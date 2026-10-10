@@ -25,6 +25,7 @@ mod spell_squiggle_test;
 mod status_bar_view_test;
 mod theme_mapper_test;
 mod toolbar_test;
+mod toolbar_visual_test;
 mod top_menu_test;
 mod ui_state_test;
 mod word_wrap_test;

@@ -398,16 +398,40 @@ fn starts_with(c: &[char], pat: &str) -> bool {
 }
 
 /// 按 id 取（或新建）节点下标。
+///
+/// # 查重必须比 **id**，不能比显示文本
+///
+/// 这里曾经写成 `g.nodes.iter().position(|(n, _)| n == id)`——`n` 是节点的
+/// **显示文本**而不是 id。于是「带标签的节点被再次以 id 引用」时永远找不到旧节点：
+///
+/// ```text
+/// graph LR
+///   A[长方形] -- 链接 --> B((圆))
+///   A --> C(圆角长方形)
+///   B --> D{菱形}
+///   C --> D
+/// ```
+///
+/// 实测解析结果是 **8 个节点**（应为 4 个）：A/长方形、B/圆 之后，`A` 与 `B`
+/// 各又新建了一个以 id 为文本的空壳节点，`C`、`D` 同理重复；图面上于是多出
+/// 四个写着 `A`/`B`/`C`/`D` 的框，连线也被引到重复节点上。
+/// 这是**最常规**的流程图写法（先定义带标签的节点，再按 id 串联），
+/// 所以看上去像「流程图整体渲染失效」。
+///
+/// 之所以此前没被发现：`graph LR / A --> B` 这种最简用例里，
+/// 节点文本恰好等于 id，文本比对「碰巧」是对的。
 fn intern(g: &mut Graph, id: &str, text: Option<String>, shape: NodeShape) -> usize {
-    if let Some(pos) = g.nodes.iter().position(|(n, _)| n == id) {
+    if let Some(pos) = g.node_ids.iter().position(|n| n == id) {
+        // 重复出现时**后写的形状与文本覆盖先写的**（与 Mermaid 一致）；
+        // 只写 id（`text == None`）则保留原有标签，不被 id 顶掉。
         if let Some(text) = text {
             g.nodes[pos] = (text, shape);
         }
         return pos;
     }
+    g.node_ids.push(id.to_string());
     g.nodes
         .push((text.unwrap_or_else(|| id.to_string()), shape));
-    g.node_ids.push(id.to_string());
     g.nodes.len() - 1
 }
 
@@ -585,6 +609,21 @@ impl MermaidLayout {
     /// 预览层用来生成交互区的热点列表（已归一化到左上角原点）。
     pub fn click_targets(&self) -> &[(egui::Rect, String)] {
         &self.hotspots
+    }
+
+    /// 版面里画出的**节点框**数量。
+    ///
+    /// 每个节点恰好产出一个**填充的多边形**图元（见 `push_node`：矩形 / 圆 /
+    /// 菱形 / 六边形…各一种轮廓，`fill` 均为 `true`），而边只有折线与箭头、
+    /// 边标签是文字，都不计入。因此这个数就是图的节点数，可用来把
+    /// 「同一个 id 被引用多次不得多出框」这条不变量钉在**版面**层面
+    /// （回归：`intern` 曾按「显示文本」而非「id」查重，`graph LR` 里
+    /// 先定义带标签节点、再按 id 串联这种最常规写法会让 4 个节点排成 8 个）。
+    pub fn node_count(&self) -> usize {
+        self.prims
+            .iter()
+            .filter(|p| matches!(p, Prim::Poly { fill: true, .. }))
+            .count()
     }
 }
 
@@ -2585,6 +2624,59 @@ mod tests {
         assert_eq!(g.nodes.len(), 2);
         assert_eq!(g.edges.len(), 1);
         assert!(g.horizontal, "LR 应为水平流向");
+    }
+
+    /// 回归：「先定义带标签的节点、再按 id 串联」不得重复建节点。
+    ///
+    /// 这正是 `docs/logs/示例文档.md` 里那段流程图，也是流程图最常见的写法。
+    /// 缺陷时期望 4 个节点却得到 8 个——多出来的四个是以 id 为标签的空壳，
+    /// 图面看上去就是「画错了 / 画重了」。
+    #[test]
+    fn repeated_id_reference_does_not_duplicate_nodes() {
+        let g = parse_graph(
+            "graph LR\n\
+             A[长方形] -- 链接 --> B((圆))\n\
+             A --> C(圆角长方形)\n\
+             B --> D{菱形}\n\
+             C --> D\n",
+        )
+        .expect("解析");
+
+        assert_eq!(g.nodes.len(), 4, "节点应只有 A/B/C/D：{:?}", g.nodes);
+        assert_eq!(g.edges.len(), 4);
+        // id 与显示文本各归其位：标签不因后续的裸 id 引用而丢失。
+        let by_id = |id: &str| {
+            let pos = g
+                .node_ids
+                .iter()
+                .position(|n| n == id)
+                .unwrap_or_else(|| panic!("缺少节点 {id}"));
+            g.nodes[pos].0.clone()
+        };
+        assert_eq!(by_id("A"), "长方形");
+        assert_eq!(by_id("B"), "圆");
+        assert_eq!(by_id("C"), "圆角长方形");
+        assert_eq!(by_id("D"), "菱形");
+        // 边必须落在**唯一**的那一对节点上（重复建节点会把边引到空壳上）。
+        assert_eq!(g.edges[1].from, g.edges[0].from, "A --> C 应出自 A");
+    }
+
+    /// 链式流程（`A[开始] --> B[中间]` 后 `B --> C[结束]`）同样不得重复。
+    #[test]
+    fn bare_id_reference_keeps_existing_label() {
+        let g =
+            parse_graph("flowchart TD\n  A[开始] --> B[中间]\n  B --> C[结束]\n").expect("解析");
+        assert_eq!(g.nodes.len(), 3, "节点应为 A/B/C：{:?}", g.nodes);
+        let texts: Vec<&str> = g.nodes.iter().map(|(t, _)| t.as_str()).collect();
+        assert_eq!(texts, ["开始", "中间", "结束"]);
+    }
+
+    /// 同一 id 后写的形状与文本覆盖先写的（与 Mermaid 行为一致）。
+    #[test]
+    fn later_definition_overwrites_earlier() {
+        let g = parse_graph("graph LR\nA[旧]\nA[新] --> B\n").expect("解析");
+        assert_eq!(g.nodes.len(), 2);
+        assert_eq!(g.nodes[0].0, "新");
     }
 
     #[test]

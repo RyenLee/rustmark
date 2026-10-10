@@ -326,6 +326,50 @@ impl UiAction {
         }
     }
 
+    /// **编辑区工具栏**按钮上的前置图标（单字形）。
+    ///
+    /// # 只收录「实测有字形」的字符
+    ///
+    /// 应用在 Windows 下用系统 CJK 字体兜底（见 `infrastructure::fonts`），
+    /// egui 自带的西文字体只覆盖一部分符号。图标一旦落在字体覆盖之外，
+    /// 界面上就是一个**豆腐块方框**——比没有图标更糟。
+    ///
+    /// 故这里逐个用 `Fonts::has_glyphs` 实测过（口径见
+    /// `tests/presentation/toolbar_visual_test.rs`，它会把这条约束钉住）。
+    /// 实测**无字形、因此刻意不用**的候选：
+    /// `▾ ◂ ❝ ▦ ▤ ⌫ ⇥ ⇤ ⤒ ⤓ ↹ ❙ ✓ ⁺`（`H⁺`「上标加号」也缺）。
+    ///
+    /// `None` 表示该动作不配图标——宁可没有，也不放一个语义不明的方块。
+    /// 图标与文案之间由渲染层补一个空格（见 `toolbar_view::button_text`），
+    /// 所以这里只返回图标字形本身。
+    pub const fn icon(self) -> Option<&'static str> {
+        match self {
+            // 字符样式：用拉丁字母是唯一「在任何字体下都成立」的选择。
+            UiAction::Bold => Some("B"),
+            UiAction::Italic => Some("I"),
+            UiAction::Strikethrough => Some("S"),
+            UiAction::InlineCode => Some("<>"),
+            UiAction::InsertLink => Some("🔗"),
+            // 块级插入
+            UiAction::CodeBlock => Some("≡"),
+            UiAction::InsertTable => Some("⊞"),
+            UiAction::InsertImage => Some("🖼"),
+            // 列表 / 结构
+            UiAction::ToggleQuote => Some("「"),
+            UiAction::ToggleList => Some("•"),
+            UiAction::ToggleOrderedList => Some("№"),
+            UiAction::ToggleTask => Some("☑"),
+            UiAction::PromoteHeading => Some("H↑"),
+            UiAction::DemoteHeading => Some("H↓"),
+            // 行操作
+            UiAction::Indent => Some("→"),
+            UiAction::Outdent => Some("←"),
+            UiAction::MoveLineUp => Some("↑"),
+            UiAction::MoveLineDown => Some("↓"),
+            _ => None,
+        }
+    }
+
     /// 所属菜单分组（对齐原型 `commands.ts` 的 `group`）。
     pub const fn group(self) -> MenuGroup {
         match self {
