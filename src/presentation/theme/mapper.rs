@@ -985,8 +985,11 @@ pub fn apply(ctx: &egui::Context, theme: &Theme) {
 
     // 间距：原型栅格以 4px 为基准（`--sp-1`）。把 egui 的控件间距与按钮内边距
     // 收敛到同一套节奏，避免桌面端比原型「松/紧一档」。
-    style.spacing.item_spacing = egui::vec2(8.0, 4.0);
-    style.spacing.button_padding = egui::vec2(8.0, 4.0);
+    // 两个值都从 [`Metrics`] 的间距刻度取——全局默认值与各视图的显式留白
+    // 必须是同一个来源，否则「统一间距规范」只管得住显式调用、管不住默认值。
+    let m = &theme.metrics;
+    style.spacing.item_spacing = egui::vec2(m.space_md, m.space_xs);
+    style.spacing.button_padding = egui::vec2(m.space_md, m.space_xs);
 
     // 字号：编辑区用等宽，其余用 UI 字体。
     for (font, size) in [

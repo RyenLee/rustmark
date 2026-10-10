@@ -28,11 +28,11 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use egui::{Align, CornerRadius, FontId, Grid, Layout, RichText, ScrollArea, Stroke, Ui};
+use egui::{Align, CornerRadius, FontId, Layout, RichText, ScrollArea, Stroke, Ui};
 
 use crate::app::frame::EditorApp;
 use crate::application::document::registry::DocumentContentProvider;
-use crate::application::dto::{BlockView, CellAlignView, ListItemView};
+use crate::application::dto::{BlockView, CellAlignView, ListItemView, TableView};
 use crate::application::markdown::queries::{HighlightSnippetQuery, RenderPreviewQuery};
 use crate::presentation::state::scroll_sync_state::{BlockRect, Side};
 use crate::presentation::theme::builtin::Theme;
@@ -55,6 +55,15 @@ const IMAGE_MAX_W: f32 = 620.0;
 /// 其后所有块的矩形整体下移——滚动同步用的正是这些矩形，于是一次解码
 /// 会让预览「跳位」。预留固定高度后，块的纵向布局与加载结果无关。
 const IMAGE_PLACEHOLDER_H: f32 = 96.0;
+
+/// 表格单元格的左右内边距（点，单侧）。
+///
+/// `pub` 供列宽分配的单测换算「内容自然宽 → 含内边距的列宽」。
+pub const TABLE_CELL_PAD: f32 = 8.0;
+/// 表格相邻两列之间的间距（点，取间距刻度的 `space_md`）。
+pub const TABLE_COL_GAP: f32 = 8.0;
+/// 压缩时每列的**保底**宽度（点）：低于它一行只放得下两三个字，几乎不可读。
+pub const TABLE_MIN_COL_W: f32 = 64.0;
 
 // ============================================================================
 // 图片纹理缓存
@@ -241,7 +250,9 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
                         top: rect.top() - base,
                         bottom: rect.bottom() - base,
                     });
-                    ui.add_space(4.0);
+                    // 块间距取刻度 `space_xs`：`scroll_sync` 的块矩形换算
+                    // 假定块与块之间就是这个值（见其文件头注释），改这里要同步那边。
+                    ui.add_space(theme.metrics.space_xs);
                 }
                 rects
             })
@@ -262,9 +273,13 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
 /// 同源，不能写死一个数字：编辑区工具栏高度是主题的一部分，两处各写一遍
 /// 会在换主题尺寸时重新错位。
 fn pane_header(ui: &mut Ui, theme: &Theme) {
-    let height = theme.metrics.editor_toolbar_height;
+    let m = theme.metrics;
+    let height = m.editor_toolbar_height;
     ui.allocate_ui(egui::vec2(ui.available_width(), height), |ui| {
         ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+            // 与编辑区工具栏同一条左边线（`space_sm`，见 `draw_editor_toolbar`）：
+            // 两栏内容从同一竖线起，顶栏才像「一对」。
+            ui.add_space(m.space_sm);
             ui.strong("预览");
         });
     });
@@ -280,7 +295,13 @@ fn draw_block(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, block: &BlockView
         "code_block" => draw_code_block(app, ui, theme, block),
         "list" => draw_list(ui, theme, block),
         "task_list" => draw_task_list(app, ui, theme, block),
-        "table" => draw_table(ui, theme, block),
+        "table" => {
+            // 结构化缺失（理论上不该发生）时退回纯文本，总比空白好。
+            match &block.table {
+                Some(table) => draw_table(ui, theme, table),
+                None => draw_paragraph(ui, theme, block),
+            }
+        }
         "image" => draw_image(app, ui, theme, block),
         "rule" => draw_rule(ui, theme),
         "footnote" => draw_footnote(ui, theme, block),
@@ -300,14 +321,17 @@ fn draw_block(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, block: &BlockView
 /// 这是预览区唯一「点击跳转」的入口——正文段落不给点击，
 /// 否则用户在预览里想选中文本时会被跳转打断。
 fn draw_heading(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, block: &BlockView) {
+    let m = theme.metrics;
     let level = block.level.unwrap_or(1).clamp(1, 6);
-    let size = theme.metrics.preview_font_size * StyleMapper::heading_scale(level);
+    let size = m.preview_font_size * StyleMapper::heading_scale(level);
     // 级别越小上方留白越多：层级感不只靠字号，也靠间距。
+    // 刻度取值：h1 一个 space_xl、h2 一个 space_lg、h3 一个 space_md、
+    // 其余一个 space_sm——层级差恒为「一格」，节奏可预期。
     ui.add_space(match level {
-        1 => 12.0,
-        2 => 10.0,
-        3 => 8.0,
-        _ => 6.0,
+        1 => m.space_xl,
+        2 => m.space_lg,
+        3 => m.space_md,
+        _ => m.space_sm,
     });
     let resp = ui.add(
         egui::Label::new(
@@ -326,7 +350,7 @@ fn draw_heading(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, block: &BlockVi
     }
     // h1 / h2 下方加一条淡分隔（对齐原型观感）。
     if level <= 2 {
-        ui.add_space(2.0);
+        ui.add_space(m.space_xxs);
         let (rect, _) =
             ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
         ui.painter()
@@ -353,7 +377,10 @@ fn draw_paragraph(ui: &mut Ui, theme: &Theme, block: &BlockView) {
 fn draw_quote(ui: &mut Ui, theme: &Theme, block: &BlockView) {
     egui::Frame::new()
         .fill(theme.bg_tertiary)
-        .inner_margin(egui::Margin::symmetric(10, 6))
+        .inner_margin(egui::Margin::symmetric(
+            theme.metrics.pane_padding as i8,
+            theme.metrics.space_sm as i8,
+        ))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 let (rect, _) = ui.allocate_exact_size(
@@ -388,7 +415,7 @@ fn draw_code_block(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, block: &Bloc
     egui::Frame::new()
         .fill(theme.code_bg)
         .corner_radius(CornerRadius::same(6))
-        .inner_margin(egui::Margin::same(8))
+        .inner_margin(egui::Margin::same(theme.metrics.pane_padding as i8))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label(
@@ -489,7 +516,8 @@ fn highlighted_code_job(
 fn draw_list(ui: &mut Ui, theme: &Theme, block: &BlockView) {
     for (i, item) in block.items.iter().enumerate() {
         ui.horizontal(|ui| {
-            ui.add_space(16.0);
+            // 列表缩进取刻度 `space_xl`：与设置对话框的分区缩进同一来源。
+            ui.add_space(theme.metrics.space_xl);
             let marker = if block.ordered {
                 format!("{}.", i + 1)
             } else {
@@ -510,7 +538,7 @@ fn draw_task_list(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, block: &Block
     for item in block.items.iter() {
         let mut checked = item.checked.unwrap_or(false);
         ui.horizontal(|ui| {
-            ui.add_space(16.0);
+            ui.add_space(theme.metrics.space_xl);
             if ui.checkbox(&mut checked, "").changed() {
                 toggle_task(app, item, checked);
             }
@@ -560,53 +588,168 @@ fn draw_item_text(ui: &mut Ui, theme: &Theme, item: &ListItemView) {
     ui.label(text);
 }
 
-/// GFM 表格：`Grid` + 表头加粗 + 列对齐。
-fn draw_table(ui: &mut Ui, theme: &Theme, block: &BlockView) {
-    let Some(table) = &block.table else {
-        // 结构化缺失（理论上不该发生）时退回纯文本，总比空白好。
-        draw_paragraph(ui, theme, block);
-        return;
-    };
-    let cols = table.header.len().max(1);
-
+/// GFM 表格：列宽按**单元格实际内容**自适应，超宽时按内容占比压缩。
+///
+/// # 为什么不用 `egui::Grid`
+///
+/// `Grid` 的列宽来自 sizing pass 里各单元格**愿意收缩到的最小宽度**，
+/// 与内容真实长度无关。表头短、正文长的表格里，每列都被压到表头那个量级，
+/// 长单元格在窄列里折成六七行，密不透风——这正是「按表头宽度换行」的观感来源。
+///
+/// 现改为两步：
+///
+/// 1. **测量**：每列取「表头 + 全部行」中最宽单元格的**单行**宽度；
+/// 2. **分配**：交给纯函数 [`table_column_distribution`]——
+///    总宽放得下就按自然宽度给列（一行不折，富余摊满面板）；
+///    放不下才按内容占比压缩，且每列保底 [`TABLE_MIN_COL_W`]，
+///    长内容列拿大头、短列保持紧凑。
+///
+/// 测量用的字体与渲染相同（`Metrics::preview_font_size`），且 egui 的
+/// `strong` 只加深颜色、不换粗体字形（见 `RichText::strong` 的实现），
+/// 因此表头用同一字体测出的自然宽度是**精确**的。
+fn draw_table(ui: &mut Ui, theme: &Theme, table: &TableView) {
+    let m = theme.metrics;
     egui::Frame::new()
         .stroke(hairline(theme.border))
         .corner_radius(CornerRadius::same(6))
-        .inner_margin(egui::Margin::same(6))
+        .inner_margin(egui::Margin::same(m.pane_padding as i8))
         .show(ui, |ui| {
-            Grid::new(("preview-table", block.id))
-                .num_columns(cols)
-                .spacing([12.0, 4.0])
-                .show(ui, |ui| {
-                    for (col, cell) in table.header.iter().enumerate() {
-                        let align = align_of(table.aligns.get(col));
-                        ui.with_layout(Layout::top_down(align), |ui| {
-                            ui.label(
-                                RichText::new(cell)
-                                    .strong()
-                                    .size(theme.metrics.preview_font_size)
-                                    .color(theme.text_primary),
-                            );
-                        });
-                    }
-                    ui.end_row();
+            let available = ui.available_width();
 
-                    for row in &table.rows {
-                        for col in 0..cols {
-                            let cell = row.get(col).map(String::as_str).unwrap_or("");
-                            let align = align_of(table.aligns.get(col));
-                            ui.with_layout(Layout::top_down(align), |ui| {
-                                ui.label(
-                                    RichText::new(cell)
-                                        .size(theme.metrics.preview_font_size)
-                                        .color(theme.text_primary),
-                                );
-                            });
-                        }
-                        ui.end_row();
+            // —— 测量：每列最宽内容的单行宽度 ——
+            let font = FontId::proportional(m.preview_font_size);
+            let mut natural = vec![0.0_f32; table.header.len().max(1)];
+            for (c, cell) in table.header.iter().enumerate() {
+                natural[c] = natural[c].max(measure_cell(ui, &font, cell));
+            }
+            for row in &table.rows {
+                for (c, cell) in row.iter().enumerate() {
+                    if let Some(n) = natural.get_mut(c) {
+                        *n = (*n).max(measure_cell(ui, &font, cell));
                     }
-                });
+                }
+            }
+            let widths = table_column_distribution(&natural, available);
+
+            // —— 表头 + 分隔线 + 表体 ——
+            table_row(ui, theme, &table.header, &widths, &table.aligns, true);
+            let (line, _) =
+                ui.allocate_exact_size(egui::vec2(available, 1.0), egui::Sense::hover());
+            ui.painter()
+                .hline(line.x_range(), line.top(), hairline(theme.border));
+            for row in &table.rows {
+                table_row(ui, theme, row, &widths, &table.aligns, false);
+            }
         });
+}
+
+/// 量一个单元格文本的**单行**自然宽度（点）。
+///
+/// 颜色不参与度量，统一用白色探针；`no_wrap` 保证拿到的是「不折行」的宽度。
+fn measure_cell(ui: &Ui, font: &FontId, text: &str) -> f32 {
+    ui.painter()
+        .layout_no_wrap(text.to_owned(), font.clone(), egui::Color32::WHITE)
+        .size()
+        .x
+}
+
+/// 表格列宽分配（**纯函数**，不依赖 egui，可脱离 UI 单测）。
+///
+/// * `natural[c]`：第 c 列最宽内容的单行宽度（**不含**内边距）。
+/// * `available`：表格可用总宽。
+/// * 返回每列的最终宽度（**含**左右内边距 [`TABLE_CELL_PAD`]）。
+///
+/// 两条不变量（各有单测钉住；「列宽和」均不含列间距——间距由布局层的
+/// `item_spacing` 提供，值同为 [`TABLE_COL_GAP`]，故分配只对
+/// 「面板宽 − 列间距」负责）：
+///
+/// 1. `sum(widths) + 列间距 == min(需求宽, available)`——放得下时占满面板、
+///    放不下时正好用满，既不溢出也不留大段空白；
+/// 2. 放不下时每列 `>= [`TABLE_MIN_COL_W`]`——内容再长也不把短列挤没。
+///
+/// 分配策略：长列拿大头（按内容占比），这正是「长内容展示合理」的实现点。
+pub fn table_column_distribution(natural: &[f32], available: f32) -> Vec<f32> {
+    let cols = natural.len();
+    if cols == 0 {
+        return Vec::new();
+    }
+    let cols_f = cols as f32;
+    let gaps = TABLE_COL_GAP * (cols - 1) as f32;
+    let need: f32 = natural
+        .iter()
+        .map(|w| w + 2.0 * TABLE_CELL_PAD)
+        .sum::<f32>()
+        + gaps;
+    // 内容占比：全空表退化为均分（`share` 的分母不可能是 0）。
+    let weight_sum: f32 = natural.iter().copied().sum();
+    let share = |w: f32| {
+        if weight_sum > 0.0 {
+            w / weight_sum
+        } else {
+            1.0 / cols_f
+        }
+    };
+
+    if need <= available {
+        // 放得下：每列拿「自然宽 + 内边距」，富余量按内容占比摊满面板。
+        // 摊法用占比而非均分：内容多的列多占一点，视觉权重与内容长度一致。
+        let extra = available - need;
+        natural
+            .iter()
+            .map(|n| n + 2.0 * TABLE_CELL_PAD + extra * share(*n))
+            .collect()
+    } else {
+        // 放不下：每列先保底，剩余预算按内容占比分配（总和恰为 available）。
+        let budget = available - gaps;
+        let floor_total = TABLE_MIN_COL_W * cols_f;
+        if budget <= floor_total {
+            // 窗口极窄：预算连保底都给不起，宁可溢出也不把内容挤没了。
+            return vec![TABLE_MIN_COL_W; cols];
+        }
+        let flex = budget - floor_total;
+        natural
+            .iter()
+            .map(|n| TABLE_MIN_COL_W + flex * share(*n))
+            .collect()
+    }
+}
+
+/// 表格的一行。`header = true` 时文字用强调色（egui 的 `strong` 即「加深颜色」）。
+///
+/// 每个单元格先按列宽**显式占位**（`allocate_ui_with_layout`，高度给 0、
+/// 内容向下撑开），再在内部按列对齐画文字——宽度是我们算出来的，
+/// 不依赖任何布局施舍；行高自动取最高单元格，顶部对齐。
+fn table_row(
+    ui: &mut Ui,
+    theme: &Theme,
+    cells: &[String],
+    widths: &[f32],
+    aligns: &[CellAlignView],
+    header: bool,
+) {
+    let size = theme.metrics.preview_font_size;
+    ui.horizontal(|ui| {
+        for (c, cell) in cells.iter().enumerate().take(widths.len()) {
+            let w = widths[c];
+            let align = align_of(aligns.get(c));
+            ui.allocate_ui_with_layout(
+                egui::vec2(w, 0.0),
+                Layout::left_to_right(Align::TOP),
+                |ui| {
+                    ui.add_space(TABLE_CELL_PAD);
+                    ui.with_layout(Layout::top_down(align), |ui| {
+                        ui.set_min_width(w - 2.0 * TABLE_CELL_PAD);
+                        let mut text = RichText::new(cell).size(size);
+                        if header {
+                            text = text.strong();
+                        }
+                        ui.label(text);
+                    });
+                    ui.add_space(TABLE_CELL_PAD);
+                },
+            );
+        }
+    });
 }
 
 /// 列对齐枚举 → egui 对齐。
@@ -657,29 +800,32 @@ fn draw_image(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, block: &BlockView
                 .rect_filled(rect, CornerRadius::same(4), theme.bg_tertiary);
             let reason = entry.error.unwrap_or_default();
             // 文案画在占位框内（`allocate_ui_at_rect` 不推进光标，故不改变高度）。
-            ui.scope_builder(egui::UiBuilder::new().max_rect(rect.shrink(8.0)), |ui| {
-                ui.label(
-                    RichText::new(format!(
-                        "图片无法加载：{}\n{}",
-                        if alt.is_empty() { &url } else { &alt },
-                        reason
-                    ))
-                    .size(theme.metrics.ui_font_size)
-                    .color(theme.warning),
-                );
-            });
+            ui.scope_builder(
+                egui::UiBuilder::new().max_rect(rect.shrink(theme.metrics.space_md)),
+                |ui| {
+                    ui.label(
+                        RichText::new(format!(
+                            "图片无法加载：{}\n{}",
+                            if alt.is_empty() { &url } else { &alt },
+                            reason
+                        ))
+                        .size(theme.metrics.ui_font_size)
+                        .color(theme.warning),
+                    );
+                },
+            );
         }
     }
 }
 
 /// 分割线。
 fn draw_rule(ui: &mut Ui, theme: &Theme) {
-    ui.add_space(6.0);
+    ui.add_space(theme.metrics.space_sm);
     let (rect, _) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
     ui.painter()
         .hline(rect.x_range(), rect.top(), hairline(theme.border));
-    ui.add_space(6.0);
+    ui.add_space(theme.metrics.space_sm);
 }
 
 /// 脚注定义：小字 + 次级色。
@@ -712,7 +858,10 @@ fn draw_math(ui: &mut Ui, theme: &Theme, block: &BlockView) {
     egui::Frame::new()
         .fill(theme.code_bg)
         .corner_radius(CornerRadius::same(6))
-        .inner_margin(egui::Margin::symmetric(10, 8))
+        .inner_margin(egui::Margin::symmetric(
+            theme.metrics.pane_padding as i8,
+            theme.metrics.space_md as i8,
+        ))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label(
@@ -741,7 +890,7 @@ fn draw_diagram(ui: &mut Ui, theme: &Theme, block: &BlockView) {
     egui::Frame::new()
         .fill(theme.code_bg)
         .corner_radius(CornerRadius::same(6))
-        .inner_margin(egui::Margin::same(8))
+        .inner_margin(egui::Margin::same(theme.metrics.pane_padding as i8))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label(

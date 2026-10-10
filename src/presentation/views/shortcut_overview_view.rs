@@ -57,7 +57,7 @@ pub fn show(app: &mut EditorApp, ctx: &Context) {
 fn body(app: &mut EditorApp, ui: &mut Ui) {
     let theme = app.theme().clone();
     filter_row(app, ui);
-    ui.add_space(6.0);
+    ui.add_space(theme.metrics.space_sm);
     let sections = collect(app);
     list(ui, &theme, &sections);
     ui.separator();
@@ -105,7 +105,7 @@ fn list(ui: &mut Ui, theme: &Theme, sections: &[ShortcutSection]) {
         .show(ui, |ui| {
             let total: usize = sections.iter().map(|s| s.rows.len()).sum();
             if total == 0 {
-                ui.add_space(16.0);
+                ui.add_space(theme.metrics.space_xl);
                 ui.centered_and_justified(|ui| {
                     ui.colored_label(theme.text_secondary, "没有匹配的操作。");
                 });
@@ -115,7 +115,7 @@ fn list(ui: &mut Ui, theme: &Theme, sections: &[ShortcutSection]) {
                 if section.is_empty() {
                     continue;
                 }
-                ui.add_space(6.0);
+                ui.add_space(theme.metrics.space_sm);
                 ui.colored_label(theme.accent, section.group.label());
                 ui.separator();
                 for row in &section.rows {

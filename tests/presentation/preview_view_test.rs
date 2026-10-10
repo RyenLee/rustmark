@@ -7,7 +7,9 @@
 //! 2. 块类型的**分发**——`kind` 写错会让整类块落进 `raw` 渲染器。
 
 use rustmark::application::dto::CellAlignView;
-use rustmark::presentation::views::preview_view::task_marker_offset;
+use rustmark::presentation::views::preview_view::{
+    TABLE_CELL_PAD, TABLE_COL_GAP, TABLE_MIN_COL_W, table_column_distribution, task_marker_offset,
+};
 
 // ============================================================================
 // 任务项回写偏移
@@ -139,4 +141,82 @@ fn all_alignments_are_mapped() {
                 | CellAlignView::Right
         ));
     }
+}
+
+// ============================================================================
+// 表格列宽分配（自适应列宽的核心算法）
+// ============================================================================
+
+/// 不变量 1（放得下）：总宽 ≤ 可用宽时每列拿到「自然宽 + 内边距」，
+/// 即**任何单元格都不必换行**；且「列宽和 + 列间距」恰占满可用宽
+/// （列间距由布局层的 `item_spacing` 提供，值同为 [`TABLE_COL_GAP`]，
+/// 故它不进列宽，分配只对「面板宽 − 列间距」负责）。
+#[test]
+fn columns_fit_without_wrapping_when_space_allows() {
+    let natural = [40.0, 120.0, 30.0];
+    let available = 400.0;
+    let widths = table_column_distribution(&natural, available);
+
+    assert_eq!(widths.len(), 3);
+    let total: f32 = widths.iter().sum::<f32>() + TABLE_COL_GAP * (widths.len() - 1) as f32;
+    assert!(
+        (total - available).abs() < 0.5,
+        "放得下时应占满可用宽：{total} vs {available}"
+    );
+    for (c, (w, n)) in widths.iter().zip(natural).enumerate() {
+        assert!(
+            *w >= n + 2.0 * TABLE_CELL_PAD,
+            "第 {c} 列宽 {w} 小于自然宽 {n} + 内边距——本不该换行的列被压窄了"
+        );
+    }
+}
+
+/// 不变量 1（放不下）：超宽时「列宽和 + 列间距」恰为可用宽，不溢出也不留白。
+#[test]
+fn overflowing_columns_use_exactly_the_available_width() {
+    let natural = [60.0, 800.0, 40.0];
+    let available = 300.0;
+    let widths = table_column_distribution(&natural, available);
+    let total: f32 = widths.iter().sum::<f32>() + TABLE_COL_GAP * (widths.len() - 1) as f32;
+    assert!(
+        (total - available).abs() < 0.5,
+        "超宽时总和应恰为可用宽：{total} vs {available}"
+    );
+}
+
+/// 不变量 2：超宽时每列不低于保底宽度，且长内容列拿到的最多——
+/// 「长内容展示合理」的实现点（长列多占、短列紧凑，而不是一刀切均分）。
+#[test]
+fn overflowing_columns_keep_a_floor_and_favor_long_content() {
+    let natural = [60.0, 800.0, 40.0];
+    let available = 300.0;
+    let widths = table_column_distribution(&natural, available);
+    for (c, w) in widths.iter().enumerate() {
+        assert!(
+            *w >= TABLE_MIN_COL_W - 0.5,
+            "第 {c} 列宽 {w} 低于保底 {TABLE_MIN_COL_W}——内容会被挤到无法阅读"
+        );
+    }
+    assert!(
+        widths[1] > widths[0] && widths[1] > widths[2],
+        "长内容列应分到最宽：{widths:?}"
+    );
+}
+
+/// 退化输入：空表返回空分配；窗口极窄时全部压到保底宽度（宁可溢出不可挤没）。
+#[test]
+fn table_distribution_degenerate_inputs_are_handled() {
+    assert!(table_column_distribution(&[], 200.0).is_empty());
+
+    // 可用宽减去列间距后连两列保底都给不起 → 全部取保底。
+    let narrow = table_column_distribution(&[500.0, 600.0], 50.0);
+    assert_eq!(narrow, vec![TABLE_MIN_COL_W, TABLE_MIN_COL_W]);
+
+    // 全空表（所有列内容都为空）：按均分处理，不得除零 NaN。
+    let empty = table_column_distribution(&[0.0, 0.0, 0.0], 300.0);
+    let total: f32 = empty.iter().sum::<f32>() + TABLE_COL_GAP * (empty.len() - 1) as f32;
+    assert!(
+        (total - 300.0).abs() < 0.5 && empty.iter().all(|w| w.is_finite()),
+        "全空表应均分可用宽且有限：{empty:?}"
+    );
 }

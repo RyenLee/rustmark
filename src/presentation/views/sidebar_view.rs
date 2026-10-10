@@ -77,6 +77,9 @@ fn draw(app: &mut EditorApp, ui: &mut Ui, ctx: &Context) {
 /// 顶部标签栏。
 fn tab_bar(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
     ui.horizontal_wrapped(|ui| {
+        // 左缘取刻度 `space_sm`：与文件树行的 `ROW_PAD`（同为 6）对齐，
+        // 标签文字与树行文字在同一条竖线上，侧栏才不显得「上歪下正」。
+        ui.add_space(theme.metrics.space_sm);
         for tab in SidebarTab::ALL {
             let selected = app.ui.sidebar_tab == *tab;
             if ui.selectable_label(selected, tab.label()).clicked() {

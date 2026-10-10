@@ -209,7 +209,7 @@ fn search_box(app: &mut EditorApp, ui: &mut Ui) {
 /// 结果列表。返回被点击的行下标（`None` = 未点击）。
 fn results(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, list: &[QuickOpenItem]) {
     if list.is_empty() {
-        ui.add_space(16.0);
+        ui.add_space(theme.metrics.space_xl);
         ui.centered_and_justified(|ui| {
             ui.colored_label(theme.text_secondary, "没有匹配的文件");
         });

@@ -147,12 +147,14 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
     ui.vertical_centered(|ui| {
         ui.add_space(rect.height() * 0.12);
         brand(ui, &theme);
-        ui.add_space(24.0);
+        // 顶级分区之间取刻度 `space_xxl`，功能区块之间取 `space_xl`：
+        // 欢迎页只有四个区块，间距是它唯一的层级语言，必须守规范。
+        ui.add_space(theme.metrics.space_xxl);
         primary_actions(ui, &theme, &mut action);
-        ui.add_space(24.0);
+        ui.add_space(theme.metrics.space_xxl);
         let recent = app.recent_files();
         recent_section(ui, &theme, &recent, &mut open_recent);
-        ui.add_space(16.0);
+        ui.add_space(theme.metrics.space_xl);
         hints(ui, &theme, app);
     });
 
@@ -181,9 +183,9 @@ fn brand(ui: &mut Ui, theme: &Theme) {
             .strong()
             .color(theme.text_primary),
     );
-    ui.add_space(8.0);
+    ui.add_space(theme.metrics.space_md);
     ui.label(RichText::new(SLOGAN).size(13.0).color(theme.text_secondary));
-    ui.add_space(10.0);
+    ui.add_space(theme.metrics.space_lg);
     // 版本号做成一个圆角小标签（原型 `.version`）。
     let galley = ui.painter().layout_no_wrap(
         format!("v{VERSION}"),
@@ -313,7 +315,7 @@ fn recent_section(
                     .strong()
                     .color(theme.text_secondary),
             );
-            ui.add_space(8.0);
+            ui.add_space(theme.metrics.space_md);
             if recent.is_empty() {
                 // 显式说「暂无」而不是留一个空框：空框看起来像坏了。
                 ui.label(

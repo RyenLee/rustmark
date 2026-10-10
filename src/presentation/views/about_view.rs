@@ -102,14 +102,14 @@ pub fn show(app: &mut EditorApp, ctx: &Context) {
 fn body(app: &mut EditorApp, ui: &mut Ui) {
     let theme = app.theme().clone();
     brand(ui, &theme);
-    ui.add_space(6.0);
+    ui.add_space(theme.metrics.space_sm);
     ui.colored_label(
         theme.text_secondary,
         "原生轻量 · 秒级启动 · 低内存占用。全部数据留在本地，不上传任何内容。",
     );
-    ui.add_space(10.0);
+    ui.add_space(theme.metrics.space_lg);
     ui.separator();
-    ui.add_space(6.0);
+    ui.add_space(theme.metrics.space_sm);
     for item in items(app) {
         ui.horizontal(|ui| {
             ui.set_min_width(90.0);

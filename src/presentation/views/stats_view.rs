@@ -85,11 +85,11 @@ fn body(app: &mut EditorApp, ui: &mut Ui) {
     // 没有活动文档时**明说**而不是显示一堆 0：0 字的文件与
     // 「根本没打开文档」在界面上必须可区分。
     let Some(stats) = app.current_stats() else {
-        ui.add_space(20.0);
+        ui.add_space(theme.metrics.space_xl);
         ui.centered_and_justified(|ui| {
             ui.colored_label(theme.text_secondary, "尚未打开任何文档，无可统计内容。");
         });
-        ui.add_space(12.0);
+        ui.add_space(theme.metrics.space_lg);
         return;
     };
 
@@ -103,7 +103,7 @@ fn body(app: &mut EditorApp, ui: &mut Ui) {
             );
         });
     });
-    ui.add_space(10.0);
+    ui.add_space(theme.metrics.space_lg);
 
     // —— 大数字 ——
     egui::Frame::new()
@@ -123,7 +123,7 @@ fn body(app: &mut EditorApp, ui: &mut Ui) {
                 ui.colored_label(theme.text_secondary, "字数");
             });
         });
-    ui.add_space(10.0);
+    ui.add_space(theme.metrics.space_lg);
 
     // —— 明细 ——
     row(
@@ -176,7 +176,7 @@ fn body(app: &mut EditorApp, ui: &mut Ui) {
         Some("已完成 / 总数"),
     );
 
-    ui.add_space(10.0);
+    ui.add_space(theme.metrics.space_lg);
     ui.separator();
     // 口径说明**必须留**：用户看到「字数 800」却发现编辑器状态栏
     // 写的是 812，会怀疑其中一个坏了。把规则写出来才能对上账。

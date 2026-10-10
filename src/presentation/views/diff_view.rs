@@ -57,7 +57,7 @@ fn body(app: &mut EditorApp, ui: &mut Ui) {
     // 没有对照文件时**只显示选择器**并明说原因，
     // 而不是显示一个空列表让用户以为「两文件完全一致」。
     let Some(right_path) = app.diff_ui.right_path.clone() else {
-        ui.add_space(8.0);
+        ui.add_space(theme.metrics.space_md);
         picker(app, ui, &theme);
         return;
     };
@@ -75,7 +75,7 @@ fn body(app: &mut EditorApp, ui: &mut Ui) {
 
     if let Some(err) = app.diff_ui.error.clone() {
         ui.colored_label(theme.error, format!("⚠ {err}"));
-        ui.add_space(4.0);
+        ui.add_space(theme.metrics.space_xs);
     }
     ui.horizontal(|ui| {
         ui.checkbox(&mut app.diff_ui.only_changes, "只看差异行");
@@ -99,7 +99,7 @@ fn body(app: &mut EditorApp, ui: &mut Ui) {
             }
         });
     });
-    ui.add_space(4.0);
+    ui.add_space(theme.metrics.space_xs);
 
     // 降级时**明说**：不提示的话用户会以为「这个文件全变了」，
     // 而真相是「我们算不动，只整段标了」。
@@ -108,7 +108,7 @@ fn body(app: &mut EditorApp, ui: &mut Ui) {
             theme.warning,
             "文件过大，已降级为整段对比：只能看出「变了」，看不出改了哪些行。",
         );
-        ui.add_space(4.0);
+        ui.add_space(theme.metrics.space_xs);
     }
 
     // 取一份快照再渲染：`visible_rows` 借用了 `app.diff_ui`，

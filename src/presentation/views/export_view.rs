@@ -82,7 +82,7 @@ pub fn show(app: &mut EditorApp, ctx: &Context) {
 fn body(app: &mut EditorApp, ui: &mut Ui) {
     let theme = app.theme().clone();
     format_row(app, ui, &theme);
-    ui.add_space(6.0);
+    ui.add_space(theme.metrics.space_sm);
     path_rows(app, ui, &theme);
     ui.separator();
     match app.export_ui.format {

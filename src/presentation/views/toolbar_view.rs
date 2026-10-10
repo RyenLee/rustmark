@@ -270,9 +270,16 @@ pub fn draw_editor_toolbar(app: &mut EditorApp, ui: &mut Ui) {
         .id_salt("editor-toolbar-scroll")
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                for (title, actions) in editor_toolbar_groups() {
+                // 间距规范：左缘内边距取 `space_sm`（与预览区标题栏同一条左边线），
+                // 组与组之间取 `space_md`（只在组之间加，末尾不加——
+                // 末尾那份间距会让整行视觉重心偏左，右侧白边看着比左侧宽）。
+                let m = app.theme().metrics;
+                ui.add_space(m.space_sm);
+                for (i, (title, actions)) in editor_toolbar_groups().into_iter().enumerate() {
+                    if i > 0 {
+                        ui.add_space(m.space_md);
+                    }
                     let row_w = menu_row_width(ui, app, &actions);
-                    ui.add_space(2.0);
                     let mut clicked = None;
                     egui::ComboBox::from_id_salt(("editor-toolbar", title))
                         .selected_text(title)

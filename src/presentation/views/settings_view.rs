@@ -111,9 +111,9 @@ fn body(app: &mut EditorApp, ui: &mut Ui) {
     let theme = app.theme().clone();
     ui.horizontal_top(|ui| {
         nav(app, ui, &theme);
-        ui.add_space(8.0);
+        ui.add_space(theme.metrics.space_md);
         ui.separator();
-        ui.add_space(10.0);
+        ui.add_space(theme.metrics.space_lg);
         content(app, ui, &theme);
     });
     ui.separator();
@@ -161,11 +161,11 @@ fn content(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
             SettingsTab::About => about(app, ui, theme),
         }
         if let Some(error) = app.settings_ui.error.clone() {
-            ui.add_space(6.0);
+            ui.add_space(theme.metrics.space_sm);
             ui.colored_label(theme.error, format!("⚠ {error}"));
         }
         if let Some(notice) = app.settings_ui.notice.clone() {
-            ui.add_space(6.0);
+            ui.add_space(theme.metrics.space_sm);
             ui.colored_label(theme.success, notice);
         }
     });
@@ -174,7 +174,7 @@ fn content(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
 /// 「外观」分区：主题 / 字号 / 行高 / 字体族。
 fn appearance(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
     let view = app.settings().theme;
-    field(ui, "主题", |ui| {
+    field(ui, theme, "主题", |ui| {
         ui.horizontal_wrapped(|ui| {
             for (kind, label) in THEME_KINDS {
                 let selected = view.kind == *kind;
@@ -199,11 +199,11 @@ fn appearance(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
         );
     }
     if view.kind == "custom" {
-        ui.add_space(4.0);
+        ui.add_space(theme.metrics.space_xs);
         ui.colored_label(theme.text_secondary, "自定义核心配色（其余沿用内置主题）：");
         custom_palette_editor(app, ui, theme);
     }
-    field(ui, "字号", |ui| {
+    field(ui, theme, "字号", |ui| {
         ui.horizontal_wrapped(|ui| {
             for size in FONT_SIZES {
                 let selected = (view.font_size - size).abs() < f32::EPSILON;
@@ -214,7 +214,7 @@ fn appearance(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
             }
         });
     });
-    field(ui, "行高", |ui| {
+    field(ui, theme, "行高", |ui| {
         ui.horizontal_wrapped(|ui| {
             for height in LINE_HEIGHTS {
                 let selected = (view.line_height - height).abs() < f32::EPSILON;
@@ -225,7 +225,7 @@ fn appearance(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
             }
         });
     });
-    field(ui, "字体族", |ui| {
+    field(ui, theme, "字体族", |ui| {
         // 主选择器：**合法预设下拉**。用下拉而非裸文本，是为了让「能选到的
         // 都是合法的」——自由文本可以填出系统不存在的字体，落盘后设置项
         // 不合规，渲染层静默回退，用户以为改了却没变（即本次要修的问题）。
@@ -319,7 +319,7 @@ fn rgb_to_hex(rgb: [u8; 3]) -> String {
 /// 「编辑器」分区：缩进 / 自动换行 / 自动保存间隔。
 fn editor(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
     let view = app.settings().editor;
-    field(ui, "Tab 缩进", |ui| {
+    field(ui, theme, "Tab 缩进", |ui| {
         ui.horizontal(|ui| {
             for size in TAB_SIZES {
                 let selected = view.tab_size == *size;
@@ -334,13 +334,13 @@ fn editor(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
             }
         });
     });
-    field(ui, "自动换行", |ui| {
+    field(ui, theme, "自动换行", |ui| {
         let mut on = view.word_wrap;
         if ui.checkbox(&mut on, "按窗口宽度折行").changed() {
             app.apply_editor_field(|e| e.word_wrap = on);
         }
     });
-    field(ui, "自动保存", |ui| {
+    field(ui, theme, "自动保存", |ui| {
         let mut interval = view.auto_save_interval.unwrap_or(0);
         if ui
             .add(egui::Slider::new(&mut interval, 0..=60).suffix(" 秒"))
@@ -420,7 +420,7 @@ fn shortcuts(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
                     });
                 });
             }
-            ui.add_space(8.0);
+            ui.add_space(theme.metrics.space_md);
             if ui.button("恢复默认快捷键").clicked() {
                 reset_all = true;
             }
@@ -472,7 +472,7 @@ fn about(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
         theme.text_secondary,
         "原生轻量 · 秒级启动 · 低内存占用。基于 Rust + egui 的即时模式实现。",
     );
-    ui.add_space(6.0);
+    ui.add_space(theme.metrics.space_sm);
     ui.colored_label(
         theme.text_secondary,
         format!("已打开文档：{} 个", app.open_document_list().len()),
@@ -528,12 +528,17 @@ fn footer(app: &mut EditorApp, ui: &mut Ui) {
     });
 }
 
-/// 「标签 + 值」一行。
-fn field(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui)) {
+/// 「标签 + 值」一行，行后留一个 `space_sm` 的呼吸位。
+///
+/// 表单行之间若只有全局 `item_spacing.y`（4pt），「一行 = 一个设置项」
+/// 的分组感会很弱；6pt 的字段间距把它撑出来。间距取刻度而不是现场定数，
+/// 与全应用的分区节奏同源。
+fn field(ui: &mut Ui, theme: &Theme, label: &str, add: impl FnOnce(&mut Ui)) {
     ui.horizontal(|ui| {
         ui.label(label);
         add(ui);
     });
+    ui.add_space(theme.metrics.space_sm);
 }
 
 /// 由持久化键反查 `UiAction`（录制与冲突定位都要用）。

@@ -186,11 +186,11 @@ fn search_box(app: &mut EditorApp, ui: &mut Ui) {
 /// 结果列表。返回被点击的行下标（`None` = 未点击）。
 fn results(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, list: &[CommandRow]) {
     if list.is_empty() {
-        ui.add_space(20.0);
+        ui.add_space(theme.metrics.space_xl);
         ui.centered_and_justified(|ui| {
             ui.vertical(|ui| {
                 ui.colored_label(theme.text_secondary, "没有匹配的命令");
-                ui.add_space(4.0);
+                ui.add_space(theme.metrics.space_xs);
                 ui.colored_label(
                     theme.text_secondary.gamma_multiply(0.75),
                     "试试「保存」「撤销」「主题」「导出」",

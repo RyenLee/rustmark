@@ -46,8 +46,12 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
 
     // 编辑区顶部工具栏：按工具作用分组的下拉菜单（问题 3）。贴在编辑区顶部、
     // 文本上方（上下布局），作用域与编辑区内容一致；预览区也可独立占满剩余宽度。
+    //
+    // 垂直居中：下拉按钮高度 = `interact_size.y`，剩余空间上下均分——
+    // 工具栏行高（34）比按钮高，顶对齐会让按钮「贴着天花板」。
     let tb_h = theme.metrics.editor_toolbar_height;
     ui.allocate_ui(egui::vec2(ui.available_width(), tb_h), |ui| {
+        ui.add_space(((tb_h - ui.spacing().interact_size.y) / 2.0).max(0.0));
         crate::presentation::views::toolbar_view::draw_editor_toolbar(app, ui);
     });
     ui.separator();
@@ -251,30 +255,10 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
     app.ui
         .sync
         .set_geometry(Side::Editor, out.content_size.y, out.inner_rect.height());
-
-    // 高亮增量：把重排 / 复用行数与行布局规模显示出来（S6-04 要求「缓存命中率
-    // 记录到调试面板」）。统一调试面板由 S6-11 收敛，届时这段 readout 迁过去。
-    let hl = mapper::last_highlight_stats();
-    ui.weak(format!(
-        "highlight · 共 {} 行 · 重排 {} · 复用 {} · 行布局 {}",
-        hl.total_lines,
-        hl.reshaped_lines,
-        hl.cached_lines,
-        mapper::line_cache_len()
-    ));
-    ui.weak(format!(
-        "scroll-sync · 主动方 {} · 驱动 {} 次 · 块矩形 {}",
-        app.ui
-            .sync
-            .last_driven
-            .map_or("—", |s| if s == Side::Editor {
-                "编辑区"
-            } else {
-                "预览区"
-            }),
-        app.ui.sync.drive_count,
-        app.preview.rects.len()
-    ));
+    // 说明：S6-04 时代曾把高亮 / 滚动同步的统计 readout 直接画在编辑区底部，
+    // 那段「零高余量里的两行字」会吃掉编辑区的可视高度，使编辑区与预览区的
+    // 滚动视口不再等高（两栏对齐的回归根源）。统计数据仍可经
+    // `mapper::last_highlight_stats()` 取用（单测在用），只是不再占用版面。
 }
 
 /// 描画左侧行号栏（当前行号用强调色）。

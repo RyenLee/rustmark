@@ -102,11 +102,11 @@ fn handle_keys(app: &mut EditorApp, ctx: &Context) {
 fn body(app: &mut EditorApp, ui: &mut Ui) {
     let theme = app.theme().clone();
     tabs(app, ui, &theme);
-    ui.add_space(4.0);
+    ui.add_space(theme.metrics.space_xs);
     search_box(app, ui);
     let visible = app.symbol_ui.visible();
     app.symbol_ui.clamp(visible.len());
-    ui.add_space(6.0);
+    ui.add_space(theme.metrics.space_sm);
     grid(app, ui, &theme, &visible);
     ui.separator();
     footer(app, ui, &theme, &visible);
@@ -151,7 +151,7 @@ fn search_box(app: &mut EditorApp, ui: &mut Ui) {
 /// 符号网格。
 fn grid(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, visible: &[SymbolItem]) {
     if visible.is_empty() {
-        ui.add_space(16.0);
+        ui.add_space(theme.metrics.space_xl);
         ui.centered_and_justified(|ui| {
             ui.colored_label(theme.text_secondary, "没有匹配的符号");
         });

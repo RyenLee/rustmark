@@ -11,8 +11,17 @@
 //! ```
 //!
 //! 生成路径：`target/golden/large-1mb.md`
+//!
+//! # 为什么 `load_or_generate_large` 每进程只生成一次
+//!
+//! 集成测试是**多线程并行**的：若干个 1MB 用例同时调本模块时，曾出现
+//! 多个线程同时向同一个 `large-1mb.md` 写盘的竞态——Windows 下表现为
+//! `PermissionDenied (os error 5)`，用例随机爆、与代码对错无关。
+//! 收敛到 `OnceLock` 后每进程只有首个线程生成并写盘，其余线程直接
+//! 复用内存中的内容；写盘只剩「尽力而为」（失败不影响本进程的用例）。
 
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
 /// 目标大小：1 MB。
 const TARGET_BYTES: usize = 1024 * 1024;
@@ -29,15 +38,8 @@ const BLOCKS: &[&str] = &[
     "正文段落 {i}：中文与 English mixed to exercise UTF-8 offsets.\n\n",
 ];
 
-/// 生成 1MB 语料并写入 `target/golden/large-1mb.md`。
-///
-/// 返回生成路径与字节数。
-fn generate() -> (PathBuf, usize) {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("target")
-        .join("golden");
-    std::fs::create_dir_all(&dir).expect("应能创建 target/golden");
-
+/// 拼出 1MB 语料（纯内存，确定性的：固定模板 + 固定顺序）。
+fn build_content() -> String {
     let mut content = String::with_capacity(TARGET_BYTES + 4096);
     let mut index = 0usize;
     while content.len() < TARGET_BYTES {
@@ -49,7 +51,20 @@ fn generate() -> (PathBuf, usize) {
             index += 1;
         }
     }
+    content
+}
 
+/// 生成 1MB 语料并写入 `target/golden/large-1mb.md`。
+///
+/// 返回生成路径与字节数。仅供 `--ignored` 的手动生成用例使用——
+/// 常规测试走 [`load_or_generate_large`]（不要求写盘成功）。
+fn generate() -> (PathBuf, usize) {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("golden");
+    std::fs::create_dir_all(&dir).expect("应能创建 target/golden");
+
+    let content = build_content();
     let path = dir.join("large-1mb.md");
     std::fs::write(&path, content.as_bytes()).expect("应能写入大文件样本");
     (path, content.len())
@@ -68,30 +83,44 @@ fn generate_large_fixture() {
 ///
 /// 自动生成让 1MB 用例可以直接参与常规 `cargo test`，
 /// 而不必先跑 `--ignored` 那条生成命令。
+///
+/// 每进程只生成 / 读盘一次（见文件头「为什么」）：后续调用方拿到的
+/// 是同一份 `String` 的克隆，既避免了并发写盘竞态，也省掉每个用例
+/// 重读 1MB 的开销。
 pub fn load_or_generate_large() -> String {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("target")
-        .join("golden");
-    let path = dir.join("large-1mb.md");
-    match std::fs::read_to_string(&path) {
-        Ok(content) if content.len() >= TARGET_BYTES => content,
-        _ => {
-            let (path, size) = generate();
-            std::fs::read_to_string(&path)
-                .expect("刚生成的文件应可读")
-                .tap(size)
-        }
-    }
+    static CACHE: OnceLock<String> = OnceLock::new();
+    CACHE
+        .get_or_init(|| {
+            let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("target")
+                .join("golden");
+            let path = dir.join("large-1mb.md");
+            // 已有合格样本就直接用（手动 `--ignored` 生成过的场景）。
+            if let Ok(content) = std::fs::read_to_string(&path)
+                && content.len() >= TARGET_BYTES
+            {
+                return content;
+            }
+            let content = build_content();
+            // 写盘尽力而为：磁盘被占 / 只读时，本进程的用例照常跑
+            // （内容在内存里），只是下次还得重新生成。
+            let _ = std::fs::create_dir_all(&dir);
+            let _ = std::fs::write(&path, content.as_bytes());
+            content
+        })
+        .clone()
 }
 
-/// 供上面的 `map` 使用的小扩展：读完后顺便断言字节数。
-trait Tap {
-    fn tap(self, size: usize) -> Self;
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-impl Tap for String {
-    fn tap(self, size: usize) -> Self {
-        assert!(size >= TARGET_BYTES, "样本应达到 1MB，实际 {size}");
-        self
+    /// 样本必须达到 1MB 且每进程多次取用的是同一份内容。
+    #[test]
+    fn large_sample_meets_target_and_is_cached() {
+        let a = load_or_generate_large();
+        assert!(a.len() >= TARGET_BYTES, "样本应达到 1MB，实际 {}", a.len());
+        let b = load_or_generate_large();
+        assert_eq!(a, b, "同进程两次取用应是同一份内容");
     }
 }
