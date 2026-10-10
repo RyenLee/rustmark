@@ -49,6 +49,7 @@ pub enum UiAction {
     // —— 文件 ——
     NewDocument,
     OpenDocument,
+    OpenFolder,
     Save,
     SaveAs,
     SaveAll,
@@ -114,6 +115,7 @@ impl UiAction {
     pub const ALL: &'static [UiAction] = &[
         UiAction::NewDocument,
         UiAction::OpenDocument,
+        UiAction::OpenFolder,
         UiAction::Save,
         UiAction::SaveAs,
         UiAction::SaveAll,
@@ -232,6 +234,7 @@ impl UiAction {
         match self {
             UiAction::NewDocument => "新建文档",
             UiAction::OpenDocument => "打开文档",
+            UiAction::OpenFolder => "打开文件夹",
             UiAction::Save => "保存",
             UiAction::SaveAs => "另存为",
             UiAction::SaveAll => "保存全部",
@@ -328,6 +331,7 @@ impl UiAction {
         match self {
             UiAction::NewDocument
             | UiAction::OpenDocument
+            | UiAction::OpenFolder
             | UiAction::Save
             | UiAction::SaveAs
             | UiAction::SaveAll
@@ -395,6 +399,7 @@ impl UiAction {
         match self {
             UiAction::NewDocument => "new create file",
             UiAction::OpenDocument => "open quick",
+            UiAction::OpenFolder => "open folder workspace directory 文件夹 目录",
             UiAction::Save => "save",
             UiAction::SaveAs => "save as",
             UiAction::SaveAll => "save all",
@@ -514,6 +519,9 @@ impl UiAction {
             UiAction::GotoTab8 => "Alt+8",
             UiAction::GotoTab9 => "Alt+9",
             UiAction::Revert => "",
+            // 「打开文件夹」跟随「打开文档」的惯例：菜单 / 命令面板可达，
+            // 但不占用快捷键（无默认键位）。
+            UiAction::OpenFolder => "",
             UiAction::InsertImage => "",
             UiAction::ShortcutOverview => "",
             UiAction::About => "",

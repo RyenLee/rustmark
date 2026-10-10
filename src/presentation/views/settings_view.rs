@@ -47,6 +47,20 @@ const LINE_HEIGHTS: &[f32] = &[1.4, 1.5, 1.6, 1.7, 1.8, 2.0];
 /// 可选缩进宽度。
 const TAB_SIZES: &[u8] = &[2, 4, 8];
 
+/// 可选的**合法字体族预设**（`(取值, 显示名)`）。
+///
+/// 字体族此前是一个裸文本输入框：用户能填出系统里根本不存在的字体名，
+/// 落盘后设置项「不合规」——渲染层静默回退到默认字体，用户以为改了却没变。
+/// 故补上这组预设，取值与领域 `ThemeSettings::font_family` 的字符串契约一致
+/// （默认 `system-ui`；`monospace` 与编辑区默认等宽字体同源）。
+/// 预设之外的系统字体仍可经下方文本框自定义。
+const FONT_FAMILIES: &[(&str, &str)] = &[
+    ("system-ui", "系统默认"),
+    ("sans-serif", "无衬线"),
+    ("serif", "衬线"),
+    ("monospace", "等宽"),
+];
+
 /// 应用版本号（「关于」分区显示）。
 const VERSION: &str = "0.1.0";
 
@@ -212,12 +226,33 @@ fn appearance(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
         });
     });
     field(ui, "字体族", |ui| {
+        // 主选择器：**合法预设下拉**。用下拉而非裸文本，是为了让「能选到的
+        // 都是合法的」——自由文本可以填出系统不存在的字体，落盘后设置项
+        // 不合规，渲染层静默回退，用户以为改了却没变（即本次要修的问题）。
+        let current = FONT_FAMILIES
+            .iter()
+            .find(|(id, _)| view.font_family == *id)
+            .map_or("自定义", |(_, label)| *label);
+        egui::ComboBox::from_id_salt("rustmark.settings.font.preset")
+            .selected_text(current)
+            .show_ui(ui, |ui| {
+                for (id, label) in FONT_FAMILIES {
+                    let selected = view.font_family == *id;
+                    if ui.selectable_label(selected, *label).clicked() && !selected {
+                        let id = (*id).to_string();
+                        app.apply_theme_field(|t| t.font_family = id);
+                    }
+                }
+            });
+        // 预设之外的**自定义**入口：保留原文本框（同时是「设置面板已渲染」的
+        // 焦点锚点，见 [`FONT_INPUT_ID`]）。未知字体由渲染层回退，不会不可用。
         let mut family = view.font_family.clone();
         if ui
             .add(
                 egui::TextEdit::singleline(&mut family)
                     .id(egui::Id::new(FONT_INPUT_ID))
-                    .desired_width(220.0),
+                    .desired_width(150.0)
+                    .hint_text("自定义"),
             )
             .changed()
         {

@@ -84,14 +84,12 @@ fn tab_bar(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
             }
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if !app.workspace_entries.is_loaded() && ui.small_button("打开文件夹").clicked() {
-                // 阻塞对话框不能在 `update()` 里调（S5-08 模块文档已写明），
-                // 故这里只登记意图，由后台线程取回路径后再扫盘。
-                app.request_dialog(crate::app::frame::PendingDialog::PickFolder);
-            }
-            // 树是快照，文件也会在本应用之外被改（别的编辑器、git 拉取、
-            // 构建产物被清理）。不给刷新入口，用户会看到「树里有这个文件
-            // 但点开说文件不存在」，像是应用坏了。
+            // 「打开文件夹」入口已上移到顶部「文件」菜单（见 [`UiAction::OpenFolder`]），
+            // 侧栏不再重复提供——同一功能两个入口会让「哪个才是正路」变得含糊。
+            //
+            // 只保留「刷新」：树是快照，文件也会在本应用之外被改（别的编辑器、
+            // git 拉取、构建产物被清理）。不给刷新入口，用户会看到「树里有这个
+            // 文件但点开说文件不存在」，像是应用坏了。
             if app.workspace_entries.is_loaded() && ui.small_button("刷新").clicked() {
                 app.refresh_workspace();
             }
@@ -100,7 +98,7 @@ fn tab_bar(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
     if !app.workspace_entries.is_loaded() && app.ui.sidebar_tab == SidebarTab::Files {
         ui.colored_label(
             theme.text_secondary,
-            "尚未打开工作区目录，点右上角「打开文件夹」开始。",
+            "尚未打开工作区目录，请用顶部「文件」菜单里的「打开文件夹」开始。",
         );
     }
 }

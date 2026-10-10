@@ -440,6 +440,17 @@ impl EditorApp {
                 Err(e) => self.set_status_error(&format!("另存为失败：{e}")),
             },
             DialogOutcome::PickFolder(Ok(path)) => {
+                // 「选择文件夹」有两个用途、共用同一个原生目录对话框：
+                // ① 打开工作区（「文件」菜单 / 欢迎页）；
+                // ② 选导出输出目录（导出对话框里的「选择文件夹…」）。
+                // 二者靠**上下文**区分：导出对话框是模态浮层，用户在它上面点
+                // 「选择文件夹」时它必然开着；此时结果应回填输出目录，而不是
+                // 把工作区根目录也切过去（那会顺带把文件树换掉）。
+                if self.dialog.is_open(Overlay::Export) {
+                    self.export_ui.output_dir = path.as_str().to_string();
+                    self.export_ui.refresh_resolved_path();
+                    return;
+                }
                 let root = path.as_str().to_string();
                 match self.scan_workspace(&root) {
                     Ok(count) => {
@@ -503,6 +514,16 @@ impl EditorApp {
         path: &str,
     ) -> AppResult<ExportResultView> {
         let destination = FilePath::new(path).map_err(|e| AppError::io(e.to_string()))?;
+        // 输出目录可能不存在（用户手填的路径，或上次导出后目录被删）。
+        // 导出前确保它存在——否则底层写盘会以「找不到路径」失败，
+        // 而那条错误对用户毫无指导意义。`create_dir_all` 对已存在目录幂等，
+        // 故重复导出不会报错。
+        if let Some(parent) = std::path::Path::new(path).parent()
+            && !parent.as_os_str().is_empty()
+        {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| AppError::io(format!("无法创建输出目录 {}：{e}", parent.display())))?;
+        }
         let doc_id = self
             .active_doc
             .ok_or_else(|| AppError::domain("没有可导出的文档"))?;
@@ -2671,6 +2692,10 @@ impl EditorApp {
             UiAction::Save => self.run_save(false),
             UiAction::SaveAs => self.run_save(true),
             UiAction::NewDocument => self.run_new_document(),
+            // 「打开文件夹」：请求工作区目录选择（后台对话框），结果由
+            // `apply_dialog_outcome` 扫盘装载。入口从侧栏上移到「文件」菜单后，
+            // 菜单 / 命令面板仍共用这一条路径（三入口一致）。
+            UiAction::OpenFolder => self.request_dialog(PendingDialog::PickFolder),
             // `OpenDocument` **故意不在这里**：`Ctrl+O` 是快速打开浮层的
             // 开启动作（`Overlay::QuickOpen.opened_by`），已经被上面的
             // `openable_overlay` 分支拦走。若在此再写一个 `request_dialog`，

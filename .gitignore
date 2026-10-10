@@ -4,6 +4,8 @@
 
 # 本地临时验证目录
 .tmp-verify/
+# 全量测试用的独立 target（避让正在运行的主程序对 target/ 二进制的占用）
+/target-verify/
 
 # 本地覆盖配置与密钥（严禁入库）
 *.local.toml

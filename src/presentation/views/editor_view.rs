@@ -21,7 +21,7 @@
 //! IME 的「组合期不产生撤销快照」由 egui 天然满足：组合中的预编辑文本不进入
 //! `&mut String`，`text_changed` 只在提交时触发，故每个汉字只产生**一次**领域命令。
 
-use egui::{Align, FontId, Layout, ScrollArea, TextEdit, Ui};
+use egui::{FontId, ScrollArea, TextEdit, Ui};
 
 use crate::app::frame::EditorApp;
 use crate::application::markdown::queries::{HighlightQuery, SpellCheckQuery};
@@ -184,7 +184,13 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
         .vertical_scroll_offset(start_y)
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                draw_gutter(ui, &theme, line_count, cursor_line, font_size, gutter_w);
+                // 行号栏：先只占住左侧宽度。**数字本帧不在此处画**——
+                // 放到 TextEdit 排版完成之后（见第 3 步），才能用「本帧真实的
+                // 行顶」来定位，彻底消除行号与正文的错位（问题 3）。
+                let (gutter_rect, _) = ui.allocate_exact_size(
+                    egui::vec2(gutter_w, ui.available_height()),
+                    egui::Sense::hover(),
+                );
 
                 let editor = TextEdit::multiline(&mut app.editor_text)
                     .id(EditorApp::editor_id())
@@ -209,7 +215,19 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
                     .layouter(&mut layouter)
                     .show(ui);
 
-                // 3) 光标 / 选区同步（egui 给的是字符索引，存成字节偏移）。
+                // 3) 行号：用**本帧真实排版的行顶**（含折行）+ 文本原点描画，
+                //    使每个行号精确落在其对应文本行上（问题 3）。
+                paint_gutter(
+                    ui,
+                    &theme,
+                    gutter_rect,
+                    editor.galley_pos,
+                    &app.editor_text,
+                    cursor_line,
+                    font_size,
+                );
+
+                // 4) 光标 / 选区同步（egui 给的是字符索引，存成字节偏移）。
                 if let Some(range) = editor.cursor_range {
                     let c = editor_ops::char_to_byte(&app.editor_text, range.primary.index);
                     let a = editor_ops::char_to_byte(&app.editor_text, range.secondary.index);
@@ -217,7 +235,7 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
                     app.editor.anchor = Some(a);
                 }
 
-                // 4) 文本变更 → diff → 领域命令。
+                // 5) 文本变更 → diff → 领域命令。
                 //    egui 0.33 的 `TextEditOutput` 已无 `text_changed` 字段，
                 //    改用「前后文本是否不同」判断——`prev` 在 show 前就已克隆。
                 if prev != app.editor_text
@@ -259,28 +277,65 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
     ));
 }
 
-/// 绘制左侧行号栏（当前行号用强调色）。
-fn draw_gutter(
-    ui: &mut Ui,
+/// 描画左侧行号栏（当前行号用强调色）。
+///
+/// # 为什么不用「每行一个 `ui.label`」
+///
+/// 旧实现把每个行号铺成一个独立 `ui.label`，与正文 `TextEdit` 各自排版。
+/// 三条差异叠加成**稳定错位**：
+///
+/// 1. **行距不同**：独立 label 之间隔着 `item_spacing.y`，与 `TextEdit`
+///    内部的行高不是同一个值；
+/// 2. **字体不同**：label 用比例字体、正文用等宽字体，同一字号的行高不等；
+/// 3. **换行**：自动换行（默认开）时一个逻辑行在 `TextEdit` 里折成多行，
+///    而 label 仍只占一行——从第一条长行起按累积量越错越远。
+///
+/// 现改为：行号**不是**独立控件，而是按编辑器**本帧真实排版结果**画上去的——
+/// [`mapper::line_tops`] 给出编辑器逐行 `Galley` 的顶边（含折行，折行那一行
+/// 更高），配合 `galley_pos`（文本左上角）换算成屏幕坐标，再用等宽字体右对齐
+/// 描画。于是「行号行距 = 正文行距」按构造成立，与字体 / 换行都无关。
+fn paint_gutter(
+    ui: &Ui,
     theme: &crate::presentation::theme::builtin::Theme,
-    line_count: usize,
+    gutter_rect: egui::Rect,
+    galley_pos: egui::Pos2,
+    text: &str,
     cursor_line: usize,
     font_size: f32,
-    gutter_w: f32,
 ) {
-    ui.allocate_ui(egui::vec2(gutter_w, ui.available_height()), |ui| {
-        ui.with_layout(Layout::top_down(Align::RIGHT), |ui| {
-            for i in 0..line_count {
-                ui.label(egui::RichText::new(format!("{i}")).size(font_size).color(
-                    if i == cursor_line {
-                        theme.accent
-                    } else {
-                        theme.text_secondary
-                    },
-                ));
-            }
-        });
-    });
+    // 首帧（本帧尚未完成整篇排版）取不到行顶表：留空，下一帧补齐。
+    // **绝不**凭空猜一个行高——那会让行号稳定地错位（而不是偶尔错位）。
+    let Some(tops) = mapper::line_tops(theme, text) else {
+        return;
+    };
+    let line_count = text.split('\n').count().max(1);
+    let font = FontId::monospace(font_size);
+    let clip = ui.clip_rect();
+    let painter = ui.painter();
+    for i in 0..line_count {
+        // `tops` 末元素是整篇高度的哨兵，故 `i` 必然落在有效范围内。
+        let Some(&top) = tops.get(i) else {
+            break;
+        };
+        let y = galley_pos.y + top;
+        // 只画落在可视区内的行号：大文档里绝大部分行在视口之外，
+        // 无谓地 `format!` 每一行会拖慢滚动。
+        if y + font_size < clip.top() || y > clip.bottom() {
+            continue;
+        }
+        let color = if i == cursor_line {
+            theme.accent
+        } else {
+            theme.text_secondary
+        };
+        painter.text(
+            egui::pos2(gutter_rect.right() - 6.0, y),
+            egui::Align2::RIGHT_TOP,
+            format!("{i}"),
+            font.clone(),
+            color,
+        );
+    }
 }
 
 /// 给定字节偏移，返回其所在行号（0-based）。

@@ -146,6 +146,13 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
     ui.painter()
         .rect_filled(ui.max_rect(), CornerRadius::ZERO, theme.bg_primary);
 
+    // 预览区顶部标题栏：与编辑区工具栏**等高**（`editor_toolbar_height`）。
+    //
+    // 编辑区在问题 3 里把工具栏移到了编辑区顶部，于是它的滚动内容区比预览区
+    // 少了一条工具栏的高度——两栏不再对齐。预览区补上等高的标题栏后，
+    // 两栏的内容区从同一条水平线起、高度一致（问题 2）。
+    pane_header(ui, &theme);
+
     let Some(doc_id) = app.active_doc else {
         ui.weak("没有打开的文档");
         return;
@@ -247,6 +254,21 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
     app.ui
         .sync
         .set_geometry(Side::Preview, out.content_size.y, out.inner_rect.height());
+}
+
+/// 预览区顶部标题栏：与编辑区工具栏等高，保证两栏内容区对齐（问题 2）。
+///
+/// 高度**必须**与 [`crate::presentation::theme::builtin::Metrics::editor_toolbar_height`]
+/// 同源，不能写死一个数字：编辑区工具栏高度是主题的一部分，两处各写一遍
+/// 会在换主题尺寸时重新错位。
+fn pane_header(ui: &mut Ui, theme: &Theme) {
+    let height = theme.metrics.editor_toolbar_height;
+    ui.allocate_ui(egui::vec2(ui.available_width(), height), |ui| {
+        ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+            ui.strong("预览");
+        });
+    });
+    ui.separator();
 }
 
 /// 按块类型分发渲染器。

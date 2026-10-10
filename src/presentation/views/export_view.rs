@@ -30,7 +30,7 @@
 
 use egui::{Align, Context, Layout, RichText, Ui};
 
-use crate::app::frame::EditorApp;
+use crate::app::frame::{EditorApp, PendingDialog};
 use crate::application::dto::ExportRequestView;
 use crate::presentation::state::dialog_ui_state::Overlay;
 use crate::presentation::state::export_ui_state::{ExportFormatChoice, PageSizeChoice};
@@ -128,9 +128,26 @@ fn path_rows(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
             egui::TextEdit::singleline(&mut app.export_ui.output_dir)
                 .id(egui::Id::new(OUTPUT_DIR_INPUT_ID))
                 .hint_text("导出到（留空则用当前目录）")
-                .desired_width(320.0),
+                .desired_width(280.0),
         );
+        // 「选择文件夹」：输出目录很可能是用户不记得的绝对路径，
+        // 纯手填容易填错。按钮走原生目录选择对话框（后台线程执行，
+        // 见 `dialog_runner`），结果由 `apply_dialog_outcome` 回填到
+        // `output_dir`——它按「导出浮层是否打开」区分去向，不会误改工作区。
+        if ui.button("选择文件夹…").clicked() {
+            app.request_dialog(PendingDialog::PickFolder);
+        }
     });
+    // 输出目录存在性检查：不存在时**当场**说清「导出会自动创建」，
+    // 而不是等提交后拿到一条底层的「找不到路径」。自动创建在
+    // `EditorApp::export_current_document` 里真正兑现（幂等）。
+    let dir = app.export_ui.output_dir.trim();
+    if !dir.is_empty() && !std::path::Path::new(dir).is_dir() {
+        ui.colored_label(
+            theme.warning,
+            format!("输出目录不存在：{dir}（导出时会自动创建）"),
+        );
+    }
     let stem_changed = ui
         .horizontal(|ui| {
             ui.label("文件名");

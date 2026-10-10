@@ -46,6 +46,24 @@ const RECENT_WIDTH: f32 = 460.0;
 const ACTION_HEIGHT: f32 = 40.0;
 /// 每行高度。
 const ROW_HEIGHT: f32 = 34.0;
+/// 主操作按钮文字字号（测量与绘制必须用同一个值，否则居中会算偏）。
+const ACTION_FONT_SIZE: f32 = 14.0;
+/// 按钮内左侧图标留白（原型每个按钮左侧有 18px 图标，这里不画但保留宽度）。
+const ACTION_ICON_PAD: f32 = 26.0;
+/// 按钮内右侧留白。
+const ACTION_TRAILING_PAD: f32 = 36.0;
+/// 主操作按钮之间的水平间距。
+const ACTION_GAP: f32 = 12.0;
+/// 快捷键小标签的字号（与 `kbd` 一致）。
+const KBD_FONT_SIZE: f32 = 11.0;
+/// 快捷键小标签的左右内边距（与 `kbd` 一致）。
+const KBD_PAD_X: f32 = 12.0;
+/// 快捷键提示文字字号（与 `hints` 一致）。
+const HINT_FONT_SIZE: f32 = 12.0;
+/// 键位标签与其说明文字之间的间距。
+const HINT_KBD_GAP: f32 = 4.0;
+/// 相邻两条快捷键提示之间的间距。
+const HINT_ITEM_GAP: f32 = 16.0;
 
 /// 欢迎页的主操作。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -188,12 +206,24 @@ fn brand(ui: &mut Ui, theme: &Theme) {
     );
 }
 
-/// 三个主操作按钮。
+/// 三个主操作按钮，**整行水平居中**（与标题、最近文件同一条中轴）。
+///
+/// `ui.horizontal` 的子布局是「从左边开始排」，放在 `vertical_centered` 里
+/// 也**不会**自动居中——这正是之前三个按钮左对齐的原因。故先用
+/// [`action_button_width`] 量出整行宽度，再在行首补一半的余量，
+/// 复用本文件 `recent_section` 已在用的同一套手动居中写法（不依赖 egui
+/// 对嵌套 `horizontal` 的居中语义，行为确定、可被几何用例断言）。
 fn primary_actions(ui: &mut Ui, theme: &Theme, picked: &mut Option<PrimaryAction>) {
+    let row_w: f32 = PrimaryAction::ALL
+        .iter()
+        .enumerate()
+        .map(|(i, action)| action_button_width(ui, *action) + if i > 0 { ACTION_GAP } else { 0.0 })
+        .sum();
     ui.horizontal(|ui| {
+        ui.add_space(((ui.available_width() - row_w) / 2.0).max(0.0));
         for (i, action) in PrimaryAction::ALL.iter().enumerate() {
             if i > 0 {
-                ui.add_space(12.0);
+                ui.add_space(ACTION_GAP);
             }
             if action_button(ui, theme, *action) {
                 *picked = Some(*action);
@@ -202,17 +232,34 @@ fn primary_actions(ui: &mut Ui, theme: &Theme, picked: &mut Option<PrimaryAction
     });
 }
 
+/// 单个主操作按钮的宽度（点）。
+///
+/// 抽出来是为了让「居中计算」与「实际绘制」用**同一个**尺寸来源：
+/// 若两处各算一次，改字号时居中必然偏掉，且症状只是「看着有点歪」，
+/// 极难发现。
+fn action_button_width(ui: &Ui, action: PrimaryAction) -> f32 {
+    let galley = ui.painter().layout_no_wrap(
+        action.label().to_string(),
+        egui::FontId::proportional(ACTION_FONT_SIZE),
+        egui::Color32::WHITE,
+    );
+    galley.size().x + ACTION_ICON_PAD + ACTION_TRAILING_PAD
+}
+
 /// 单个主操作按钮。返回是否被点击。
 fn action_button(ui: &mut Ui, theme: &Theme, action: PrimaryAction) -> bool {
     let galley = ui.painter().layout_no_wrap(
         action.label().to_string(),
-        egui::FontId::proportional(14.0),
+        egui::FontId::proportional(ACTION_FONT_SIZE),
         theme.text_primary,
     );
     // 图标位置留 26px：原型每个按钮左侧有个 18px 的 lucide 图标。
     // 这里不画图标（egui 无内置图标集），但**保留**这段留白，
     // 否则三个按钮宽度会比原型窄一截，与整体布局对不上。
-    let desired = Vec2::new(galley.size().x + 26.0 + 36.0, ACTION_HEIGHT);
+    let desired = Vec2::new(
+        galley.size().x + ACTION_ICON_PAD + ACTION_TRAILING_PAD,
+        ACTION_HEIGHT,
+    );
     let (rect, response) = ui.allocate_exact_size(desired, egui::Sense::click());
     let hovered = response.hovered();
     // 「新建文件」是主操作（原型 `.action.primary`）：用强调色实心。
@@ -238,7 +285,7 @@ fn action_button(ui: &mut Ui, theme: &Theme, action: PrimaryAction) -> bool {
         theme.text_primary
     };
     ui.painter().galley(
-        rect.left_top() + Vec2::new(26.0, (rect.height() - galley.size().y) / 2.0),
+        rect.left_top() + Vec2::new(ACTION_ICON_PAD, (rect.height() - galley.size().y) / 2.0),
         galley,
         text_color,
     );
@@ -345,32 +392,70 @@ fn recent_row(ui: &mut Ui, theme: &Theme, width: f32, item: &RecentFileView) -> 
     clicked
 }
 
-/// 底部快捷键提示。
+/// 底部快捷键提示，**整行水平居中**（与标题、主操作按钮同一条中轴）。
+///
+/// 与 [`primary_actions`] 同理：先量出整行宽度再补左侧余量。
+/// 间距也一并改成「只在项与项之间加」，否则末尾那一份间距会让整行
+/// 视觉重心偏左——居中会「看起来差一点」。
 fn hints(ui: &mut Ui, theme: &Theme, app: &EditorApp) {
+    let items = shortcut_hints(app);
+    let row_w: f32 = items
+        .iter()
+        .enumerate()
+        .map(|(i, hint)| {
+            kbd_width(ui, &hint.combo)
+                + HINT_KBD_GAP
+                + hint_label_width(ui, &hint.label)
+                + if i > 0 { HINT_ITEM_GAP } else { 0.0 }
+        })
+        .sum();
     ui.horizontal(|ui| {
-        for hint in shortcut_hints(app) {
-            if !hint.combo.is_empty() {
-                kbd(ui, theme, &hint.combo);
-                ui.add_space(4.0);
-                ui.label(
-                    RichText::new(hint.label)
-                        .size(12.0)
-                        .color(theme.text_secondary),
-                );
-                ui.add_space(16.0);
+        ui.add_space(((ui.available_width() - row_w) / 2.0).max(0.0));
+        for (i, hint) in items.iter().enumerate() {
+            if i > 0 {
+                ui.add_space(HINT_ITEM_GAP);
             }
+            kbd(ui, theme, &hint.combo);
+            ui.add_space(HINT_KBD_GAP);
+            ui.label(
+                RichText::new(&hint.label)
+                    .size(HINT_FONT_SIZE)
+                    .color(theme.text_secondary),
+            );
         }
     });
+}
+
+/// 键位小标签的宽度（点），供 [`hints`] 量取整行宽度。
+fn kbd_width(ui: &Ui, text: &str) -> f32 {
+    let galley = ui.painter().layout_no_wrap(
+        text.to_string(),
+        egui::FontId::monospace(KBD_FONT_SIZE),
+        egui::Color32::WHITE,
+    );
+    galley.size().x + KBD_PAD_X
+}
+
+/// 单条提示说明文字的宽度（点），供 [`hints`] 量取整行宽度。
+fn hint_label_width(ui: &Ui, label: &str) -> f32 {
+    ui.painter()
+        .layout_no_wrap(
+            label.to_string(),
+            egui::FontId::proportional(HINT_FONT_SIZE),
+            egui::Color32::WHITE,
+        )
+        .size()
+        .x
 }
 
 /// 键位小标签（`<kbd>` 样式）。
 fn kbd(ui: &mut Ui, theme: &Theme, text: &str) {
     let galley = ui.painter().layout_no_wrap(
         text.to_string(),
-        egui::FontId::monospace(11.0),
+        egui::FontId::monospace(KBD_FONT_SIZE),
         theme.text_primary,
     );
-    let pad = Vec2::new(12.0, 4.0);
+    let pad = Vec2::new(KBD_PAD_X, 4.0);
     let (rect, _) = ui.allocate_exact_size(galley.size() + pad, egui::Sense::hover());
     let box_rect = egui::Rect::from_center_size(rect.center(), galley.size() + pad);
     ui.painter()
