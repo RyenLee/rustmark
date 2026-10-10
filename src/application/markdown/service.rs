@@ -19,7 +19,7 @@ use crate::domain::markdown::services::{
     BlockMapper, MarkdownParser, SpellChecker, SyntaxHighlighter,
 };
 use crate::domain::markdown::value_objects::{
-    BlockId, BlockKind, CellAlignment, InlineStyle, RenderedBlock, SpanStyle,
+    BlockId, BlockKind, CellAlignment, InlineSpan, InlineStyle, RenderedBlock, SpanStyle,
 };
 use crate::shared::error::AppError;
 use crate::shared::geometry::ByteOffset;
@@ -29,8 +29,8 @@ use crate::shared::time::{Clock, Timestamp};
 
 use crate::application::document::DocumentContentProvider;
 use crate::application::dto::{
-    BlockView, CellAlignView, ListItemView, OutlineItemView, OutlineView, RangeView, RenderedView,
-    SpanView, TableView,
+    BlockView, CellAlignView, DefinitionBodyView, DefinitionEntryView, ListItemView,
+    OutlineItemView, OutlineView, RangeView, RenderedView, SpanView, TableView,
 };
 
 use super::commands::*;
@@ -768,6 +768,9 @@ fn to_block_view(block: &RenderedBlock) -> BlockView {
                     checked: item.checked(),
                     start: item.source_range().start().value(),
                     end: item.source_range().end().value(),
+                    depth: item.depth(),
+                    ordinal: item.ordinal(),
+                    spans: spans_to_view(item.spans()),
                 })
                 .collect()
         }),
@@ -782,6 +785,20 @@ fn to_block_view(block: &RenderedBlock) -> BlockView {
                     CellAlignment::Left => CellAlignView::Left,
                     CellAlignment::Center => CellAlignView::Center,
                     CellAlignment::Right => CellAlignView::Right,
+                })
+                .collect(),
+            // 片段表要**按列补齐到与表体等长**：源文里某些行可能少写单元格
+            // （`| a | b |` 后面一行只写 `| c |`），此时解析器只收集到 1 组
+            // 片段而 `rows` 仍是 2 行。渲染层按 `(r, c)` 索引时若越界就得
+            // 处处判空，补齐在这里一次性做掉。
+            header_spans: (0..data.header().len())
+                .map(|c| spans_to_view(data.header_spans(c)))
+                .collect(),
+            rows_spans: (0..data.rows().len())
+                .map(|r| {
+                    (0..data.columns())
+                        .map(|c| spans_to_view(data.cell_spans(r, c)))
+                        .collect()
                 })
                 .collect(),
         }),
@@ -805,15 +822,41 @@ fn to_block_view(block: &RenderedBlock) -> BlockView {
             BlockKind::Diagram { kind } => Some(kind.clone()),
             _ => None,
         },
-        spans: block
-            .spans()
-            .iter()
-            .map(|span| SpanView {
-                range: RangeView::new(span.start(), span.end()),
-                style: inline_style_str(span.style()).to_string(),
-            })
-            .collect(),
+        label: kind.footnote_label().map(str::to_string),
+        definitions: kind.definitions().map_or_else(Vec::new, |entries| {
+            entries
+                .iter()
+                .map(|entry| DefinitionEntryView {
+                    term: entry.term().to_string(),
+                    term_spans: spans_to_view(entry.term_spans()),
+                    definitions: entry
+                        .definitions()
+                        .iter()
+                        .map(|body| DefinitionBodyView {
+                            text: body.text().to_string(),
+                            spans: spans_to_view(body.spans()),
+                        })
+                        .collect(),
+                })
+                .collect()
+        }),
+        spans: spans_to_view(block.spans()),
     }
+}
+
+/// 领域行内片段 → DTO 片段（区间 + 样式字符串）。
+///
+/// 单独提出来是因为**五处**都要做同一件事（块 / 列表项 / 定义术语 / 定义正文 /
+/// 表格单元格）。各自内联一遍 `map(...)` 的话，将来往 `SpanView` 加字段
+/// （比如「是否可点击」）就会漏改其中几处，且漏改后仍能编译。
+fn spans_to_view(spans: &[InlineSpan]) -> Vec<SpanView> {
+    spans
+        .iter()
+        .map(|span| SpanView {
+            range: RangeView::new(span.start(), span.end()),
+            style: inline_style_str(span.style()).to_string(),
+        })
+        .collect()
 }
 
 /// 行内样式 → 稳定字符串（供表现层分发渲染器）。
@@ -846,7 +889,12 @@ fn block_kind_str(kind: &BlockKind) -> String {
         BlockKind::Quote => "quote".to_string(),
         BlockKind::Image { .. } => "image".to_string(),
         BlockKind::Rule => "rule".to_string(),
-        BlockKind::Footnote => "footnote".to_string(),
+        // 标签（`label`）与正文分开展示，但**共用同一个 kind 字符串**：
+        // 表现层只需要一个渲染器，标签从 `BlockView::label` 读。
+        BlockKind::Footnote { .. } => "footnote".to_string(),
+        // 定义列表（`术语` / `: 定义`）——与普通列表渲染形态不同（无项目符号、
+        // 定义要缩进在术语下方），故单列一种 kind。
+        BlockKind::DefinitionList { .. } => "definition_list".to_string(),
         // 行内 / 块级公式共用 `math` 类型，由 `BlockView::display` 区分呈现。
         BlockKind::Math { .. } => "math".to_string(),
         BlockKind::Diagram { .. } => "diagram".to_string(),

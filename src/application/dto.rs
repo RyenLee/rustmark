@@ -366,6 +366,14 @@ pub struct TableView {
     pub rows: Vec<Vec<String>>,
     /// 每列对齐方式（长度对应 `header`）。
     pub aligns: Vec<CellAlignView>,
+    /// 表头各单元格的行内样式片段（与 `header` 同形；区间相对该单元格文本）。
+    ///
+    /// 与 [`TableView::header`] 并列而不是塞进一个结构体：单元格文本早已被
+    /// 多处调用方按 `Vec<String>` 读取（导出、搜索、测试断言），
+    /// 换成 `Vec<Cell>` 会波及所有调用点；并行的片段表是**增量**改动。
+    pub header_spans: Vec<Vec<SpanView>>,
+    /// 表体各行各单元格的行内样式片段（与 `rows` 同形）。
+    pub rows_spans: Vec<Vec<Vec<SpanView>>>,
 }
 
 /// 预览用列表项。
@@ -379,6 +387,40 @@ pub struct ListItemView {
     pub start: usize,
     /// 该项在源码中的字节区间终点（不含）。
     pub end: usize,
+    /// 缩进层级（顶层为 `0`；嵌套列表按层递增）。
+    ///
+    /// **必须由解析层给出**：pulldown 的事件流里嵌套深度只体现为
+    /// `List` 标签的开闭层次，块一旦被"拍平"成单个列表块（见解析器的
+    /// `root_list_index`），层级信息就只存在于这个字段里了。
+    /// 渲染层若想用「文本前导空格数」反推，会在 `1.` 与 `-` 混排时算错。
+    pub depth: u8,
+    /// 有序项的编号；无序项为 `None`。
+    ///
+    /// 不自己数序号的原因：有序列表可从任意数字起（`3.` 开头），
+    /// 且中间可能被嵌套列表打断，渲染层从 1 开始数会与源文不符。
+    pub ordinal: Option<u64>,
+    /// 该项文本的行内样式片段（区间相对 [`Self::text`]）。
+    pub spans: Vec<SpanView>,
+}
+
+/// 定义列表的**单条定义正文**视图。
+#[derive(Clone, Debug, Serialize)]
+pub struct DefinitionBodyView {
+    /// 定义正文文本。
+    pub text: String,
+    /// 正文的行内样式片段（区间相对 `text`）。
+    pub spans: Vec<SpanView>,
+}
+
+/// 定义列表的**一个词条**视图（一个术语 + 若干条定义）。
+#[derive(Clone, Debug, Serialize)]
+pub struct DefinitionEntryView {
+    /// 术语（`术语` 行）。
+    pub term: String,
+    /// 术语的行内样式片段（区间相对 `term`）。
+    pub term_spans: Vec<SpanView>,
+    /// 该术语下的各条定义（`: 定义` 行，可多条）。
+    pub definitions: Vec<DefinitionBodyView>,
 }
 
 /// 渲染块视图（预览区的单个块）。
@@ -417,6 +459,14 @@ pub struct BlockView {
     pub display: Option<bool>,
     /// 图表引擎名（`kind == "diagram"` 时有值，当前恒为 `"mermaid"`）。
     pub diagram: Option<String>,
+    /// 脚注标签（`kind == "footnote"` 时有值）。
+    ///
+    /// 解析器把 `[^1]: 内容` 收成一个 `footnote` 块，**正文放在 `content`**，
+    /// 标签单列在此：渲染时要画成「`1.` 正文」而不是把标签再拼回正文里
+    /// （正文里本来只有 `内容`，不含 `[^1]`）。
+    pub label: Option<String>,
+    /// 定义列表词条（`kind == "definition_list"` 时有值）。
+    pub definitions: Vec<DefinitionEntryView>,
     /// 块内行内样式片段（区间相对 `content`；无样式时为空）。
     ///
     /// 复用 [`SpanView`] 的形状（区间 + 样式字符串）：它与编辑区高亮的

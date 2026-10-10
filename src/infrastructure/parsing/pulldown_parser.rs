@@ -29,7 +29,8 @@
 use crate::domain::markdown::errors::ParseError;
 use crate::domain::markdown::services::MarkdownParser;
 use crate::domain::markdown::value_objects::{
-    BlockId, BlockKind, CellAlignment, InlineSpan, InlineStyle, ListItem, RenderedBlock, TableData,
+    BlockId, BlockKind, CellAlignment, DefinitionBody, DefinitionEntry, InlineSpan, InlineStyle,
+    ListItem, RenderedBlock, TableData,
 };
 use crate::shared::geometry::{ByteOffset, TextRange};
 use pulldown_cmark::{
@@ -61,6 +62,10 @@ pub fn parser_options() -> Options {
         // 数学公式：`$...$`（行内）/ `$$...$$`（块级）需此选项才会被识别为
         // `Event::InlineMath` / `Event::DisplayMath`（否则按字面文本处理）。
         | Options::ENABLE_MATH
+        // 定义列表（`术语` + 缩进的 `: 定义`）。不开时 pulldown 会把两行当成
+        // **一个普通段落**，预览里就是「术语 A: 定义 A 的内容」糊在一行——
+        // 用户写的层级结构全部丢失。
+        | Options::ENABLE_DEFINITION_LIST
 }
 
 /// 基于 `pulldown-cmark` 的 Markdown 解析器。
@@ -204,6 +209,14 @@ impl SourceOffsets {
 /// 表格变成 `"列A列B1234"`（S6-05 实测），预览区无法还原结构。
 /// 故这两类现在**各自收集自己的文本**，在闭合时归入父块的 `items` / `current_row`，
 /// 同时也并入父块的 `content`（保持搜索与大纲所需的扁平文本）。
+///
+/// # 为什么还要 `absorbs`
+///
+/// `- 项`（松散列表）与 `[^1]: 正文` 的正文在事件流里都包着一层 `Paragraph`，
+/// 若让那层 Paragraph 照常产出块，预览里就会出现「列表项 + 同文段落」两份，
+/// 脚注的定义正文更是会变成一个**游离在文档末尾的普通段落**。
+/// 故这三类帧（列表项 / 脚注定义 / 定义列表的定义）标记 `absorbs`：
+/// 内层段落块的文本已由 [`push_content`] 回流到本帧，块本身则被丢弃。
 struct OpenBlock {
     /// 该块产出的领域类型；`None` 表示该标签**不产出块**（行内标签 / 列表项 / 单元格）。
     kind: Option<BlockKind>,
@@ -217,6 +230,12 @@ struct OpenBlock {
     is_item: bool,
     /// 该 `Start` 是否为 `Tag::TableCell`（单元格，需把内容归入表格当前行）。
     is_cell: bool,
+    /// 内层段落块是否应被本帧吞掉（列表项 / 脚注定义 / 定义列表的定义）。
+    absorbs: bool,
+    /// 该 `Start` 是否为 `Tag::DefinitionListTitle`（术语，闭合时开一个新条目）。
+    is_dl_title: bool,
+    /// 该 `Start` 是否为 `Tag::DefinitionListDefinition`（定义，闭合时追加一条定义）。
+    is_dl_def: bool,
     /// 该列表（或其任一列表项）内是否出现 `TaskListMarker`。
     is_task: bool,
     /// 该列表项是否已出现 `TaskListMarker`（决定 `checked` 取值）。
@@ -227,12 +246,22 @@ struct OpenBlock {
     rows: Vec<Vec<String>>,
     /// 表格正在收集的一行（单元格逐个追加，行闭合时整体归入 `rows` 或表头）。
     current_row: Vec<String>,
+    /// 当前行各单元格的行内样式片段（与 `current_row` 一一对应）。
+    current_row_spans: Vec<Vec<InlineSpan>>,
     /// 表格的表头行。
     header: Vec<String>,
+    /// 表头行各单元格的行内样式片段。
+    header_spans: Vec<Vec<InlineSpan>>,
+    /// 表体各行各单元格的行内样式片段。
+    rows_spans: Vec<Vec<Vec<InlineSpan>>>,
     /// 表格每列的对齐方式（来自 `Tag::Table(aligns)`）。
     aligns: Vec<CellAlignment>,
     /// 当前是否处于 `TableHead` 之内（决定表体行归入表头还是表体）。
     in_head: bool,
+    /// 该列表的嵌套层级（顶层为 0）；仅列表帧有意义。
+    list_depth: u8,
+    /// 该有序列表下一个待分配的序号（`Tag::List(Some(n))` 给初值）。
+    list_next_ordinal: u64,
     /// 该项是否为独立图片（`Tag::Image` 需要单独成块）。
     ///
     /// 值为 `(alt 或 title, url)`。
@@ -243,6 +272,49 @@ struct OpenBlock {
     style: Option<InlineStyle>,
     /// 该块已收集到的行内样式片段（相对本帧 `content` 的字节区间）。
     spans: Vec<InlineSpan>,
+}
+
+impl OpenBlock {
+    /// 空白帧：给出产出类型与起始偏移，其余字段取默认。
+    ///
+    /// 存在的意义是**避免每加一个字段就要改所有构造点**——本结构已有 20+ 字段，
+    /// 散落的字面量构造会在下一次加字段时静默漏改（漏改处编译报错还算是好的，
+    /// 漏成默认值就会改变行为）。
+    fn new(kind: Option<BlockKind>, start: usize) -> Self {
+        Self {
+            kind,
+            start,
+            content: String::new(),
+            is_inline: false,
+            is_item: false,
+            is_cell: false,
+            absorbs: false,
+            is_dl_title: false,
+            is_dl_def: false,
+            is_task: false,
+            item_checked: None,
+            items: Vec::new(),
+            rows: Vec::new(),
+            current_row: Vec::new(),
+            current_row_spans: Vec::new(),
+            header: Vec::new(),
+            header_spans: Vec::new(),
+            rows_spans: Vec::new(),
+            aligns: Vec::new(),
+            in_head: false,
+            list_depth: 0,
+            list_next_ordinal: 1,
+            image: None,
+            image_mark: None,
+            style: None,
+            spans: Vec::new(),
+        }
+    }
+
+    /// 该帧是否会把文本**回流**给它的祖先（列表项 / 单元格 / 脚注 / 定义）。
+    const fn absorbs_text(&self) -> bool {
+        self.is_item || self.is_cell || self.absorbs
+    }
 }
 
 /// 取最内层「会产出块」的栈帧（列表 / 表格 / 段落等）。
@@ -257,32 +329,53 @@ fn nearest_producer(stack: &mut [OpenBlock]) -> Option<&mut OpenBlock> {
 
 /// 把一段文本并入当前块的 `content`，并（可选）记录行内样式区间。
 ///
-/// 目标是最内层**非行内**帧（规则见模块文档）；列表项与单元格虽非行内，
-/// 但它们会把内容进一步交给父亲，因此若帧栈里还有更外层的列表项 / 单元格，
-/// 也要同步一份——松散列表（`- 项` 之后空一行再写）的文本会落在内部段落帧上，
-/// 不同步的话列表项文本会是空的。
+/// # 文本去哪
 ///
-/// # 样式区间只记在「会产出块」的帧上
+/// 目标是最内层**非行内**帧。若该帧自己**不回流**文本（即它不是列表项 /
+/// 单元格 / 脚注定义 / 定义列表的定义），则再回流一份给最近的回流帧——
+/// 松散列表（`- 项` 之后空一行再写）的文本会落在内部段落帧上，
+/// 不回流的话列表项文本会是空的；脚注定义内的段落同理。
 ///
-/// 列表项 / 单元格帧的内容会被父亲吸收成结构（`items` / `cells`），
-/// 没有独立的 `content` 供渲染；给它们记 span 只会在转换时被丢弃。
-/// 故只在最内层**产出块**的帧上记录——列表项在预览里本就不做行内富文本。
+/// # ⚠️ 为什么回流的条件里带「目标自己不是回流帧」
+///
+/// 早先的写法是无条件回流，于是嵌套列表里子项的文字会一路回流到**父项**：
+/// `1. 一级` 里嵌 `- 二级 a`，父项文本变成 `"一级二级 a"`（实测），
+/// 父项与子项都显示同一段字。收紧后：目标是项/单元格时说明文本本就属于它，
+/// 不再往祖先回流。
+///
+/// # 样式区间记在哪
+///
+/// 记在「会产出块的帧」以及「回流帧」上——列表项与单元格的内容虽被父亲
+/// 吸收成结构，但它们各自有独立的 `text` / 单元格文本需要行内富文本
+/// （`- **粗体**` 里的粗体在预览里必须显示为粗体）。
 fn push_content(stack: &mut [OpenBlock], s: &str, style: Option<InlineStyle>) {
     let Some(target) = stack.iter().rposition(|f| !f.is_inline) else {
         return;
     };
+    // 空文本不记片段（零长度片段没有意义，还会让渲染方多切一刀）。
+    let style = if s.is_empty() { None } else { style };
+    // 先读出来，避免随后可变借用期间再借用 `stack`。
+    let target_is_owner = stack[target].absorbs_text();
     let start = stack[target].content.len();
     stack[target].content.push_str(s);
-    if stack[target].kind.is_some()
-        && let Some(style) = style
-        && !s.is_empty()
+    if let Some(style) = style
+        && (stack[target].kind.is_some() || target_is_owner)
     {
         stack[target]
             .spans
             .push(InlineSpan::new(start, start + s.len(), style));
     }
-    if let Some(owner) = stack[..target].iter().rposition(|f| f.is_item || f.is_cell) {
+    // 回流：仅在目标自己不是回流帧时进行（见上文「为什么」）。
+    if !target_is_owner
+        && let Some(owner) = stack[..target].iter().rposition(OpenBlock::absorbs_text)
+    {
+        let ostart = stack[owner].content.len();
         stack[owner].content.push_str(s);
+        if let Some(style) = style {
+            stack[owner]
+                .spans
+                .push(InlineSpan::new(ostart, ostart + s.len(), style));
+        }
     }
 }
 
@@ -333,26 +426,10 @@ fn push_plain_run(stack: &mut [OpenBlock], s: &str) {
 /// 合成帧不进 `kind`（不产出块），只用来在扫描期间维持「当前是否在键帽里」。
 /// 之所以需要它：`<kbd>` 与 `</kbd>` 可能落在**不同事件**里，状态必须跨事件保留。
 fn push_keycap_frame(stack: &mut Vec<OpenBlock>, start: usize) {
-    stack.push(OpenBlock {
-        kind: None,
-        start,
-        content: String::new(),
-        is_item: false,
-        is_cell: false,
-        is_inline: true,
-        is_task: false,
-        item_checked: None,
-        items: Vec::new(),
-        rows: Vec::new(),
-        current_row: Vec::new(),
-        header: Vec::new(),
-        aligns: Vec::new(),
-        in_head: false,
-        image: None,
-        image_mark: None,
-        style: Some(InlineStyle::Keycap),
-        spans: Vec::new(),
-    });
+    let mut frame = OpenBlock::new(None, start);
+    frame.is_inline = true;
+    frame.style = Some(InlineStyle::Keycap);
+    stack.push(frame);
 }
 
 /// 弹掉栈顶的合成键帽帧（顶层不是键帽帧则忽略）。
@@ -571,7 +648,12 @@ fn block_kind_of(tag: &Tag, ordered: bool) -> Option<BlockKind> {
             ordered,
             items: Vec::new(),
         },
-        Tag::FootnoteDefinition(_) => BlockKind::Footnote,
+        Tag::FootnoteDefinition(label) => BlockKind::Footnote {
+            label: label.to_string(),
+        },
+        Tag::DefinitionList => BlockKind::DefinitionList {
+            entries: Vec::new(),
+        },
         Tag::Table(aligns) => BlockKind::Table {
             data: TableData::new(
                 Vec::new(),
@@ -625,16 +707,128 @@ fn toc_title_of_source(src: &str) -> Option<String> {
     })
 }
 
-/// 去掉列表项文本开头的任务标记（`[x] ` / `[ ] `）。
+/// 去掉列表项文本开头的任务标记（`[x] ` / `[ ] `），并**同步修正样式片段偏移**。
 ///
 /// 勾选状态已由 [`ListItem::checked`] 单独承载，渲染时画成复选框；
 /// 若文本里再留一份 `[x] ` 就会重复显示。未标记的项原样返回。
-fn strip_task_marker(text: &str) -> String {
+///
+/// # 为什么必须一起挪片段
+///
+/// 片段区间是相对 `content` 的字节偏移。标记被切掉后若不移位，
+/// `- [x] **重点**` 的 `重点` 会指向错误的位置（偏移 4 字节），
+/// 渲染结果是「前两个字变粗、真正的内容没变」——比不渲染更难排查。
+fn strip_task_marker(text: &str, spans: Vec<InlineSpan>) -> (String, Vec<InlineSpan>) {
     let s = text.trim_start();
-    if let Some(rest) = s.strip_prefix("[x] ").or_else(|| s.strip_prefix("[ ] ")) {
-        return rest.trim_start().to_string();
+    let stripped = match s.strip_prefix("[x] ").or_else(|| s.strip_prefix("[ ] ")) {
+        Some(rest) => rest.trim_start(),
+        None => s,
+    };
+    let removed = text.len().saturating_sub(stripped.len());
+    if removed == 0 {
+        return (stripped.to_string(), spans);
     }
-    s.to_string()
+    let moved = spans
+        .into_iter()
+        .filter_map(|span| {
+            let start = span.start().saturating_sub(removed);
+            let end = span.end().saturating_sub(removed);
+            (end > start).then(|| InlineSpan::new(start, end, span.style()))
+        })
+        .collect();
+    (stripped.to_string(), moved)
+}
+
+/// 把「已 `trim` 过的文本」对应的样式片段平移到新坐标系。
+///
+/// # 为什么独立于 `strip_task_marker`
+///
+/// 单元格、定义列表术语、定义正文在收集时都做了 `.trim()`，而它们的样式片段
+/// 仍以**未裁剪**的 `content` 为坐标系。若直接拿 `spans` 去渲染裁剪后的文本，
+/// 首尾空白会让所有片段整体右移若干字节：`| **粗** |` 的粗体会落到「粗」后面
+/// 的字符上（表格里表现为「样式漂移一格」）。
+///
+/// 与 `strip_task_marker` 的区别：那个切的是**头部标记**（还带 `[x] ` 的语义），
+/// 这个只做纯空白裁剪，且必须同时砍掉落在空白区里的片段——两类偏移问题不同源。
+fn trim_spans(text: &str, spans: Vec<InlineSpan>) -> Vec<InlineSpan> {
+    let lead = text.len().saturating_sub(text.trim_start().len());
+    if lead == 0 && text.trim_end().len() == text.len() {
+        return spans;
+    }
+    spans
+        .into_iter()
+        .filter_map(|span| {
+            let start = span.start().saturating_sub(lead);
+            let end = span.end().saturating_sub(lead);
+            (end > start).then(|| InlineSpan::new(start, end, span.style()))
+        })
+        .collect()
+}
+
+/// 列表的嵌套层级：`stack` 里已有的列表帧数量即当前深度（顶层列表为 0）。
+fn list_depth_of(stack: &[OpenBlock]) -> u8 {
+    let n = stack
+        .iter()
+        .filter(|f| matches!(f.kind, Some(BlockKind::List { .. })))
+        .count();
+    u8::try_from(n).unwrap_or(u8::MAX)
+}
+
+/// 最外层（根）列表帧的下标——嵌套列表的全部项都归它，从而拍平成一棵树。
+///
+/// 取**最外层**而非最近：若归到最近的内层列表，`1. 一级` 与 `- 二级 a`
+/// 会各自成块，父项的文本又会被子项回流污染；拍平后一个块就能表达整棵树。
+fn root_list_index(stack: &[OpenBlock]) -> Option<usize> {
+    stack
+        .iter()
+        .position(|f| matches!(f.kind, Some(BlockKind::List { .. })))
+}
+
+/// 最近的、会吞掉内层段落的帧下标（列表项 / 脚注定义 / 定义列表的定义）。
+fn absorbing_index(stack: &[OpenBlock]) -> Option<usize> {
+    stack.iter().rposition(OpenBlock::absorbs_text)
+}
+
+/// 列表块的扁平文本：按**源码顺序**把各项文本用空格连起来，并**还原任务标记**。
+///
+/// 不用 `open.content` 直接当内容，有两个毛病（均为实测）：
+/// 1. 那是各 `Item` 帧按**收集顺序**拼的，而嵌套列表的 `End(Item)` 由内向外
+///    到达，于是顺序是「先子后父」——搜索命中片段会显示成 `三级 x二级 a一级`；
+/// 2. 相邻项的文本之间**没有任何分隔符**（`…代码[ ] 任务 1`），是粘连的。
+///
+/// # 为什么要按 `checked` 把 `[x] ` 写回去
+///
+/// 块的扁平 `content` 是大纲与跨文件搜索的**唯一**文本来源
+/// （见 `list_content_still_contains_flat_text_for_search`）：
+/// 用户搜 `[x]` 就是想筛出已完成的待办。渲染用的项文本必须去掉标记
+/// （否则预览里会「复选框 + 字面 [x]」重复显示），但扁平文本要留着。
+/// 两者是同一份内容面向不同消费方的两种投影，故分开生成。
+fn list_plain_text(items: &[ListItem]) -> String {
+    items
+        .iter()
+        .map(|item| match item.checked() {
+            Some(true) => format!("[x] {}", item.text()),
+            Some(false) => format!("[ ] {}", item.text()),
+            None => item.text().to_string(),
+        })
+        .filter(|line| !line.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// 定义列表块的扁平文本：`术语: 定义` 逐条一行。
+fn definition_list_plain_text(entries: &[DefinitionEntry]) -> String {
+    entries
+        .iter()
+        .map(|entry| {
+            let mut line = entry.term().to_string();
+            for body in entry.definitions() {
+                line.push_str(": ");
+                line.push_str(body.text());
+            }
+            line
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// pulldown 的列对齐转为自有枚举。
@@ -666,6 +860,8 @@ impl MarkdownParser for PulldownMarkdownParser {
         let mut next_id: u64 = 0;
         // 当前所处的列表是否有序——`Tag::List` 开启时写入，Item 继承之。
         let mut list_ordered = false;
+        // 当前 `Tag::List` 给出的首项编号（有序列表 `1.` 的 1；无序列表无意义）。
+        let mut list_first_ordinal: u64 = 1;
         // 连续的文本类事件先攒在这里（见 `flush_inline_text`）。
         let mut pending = String::new();
 
@@ -707,16 +903,25 @@ impl MarkdownParser for PulldownMarkdownParser {
                 }
 
                 Event::Start(tag) => {
-                    // `Tag::List(Some(_))` 表示有序列表。
+                    // `Tag::List(Some(n))` 表示有序列表（首项编号为 `n`）。
                     if let Tag::List(first) = tag {
                         list_ordered = first.is_some();
+                        list_first_ordinal = first.unwrap_or(1);
                     }
                     let is_item = matches!(tag, Tag::Item);
                     let is_cell = matches!(tag, Tag::TableCell);
+                    // 定义列表的术语 / 定义：都不产出块，但要各自收集文本。
+                    let is_dl_title = matches!(tag, Tag::DefinitionListTitle);
+                    let is_dl_def = matches!(tag, Tag::DefinitionListDefinition);
+                    // 脚注定义的正文包在段落里，必须回流到本帧（否则会变成
+                    // 一个游离在文档里的普通段落）。
+                    let is_footnote = matches!(tag, Tag::FootnoteDefinition(_));
                     // 列表项与单元格要各自收集文本（见 `OpenBlock` 的类型注释），
                     // 故不能标记为 `is_inline`——否则文本会被并到外层块去。
+                    // 定义列表的术语 / 定义同理。
                     let kind = block_kind_of(&tag, list_ordered);
-                    let is_inline = kind.is_none() && !is_item && !is_cell;
+                    let is_inline =
+                        kind.is_none() && !is_item && !is_cell && !is_dl_title && !is_dl_def;
                     // 行内样式标签（粗体 / 链接 / 上下标…）把样式挂在帧上，
                     // 其内文本按该样式记录（见 `current_inline_style`）。
                     let style = inline_style_of(&tag);
@@ -725,26 +930,22 @@ impl MarkdownParser for PulldownMarkdownParser {
                         _ => Vec::new(),
                     };
                     let opens_head = matches!(tag, Tag::TableHead);
-                    stack.push(OpenBlock {
-                        kind,
-                        start: range.start,
-                        content: String::new(),
-                        is_item,
-                        is_cell,
-                        is_inline,
-                        is_task: false,
-                        item_checked: None,
-                        items: Vec::new(),
-                        rows: Vec::new(),
-                        current_row: Vec::new(),
-                        header: Vec::new(),
-                        aligns,
-                        in_head: false,
-                        image: None,
-                        image_mark: None,
-                        style,
-                        spans: Vec::new(),
-                    });
+                    let mut frame = OpenBlock::new(kind, range.start);
+                    frame.is_item = is_item;
+                    frame.is_cell = is_cell;
+                    frame.is_inline = is_inline;
+                    // 会吞掉内层段落块的三类帧（见 `OpenBlock::absorbs`）。
+                    frame.absorbs = is_item || is_dl_def || is_footnote;
+                    frame.is_dl_title = is_dl_title;
+                    frame.is_dl_def = is_dl_def;
+                    frame.aligns = aligns;
+                    frame.style = style;
+                    if matches!(tag, Tag::List(_)) {
+                        // 深度取「已有的列表帧个数」——本帧尚未入栈，故顶层为 0。
+                        frame.list_depth = list_depth_of(&stack);
+                        frame.list_next_ordinal = list_first_ordinal;
+                    }
+                    stack.push(frame);
                     // 进入表头：把所属表格切到「表头模式」，后续整行归为表头。
                     if opens_head {
                         let len = stack.len();
@@ -788,11 +989,13 @@ impl MarkdownParser for PulldownMarkdownParser {
                     // ---- 单元格：文本归入所属表格的当前行 ----
                     if open.is_cell {
                         let cell = open.content.trim().to_string();
+                        let spans = trim_spans(&open.content, std::mem::take(&mut open.spans));
                         if let Some(table) = nearest_producer(&mut stack) {
                             // 单元格文本归表格的扁平 `content`：搜索与大纲要能命中表格里的字
                             // （单元格现在自己收集文本，不并入 content 的话它会变空）。
                             table.content.push_str(&cell);
                             table.current_row.push(cell);
+                            table.current_row_spans.push(spans);
                         }
                         continue;
                     }
@@ -807,8 +1010,12 @@ impl MarkdownParser for PulldownMarkdownParser {
                         if let Some(table) = nearest_producer(&mut stack) {
                             if table.in_head {
                                 table.header = std::mem::take(&mut table.current_row);
+                                table.header_spans = std::mem::take(&mut table.current_row_spans);
                             } else {
                                 table.rows.push(std::mem::take(&mut table.current_row));
+                                table
+                                    .rows_spans
+                                    .push(std::mem::take(&mut table.current_row_spans));
                             }
                         }
                         continue;
@@ -818,23 +1025,73 @@ impl MarkdownParser for PulldownMarkdownParser {
                     if matches!(tag_end, TagEnd::TableHead) {
                         if let Some(table) = nearest_producer(&mut stack) {
                             table.header = std::mem::take(&mut table.current_row);
+                            table.header_spans = std::mem::take(&mut table.current_row_spans);
                             table.in_head = false;
                         }
                         continue;
                     }
 
+                    // ---- 定义列表的术语：开启一个新条目 ----
+                    if open.is_dl_title {
+                        let term = open.content.trim().to_string();
+                        let spans = trim_spans(&open.content, std::mem::take(&mut open.spans));
+                        if let Some(list) = nearest_producer(&mut stack)
+                            && let Some(BlockKind::DefinitionList { entries }) = list.kind.as_mut()
+                        {
+                            entries.push(DefinitionEntry::new(term, spans));
+                        }
+                        continue;
+                    }
+
+                    // ---- 定义列表的定义：追加到当前条目的定义列表 ----
+                    if open.is_dl_def {
+                        let text = open.content.trim().to_string();
+                        let spans = trim_spans(&open.content, std::mem::take(&mut open.spans));
+                        if let Some(list) = nearest_producer(&mut stack)
+                            && let Some(BlockKind::DefinitionList { entries }) = list.kind.as_mut()
+                            && let Some(entry) = entries.last_mut()
+                        {
+                            entry.push_definition(DefinitionBody::new(text, spans));
+                        }
+                        continue;
+                    }
+
+                    // ---- 列表项：闭合时定型，并**拍平**到根列表 ----
+                    //
                     // 列表项在闭合时定型（TaskListMarker 此刻已到达）：
-                    // 收成一个 `ListItem` 归入所属列表，同时把文本并入列表的
+                    // 收成一个 `ListItem` 归入**根**列表，同时把文本并入列表的
                     // 扁平 `content`（搜索与大纲仍能看到整段列表文字）。
                     if open.is_item {
-                        let item = ListItem::new(
-                            strip_task_marker(&open.content),
-                            open.item_checked,
-                            open.range(end, text),
-                        );
-                        if let Some(list) = nearest_producer(&mut stack) {
+                        // 最近的那个列表帧决定：本项的缩进层级、是否有序、序号取几。
+                        let mut depth = 0u8;
+                        let mut ordinal = None;
+                        if let Some(li) = stack
+                            .iter()
+                            .rposition(|f| matches!(f.kind, Some(BlockKind::List { .. })))
+                        {
+                            depth = stack[li].list_depth;
+                            if matches!(stack[li].kind, Some(BlockKind::List { ordered: true, .. }))
+                            {
+                                ordinal = Some(stack[li].list_next_ordinal);
+                                stack[li].list_next_ordinal += 1;
+                            }
+                        }
+                        let range = open.range(end, text);
+                        let (item_text, item_spans) =
+                            strip_task_marker(&open.content, std::mem::take(&mut open.spans));
+                        let mut item = ListItem::new(item_text, open.item_checked, range)
+                            .with_depth(depth)
+                            .with_spans(item_spans);
+                        if let Some(n) = ordinal {
+                            item = item.with_ordinal(n);
+                        }
+                        if let Some(root) = root_list_index(&stack) {
+                            let list = &mut stack[root];
                             list.is_task |= open.item_checked.is_some();
-                            list.content.push_str(&open.content);
+                            // 注意这里**不能**顺手拼 `open.content`：项是按
+                            // 由内向外的顺序闭合的，拼出来是乱序且带任务标记的
+                            // 文本；扁平内容统一在列表块定型时按源码顺序重建
+                            // （见 `list_plain_text`）。
                             list.items.push(item);
                         }
                         continue;
@@ -843,6 +1100,34 @@ impl MarkdownParser for PulldownMarkdownParser {
                     // 其余行内标签（强调 / 链接 / 删除线 / 图片的 alt 文本等）：
                     // 进出栈即可，**不产出块**——它们的文本已由内层块收集。
                     if open.is_inline {
+                        continue;
+                    }
+
+                    // ---- 被吸收的段落：不再自己成块 ----
+                    //
+                    // 脚注定义 `[^1]: 内容` 与定义列表的定义 `: 内容` 里，正文
+                    // 被 pulldown 包在**段落**里。该段落的文本已由 `push_content`
+                    // 回流给外层的脚注 / 定义帧；若这里再让它成块，文档流里就
+                    // 会多出一个游离段落，预览中脚注内容会**显示两遍**
+                    // （实测：`[Paragraph, Footnote, Paragraph]`）。
+                    if matches!(open.kind, Some(BlockKind::Paragraph))
+                        && absorbing_index(&stack).is_some()
+                    {
+                        continue;
+                    }
+
+                    // ---- 嵌套列表：项已归入根列表，内层是空壳 ----
+                    //
+                    // `root_list_index` 把整棵列表树的项都拍平给**根**列表，
+                    // 于是每个内层 `List` 帧闭合时 `items` 都是空的。
+                    // 不丢弃的话每深一层就多一个空列表块——预览里表现为
+                    // 列表下方多出一片莫名的空白（零项列表仍占一个段落间距）。
+                    if matches!(
+                        open.kind,
+                        Some(BlockKind::List { .. } | BlockKind::TaskList { .. })
+                    ) && open.items.is_empty()
+                        && root_list_index(&stack).is_some()
+                    {
                         continue;
                     }
 
@@ -889,6 +1174,10 @@ impl MarkdownParser for PulldownMarkdownParser {
                                 std::mem::take(&mut open.header),
                                 std::mem::take(&mut open.rows),
                                 std::mem::take(&mut open.aligns),
+                            )
+                            .with_cell_spans(
+                                std::mem::take(&mut open.header_spans),
+                                std::mem::take(&mut open.rows_spans),
                             ),
                         },
                         (Some(BlockKind::Paragraph), _) if toc.is_some() => BlockKind::Toc {
@@ -901,6 +1190,16 @@ impl MarkdownParser for PulldownMarkdownParser {
                         // `kind` 为 None 说明是无需产出块的标签，已在上面 continue。
                         (None, _) => continue,
                     };
+
+                    // 列表项排序：项在各自的 `End(Item)` 收集，而嵌套列表的 End
+                    // 由内向外到达，收集顺序天然是「先子后父」（实测得到
+                    // `[三级 x, 二级 a, 二级 b, 一级, 一级二]`）。不排序的话预览里
+                    // 子项会整片跑到父项**上面**。按源码起点排即恢复文档顺序。
+                    let mut kind = kind;
+                    if let BlockKind::List { items, .. } | BlockKind::TaskList { items } = &mut kind
+                    {
+                        items.sort_by_key(|item| item.source_range().start().value());
+                    }
 
                     // 公式块的content 存**公式本体**（不含`$$`），
                     // 表现层直接展示 / 复制，无需再剥分隔符。
@@ -928,6 +1227,17 @@ impl MarkdownParser for PulldownMarkdownParser {
                         (BlockKind::Toc { title }, _) => {
                             spans.clear();
                             title.clone()
+                        }
+                        // 列表 / 定义列表的扁平内容按**源码顺序**重建
+                        // （理由见 `list_plain_text`）；块级 `spans` 对应的是
+                        // 被替换掉的旧 `content`，一并清掉以免错位。
+                        (BlockKind::List { items, .. } | BlockKind::TaskList { items }, _) => {
+                            spans.clear();
+                            list_plain_text(items)
+                        }
+                        (BlockKind::DefinitionList { entries }, _) => {
+                            spans.clear();
+                            definition_list_plain_text(entries)
                         }
                         _ => open.content,
                     };

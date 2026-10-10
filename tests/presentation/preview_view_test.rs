@@ -8,7 +8,8 @@
 
 use rustmark::application::dto::CellAlignView;
 use rustmark::presentation::views::preview_view::{
-    TABLE_CELL_PAD, TABLE_COL_GAP, TABLE_MIN_COL_W, table_column_distribution, task_marker_offset,
+    TABLE_CELL_PAD, TABLE_COL_GAP, TABLE_MIN_COL_W, strip_math_delimiters,
+    table_column_distribution, task_marker_offset,
 };
 
 // ============================================================================
@@ -95,6 +96,10 @@ fn every_block_kind_has_a_renderer() {
         "image",
         "rule",
         "footnote",
+        "definition_list",
+        "math",
+        "diagram",
+        "toc",
         "raw:html",
     ];
     for kind in known {
@@ -111,6 +116,10 @@ fn every_block_kind_has_a_renderer() {
                 | "image"
                 | "rule"
                 | "footnote"
+                | "definition_list"
+                | "math"
+                | "diagram"
+                | "toc"
         );
         let is_raw = kind.starts_with("raw:");
         assert!(
@@ -118,6 +127,22 @@ fn every_block_kind_has_a_renderer() {
             "块类型 {kind} 没有对应的渲染分支，会落进 raw 兜底"
         );
     }
+}
+
+/// 行内公式的 `$` 分隔符必须被剥掉：留着会显示成 `$E=mc^2$`，
+/// 用户会以为公式没被识别。
+#[test]
+fn inline_math_delimiters_are_stripped_for_display() {
+    assert_eq!(strip_math_delimiters("$E = mc^2$"), "E = mc^2");
+    assert_eq!(strip_math_delimiters("$$x$$"), "x");
+    // 单侧不成对时原样返回——剥空会让公式凭空消失。
+    assert_eq!(strip_math_delimiters("$E = mc^2"), "$E = mc^2");
+    assert_eq!(strip_math_delimiters("E = mc^2$"), "E = mc^2$");
+    // 片段里本来就没有「内容」时，宁可不动。
+    assert_eq!(strip_math_delimiters("$$"), "$$");
+    assert_eq!(strip_math_delimiters(""), "");
+    // 公式本体不能被牵连（`a=1` 里的 `1` 要留下）。
+    assert_eq!(strip_math_delimiters("$a=1$"), "a=1");
 }
 
 /// 列对齐枚举的四种取值都要能映射到 egui 对齐。
@@ -240,6 +265,10 @@ use rustmark::application::document::commands::ReplaceRangeCommand;
 use rustmark::shared::geometry::{ByteOffset, TextRange};
 
 /// 示例文档片段：目录 / 键帽 / 高亮 / 上下标 / 带尺寸图片 / 公式全都在。
+///
+/// 问题 2 / 3 / 4 / 5 的写法也都放进来（列表行内样式、多级列表、表格、
+/// 脚注、定义列表、块级公式、Mermaid 图），使末尾那条「真实帧」用例
+/// 一次性走遍全部渲染分支——包括两个内置引擎的**绘制**路径。
 const SAMPLE: &str = "\
 @[TOC](欢迎)
 
@@ -253,7 +282,47 @@ const SAMPLE: &str = "\
 
 带尺寸的图片: ![Alt](images/a.png =30x30)
 
-$$E = mc^2$$
+列表里的行内样式：
+
+- 普通项 **粗体** 与 *斜体* 与 ~~删除~~ 与 `代码`
+- [x] 已办 **重点**
+
+多级列表：
+
+1. 一级
+   - 二级 a
+     - 三级 x
+   - 二级 b
+2. 一级二
+
+| 左 | 中 | 右 |
+|:---|:--:|---:|
+| a **粗** | b | c |
+| d | e | f |
+
+脚注区：
+
+正文里有一个脚注[^1]。
+
+[^1]: 脚注内容 **加粗**。
+
+自定义列表：
+
+术语 A
+: 定义 A 的内容
+
+行内公式 $E = mc^2$ 结束。
+
+$$
+\\int_0^1 x^2 dx
+$$
+
+```mermaid
+graph LR
+  A[开始] --> B{判断}
+  B -->|是| C[结束]
+  B -- 否 --> A
+```
 ";
 
 /// 造一个装好 `content` 的应用。
@@ -358,4 +427,354 @@ fn sample_document_renders_a_real_frame() {
     let ctx = egui::Context::default();
     let shapes = render(&mut app, &ctx, 3);
     assert!(shapes > 0, "预览应产出绘制指令");
+}
+
+// ============================================================================
+// 问题 2/4/5 的端到端防线：解析 → DTO → 真实帧
+// ============================================================================
+//
+// 这四类问题的表现都在**渲染**上，但根因各不相同（DTO 没带字段 / 解析丢样式 /
+// 枚举缺分支）。下面几条按「数据是否真的到了渲染层」来断言，比断言像素更稳，
+// 也更容易定位到底是哪一层断的。
+
+/// 多级列表的层级与编号必须一路传到预览块（问题 4 的根因是 DTO 没带这些字段）。
+#[test]
+fn list_depth_and_ordinal_reach_the_preview() {
+    let (_dir, mut app) = app_with(SAMPLE);
+    let ctx = egui::Context::default();
+    render(&mut app, &ctx, 2);
+
+    let blocks = &app.preview.blocks;
+    let list = blocks
+        .iter()
+        .find(|b| b.kind == "list" && b.items.iter().any(|i| i.depth > 0))
+        .expect("应有多级列表块");
+    let got: Vec<(u8, Option<u64>, &str)> = list
+        .items
+        .iter()
+        .map(|i| (i.depth, i.ordinal, i.text.as_str()))
+        .collect();
+    assert_eq!(
+        got,
+        vec![
+            (0, Some(1), "一级"),
+            (1, None, "二级 a"),
+            (2, None, "三级 x"),
+            (1, None, "二级 b"),
+            (0, Some(2), "一级二"),
+        ],
+        "层级、源序号、源码顺序三者都要对"
+    );
+}
+
+/// 列表项的行内样式必须传到预览块（问题 2 的根因）。
+#[test]
+fn list_item_inline_styles_reach_the_preview() {
+    let (_dir, mut app) = app_with(SAMPLE);
+    let ctx = egui::Context::default();
+    render(&mut app, &ctx, 2);
+
+    let blocks = &app.preview.blocks;
+    let item = blocks
+        .iter()
+        .flat_map(|b| b.items.iter())
+        .find(|i| i.text.contains("普通项"))
+        .expect("应找到带样式的列表项");
+    let styles: Vec<&str> = item.spans.iter().map(|s| s.style.as_str()).collect();
+    for expected in ["strong", "emphasis", "strikethrough", "code"] {
+        assert!(
+            styles.contains(&expected),
+            "列表项缺少 {expected:?} 片段：{styles:?}（文本 {:?}）",
+            item.text
+        );
+    }
+    // 片段区间必须相对**该列表项自己的文本**，否则预览会渲染到错的位置。
+    for span in &item.spans {
+        assert!(
+            item.text.is_char_boundary(span.range.start)
+                && item.text.is_char_boundary(span.range.end)
+                && span.range.start < span.range.end,
+            "列表项片段落在无效区间：{span:?}"
+        );
+    }
+}
+
+/// 任务项的勾选状态与行内样式（含标记位移）都要正确。
+#[test]
+fn task_item_reaches_the_preview_with_checked_state_and_styles() {
+    let (_dir, mut app) = app_with(SAMPLE);
+    let ctx = egui::Context::default();
+    render(&mut app, &ctx, 2);
+
+    let blocks = &app.preview.blocks;
+    let task = blocks
+        .iter()
+        .find(|b| b.kind == "task_list")
+        .expect("应有任务列表块");
+    let item = task
+        .items
+        .iter()
+        .find(|i| i.checked == Some(true))
+        .expect("应有已勾选项");
+    assert_eq!(item.text, "已办 重点");
+    let span = item.spans.first().expect("已勾选项也应带粗体片段");
+    assert_eq!(span.style, "strong");
+    assert_eq!(&item.text[span.range.start..span.range.end], "重点");
+}
+
+/// 表格单元格的行内样式必须传到预览块（问题 5 的表格部分）。
+#[test]
+fn table_cell_spans_reach_the_preview() {
+    let (_dir, mut app) = app_with(SAMPLE);
+    let ctx = egui::Context::default();
+    render(&mut app, &ctx, 2);
+
+    let table = app
+        .preview
+        .blocks
+        .iter()
+        .find_map(|b| b.table.as_ref())
+        .expect("应有表格块");
+    assert_eq!(table.rows[0][0], "a 粗");
+    let spans = &table.rows_spans[0][0];
+    assert_eq!(spans.len(), 1, "单元格应带 1 个片段：{spans:?}");
+    assert_eq!(spans[0].style, "strong");
+    assert_eq!(
+        &table.rows[0][0][spans[0].range.start..spans[0].range.end],
+        "粗"
+    );
+    // 片段表必须与行数**等长**，否则渲染按 `(r, c)` 索引时会越界。
+    assert_eq!(table.rows_spans.len(), table.rows.len());
+}
+
+/// 脚注：标签与正文分开到达预览块（问题 5 的脚注部分）。
+#[test]
+fn footnote_label_and_body_reach_the_preview() {
+    let (_dir, mut app) = app_with(SAMPLE);
+    let ctx = egui::Context::default();
+    render(&mut app, &ctx, 2);
+
+    let note = app
+        .preview
+        .blocks
+        .iter()
+        .find(|b| b.kind == "footnote")
+        .expect("应有脚注块");
+    assert_eq!(note.label.as_deref(), Some("1"));
+    assert!(note.content.contains("脚注内容"), "正文应在块里：{note:?}");
+    assert!(
+        note.spans.iter().any(|s| s.style == "strong"),
+        "脚注正文的粗体也要传到预览：{:?}",
+        note.spans
+    );
+    // 正文不该再以游离段落的形式重复出现（否则预览里显示两遍）。
+    let stray = app
+        .preview
+        .blocks
+        .iter()
+        .filter(|b| b.kind == "paragraph" && b.content.contains("脚注内容"))
+        .count();
+    assert_eq!(stray, 0, "脚注正文不应额外产出段落");
+}
+
+/// 定义列表：术语与定义分条到达预览块（问题 5 的自定义列表部分）。
+#[test]
+fn definition_list_reaches_the_preview() {
+    let (_dir, mut app) = app_with(SAMPLE);
+    let ctx = egui::Context::default();
+    render(&mut app, &ctx, 2);
+
+    let dl = app
+        .preview
+        .blocks
+        .iter()
+        .find(|b| b.kind == "definition_list")
+        .expect("应有定义列表块");
+    assert_eq!(dl.definitions.len(), 1);
+    assert_eq!(dl.definitions[0].term, "术语 A");
+    assert_eq!(dl.definitions[0].definitions.len(), 1);
+    assert_eq!(dl.definitions[0].definitions[0].text, "定义 A 的内容");
+}
+
+/// 块级公式与图表必须**被渲染**成图，而不是「降级成源码」。
+///
+/// 判据是「降级提示没有出现」：`draw_unrendered_source` 只在两个内置引擎
+/// 返回 `Err` 时被调用，而它会把 `未能排版：…` 画进帧里。
+#[test]
+fn math_and_diagram_are_actually_rendered_not_fallback_cards() {
+    let (_dir, mut app) = app_with(SAMPLE);
+    let ctx = egui::Context::default();
+    render(&mut app, &ctx, 3);
+
+    let kinds: Vec<&str> = app.preview.blocks.iter().map(|b| b.kind.as_str()).collect();
+    assert!(kinds.contains(&"math"), "样例应产出公式块：{kinds:?}");
+    assert!(kinds.contains(&"diagram"), "样例应产出图表块：{kinds:?}");
+
+    // 两个引擎能直接排出来（不经 UI）——这是「渲染器真的工作了」的硬证据。
+    let measure = |t: &str, size: f32| t.chars().count() as f32 * size * 0.5;
+    let math = app
+        .preview
+        .blocks
+        .iter()
+        .find(|b| b.kind == "math")
+        .expect("公式块");
+    assert!(
+        rustmark::presentation::views::math::layout(&math.content, 16.0, true, &measure).is_ok(),
+        "样例公式应能排版：{:?}",
+        math.content
+    );
+    let diagram = app
+        .preview
+        .blocks
+        .iter()
+        .find(|b| b.kind == "diagram")
+        .expect("图表块");
+    let graph = rustmark::presentation::views::mermaid::layout(&diagram.content, 14.0, &measure)
+        .unwrap_or_else(|e| panic!("样例图表应能布局：{e}"));
+    assert!(graph.width > 0.0 && graph.height > 0.0);
+}
+
+// ============================================================================
+// 问题 1 的回归：预览区必须能滚
+// ============================================================================
+
+/// 够长的文档：内容高度必须超过常见窗口高度，否则「滚不动」无从谈起。
+///
+/// 刻意用**很短的段落**，且**不含标题**，两个约束都不可省：
+///
+/// * 缺陷（滚动区横向收缩到内容宽度）只在「内容比面板窄」时才显出后果。
+///   正文若本来就占满面板宽，收缩与否看不出差别，用例就会「碰巧通过」。
+/// * 标题是这里最容易踩的坑：`draw_heading` 对 h1/h2 会画一条
+///   `available_width()` 宽的分隔线，那一下就把内容宽度撑满面板，
+///   横向收缩随之失效，用例又「碰巧通过」（实测过一次）。
+///   所以这里只放段落，让内容宽度真实地停在文字宽度上
+///   （本机 1000×640 窗口、默认主题下实测 81.5pt，面板可用 348pt）。
+fn long_document(paragraphs: usize) -> String {
+    (0..paragraphs)
+        .map(|i| format!("短行内容 {i}\n"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// 在预览区**空白处**滚滚轮，偏移必须真的变大。
+///
+/// # 为什么这条用例能钉住那个缺陷
+///
+/// 缺陷是 `ScrollArea::vertical()` **没设** `auto_shrink`，于是取默认值
+/// `Vec2b::TRUE`——两个方向都开。而 `ScrollArea::vertical()` 的
+/// `direction_enabled` 是 `[false, true]`（横向关、纵向开），横向因此落到
+/// egui 的这一支（`scroll_area.rs`，已核对 0.33.3 源码）：
+///
+/// ```text
+/// (true,  true)  => inner_size.min(content_size)   // 纵向：内容小则收缩
+/// (false, true)  => content_size[d]                // 横向：**收缩到内容宽度**
+/// ```
+///
+/// 后果是滚动区只有正文那么宽。带来两个问题，都不报错：
+/// 1. 指针悬在正文右侧的空白上时**并不在滚动区内**
+///    （`is_hovering_outer_rect` 为假），滚轮事件被整个丢掉；
+/// 2. 滚动条画在内容右缘那条细缝里，视觉上等于不存在。
+///
+/// 两者合起来正是用户说的「预览区滚不动、下面的内容看不到」。
+///
+/// 故判据取「在预览区**中央**滚轮，偏移要变」——对本用例的短段落文档而言，
+/// 那个点稳稳落在内容列右侧的空白里。缺陷在时它是空白（滚不动），
+/// 修好后它是滚动区的一部分（能滚）。判据与用户抱怨的现象一一对应，
+/// 不依赖我们记住是哪个开关写错了。
+///
+/// 坐标不是硬编码常量，而是**上一帧真实记录下来的预览区矩形**中心
+/// （`app.preview_rect()`）：窗口尺寸、分割比例、主题度量任何一项变化，
+/// 用例都跟着走，不会因为布局微调而无故变红。
+#[test]
+fn preview_scrolls_with_the_wheel_over_its_content() {
+    let (_dir, mut app) = app_with(&long_document(80));
+    let ctx = egui::Context::default();
+    let screen_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 640.0));
+
+    let run = |app: &mut EditorApp, events: Vec<egui::Event>| {
+        let input = egui::RawInput {
+            screen_rect: Some(screen_rect),
+            events,
+            ..Default::default()
+        };
+        let _ = ctx.run(input, |ctx| {
+            rustmark::presentation::theme::mapper::apply(ctx, &app.ui.theme);
+            rustmark::presentation::views::main_view::show(app, ctx);
+        });
+    };
+
+    // 第 1 帧：建立布局，拿到预览区矩形。
+    run(&mut app, Vec::new());
+    let pane = app.preview_rect().expect("主视图应记录预览区矩形");
+    let at = pane.center();
+
+    // 前置条件：内容必须真的超出一屏，否则「滚不动」这条断言没有意义。
+    let geo = app
+        .ui
+        .sync
+        .geometry(rustmark::presentation::state::scroll_sync_state::Side::Preview);
+    assert!(
+        geo.content_h > geo.viewport_h,
+        "用例前提：内容（{}）应高于视口（{}）",
+        geo.content_h,
+        geo.viewport_h
+    );
+
+    // 连滚若干帧（真实用户也是一帧一个增量）。
+    for _ in 0..10 {
+        run(
+            &mut app,
+            vec![
+                egui::Event::PointerMoved(at),
+                egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    delta: egui::vec2(0.0, -120.0),
+                    modifiers: egui::Modifiers::default(),
+                },
+            ],
+        );
+    }
+
+    assert!(
+        app.preview.scroll_y > 0.0,
+        "在预览区中央（{at:?}）滚轮后偏移仍为 0——滚动区收缩到了内容宽度（问题 1 复发）"
+    );
+}
+
+/// 反向：指针在**预览区之外**时不该动预览区（防止「整个窗口随便滚都能滚」）。
+#[test]
+fn wheel_outside_the_preview_pane_does_not_scroll_it() {
+    let (_dir, mut app) = app_with(&long_document(80));
+    let ctx = egui::Context::default();
+    let screen_rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 640.0));
+    let run = |app: &mut EditorApp, events: Vec<egui::Event>| {
+        let input = egui::RawInput {
+            screen_rect: Some(screen_rect),
+            events,
+            ..Default::default()
+        };
+        let _ = ctx.run(input, |ctx| {
+            rustmark::presentation::theme::mapper::apply(ctx, &app.ui.theme);
+            rustmark::presentation::views::main_view::show(app, ctx);
+        });
+    };
+    run(&mut app, Vec::new());
+    let outside = app.preview_rect().expect("预览区矩形").left_top() - egui::vec2(300.0, 0.0);
+    for _ in 0..6 {
+        run(
+            &mut app,
+            vec![
+                egui::Event::PointerMoved(outside),
+                egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    delta: egui::vec2(0.0, -120.0),
+                    modifiers: egui::Modifiers::default(),
+                },
+            ],
+        );
+    }
+    assert_eq!(
+        app.preview.scroll_y, 0.0,
+        "指针不在预览区上时不该滚动预览（否则滚轮会被两侧抢）"
+    );
 }

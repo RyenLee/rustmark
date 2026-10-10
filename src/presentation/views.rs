@@ -8,6 +8,8 @@ pub mod editor_view;
 pub mod export_view;
 pub mod find_replace_view;
 pub mod main_view;
+pub mod math;
+pub mod mermaid;
 pub mod overlays;
 pub mod preview_view;
 pub mod quick_open_view;

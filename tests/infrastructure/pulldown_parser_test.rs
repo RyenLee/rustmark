@@ -179,9 +179,29 @@ fn thematic_break_is_parsed() {
 fn footnote_definition_is_parsed() {
     let text = "正文[^1]\n\n[^1]: 脚注内容\n";
     let blocks = parse(text);
+    let note = blocks
+        .iter()
+        .find(|b| matches!(b.kind(), BlockKind::Footnote { .. }))
+        .unwrap_or_else(|| {
+            panic!(
+                "应产出 Footnote 块，实际：{:?}",
+                blocks.iter().map(|b| b.kind()).collect::<Vec<_>>()
+            )
+        });
+    // 标签与正文必须各归各位：`[^1]` 是标签、`脚注内容` 是正文。
+    // 若解析时只为段落帧记 content 而不回流到脚注帧，这里拿到的是空串，
+    // 正文会以**游离段落**的形式出现在文档流里（曾经的实测表现）。
+    match note.kind() {
+        BlockKind::Footnote { label } => assert_eq!(label, "1"),
+        other => panic!("类型不符：{other:?}"),
+    }
+    assert_eq!(note.content(), "脚注内容", "脚注正文应回流进本块");
+    // 正文不应该再作为独立段落重复出现。
     assert!(
-        blocks.iter().any(|b| b.kind() == &BlockKind::Footnote),
-        "应产出 Footnote 块，实际：{:?}",
+        !blocks
+            .iter()
+            .any(|b| matches!(b.kind(), BlockKind::Paragraph) && b.content().contains("脚注内容")),
+        "脚注正文不应额外产出游离段落：{:?}",
         blocks.iter().map(|b| b.kind()).collect::<Vec<_>>()
     );
     assert!(
@@ -924,4 +944,196 @@ fn real_world_sample_document_parses_cleanly() {
         keycap_blocks <= 3,
         "键帽样式疑似泄漏到 {keycap_blocks} 个块（样例里只有两段用了 <kbd>）"
     );
+}
+
+// ============================================================================
+// 列表 / 表格 / 定义列表的行内样式与层级（预览区「格式不生效」类问题的防线）
+// ============================================================================
+
+/// 取文档里唯一的列表块（有序 / 无序 / 任务列表都算）。
+fn only_list(text: &str) -> Vec<rustmark::domain::markdown::value_objects::ListItem> {
+    let blocks = parse(text);
+    blocks
+        .iter()
+        .find_map(|b| b.kind().list_items().map(<[_]>::to_vec))
+        .unwrap_or_else(|| {
+            panic!(
+                "应产出列表块：{:?}",
+                blocks.iter().map(|b| b.kind()).collect::<Vec<_>>()
+            )
+        })
+}
+
+#[test]
+fn nested_list_items_carry_depth_in_source_order() {
+    // 层次：一级(0) → 二级 a(1) → 三级 x(2) → 二级 b(1) → 一级二(0)
+    let items = only_list("1. 一级\n   - 二级 a\n     - 三级 x\n   - 二级 b\n2. 一级二\n");
+    let got: Vec<(u8, &str)> = items.iter().map(|i| (i.depth(), i.text())).collect();
+    assert_eq!(
+        got,
+        vec![
+            (0, "一级"),
+            (1, "二级 a"),
+            (2, "三级 x"),
+            (1, "二级 b"),
+            (0, "一级二"),
+        ],
+        "嵌套列表应按源码顺序给出各项，且深度逐层递增"
+    );
+}
+
+#[test]
+fn nested_list_does_not_duplicate_parent_text() {
+    // 回归：曾出现「父项文本被子项回流污染」——`一级` 变成 `一级二级 a`。
+    let items = only_list("1. 一级\n   - 二级 a\n");
+    assert_eq!(items[0].text(), "一级", "父项文本不应含子项文字");
+    assert_eq!(items[1].text(), "二级 a");
+}
+
+#[test]
+fn ordered_list_items_carry_their_own_ordinal() {
+    let items = only_list("1. 甲\n2. 乙\n3. 丙\n");
+    let got: Vec<Option<u64>> = items
+        .iter()
+        .map(rustmark::domain::markdown::value_objects::ListItem::ordinal)
+        .collect();
+    assert_eq!(got, vec![Some(1), Some(2), Some(3)]);
+    // 无序列表不带编号（渲染层据此决定画「•」还是画数字）。
+    let items = only_list("- 甲\n- 乙\n");
+    assert!(items.iter().all(|i| i.ordinal().is_none()));
+}
+
+#[test]
+fn ordered_list_honours_its_starting_number() {
+    // `3.` 起头时首项编号就是 3——渲染层若从 1 自己数就会与源文不符。
+    let items = only_list("3. 甲\n4. 乙\n");
+    let got: Vec<Option<u64>> = items
+        .iter()
+        .map(rustmark::domain::markdown::value_objects::ListItem::ordinal)
+        .collect();
+    assert_eq!(got, vec![Some(3), Some(4)]);
+}
+
+#[test]
+fn list_item_inline_styles_are_recorded() {
+    // 核心回归：列表项的行内样式（粗体 / 斜体 / 删除线 / 代码）此前**全部丢失**，
+    // 预览里列表中的 **粗体** 与正文里的表现不一致。
+    let items = only_list("- 项 **粗** *斜* ~~删~~ `码`\n");
+    let styles: Vec<InlineStyle> = items[0].spans().iter().map(|s| s.style()).collect();
+    for expected in [
+        InlineStyle::Strong,
+        InlineStyle::Emphasis,
+        InlineStyle::Strikethrough,
+        InlineStyle::Code,
+    ] {
+        assert!(
+            styles.contains(&expected),
+            "列表项应记录 {expected:?}：{styles:?}"
+        );
+    }
+    // 片段必须落在**文本**的坐标系里：按区间切片应能取回原词。
+    let text = items[0].text();
+    for span in items[0].spans() {
+        let slice = &text[span.start()..span.end()];
+        assert!(
+            matches!(slice, "粗" | "斜" | "删" | "码"),
+            "片段区间错位，切出 {slice:?}（文本 {text:?}）"
+        );
+    }
+}
+
+#[test]
+fn task_marker_removal_keeps_inline_span_offsets_aligned() {
+    // 回归：切掉 `[x] ` 后若不移位片段，`重点` 会指向前 4 个字节，
+    // 渲染成「前两个字变粗、内容没变」。
+    let items = only_list("- [x] **重点**\n");
+    assert_eq!(items[0].text(), "重点");
+    assert_eq!(items[0].checked(), Some(true));
+    let span = items[0].spans()[0];
+    assert_eq!(span.style(), InlineStyle::Strong);
+    assert_eq!(&items[0].text()[span.start()..span.end()], "重点");
+}
+
+#[test]
+fn table_cell_inline_styles_are_recorded() {
+    // 核心回归：表格单元格样式此前丢失，`| a **粗** |` 显示成纯文本 `a 粗`。
+    let text = "| 左 | 中 |\n|:---|---:|\n| a **粗** | b |\n";
+    let blocks = parse(text);
+    let data = blocks
+        .iter()
+        .find_map(|b| b.kind().table())
+        .expect("应产出表格块");
+    assert_eq!(data.rows()[0][0], "a 粗");
+    let spans = data.cell_spans(0, 0);
+    assert_eq!(spans.len(), 1, "单元格应记录 1 个片段：{spans:?}");
+    assert_eq!(spans[0].style(), InlineStyle::Strong);
+    assert_eq!(
+        &data.rows()[0][0][spans[0].start()..spans[0].end()],
+        "粗",
+        "单元格片段区间必须相对**裁剪后**的单元格文本"
+    );
+}
+
+#[test]
+fn table_header_inline_styles_are_recorded() {
+    let text = "| **表头** | 中 |\n|:---|---:|\n| a | b |\n";
+    let blocks = parse(text);
+    let data = blocks.iter().find_map(|b| b.kind().table()).expect("表格");
+    assert_eq!(data.header()[0], "表头");
+    let spans = data.header_spans(0);
+    assert_eq!(spans.len(), 1);
+    assert_eq!(spans[0].style(), InlineStyle::Strong);
+    assert_eq!(&data.header()[0][spans[0].start()..spans[0].end()], "表头");
+}
+
+#[test]
+fn definition_list_is_parsed_into_entries() {
+    // 核心回归：不开 `ENABLE_DEFINITION_LIST` 时 pulldown 把两行并成一个段落，
+    // 预览里显示成「术语 A: 定义 A 的内容」糊在一行。
+    let text = "术语 A\n: 定义 A 的内容\n\n术语 B\n: 定义 B 的内容\n";
+    let blocks = parse(text);
+    let entries = blocks
+        .iter()
+        .find_map(|b| b.kind().definitions())
+        .unwrap_or_else(|| {
+            panic!(
+                "应产出定义列表块：{:?}",
+                blocks.iter().map(|b| b.kind()).collect::<Vec<_>>()
+            )
+        });
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0].term(), "术语 A");
+    assert_eq!(entries[0].definitions()[0].text(), "定义 A 的内容");
+    assert_eq!(entries[1].term(), "术语 B");
+    assert_eq!(entries[1].definitions().len(), 1);
+}
+
+#[test]
+fn definition_body_is_not_a_stray_paragraph() {
+    // 回归：定义正文曾被包在段落里，若不让外层帧吸收就会变成游离段落
+    // （预览里定义内容显示两遍）。
+    let text = "术语 A\n: 定义 A 的内容\n";
+    let blocks = parse(text);
+    let stray = blocks
+        .iter()
+        .filter(|b| matches!(b.kind(), BlockKind::Paragraph) && b.content().contains("定义 A"))
+        .count();
+    assert_eq!(
+        stray,
+        0,
+        "定义正文不应额外产出段落：{:?}",
+        blocks.iter().map(|b| b.kind()).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn multiple_definitions_under_one_term_are_kept_apart() {
+    let text = "术语 A\n: 第一条\n: 第二条\n";
+    let blocks = parse(text);
+    let entries = blocks
+        .iter()
+        .find_map(|b| b.kind().definitions())
+        .expect("定义列表");
+    let texts: Vec<&str> = entries[0].definitions().iter().map(|d| d.text()).collect();
+    assert_eq!(texts, vec!["第一条", "第二条"]);
 }

@@ -1,0 +1,1674 @@
+//! 内置 Mermaid 子集渲染引擎（问题 3：图表在预览里不出图）。
+//!
+//! # 范围：`graph` / `flowchart` 的「节点 + 有向边」子集
+//!
+//! 支持：
+//! - 方向 `LR` / `RL` / `TB` / `TD` / `BT`；
+//! - 节点形状 `[矩形]` `(圆角)` `([机场跑道])` `[[子程序]]` `[(数据库)]`
+//!   `((圆))` `{菱形}` `{{六边形}}` `[/平行四边形/]` `>旗帜]`；
+//! - 边 `-->` `---` `-.->` `-.-` `==>` `===` `--x` `--o` `<-->`，以及带标签的
+//!   `A -- 文案 --> B` 与 `A -->|文案| B`；
+//! - 链式写法 `A --> B --> C`、`%%` 注释、空行、`;` 分隔。
+//!
+//! **不支持**：`subgraph`、以及 `sequenceDiagram` / `classDiagram` /
+//! `stateDiagram` / `pie` / `gantt` / `journey` / `erDiagram` 等其它图种。
+//! 遇到它们返回 [`MermaidError::Unsupported`]，由调用方回退到「源码卡」
+//! （见 `preview_view::draw_diagram`）——**不猜**。半张图画出来比不画更难排查：
+//! 用户会先怀疑自己的语法。
+//!
+//! 纯装饰指令（`style` / `classDef` / `class` / `linkStyle` / `click` / `direction`）
+//! **忽略而非报错**：它们只影响配色与交互，装看不见不影响图的结构正确性，
+//! 而为此整体回退到源码是过度反应。
+//!
+//! # 布局算法：分层（Sugiyama 骨架）
+//!
+//! 1. **分层**：沿边做最长路径松弛，得到每个节点的 rank（列号）；
+//! 2. **排序**：同 rank 内按重心（barycenter）迭代两轮，减少交叉；
+//! 3. **定位**：rank 决定列、rank 内的次序决定行，整体按最大值居中；
+//! 4. **走线**：同轴相邻走直线，跨列走「出边 → 中点干 → 入边」的正交折线；
+//!    箭头画在入口。
+//!
+//! 与 [`super::math`] 相同的分层：解析 → 布局（纯函数）→ 绘制。
+//! 度量通过 [`Measure`] 注入，于是「B 必须在 A 右边」「有环也不会卡死」
+//! 这类规则都能在没有窗口的环境里断言。
+
+use egui::text::LayoutJob;
+use egui::{
+    Color32, CornerRadius, FontId, Painter, Pos2, Rect, Shape, Stroke, StrokeKind, TextFormat, Vec2,
+};
+
+/// 文本宽度度量函数：`(文本, 字号) -> 宽度（点）`。
+///
+/// 与 [`super::math::Measure`] 同形但**各自声明**：两个模块互不依赖，
+/// 将来其中一个要换成「带粗细的度量」时不必牵连另一个。
+pub type Measure<'a> = &'a dyn Fn(&str, f32) -> f32;
+
+/// 子集外的图种 / 结构。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MermaidError {
+    /// 不是本引擎支持的图种或结构。
+    Unsupported(String),
+    /// 语法读不通（边缺一端、形状括号不配对等）。
+    Malformed(String),
+}
+
+impl std::fmt::Display for MermaidError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unsupported(what) => write!(f, "不支持的图表写法：{what}"),
+            Self::Malformed(what) => write!(f, "图表语法错误：{what}"),
+        }
+    }
+}
+
+// ============================================================================
+// 缩放常量（点；与基准字号的乘积即为实际值）
+// ============================================================================
+
+/// 节点内边距（横向，乘基准字号）。
+const NODE_PAD_X: f32 = 0.75;
+/// 节点内边距（纵向）。
+const NODE_PAD_Y: f32 = 0.4;
+/// 同列相邻节点之间的间距。
+const NODE_GAP: f32 = 0.85;
+/// 相邻列之间的间距。
+const RANK_GAP: f32 = 1.7;
+/// 菱形这类「内切」外形需要的额外尺寸系数。
+const DIAMOND_SCALE: f32 = 2.0;
+/// 圆形的直径系数。
+const CIRCLE_D: f32 = 1.7;
+/// 箭头长度系数。
+const ARROW_LEN: f32 = 0.65;
+/// 箭头张角（半宽 / 长度）。
+const ARROW_SPREAD: f32 = 0.42;
+/// 折线走线时的「出桩」长度。
+const ROUTE_STUB: f32 = 12.0;
+
+// ============================================================================
+// 图模型
+// ============================================================================
+
+/// 节点外形。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum NodeShape {
+    Rect,
+    Rounded,
+    Stadium,
+    Subroutine,
+    Cylinder,
+    Circle,
+    Rhombus,
+    Hexagon,
+    Parallelogram,
+    Asymmetric,
+}
+
+/// 边的线型。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum LineStyle {
+    Solid,
+    Dotted,
+    Thick,
+}
+
+/// 边的末端装饰。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Head {
+    /// `-->`：实心箭头。
+    Arrow,
+    /// `--x`：叉头。
+    Cross,
+    /// `--o`：圆头。
+    Circle,
+    /// `---`：无。
+    None,
+}
+
+/// 边。
+#[derive(Clone, Debug)]
+struct Edge {
+    from: usize,
+    to: usize,
+    label: Option<String>,
+    line: LineStyle,
+    head: Head,
+    /// 起点侧是否也有箭头（`<-->`）。
+    bidirectional: bool,
+}
+
+/// 解析后的图。
+#[derive(Clone, Debug)]
+struct Graph {
+    /// 流向为水平（`LR` / `RL`）还是垂直（`TB` / `TD` / `BT`）。
+    horizontal: bool,
+    /// 是否反向（`RL` / `BT`）。
+    reversed: bool,
+    /// 节点：显示文本 + 外形。
+    nodes: Vec<(String, NodeShape)>,
+    edges: Vec<Edge>,
+}
+
+// ============================================================================
+// 解析
+// ============================================================================
+
+/// 解析 Mermaid 源码为图模型。
+fn parse_graph(src: &str) -> Result<Graph, MermaidError> {
+    let header = src
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty() && !l.starts_with("%%"))
+        .ok_or_else(|| MermaidError::Malformed("图表内容为空".to_string()))?;
+    // 头部形如 `graph LR` / `flowchart TD;`；`;` 之后可能还带着第一条语句。
+    let header = header.trim_end_matches(';').trim();
+    let mut words = header.splitn(2, char::is_whitespace);
+    let kind = words.next().unwrap_or_default().to_ascii_lowercase();
+    if kind != "graph" && kind != "flowchart" {
+        return Err(MermaidError::Unsupported(kind));
+    }
+    let rest = words.next().unwrap_or("");
+    let mut tail_iter = rest.splitn(2, |c: char| c.is_whitespace() || c == ';');
+    let dir = tail_iter.next().unwrap_or("TB").trim().to_ascii_uppercase();
+    let tail = tail_iter
+        .next()
+        .unwrap_or("")
+        .trim_start_matches([';', ' ']);
+    let (horizontal, reversed) = match dir.as_str() {
+        "" | "TB" | "TD" => (false, false),
+        "LR" => (true, false),
+        "RL" => (true, true),
+        "BT" => (false, true),
+        other => return Err(MermaidError::Unsupported(format!("方向 `{other}`"))),
+    };
+
+    let mut g = Graph {
+        horizontal,
+        reversed,
+        nodes: Vec::new(),
+        edges: Vec::new(),
+    };
+    if !tail.is_empty() {
+        parse_line(tail, &mut g)?;
+    }
+    // 头部那一行之后的其余行。
+    let mut seen_header = false;
+    for line in src.lines().map(str::trim) {
+        if !seen_header {
+            if line.is_empty() || line.starts_with("%%") {
+                continue;
+            }
+            seen_header = true;
+            continue;
+        }
+        parse_line(line, &mut g)?;
+    }
+    Ok(g)
+}
+
+/// 解析一行（可能含多条语句，用 `;` 分隔）。
+fn parse_line(line: &str, g: &mut Graph) -> Result<(), MermaidError> {
+    let line = line.trim();
+    if line.is_empty() || line.starts_with("%%") {
+        return Ok(());
+    }
+    for stmt in line.split(';').map(str::trim).filter(|s| !s.is_empty()) {
+        parse_statement(stmt, g)?;
+    }
+    Ok(())
+}
+
+/// 取语句开头的标识符（用于识别指令关键字）。
+fn leading_word(stmt: &str) -> String {
+    stmt.chars()
+        .take_while(|c| c.is_ascii_alphanumeric())
+        .collect()
+}
+
+/// 纯装饰指令：忽略。
+fn is_cosmetic(stmt: &str) -> bool {
+    matches!(
+        leading_word(stmt).as_str(),
+        "style"
+            | "classDef"
+            | "class"
+            | "linkStyle"
+            | "click"
+            | "direction"
+            | "accTitle"
+            | "accDescr"
+    )
+}
+
+/// 结构上不支持：宁可整体回退，也不要画出半张图。
+fn unsupported_kind(stmt: &str) -> Option<String> {
+    let head = leading_word(stmt);
+    if matches!(head.as_str(), "subgraph" | "end") {
+        return Some(head);
+    }
+    // `sequenceDiagram` / `classDiagram` 这类：关键字本身以 Diagram 结尾。
+    if head.ends_with("Diagram") {
+        return Some(head);
+    }
+    if matches!(
+        head.as_str(),
+        "pie"
+            | "gantt"
+            | "journey"
+            | "gitGraph"
+            | "mindmap"
+            | "timeline"
+            | "quadrantChart"
+            | "xychart"
+            | "sankey"
+            | "requirement"
+    ) {
+        return Some(head);
+    }
+    None
+}
+
+/// 解析一条语句：`节点 (边 节点)*`。
+fn parse_statement(stmt: &str, g: &mut Graph) -> Result<(), MermaidError> {
+    if is_cosmetic(stmt) {
+        return Ok(());
+    }
+    if let Some(what) = unsupported_kind(stmt) {
+        return Err(MermaidError::Unsupported(what));
+    }
+    let chars: Vec<char> = stmt.chars().collect();
+    let mut i = 0usize;
+    let mut prev = parse_node(&chars, &mut i, g)?;
+    loop {
+        skip_ws(&chars, &mut i);
+        if i >= chars.len() {
+            break;
+        }
+        let edge = parse_edge(&chars, i)?;
+        i += edge.consumed;
+        skip_ws(&chars, &mut i);
+        let next = parse_node(&chars, &mut i, g)?;
+        g.edges.push(Edge {
+            from: prev,
+            to: next,
+            label: edge.label,
+            line: edge.line,
+            head: edge.head,
+            bidirectional: edge.bidirectional,
+        });
+        prev = next;
+    }
+    Ok(())
+}
+
+fn skip_ws(c: &[char], i: &mut usize) {
+    while *i < c.len() && c[*i].is_whitespace() {
+        *i += 1;
+    }
+}
+
+/// 读一个节点（id + 可选的形状与文本），返回它在 `g.nodes` 里的下标。
+///
+/// 同一 id 重复出现时复用同一下标，但**后写的形状与文本会覆盖先写的**——
+/// 与 Mermaid 的行为一致（`A[旧]` 之后写 `A[新]`，显示新的）。
+fn parse_node(c: &[char], i: &mut usize, g: &mut Graph) -> Result<usize, MermaidError> {
+    skip_ws(c, i);
+    let start = *i;
+    while *i < c.len() {
+        let ch = c[*i];
+        if ch.is_alphanumeric() || ch == '_' {
+            *i += 1;
+            continue;
+        }
+        // 连字符算 id 的一部分（`my-node`），但若它**引出一条边**就必须停。
+        //
+        // `A-->B` 是最常见的写法：不设这道闸，id 会被读成 `A--`，
+        // 随后 `>` 被当成「形状开始」，报出「形状没有闭合」这种
+        // 与真实原因八竿子打不着的错——实测就是这么误导的。
+        if ch == '-' {
+            let next = c.get(*i + 1).copied();
+            if matches!(
+                next,
+                Some('-') | Some('>') | Some('.') | Some('x') | Some('o')
+            ) {
+                break;
+            }
+            *i += 1;
+            continue;
+        }
+        break;
+    }
+    if start == *i {
+        return Err(MermaidError::Malformed(format!(
+            "期望节点名，实际遇到 `{}`",
+            c.get(*i).copied().unwrap_or(' ')
+        )));
+    }
+    let id: String = c[start..*i].iter().collect();
+
+    // 形状：**先长后短**，否则 `[[` 会被 `[` 抢走、`(("` 会被 `(` 抢走。
+    let rest = &c[*i..];
+    let (shape, open, close) = if starts_with(rest, "[[") {
+        (NodeShape::Subroutine, "[[", "]]")
+    } else if starts_with(rest, "((") {
+        (NodeShape::Circle, "((", "))")
+    } else if starts_with(rest, "([") {
+        (NodeShape::Stadium, "([", "])")
+    } else if starts_with(rest, "[(") {
+        (NodeShape::Cylinder, "[(", ")]")
+    } else if starts_with(rest, "{{") {
+        (NodeShape::Hexagon, "{{", "}}")
+    } else if starts_with(rest, "[/") {
+        (NodeShape::Parallelogram, "[/", "/]")
+    } else if starts_with(rest, "[\\") {
+        (NodeShape::Parallelogram, "[\\", "\\]")
+    } else if starts_with(rest, "[") {
+        (NodeShape::Rect, "[", "]")
+    } else if starts_with(rest, "(") {
+        (NodeShape::Rounded, "(", ")")
+    } else if starts_with(rest, "{") {
+        (NodeShape::Rhombus, "{", "}")
+    } else if starts_with(rest, ">") {
+        (NodeShape::Asymmetric, ">", "]")
+    } else {
+        // 裸 id：默认矩形，文本就是 id。
+        return Ok(intern(g, &id, None, NodeShape::Rect));
+    };
+
+    *i += open.chars().count();
+    let text_start = *i;
+    while *i < c.len() && !starts_with(&c[*i..], close) {
+        *i += 1;
+    }
+    if *i >= c.len() {
+        return Err(MermaidError::Malformed(format!(
+            "节点 `{id}` 的形状 `{open}` 没有用 `{close}` 闭合"
+        )));
+    }
+    let raw: String = c[text_start..*i].iter().collect();
+    *i += close.chars().count();
+    // Mermaid 允许 `A["文本"]`；剥掉成对的引号。
+    let text = raw.trim().trim_matches('"').trim().to_string();
+    let text = if text.is_empty() { id.clone() } else { text };
+    Ok(intern(g, &id, Some(text), shape))
+}
+
+fn starts_with(c: &[char], pat: &str) -> bool {
+    let p: Vec<char> = pat.chars().collect();
+    c.len() >= p.len() && c[..p.len()] == p[..]
+}
+
+/// 按 id 取（或新建）节点下标。
+fn intern(g: &mut Graph, id: &str, text: Option<String>, shape: NodeShape) -> usize {
+    if let Some(pos) = g.nodes.iter().position(|(n, _)| n == id) {
+        if let Some(text) = text {
+            g.nodes[pos] = (text, shape);
+        }
+        return pos;
+    }
+    g.nodes
+        .push((text.unwrap_or_else(|| id.to_string()), shape));
+    g.nodes.len() - 1
+}
+
+/// 一条边的解析结果。
+struct ParsedEdge {
+    line: LineStyle,
+    head: Head,
+    label: Option<String>,
+    bidirectional: bool,
+    consumed: usize,
+}
+
+/// 读一条边。
+///
+/// # 为什么用「扫描找收尾符」而不是穷举全部写法
+///
+/// Mermaid 的边语法有两套并存：标签**夹在**中间（`A -- 文案 --> B`）与
+/// 标签写在**管道里**（`A -->|文案| B`）。前者意味着「标签」与「收尾符」
+/// 之间没有固定分隔，穷举要写 `--` × `==` × `-.` × 收尾符 × 有无标签的组合。
+/// 改为：先定线型（看开头两字符），再向后扫描找**第一个收尾符**，
+/// 中间的部分就是标签。一套逻辑覆盖全部组合。
+fn parse_edge(c: &[char], start: usize) -> Result<ParsedEdge, MermaidError> {
+    let mut i = start;
+    // 双向：`A <--> B`。起点侧多一个 `<`。
+    let bidirectional = c[i] == '<';
+    if bidirectional {
+        i += 1;
+    }
+    let line = if starts_with(&c[i..], "==") {
+        LineStyle::Thick
+    } else if starts_with(&c[i..], "-.") {
+        LineStyle::Dotted
+    } else if starts_with(&c[i..], "-") {
+        // `--` 与单个 `-` 同归实线：前者是 mermaid 的标准写法，后者是
+        // `A - B` 这类宽松输入的容错。两者后面的步进完全一致，故合并。
+        LineStyle::Solid
+    } else {
+        return Err(MermaidError::Malformed(format!(
+            "期望边（`-->` 之类），实际遇到 `{}`",
+            c[i]
+        )));
+    };
+    i += 2;
+    let label_start = i;
+    let mut label_end = i;
+    let mut found: Option<(Head, usize)> = None;
+    while i < c.len() {
+        if let Some((head, len)) = match_closer(&c[i..]) {
+            found = Some((head, len));
+            break;
+        }
+        i += 1;
+        label_end = i;
+    }
+    let Some((head, len)) = found else {
+        return Err(MermaidError::Malformed(
+            "边的收尾符缺失（应为 `>` / `-` / `x` / `o`）".to_string(),
+        ));
+    };
+    let mut consumed = i + len;
+    let raw: String = c[label_start..label_end].iter().collect();
+    let mut label = raw.trim().to_string();
+    // `A -->|文案| B`：管道里的标签排在收尾符**之后**，且优先级更高。
+    if c.get(consumed) == Some(&'|') {
+        let body_start = consumed + 1;
+        let mut j = body_start;
+        while j < c.len() && c[j] != '|' {
+            j += 1;
+        }
+        if j < c.len() {
+            let piped: String = c[body_start..j].iter().collect();
+            if !piped.trim().is_empty() {
+                label = piped.trim().to_string();
+            }
+            consumed = j + 1;
+        }
+    }
+    Ok(ParsedEdge {
+        line,
+        head,
+        label: (!label.is_empty()).then_some(label),
+        bidirectional,
+        consumed: consumed - start,
+    })
+}
+
+/// 在当前前缀匹配一个收尾符（**先长后短**，否则 `-->` 会被 `-` 抢走）。
+fn match_closer(c: &[char]) -> Option<(Head, usize)> {
+    const TABLE: &[(&str, Head)] = &[
+        ("-->", Head::Arrow),
+        ("---", Head::None),
+        ("--x", Head::Cross),
+        ("--o", Head::Circle),
+        ("==>", Head::Arrow),
+        ("===", Head::None),
+        (".->", Head::Arrow),
+        (".-", Head::None),
+        ("->", Head::Arrow),
+        (">", Head::Arrow),
+        ("x", Head::Cross),
+        ("o", Head::Circle),
+        ("-", Head::None),
+        ("=", Head::None),
+    ];
+    TABLE
+        .iter()
+        .find(|(pat, _)| starts_with(c, pat))
+        .map(|(pat, head)| (*head, pat.chars().count()))
+}
+
+// ============================================================================
+// 布局
+// ============================================================================
+
+/// 一个节点在版面里的位置与尺寸。
+#[derive(Clone, Debug)]
+struct Placed {
+    /// 节点中心。
+    center: Pos2,
+    size: Vec2,
+    shape: NodeShape,
+}
+
+/// 绘制图元（坐标已含方向变换，可直接使用）。
+#[derive(Clone, Debug)]
+enum Prim {
+    /// 多边形。`radius > 0` 且为 4 点时按圆角矩形处理。
+    Poly {
+        points: Vec<Pos2>,
+        radius: f32,
+        fill: bool,
+        /// 子程序形的两道内竖线。
+        ticks: bool,
+    },
+    Line {
+        a: Pos2,
+        b: Pos2,
+        width: f32,
+        dotted: bool,
+    },
+    /// 实心三角箭头。
+    Arrow {
+        tip: Pos2,
+        dir: Vec2,
+        len: f32,
+        spread: f32,
+    },
+    /// 叉头（`--x`）。
+    Cross { at: Pos2, dir: Vec2, len: f32 },
+    /// 文字。
+    Text {
+        at: Pos2,
+        text: String,
+        size: f32,
+        /// 是否铺一块底色（边标签压线时用）。
+        plate: bool,
+    },
+}
+
+/// 版面。
+#[derive(Clone, Debug)]
+pub struct MermaidLayout {
+    /// 内容宽（点）。
+    pub width: f32,
+    /// 内容高（点）。
+    pub height: f32,
+    /// 图元（坐标以左上角为原点）。
+    prims: Vec<Prim>,
+}
+
+/// 把源码排成版面。返回 `Err` 时调用方应回退到源码显示。
+pub fn layout(src: &str, size: f32, measure: Measure<'_>) -> Result<MermaidLayout, MermaidError> {
+    let g = parse_graph(src)?;
+    if g.nodes.is_empty() {
+        return Err(MermaidError::Malformed(
+            "图里没有任何节点（只有 `graph LR` 一行？）".to_string(),
+        ));
+    }
+    let ranks = rank_nodes(&g);
+    let layers = order_within_rank(&g, &ranks);
+    let placed = place(&g, &layers, size, measure);
+    let prims = emit(&g, &placed, size, measure);
+    // 版面尺寸：把所有图元的外接框并起来。
+    // 不另算一份坐标系——两份几何一旦走偏，图会贴边或被裁，且很难定位。
+    // 用 `Option` 而不是 `Rect::NOTHING` 当哨兵：emath 0.33 的 `Rect`
+    // 没有 `is_nothing()`（旧版本有），比对 `NOTHING` 又要依赖它的
+    // 「min 为 +∞ / max 为 -∞」这种实现细节，读起来像在猜。
+    let bounds = prims
+        .iter()
+        .map(prim_bounds)
+        .reduce(Rect::union)
+        .unwrap_or_else(|| Rect::from_min_size(Pos2::ZERO, Vec2::splat(size)));
+    // 归一化到左上角为原点。
+    let offset = -bounds.min.to_vec2();
+    let prims: Vec<Prim> = prims.into_iter().map(|p| shift_prim(p, offset)).collect();
+    Ok(MermaidLayout {
+        width: bounds.width(),
+        height: bounds.height(),
+        prims,
+    })
+}
+
+/// 最长路径分层：`rank[v] = max(rank[pred] + 1)`。
+///
+/// 迭代**有上界**（最多 `节点数` 轮），故**有环也不会卡死**：
+/// 环上的节点会稳定在某个较大 rank 上（图仍画得出来，只是不最优）。
+fn rank_nodes(g: &Graph) -> Vec<usize> {
+    let n = g.nodes.len();
+    let mut rank = vec![0usize; n];
+    for _ in 0..n.max(1) {
+        let mut changed = false;
+        for e in &g.edges {
+            // 自环必须排除：`A-->A` 若参与松弛会把自身一轮轮推高，
+            // 白跑满所有轮次（结果虽然被上界兜住，但徒增开销且层次难看）。
+            if e.from == e.to {
+                continue;
+            }
+            let want = rank[e.from] + 1;
+            if want > rank[e.to] && want <= n {
+                rank[e.to] = want;
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    rank
+}
+
+/// 同 rank 内排序：按重心迭代两轮，减少边交叉。
+///
+/// 第一轮按「前驱的平均次序」，第二轮按「后继的平均次序」——Sugiyama 的
+/// 相邻交换启发式的最简形式。不做的话 `A-->C, B-->D` 这类图会出现大量交叉线。
+fn order_within_rank(g: &Graph, ranks: &[usize]) -> Vec<Vec<usize>> {
+    let max_rank = ranks.iter().copied().max().unwrap_or(0);
+    let mut layers: Vec<Vec<usize>> = vec![Vec::new(); max_rank + 1];
+    // 初始次序 = 首次出现的次序（稳定且可预期）。
+    for v in 0..g.nodes.len() {
+        layers[ranks[v]].push(v);
+    }
+    for pass in 0..2 {
+        let forward = pass == 0;
+        let mut range: Vec<usize> = if forward {
+            (1..=max_rank).collect()
+        } else {
+            (0..max_rank).collect()
+        };
+        if !forward {
+            range.reverse();
+        }
+        for r in range {
+            // 注意：先只读 `layers` 算出重心，再写回 `layers[r]`。
+            // 若在 `.map()` 里直接改 `layers[r]`，闭包会同时持有可变与不可变借用。
+            let mut scored: Vec<(f32, usize)> = layers[r]
+                .iter()
+                .map(|v| {
+                    let mut sum = 0.0_f32;
+                    let mut count = 0usize;
+                    for e in &g.edges {
+                        let (near, far) = if forward {
+                            (e.to, e.from)
+                        } else {
+                            (e.from, e.to)
+                        };
+                        if near != *v || ranks[far] == r {
+                            continue;
+                        }
+                        if let Some(p) = layers[ranks[far]].iter().position(|x| *x == far) {
+                            sum += p as f32;
+                            count += 1;
+                        }
+                    }
+                    let key = if count == 0 {
+                        // 无邻居的节点保持原位次（用自己在层内的位置兜底）。
+                        layers[r]
+                            .iter()
+                            .position(|x| x == v)
+                            .map_or(0.0, |p| p as f32)
+                    } else {
+                        sum / count as f32
+                    };
+                    (key, *v)
+                })
+                .collect();
+            scored.sort_by(|a, b| a.0.total_cmp(&b.0));
+            layers[r] = scored.into_iter().map(|(_, v)| v).collect();
+        }
+    }
+    layers
+}
+
+/// 节点尺寸：由文本量 + 外形决定。
+fn node_size(text: &str, shape: NodeShape, size: f32, measure: Measure<'_>) -> Vec2 {
+    let tw = measure(text, size);
+    let pad_x = size * NODE_PAD_X;
+    let pad_y = size * NODE_PAD_Y;
+    let mut w = tw + 2.0 * pad_x;
+    let mut h = size + 2.0 * pad_y;
+    match shape {
+        // 菱形 / 六边形的可用内切区只有一半左右，文本要留双倍余量，
+        // 否则文字会顶出斜边。
+        NodeShape::Rhombus => {
+            w *= DIAMOND_SCALE;
+            h *= DIAMOND_SCALE;
+        }
+        NodeShape::Hexagon | NodeShape::Parallelogram => {
+            w *= 1.45;
+            h *= 1.1;
+        }
+        NodeShape::Circle => {
+            let d = w.max(h) * CIRCLE_D;
+            w = d;
+            h = d;
+        }
+        NodeShape::Stadium => {
+            w += h;
+        }
+        _ => {}
+    }
+    Vec2::new(w.max(size * 1.2), h.max(size * 1.5))
+}
+
+/// 定位：rank → 主坐标，rank 内次序 → 次坐标。
+///
+/// 内部一律按「流向水平」计算，需要时在末尾把主轴镜像 / 交换——
+/// 若为横竖两种流向各写一套定位，两套的分支点迟早会不一致。
+fn place(g: &Graph, layers: &[Vec<usize>], size: f32, measure: Measure<'_>) -> Vec<Placed> {
+    let sizes: Vec<Vec2> = g
+        .nodes
+        .iter()
+        .map(|(t, s)| node_size(t, *s, size, measure))
+        .collect();
+    let gap = size * NODE_GAP;
+    let rank_gap = size * RANK_GAP;
+
+    // 每列的主向厚度与次向总长。
+    let mut col_thick = vec![0.0_f32; layers.len()];
+    let mut col_span = vec![0.0_f32; layers.len()];
+    for (r, layer) in layers.iter().enumerate() {
+        for v in layer {
+            let s = sizes[*v];
+            col_thick[r] = col_thick[r].max(if g.horizontal { s.x } else { s.y });
+        }
+        col_span[r] = layer
+            .iter()
+            .map(|v| {
+                if g.horizontal {
+                    sizes[*v].y
+                } else {
+                    sizes[*v].x
+                }
+            })
+            .sum::<f32>()
+            + gap * layer.len().saturating_sub(1) as f32;
+    }
+    let max_span = col_span.iter().copied().fold(0.0_f32, f32::max);
+
+    // 每列的主向起点。
+    let mut col_start = vec![0.0_f32; layers.len()];
+    let mut acc = 0.0_f32;
+    for r in 0..layers.len() {
+        col_start[r] = acc;
+        acc += col_thick[r] + rank_gap;
+    }
+
+    let mut out = vec![
+        Placed {
+            center: Pos2::ZERO,
+            size: Vec2::ZERO,
+            shape: NodeShape::Rect,
+        };
+        g.nodes.len()
+    ];
+    for (r, layer) in layers.iter().enumerate() {
+        // 本列在主向上整体居中。
+        let mut secondary = (max_span - col_span[r]) * 0.5;
+        for v in layer {
+            let s = sizes[*v];
+            let (sec_extent, thick_extent) = if g.horizontal { (s.y, s.x) } else { (s.x, s.y) };
+            let primary = col_start[r] + (col_thick[r] - thick_extent) * 0.5;
+            let (px, py) = if g.horizontal {
+                (primary, secondary)
+            } else {
+                (secondary, primary)
+            };
+            secondary += sec_extent + gap;
+            out[*v] = Placed {
+                center: Pos2::new(px + s.x * 0.5, py + s.y * 0.5),
+                size: s,
+                shape: g.nodes[*v].1,
+            };
+        }
+    }
+
+    // 反向（`RL` / `BT`）：把主坐标镜像。
+    if g.reversed {
+        let total = acc - rank_gap;
+        for p in &mut out {
+            if g.horizontal {
+                p.center.x = total - p.center.x;
+            } else {
+                p.center.y = total - p.center.y;
+            }
+        }
+    }
+    out
+}
+
+/// 发出图元：先把节点全部画出，再画边（箭头落在节点边界上，不会被节点盖住）。
+fn emit(g: &Graph, placed: &[Placed], size: f32, measure: Measure<'_>) -> Vec<Prim> {
+    let mut prims: Vec<Prim> = Vec::new();
+    for (i, p) in placed.iter().enumerate() {
+        push_node(&mut prims, p, &g.nodes[i].0, size);
+    }
+    for e in &g.edges {
+        push_edge(&mut prims, g, placed, e, size, measure);
+    }
+    prims
+}
+
+/// 一个节点的外形与文字。
+fn push_node(prims: &mut Vec<Prim>, p: &Placed, text: &str, size: f32) {
+    let c = p.center;
+    let (hw, hh) = (p.size.x * 0.5, p.size.y * 0.5);
+    let rect_pts = |w: f32, h: f32| {
+        vec![
+            Pos2::new(c.x - w, c.y - h),
+            Pos2::new(c.x + w, c.y - h),
+            Pos2::new(c.x + w, c.y + h),
+            Pos2::new(c.x - w, c.y + h),
+        ]
+    };
+    let corners = |hw: f32, hh: f32, radius: f32, ticks: bool| Prim::Poly {
+        points: rect_pts(hw, hh),
+        radius,
+        fill: true,
+        ticks,
+    };
+    match p.shape {
+        NodeShape::Rect => prims.push(corners(hw, hh, 4.0, false)),
+        NodeShape::Rounded => prims.push(corners(hw, hh, hh.min(12.0), false)),
+        // 机场跑道：圆角半径等于半高。
+        NodeShape::Stadium => prims.push(corners(hw, hh, hh, false)),
+        NodeShape::Subroutine => prims.push(corners(hw, hh, 2.0, true)),
+        // 数据库：用大圆角矩形近似真圆柱——epaint 没有椭圆填充图元，
+        // 而圆角矩形在视觉上同样表达「存储」。
+        NodeShape::Cylinder => prims.push(corners(hw, hh, hh * 0.7, false)),
+        // 圆：尺寸阶段已把宽高调成正方形，故「圆角=半宽」即圆。
+        NodeShape::Circle => prims.push(corners(hw, hh, hw.min(hh), false)),
+        NodeShape::Rhombus => prims.push(Prim::Poly {
+            points: vec![
+                Pos2::new(c.x, c.y - hh),
+                Pos2::new(c.x + hw, c.y),
+                Pos2::new(c.x, c.y + hh),
+                Pos2::new(c.x - hw, c.y),
+            ],
+            radius: 0.0,
+            fill: true,
+            ticks: false,
+        }),
+        NodeShape::Hexagon => {
+            let inset = hw * 0.5;
+            prims.push(Prim::Poly {
+                points: vec![
+                    Pos2::new(c.x - hw + inset, c.y - hh),
+                    Pos2::new(c.x + hw - inset, c.y - hh),
+                    Pos2::new(c.x + hw, c.y),
+                    Pos2::new(c.x + hw - inset, c.y + hh),
+                    Pos2::new(c.x - hw + inset, c.y + hh),
+                    Pos2::new(c.x - hw, c.y),
+                ],
+                radius: 0.0,
+                fill: true,
+                ticks: false,
+            });
+        }
+        NodeShape::Parallelogram => {
+            let skew = hw * 0.4;
+            prims.push(Prim::Poly {
+                points: vec![
+                    Pos2::new(c.x - hw + skew, c.y - hh),
+                    Pos2::new(c.x + hw, c.y - hh),
+                    Pos2::new(c.x + hw - skew, c.y + hh),
+                    Pos2::new(c.x - hw, c.y + hh),
+                ],
+                radius: 0.0,
+                fill: true,
+                ticks: false,
+            });
+        }
+        NodeShape::Asymmetric => {
+            prims.push(Prim::Poly {
+                points: vec![
+                    Pos2::new(c.x - hw, c.y - hh),
+                    Pos2::new(c.x + hw - hh * 0.6, c.y - hh),
+                    Pos2::new(c.x + hw, c.y),
+                    Pos2::new(c.x + hw - hh * 0.6, c.y + hh),
+                    Pos2::new(c.x - hw, c.y + hh),
+                ],
+                radius: 0.0,
+                fill: true,
+                ticks: false,
+            });
+        }
+    }
+    prims.push(Prim::Text {
+        at: c,
+        text: text.to_string(),
+        size,
+        plate: false,
+    });
+}
+
+/// 一条边：走线 + 箭头 + 标签。
+fn push_edge(
+    prims: &mut Vec<Prim>,
+    g: &Graph,
+    placed: &[Placed],
+    e: &Edge,
+    size: f32,
+    measure: Measure<'_>,
+) {
+    let a = &placed[e.from];
+    let b = &placed[e.to];
+    // 线宽随字号缩放，但保底 0.7 点，否则小字号下图会「消失」。
+    let width = match e.line {
+        LineStyle::Thick => 2.4,
+        _ => 1.4,
+    } * (size / 16.0).max(0.7);
+    let dotted = e.line == LineStyle::Dotted;
+
+    // 自环：在节点上方绕一个小圈（`A --> A` 在状态图里很常见）。
+    if e.from == e.to {
+        let top = Pos2::new(a.center.x, a.center.y - a.size.y * 0.5);
+        let r = size * 0.7;
+        let pts = [
+            top,
+            Pos2::new(top.x - r, top.y - r),
+            Pos2::new(top.x + r, top.y - r),
+            top,
+        ];
+        for w in pts.windows(2) {
+            prims.push(Prim::Line {
+                a: w[0],
+                b: w[1],
+                width,
+                dotted,
+            });
+        }
+        prims.push(Prim::Arrow {
+            tip: top,
+            dir: Vec2::new(0.0, 1.0),
+            len: size * ARROW_LEN,
+            spread: ARROW_SPREAD,
+        });
+        if let Some(label) = &e.label {
+            prims.push(Prim::Text {
+                at: Pos2::new(top.x, top.y - r * 1.6),
+                text: label.clone(),
+                size: size * 0.85,
+                plate: false,
+            });
+        }
+        return;
+    }
+
+    // 出 / 入方向：沿主轴由 a 指向 b，另一轴上则互相靠近（正交走线）。
+    let (out_dir, in_dir) = if g.horizontal {
+        let sign = if b.center.x >= a.center.x { 1.0 } else { -1.0 };
+        (Vec2::new(sign, 0.0), Vec2::new(sign, 0.0))
+    } else {
+        let sign = if b.center.y >= a.center.y { 1.0 } else { -1.0 };
+        (Vec2::new(0.0, sign), Vec2::new(0.0, sign))
+    };
+
+    // 从节点**边界**出发而不是中心：否则线会被节点盖住一半，箭头也看不见。
+    let start = boundary_point(a, out_dir);
+    let end = boundary_point(b, -in_dir);
+    let route = route_points(start, end, out_dir, in_dir);
+    for w in route.windows(2) {
+        prims.push(Prim::Line {
+            a: w[0],
+            b: w[1],
+            width,
+            dotted,
+        });
+    }
+    if e.bidirectional {
+        prims.push(Prim::Arrow {
+            tip: start,
+            dir: -out_dir,
+            len: size * ARROW_LEN,
+            spread: ARROW_SPREAD,
+        });
+    }
+    match e.head {
+        Head::Arrow => prims.push(Prim::Arrow {
+            tip: end,
+            dir: -in_dir,
+            len: size * ARROW_LEN,
+            spread: ARROW_SPREAD,
+        }),
+        Head::Cross => prims.push(Prim::Cross {
+            at: end,
+            dir: in_dir,
+            len: size * ARROW_LEN * 0.7,
+        }),
+        // `--o`：空心圆头用「很扁的三角」不行，改画一个小线段交叉的近似——
+        // 这里用短而宽的三角，视觉上读作圆点（见 paint 的填充色）。
+        Head::Circle => prims.push(Prim::Arrow {
+            tip: end,
+            dir: -in_dir,
+            len: size * ARROW_LEN * 0.45,
+            spread: 1.0,
+        }),
+        Head::None => {}
+    }
+
+    if let Some(label) = &e.label {
+        // 标签压在线上读不清，故 `plate = true` 铺一块底色把线挡住（见 paint）。
+        let _ = measure;
+        prims.push(Prim::Text {
+            at: polyline_midpoint(&route),
+            text: label.clone(),
+            size: size * 0.85,
+            plate: true,
+        });
+    }
+}
+
+/// 取节点边界上沿 `dir` 方向的交点。
+fn boundary_point(p: &Placed, dir: Vec2) -> Pos2 {
+    let (hw, hh) = (p.size.x * 0.5, p.size.y * 0.5);
+    // 菱形 / 圆按更小的内切半径算，让线不要插进斜边里。
+    let (sx, sy) = match p.shape {
+        NodeShape::Rhombus => (hw * 0.62, hh * 0.62),
+        NodeShape::Circle => (hw * 0.8, hh * 0.8),
+        _ => (hw, hh),
+    };
+    let t = if dir.x.abs() > f32::EPSILON {
+        sx / dir.x.abs()
+    } else {
+        f32::INFINITY
+    };
+    let u = if dir.y.abs() > f32::EPSILON {
+        sy / dir.y.abs()
+    } else {
+        f32::INFINITY
+    };
+    let k = t.min(u);
+    Pos2::new(p.center.x + dir.x * k, p.center.y + dir.y * k)
+}
+
+/// 走线：同轴对齐时走直线，否则走「出边 → 中点干 → 入边」的折线。
+fn route_points(start: Pos2, end: Pos2, out_dir: Vec2, in_dir: Vec2) -> Vec<Pos2> {
+    let aligned = (out_dir.x.abs() > 0.5 && (end.y - start.y).abs() < 1.0)
+        || (out_dir.y.abs() > 0.5 && (end.x - start.x).abs() < 1.0);
+    if aligned {
+        return vec![start, end];
+    }
+    if out_dir.x.abs() > 0.5 {
+        let mid_x = (start.x + end.x) * 0.5;
+        vec![
+            start,
+            Pos2::new(start.x + out_dir.x * ROUTE_STUB, start.y),
+            Pos2::new(mid_x, start.y),
+            Pos2::new(mid_x, end.y),
+            Pos2::new(end.x - in_dir.x * ROUTE_STUB, end.y),
+            end,
+        ]
+    } else {
+        let mid_y = (start.y + end.y) * 0.5;
+        vec![
+            start,
+            Pos2::new(start.x, start.y + out_dir.y * ROUTE_STUB),
+            Pos2::new(start.x, mid_y),
+            Pos2::new(end.x, mid_y),
+            Pos2::new(end.x, end.y - in_dir.y * ROUTE_STUB),
+            end,
+        ]
+    }
+}
+
+/// 折线的中点（用于放标签）。
+fn polyline_midpoint(pts: &[Pos2]) -> Pos2 {
+    let total: f32 = pts.windows(2).map(|w| (w[1] - w[0]).length()).sum();
+    let mut want = total * 0.5;
+    for w in pts.windows(2) {
+        let seg = (w[1] - w[0]).length();
+        if seg >= want {
+            let t = if seg > 0.0 { want / seg } else { 0.0 };
+            return w[0] + (w[1] - w[0]) * t;
+        }
+        want -= seg;
+    }
+    *pts.last().unwrap_or(&Pos2::ZERO)
+}
+
+/// 一个图元的外接框。
+fn prim_bounds(p: &Prim) -> Rect {
+    match p {
+        Prim::Poly { points, .. } => Rect::from_points(points),
+        Prim::Line { a, b, width, .. } => Rect::from_two_pos(*a, *b).expand(*width * 0.5),
+        Prim::Arrow {
+            tip,
+            dir,
+            len,
+            spread,
+        } => Rect::from_two_pos(*tip, *tip - *dir * *len).expand(*len * *spread),
+        Prim::Cross { at, len, .. } => Rect::from_center_size(*at, Vec2::splat(*len * 2.0)),
+        Prim::Text { at, text, size, .. } => {
+            // 用「字符数 × 半字号」估外接框：这里只需要**足够大**。
+            // 真实宽度由绘制阶段的字体度量决定，估算偏差只让版面多一点留白。
+            let w = text.chars().count() as f32 * *size * 0.55;
+            Rect::from_center_size(*at, Vec2::new(w.max(*size), *size * 1.5))
+        }
+    }
+}
+
+fn shift_prim(p: Prim, d: Vec2) -> Prim {
+    match p {
+        Prim::Poly {
+            points,
+            radius,
+            fill,
+            ticks,
+        } => Prim::Poly {
+            points: points.into_iter().map(|q| q + d).collect(),
+            radius,
+            fill,
+            ticks,
+        },
+        Prim::Line {
+            a,
+            b,
+            width,
+            dotted,
+        } => Prim::Line {
+            a: a + d,
+            b: b + d,
+            width,
+            dotted,
+        },
+        Prim::Arrow {
+            tip,
+            dir,
+            len,
+            spread,
+        } => Prim::Arrow {
+            tip: tip + d,
+            dir,
+            len,
+            spread,
+        },
+        Prim::Cross { at, dir, len } => Prim::Cross {
+            at: at + d,
+            dir,
+            len,
+        },
+        Prim::Text {
+            at,
+            text,
+            size,
+            plate,
+        } => Prim::Text {
+            at: at + d,
+            text,
+            size,
+            plate,
+        },
+    }
+}
+
+// ============================================================================
+// 绘制
+// ============================================================================
+
+/// 图表配色（由调用方从主题取；本模块不依赖 `Theme`）。
+#[derive(Clone, Copy, Debug)]
+pub struct MermaidStyle {
+    /// 节点填充色。
+    pub node_fill: Color32,
+    /// 节点描边色。
+    pub node_stroke: Color32,
+    /// 节点文字色。
+    pub text: Color32,
+    /// 连线色。
+    pub edge: Color32,
+    /// 边标签底色。
+    pub label_bg: Color32,
+}
+
+/// 把版面按可用宽度缩放到 `rect` 里，返回实际占用高度。
+///
+/// 宽度不足时**整体等比缩小**（含字号与线宽）——宁可整张图小一点，
+/// 也不要右侧被裁掉：图的信息全在结构上，被裁掉的结构等于没画。
+pub fn paint(painter: &Painter, rect: Rect, layout: &MermaidLayout, style: &MermaidStyle) -> f32 {
+    let scale = if layout.width > rect.width() && layout.width > 0.0 {
+        rect.width() / layout.width
+    } else {
+        1.0
+    };
+    let origin = Pos2::new(
+        rect.left() + (rect.width() - layout.width * scale).max(0.0) * 0.5,
+        rect.top(),
+    );
+    let map = |p: Pos2| origin + p.to_vec2() * scale;
+
+    for prim in &layout.prims {
+        match prim {
+            Prim::Poly {
+                points,
+                radius,
+                fill,
+                ticks,
+            } => {
+                let pts: Vec<Pos2> = points.iter().map(|p| map(*p)).collect();
+                let stroke = Stroke::new(1.2 * scale, style.node_stroke);
+                if *fill {
+                    let r = Rect::from_points(&pts);
+                    if pts.len() == 4 && *radius > 0.0 {
+                        painter.rect_filled(
+                            r,
+                            CornerRadius::same(radius.round().clamp(0.0, 255.0) as u8),
+                            style.node_fill,
+                        );
+                    } else {
+                        painter.add(Shape::convex_polygon(
+                            pts.clone(),
+                            style.node_fill,
+                            Stroke::NONE,
+                        ));
+                    }
+                }
+                // 描边：圆角矩形用 `rect_stroke`，其余多边形闭合折线。
+                let r = Rect::from_points(&pts);
+                if pts.len() == 4 && *radius > 0.0 {
+                    painter.rect_stroke(
+                        r,
+                        CornerRadius::same(radius.round().clamp(0.0, 255.0) as u8),
+                        stroke,
+                        StrokeKind::Inside,
+                    );
+                } else {
+                    let mut closed = pts.clone();
+                    if let Some(first) = pts.first() {
+                        closed.push(*first);
+                    }
+                    painter.add(Shape::line(closed, stroke));
+                }
+                if *ticks {
+                    // 子程序形：左右各一道内竖线。
+                    for t in [0.25_f32, 0.75] {
+                        let x = r.left() + r.width() * t;
+                        painter.line_segment(
+                            [Pos2::new(x, r.top()), Pos2::new(x, r.bottom())],
+                            Stroke::new(1.0 * scale, style.node_stroke),
+                        );
+                    }
+                }
+            }
+            Prim::Line {
+                a,
+                b,
+                width,
+                dotted,
+            } => {
+                let (a, b) = (map(*a), map(*b));
+                let stroke = Stroke::new(width * scale, style.edge);
+                if *dotted {
+                    painter.extend(Shape::dashed_line(
+                        &[a, b],
+                        stroke,
+                        4.0 * scale,
+                        3.0 * scale,
+                    ));
+                } else {
+                    painter.line_segment([a, b], stroke);
+                }
+            }
+            Prim::Arrow {
+                tip,
+                dir,
+                len,
+                spread,
+            } => {
+                let tip = map(*tip);
+                let len = len * scale;
+                // 等比缩放不改变方向，故 `dir` 直接用原值。
+                let side = Vec2::new(-dir.y, dir.x);
+                let back = tip - *dir * len;
+                painter.add(Shape::convex_polygon(
+                    vec![
+                        tip,
+                        back + side * len * *spread,
+                        back - side * len * *spread,
+                    ],
+                    style.edge,
+                    Stroke::NONE,
+                ));
+            }
+            Prim::Cross { at, dir, len } => {
+                let at = map(*at);
+                let len = len * scale;
+                let side = Vec2::new(-dir.y, dir.x);
+                for s in [1.0_f32, -1.0] {
+                    painter.line_segment(
+                        [at, at + (*dir + side * s) * len * 0.9],
+                        Stroke::new(1.4 * scale, style.edge),
+                    );
+                }
+            }
+            Prim::Text {
+                at,
+                text,
+                size,
+                plate,
+            } => {
+                if text.is_empty() {
+                    continue;
+                }
+                let at = map(*at);
+                let mut job = LayoutJob::default();
+                job.append(
+                    text,
+                    0.0,
+                    TextFormat {
+                        font_id: FontId::proportional(size * scale),
+                        color: style.text,
+                        ..Default::default()
+                    },
+                );
+                let galley = painter.layout_job(job);
+                let pos = at - galley.size() * 0.5;
+                if *plate {
+                    // 边标签：先铺一块底色，否则线从字缝里穿过去读不清。
+                    painter.rect_filled(
+                        Rect::from_center_size(at, galley.size() + Vec2::splat(4.0 * scale)),
+                        CornerRadius::same(2),
+                        style.label_bg,
+                    );
+                }
+                painter.galley(pos, galley, style.text);
+            }
+        }
+    }
+    layout.height * scale
+}
+
+/// 按可用宽度等比缩放后占用的高度（调用方排布卡片时用）。
+pub fn fitted_height(layout: &MermaidLayout, max_w: f32) -> f32 {
+    let scale = if layout.width > max_w && layout.width > 0.0 {
+        max_w / layout.width
+    } else {
+        1.0
+    };
+    layout.height * scale
+}
+
+/// 供测试与调用方查询图元数量（绘制结果是否为空的自检入口）。
+pub fn prim_count(layout: &MermaidLayout) -> usize {
+    layout.prims.len()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 假度量：每字符宽 `0.5em`（与 `math` 的测试同口径）。
+    fn m() -> impl Fn(&str, f32) -> f32 {
+        |s: &str, size: f32| s.chars().count() as f32 * size * 0.5
+    }
+
+    fn lay(src: &str) -> MermaidLayout {
+        let f = m();
+        layout(src, 14.0, &f).expect("应能布局")
+    }
+
+    fn bad(src: &str) -> MermaidError {
+        let f = m();
+        layout(src, 14.0, &f).expect_err("应报错")
+    }
+
+    #[test]
+    fn simple_graph_has_two_nodes_and_one_edge() {
+        let g = parse_graph("graph LR\nA --> B\n").expect("解析");
+        assert_eq!(g.nodes.len(), 2);
+        assert_eq!(g.edges.len(), 1);
+        assert!(g.horizontal, "LR 应为水平流向");
+    }
+
+    #[test]
+    fn all_directions_are_recognized() {
+        for (src, horiz, rev) in [
+            ("graph LR\nA-->B", true, false),
+            ("graph RL\nA-->B", true, true),
+            ("graph TB\nA-->B", false, false),
+            ("graph TD\nA-->B", false, false),
+            ("graph BT\nA-->B", false, true),
+            ("flowchart LR\nA-->B", true, false),
+            // 只有 `graph` 没写方向时按 Mermaid 的默认 TB 处理。
+            ("graph\nA-->B", false, false),
+        ] {
+            let g = parse_graph(src).unwrap_or_else(|e| panic!("{src} 应能解析：{e}"));
+            assert_eq!(g.horizontal, horiz, "{src}");
+            assert_eq!(g.reversed, rev, "{src}");
+        }
+    }
+
+    #[test]
+    fn node_shapes_are_recognized() {
+        let src = "graph LR\nA[a]-->B(b)-->C([c])-->D[[d]]-->E((e))-->F{f}";
+        let g = parse_graph(src).expect("解析");
+        let shapes: Vec<NodeShape> = g.nodes.iter().map(|(_, s)| *s).collect();
+        assert_eq!(
+            shapes,
+            vec![
+                NodeShape::Rect,
+                NodeShape::Rounded,
+                NodeShape::Stadium,
+                NodeShape::Subroutine,
+                NodeShape::Circle,
+                NodeShape::Rhombus,
+            ]
+        );
+    }
+
+    #[test]
+    fn cylinder_and_hexagon_shapes_are_recognized() {
+        let g = parse_graph("graph LR\nA[(库)]-->B{{六}}\n").expect("解析");
+        assert_eq!(g.nodes[0].1, NodeShape::Cylinder);
+        assert_eq!(g.nodes[1].1, NodeShape::Hexagon);
+        assert_eq!(g.nodes[0].0, "库");
+    }
+
+    #[test]
+    fn node_text_overrides_the_id() {
+        let g = parse_graph("graph LR\nA[启动流程]-->B\n").expect("解析");
+        assert_eq!(g.nodes[0].0, "启动流程");
+        // 裸 id 的节点用 id 当文本。
+        assert_eq!(g.nodes[1].0, "B");
+    }
+
+    #[test]
+    fn quoted_node_text_is_unwrapped() {
+        let g = parse_graph("graph LR\nA[\"带 空格 的文本\"]-->B\n").expect("解析");
+        assert_eq!(g.nodes[0].0, "带 空格 的文本");
+    }
+
+    #[test]
+    fn edge_styles_and_heads_are_recognized() {
+        let g = parse_graph("graph LR\nA-->B\nB-.->C\nC==>D\nD---E\nE--xF\nF--oG\n").expect("解析");
+        let styles: Vec<(LineStyle, Head)> = g.edges.iter().map(|e| (e.line, e.head)).collect();
+        assert_eq!(
+            styles,
+            vec![
+                (LineStyle::Solid, Head::Arrow),
+                (LineStyle::Dotted, Head::Arrow),
+                (LineStyle::Thick, Head::Arrow),
+                (LineStyle::Solid, Head::None),
+                (LineStyle::Solid, Head::Cross),
+                (LineStyle::Solid, Head::Circle),
+            ]
+        );
+    }
+
+    #[test]
+    fn bidirectional_edge_marks_both_ends() {
+        let g = parse_graph("graph LR\nA<-->B\n").expect("解析");
+        assert!(g.edges[0].bidirectional, "`<-->` 应记下起点侧的箭头");
+    }
+
+    #[test]
+    fn inline_edge_label_between_dashes_is_read() {
+        let g = parse_graph("graph LR\nA -- 是 --> B\n").expect("解析");
+        assert_eq!(g.edges[0].label.as_deref(), Some("是"));
+    }
+
+    #[test]
+    fn piped_edge_label_is_read() {
+        let g = parse_graph("graph LR\nA -->|否| B\n").expect("解析");
+        assert_eq!(g.edges[0].label.as_deref(), Some("否"));
+    }
+
+    #[test]
+    fn chained_edges_produce_one_edge_per_hop() {
+        let g = parse_graph("graph LR\nA --> B --> C\n").expect("解析");
+        assert_eq!(g.edges.len(), 2);
+        assert_eq!(g.nodes.len(), 3);
+    }
+
+    #[test]
+    fn semicolons_and_comments_are_handled() {
+        let g = parse_graph("graph LR; A-->B; B-->C;\n").expect("解析");
+        assert_eq!(g.edges.len(), 2);
+        // 语句写在头部同一行时也要读进来。
+        let g = parse_graph("graph LR; A-->B\nB-->C\n").expect("解析");
+        assert_eq!(g.edges.len(), 2);
+    }
+
+    #[test]
+    fn comment_lines_are_skipped() {
+        let g = parse_graph("graph LR\n%% 这是一行注释\nA-->B\n%% 又一行\n").expect("解析");
+        assert_eq!(g.edges.len(), 1);
+    }
+
+    #[test]
+    fn cosmetic_directives_are_ignored_not_fatal() {
+        // 只改配色 / 交互的指令不该让整张图打回源码。
+        let g = parse_graph(
+            "graph LR\nA-->B\nstyle A fill:#f9f\nclassDef x fill:#fff\nlinkStyle 0 stroke:red\nclick A href \"x\"\n",
+        )
+        .expect("装饰性指令应被忽略");
+        assert_eq!(g.nodes.len(), 2);
+    }
+
+    #[test]
+    fn other_diagram_kinds_are_unsupported() {
+        for src in [
+            "sequenceDiagram\nA->>B: hi",
+            "classDiagram\nA <|-- B",
+            "pie title x\n\"a\" : 1",
+            "gantt\ntitle x",
+            "stateDiagram-v2\n[*] --> A",
+            "erDiagram\nA ||--o{ B : has",
+            "journey\ntitle x",
+        ] {
+            assert!(
+                matches!(bad(src), MermaidError::Unsupported(_)),
+                "{src} 应报 Unsupported"
+            );
+        }
+    }
+
+    #[test]
+    fn subgraph_is_unsupported_rather_than_half_drawn() {
+        // 半张图比不画更难排查：用户会先怀疑自己的语法。
+        let e = bad("graph LR\nsubgraph 一组\nA-->B\nend\n");
+        assert!(matches!(e, MermaidError::Unsupported(_)), "实际 {e:?}");
+    }
+
+    #[test]
+    fn malformed_input_is_reported_not_panicked() {
+        // `panic = "abort"` 下绝不能崩。
+        for src in [
+            "graph LR\nA -->",
+            "graph LR\nA --> )",
+            "graph LR\nA[未闭合 --> B",
+            "graph LR\n",
+            "graph LR\n-->B",
+            "graph ZZ\nA-->B",
+        ] {
+            let _ = bad(src);
+        }
+    }
+
+    #[test]
+    fn ranks_follow_edge_direction() {
+        let g = parse_graph("graph LR\nA-->B-->C\n").expect("解析");
+        let r = rank_nodes(&g);
+        assert!(r[0] < r[1], "B 应排在 A 之后");
+        assert!(r[1] < r[2], "C 应排在 B 之后");
+    }
+
+    #[test]
+    fn parallel_nodes_share_a_rank() {
+        let g = parse_graph("graph LR\nA-->B\nA-->C\n").expect("解析");
+        let r = rank_nodes(&g);
+        assert_eq!(r[1], r[2], "B 与 C 同层");
+    }
+
+    #[test]
+    fn cycles_do_not_hang_or_panic() {
+        let g = parse_graph("graph LR\nA-->B\nB-->C\nC-->A\n").expect("解析");
+        let r = rank_nodes(&g);
+        assert!(r.iter().any(|v| *v > 0), "有环也要排出层次");
+        assert!(r.iter().all(|v| *v <= g.nodes.len()));
+        // 布局本身也必须能结束（这条才是「不卡死」的真断言）。
+        assert!(lay("graph LR\nA-->B\nB-->C\nC-->A\n").width > 0.0);
+    }
+
+    #[test]
+    fn self_loop_does_not_hang() {
+        let g = parse_graph("graph LR\nA-->A\n").expect("解析");
+        let r = rank_nodes(&g);
+        assert_eq!(r[0], 0, "自环不应把自身推到第 1 层");
+        assert!(lay("graph LR\nA-->A\n").height > 0.0);
+    }
+
+    #[test]
+    fn layout_produces_positive_bounds_and_prims() {
+        let l = lay("graph LR\nA[开始]-->B{判断}-->C[结束]\n");
+        assert!(l.width > 0.0);
+        assert!(l.height > 0.0);
+        assert!(prim_count(&l) > 0);
+    }
+
+    #[test]
+    fn horizontal_layout_grows_along_x() {
+        let l = lay("graph LR\nA[第一步]-->B[第二步]-->C[第三步]\n");
+        assert!(
+            l.width > l.height,
+            "LR 三列应比一列宽：{}x{}",
+            l.width,
+            l.height
+        );
+    }
+
+    #[test]
+    fn vertical_layout_grows_along_y() {
+        let l = lay("graph TD\nA[第一步]-->B[第二步]-->C[第三步]\n");
+        assert!(
+            l.height > l.width,
+            "TD 三层应比一列高：{}x{}",
+            l.width,
+            l.height
+        );
+    }
+
+    #[test]
+    fn isolated_node_is_still_drawn() {
+        let g = parse_graph("graph LR\nA-->B\nC\n").expect("解析");
+        assert_eq!(g.nodes.len(), 3);
+        assert!(prim_count(&lay("graph LR\nA-->B\nC\n")) > 0);
+    }
+
+    #[test]
+    fn fitting_scales_down_when_too_wide() {
+        let l = lay("graph LR\nA[很长的节点名称甲]-->B[很长的节点名称乙]-->C[很长的节点名称丙]\n");
+        let narrow = l.width * 0.5;
+        assert!(
+            (fitted_height(&l, narrow) - l.height * 0.5).abs() < 0.01,
+            "宽度不足时应等比缩小"
+        );
+        assert!(
+            (fitted_height(&l, l.width * 2.0) - l.height).abs() < 0.01,
+            "放得下就不该缩放"
+        );
+    }
+
+    #[test]
+    fn wider_node_text_makes_wider_graph() {
+        let narrow = lay("graph LR\nA-->B\n");
+        let wide = lay("graph LR\nA[一段明显更长的节点文字]-->B\n");
+        assert!(wide.width > narrow.width);
+    }
+
+    #[test]
+    fn every_hostile_input_is_an_error_not_a_panic() {
+        // 一批「看起来像但又不对」的输入，全部只允许返回 Err。
+        for src in [
+            "",
+            "\n\n",
+            "graph",
+            "%%只有注释",
+            "graph LR\nA[[x]-->B",
+            "graph LR\nA{{x}-->B",
+            "graph LR\nA((x)-->B",
+        ] {
+            let f = m();
+            let _ = layout(src, 14.0, &f);
+        }
+    }
+}

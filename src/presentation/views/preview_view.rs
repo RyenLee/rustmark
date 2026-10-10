@@ -29,7 +29,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 use egui::text::{LayoutJob, TextFormat, TextWrapping};
-use egui::{Align, CornerRadius, FontId, Layout, RichText, ScrollArea, Stroke, Ui};
+use egui::{Align, Align2, CornerRadius, FontId, Layout, RichText, ScrollArea, Stroke, Ui};
 
 use crate::app::frame::EditorApp;
 use crate::application::document::registry::DocumentContentProvider;
@@ -254,6 +254,25 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
     };
     let out = ScrollArea::vertical()
         .id_salt("preview-scroll")
+        // ⚠️ 必须关掉**横向**自动收缩。写 `.auto_shrink([false, true])` 不是
+        // 为了腾地方，而是修一个「预览区滚不动」的缺陷：
+        //
+        // `ScrollArea::vertical()` 的 `direction_enabled` 是 `[false, true]`
+        // （横向关、纵向开），而 `auto_shrink` 默认 `Vec2b::TRUE` 两个方向都开。
+        // 于是横向落进 egui 的这一支（`containers/scroll_area.rs`，0.33.3）：
+        //
+        //   (false, true) => content_size[d]   // **收缩到内容宽度**
+        //
+        // 滚动区因此只有正文那么宽。实测（本机 1000×640、默认主题）：
+        // 面板可用 348pt，纯段落文档的内容宽 81.5pt，滚轮只有落在这 81.5pt
+        // 里才算「悬停在滚动区上」（`is_hovering_outer_rect` 用 `outer_rect`
+        // 判定），右侧那 260 多 pt 的空白上是滚不动的——用户看到的正是
+        // 「预览区滚不动、下半截内容看不到」。横向关掉后滚动区占满面板宽度，
+        // 在预览区任意位置滚轮都生效。
+        //
+        // 纵向仍保持自动收缩：内容不足一屏时不该占满高度（否则会出现
+        // 一条永远拖不动的空滚动条）。
+        .auto_shrink([false, true])
         .vertical_scroll_offset(start_y)
         .show(ui, |ui| {
             ui.vertical(|ui| {
@@ -335,6 +354,7 @@ fn draw_block(
         "image" => draw_image(app, ui, theme, block),
         "rule" => draw_rule(ui, theme),
         "footnote" => draw_footnote(ui, theme, block),
+        "definition_list" => draw_definition_list(ui, theme, block),
         "math" => draw_math(ui, theme, block),
         "diagram" => draw_diagram(ui, theme, block),
         "toc" => draw_toc(app, ui, theme, block, headings),
@@ -396,9 +416,17 @@ fn span_format(theme: &Theme, style: &str, size: f32, line_height: f32) -> TextF
             underline: Stroke::new(1.0_f32, theme.syn_link),
             ..base
         },
+        // 行内公式：**只做样式区分，不做二维排版**。
+        //
+        // `LayoutJob` 里没有「行内自定义控件」的位置（epaint 0.33 既没有
+        // placeholder 段，也没有可插进文字流的 `Shape::Callback` 挂点），
+        // 想在段落中段嵌一块二维公式就得自己接管整个段落的折行——
+        // 那是把「段落渲染」这条最常用的代码路径整个重写，风险远大于收益。
+        // 故行内公式渲染为「倾斜 + 公式色」的文字，并把 `$` 分隔符去掉
+        // （见 `render_inline_text`）——分隔符是语法，不是内容。
         "math" => TextFormat {
             color: theme.syn_code,
-            font_id: FontId::monospace(size),
+            italics: true,
             ..base
         },
         // 键帽：等宽 + 底色，视觉上是一枚小按键。
@@ -412,6 +440,16 @@ fn span_format(theme: &Theme, style: &str, size: f32, line_height: f32) -> TextF
         "mark" => TextFormat {
             color: theme.text_primary,
             background: theme.find_bg,
+            ..base
+        },
+        // 已勾选的任务项：整行次级色 + 删除线。
+        //
+        // 刻意**不**复用 `strikethrough` 样式：那个是给 `~~删除~~` 用的，
+        // 语义不同（一个是「用户划掉的文字」，一个是「已完成」）。
+        // 分开命名后，将来想给「已完成」换色（比如绿色对勾配色）不会波及删除线。
+        "task_done" => TextFormat {
+            color: theme.text_secondary,
+            strikethrough: Stroke::new(1.0_f32, theme.text_secondary),
             ..base
         },
         // 上下标：epaint 无基线位移，用略小字号近似（行高由 `base.line_height`
@@ -461,11 +499,17 @@ fn render_inline_text(
         base_style,
     } = typo;
     let base = span_format(theme, base_style, size, line_height);
+    // 「已完成」是**叠加**在行内样式之上的装饰，不是一个基准样式。
+    // `- [x] **重点**` 里已勾选的项仍要能看出哪几个词原本是粗体——只把样式
+    // 替换掉会让勾选这个动作顺手抹掉用户写的格式信息。
+    let done = base_style == "task_done";
     // 无样式片段：走单标签快路径（与旧实现完全一致，零额外开销）。
     if spans.is_empty() {
-        return ui.add(
-            egui::Label::new(RichText::new(content).size(size).color(base.color)).sense(sense),
-        );
+        let mut text = RichText::new(content).size(size).color(base.color);
+        if done {
+            text = text.strikethrough();
+        }
+        return ui.add(egui::Label::new(text).sense(sense));
     }
     let mut job = LayoutJob {
         wrap: TextWrapping {
@@ -489,11 +533,18 @@ fn render_inline_text(
             job.append(&content[cursor..start], 0.0, base.clone());
         }
         if end > start {
-            job.append(
-                &content[start..end],
-                0.0,
-                span_format(theme, &span.style, size, line_height),
-            );
+            let mut fmt = span_format(theme, &span.style, size, line_height);
+            if done {
+                fmt = done_overlay(theme, fmt);
+            }
+            // 行内公式剥掉 `$` / `$$` 分隔符：它们是语法，不是内容。
+            // 不剥的话预览里会显示成 `$E=mc^2$`，看起来像没解析成功。
+            let slice = if span.style == "math" {
+                strip_math_delimiters(&content[start..end])
+            } else {
+                &content[start..end]
+            };
+            job.append(slice, 0.0, fmt);
         }
         cursor = end.max(cursor);
     }
@@ -501,6 +552,38 @@ fn render_inline_text(
         job.append(&content[cursor..], 0.0, base);
     }
     ui.add(egui::Label::new(job).sense(sense))
+}
+
+/// 给一个行内格式叠上「已完成」装饰（次级色 + 删除线）。
+fn done_overlay(theme: &Theme, mut fmt: TextFormat) -> TextFormat {
+    fmt.color = theme.text_secondary;
+    fmt.strikethrough = Stroke::new(1.0_f32, theme.text_secondary);
+    fmt
+}
+
+/// 剥掉行内公式两端的 `$` / `$$` 分隔符（两侧各最多两个）。
+///
+/// 只在**两端成对**时才剥：`a $x$ 与 b` 的片段是 `$x$`，剥成 `x`；
+/// 而片段本身若只剩一个 `$`（解析边界与渲染边界不一致时可能发生），
+/// 原样返回比剥空更安全——剥空会让那一个字符凭空消失。
+///
+/// `pub` 是为了让表现层用例直接断言（切片越界会 panic，而本项目
+/// `panic = "abort"`；这条规则不能只靠肉眼检查）。
+pub fn strip_math_delimiters(s: &str) -> &str {
+    let lead = s.len() - s.trim_start().len();
+    let trail = s.trim_end().len();
+    if trail <= lead {
+        return s;
+    }
+    let body = &s[lead..trail];
+    let open = body.len() - body.trim_start_matches('$').len();
+    let close = body.len() - body.trim_end_matches('$').len();
+    if open == 0 || close == 0 {
+        return s;
+    }
+    let k = open.min(close).min(2);
+    let (start, end) = (lead + k, trail - k);
+    if end <= start { s } else { &s[start..end] }
 }
 
 // ============================================================================
@@ -722,21 +805,61 @@ fn highlighted_code_job(
     job
 }
 
-/// 列表：有序用递增编号，无序用圆点。
+/// 列表每加深一级增加的缩进（点）。
+///
+/// 取刻度 `space_lg` 而不是固定像素：缩进必须与主题的间距体系同源，
+/// 否则换主题后列表会与段落、引用条的左缘参差不齐。
+fn list_indent_step(theme: &Theme) -> f32 {
+    theme.metrics.space_lg
+}
+
+/// 列表标记（`•` / `1.`）所在列的固定宽度。
+///
+/// 必须**固定**并右对齐：`1.` 与 `10.` 宽度差一个字符，不固定列宽的话
+/// 两位数序号会把该项文本整体右推一格，同一列表里文字左缘就参差了。
+fn list_marker_width(theme: &Theme) -> f32 {
+    theme.metrics.preview_font_size * 1.8
+}
+
+/// 无序列表按层级换用不同符号（`•` → `◦` → `▪`，三层一循环）。
+///
+/// 只靠缩进区分层级在**窄面板**里不够用：面板一窄，每级缩进被压到几个点，
+/// 加上软换行后子项可能顶到父项的缩进位，视觉上就分不清谁是谁的孩子。
+/// 换符号是零成本的第二重线索。
+fn bullet_for(depth: u8) -> &'static str {
+    match depth % 3 {
+        0 => "•",
+        1 => "◦",
+        _ => "▪",
+    }
+}
+
+/// 列表：有序用递增编号，无序用圆点；**按 `depth` 缩进**、按 `ordinal` 编号。
+///
+/// # 缩进为什么由数据给出而不是从文本推
+///
+/// 之前的实现只画一层 `space_xl` 缩进，所有层级看起来都是平的——因为
+/// `BlockView` 当初根本没带层级信息。现在解析器把整棵列表树**拍平**进
+/// 同一个 `items`（见其 `root_list_index`），层级只存在于 `ListItemView::depth`：
+/// 想从 `text` 的前导空格反推是行不通的（pulldown 已把标记与缩进吃掉）。
 fn draw_list(ui: &mut Ui, theme: &Theme, block: &BlockView) {
-    for (i, item) in block.items.iter().enumerate() {
+    let marker_w = list_marker_width(theme);
+    for item in block.items.iter() {
         ui.horizontal(|ui| {
-            // 列表缩进取刻度 `space_xl`：与设置对话框的分区缩进同一来源。
-            ui.add_space(theme.metrics.space_xl);
-            let marker = if block.ordered {
-                format!("{}.", i + 1)
-            } else {
-                "•".to_string()
-            };
-            ui.label(
-                RichText::new(marker)
+            // 基准缩进 + 每级一格。
+            ui.add_space(theme.metrics.space_xl + f32::from(item.depth) * list_indent_step(theme));
+            // 标记列右对齐（理由见 `list_marker_width`）。
+            ui.add_sized(
+                egui::vec2(marker_w, theme.metrics.preview_font_size),
+                egui::Label::new(
+                    RichText::new(match item.ordinal {
+                        Some(n) => format!("{n}."),
+                        None => bullet_for(item.depth).to_string(),
+                    })
                     .size(theme.metrics.preview_font_size)
                     .color(theme.syn_marker),
+                )
+                .halign(Align::RIGHT),
             );
             draw_item_text(ui, theme, item);
         });
@@ -748,7 +871,7 @@ fn draw_task_list(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, block: &Block
     for item in block.items.iter() {
         let mut checked = item.checked.unwrap_or(false);
         ui.horizontal(|ui| {
-            ui.add_space(theme.metrics.space_xl);
+            ui.add_space(theme.metrics.space_xl + f32::from(item.depth) * list_indent_step(theme));
             if ui.checkbox(&mut checked, "").changed() {
                 toggle_task(app, item, checked);
             }
@@ -787,15 +910,26 @@ pub fn task_marker_offset(text: &str, start: usize, end: usize) -> Option<usize>
     Some(start + pos)
 }
 
-/// 列表项文本：已勾选的加删除线并转次级色。
+/// 列表项文本：走行内富文本（`- **粗体**` 必须与正文里的粗体一致），
+/// 已勾选的项叠上删除线 + 次级色。
 fn draw_item_text(ui: &mut Ui, theme: &Theme, item: &ListItemView) {
-    let mut text = RichText::new(&item.text).size(theme.metrics.preview_font_size);
-    text = if item.checked == Some(true) {
-        text.color(theme.text_secondary).strikethrough()
-    } else {
-        text.color(theme.text_primary)
-    };
-    ui.label(text);
+    let size = theme.metrics.preview_font_size;
+    render_inline_text(
+        ui,
+        theme,
+        &item.text,
+        &item.spans,
+        Typography {
+            size,
+            line_height: size * theme.metrics.preview_line_height,
+            base_style: if item.checked == Some(true) {
+                "task_done"
+            } else {
+                ""
+            },
+        },
+        egui::Sense::hover(),
+    );
 }
 
 /// GFM 表格：列宽按**单元格实际内容**自适应，超宽时按内容占比压缩。
@@ -841,14 +975,39 @@ fn draw_table(ui: &mut Ui, theme: &Theme, table: &TableView) {
             }
             let widths = table_column_distribution(&natural, available);
 
-            // —— 表头 + 分隔线 + 表体 ——
-            table_row(ui, theme, &table.header, &widths, &table.aligns, true);
-            let (line, _) =
-                ui.allocate_exact_size(egui::vec2(available, 1.0), egui::Sense::hover());
-            ui.painter()
-                .hline(line.x_range(), line.top(), hairline(theme.border));
-            for row in &table.rows {
-                table_row(ui, theme, row, &widths, &table.aligns, false);
+            // 行与行**不留间距**，否则列间竖线会在每行交界处断开，网格变成虚线。
+            // 行距改由单元格自己的纵向内边距提供（见 `table_row`）。
+            ui.spacing_mut().item_spacing.y = 0.0;
+
+            let row_count = table.rows.len();
+            let last = row_count.saturating_sub(1);
+            let cols_layout = ColumnLayout {
+                widths: &widths,
+                aligns: &table.aligns,
+            };
+            if !table.header.is_empty() {
+                table_row(
+                    ui,
+                    theme,
+                    &table.header,
+                    &table.header_spans,
+                    cols_layout,
+                    true,
+                    true,
+                );
+            }
+            for (r, row) in table.rows.iter().enumerate() {
+                // 最后一行**不画底线**：它与外框的下边重合，画两遍会在圆角处
+                // 露出一道比别处亮的线。
+                table_row(
+                    ui,
+                    theme,
+                    row,
+                    table.rows_spans.get(r).map_or(&[][..], Vec::as_slice),
+                    cols_layout,
+                    false,
+                    r < last,
+                );
             }
         });
 }
@@ -924,42 +1083,118 @@ pub fn table_column_distribution(natural: &[f32], available: f32) -> Vec<f32> {
     }
 }
 
-/// 表格的一行。`header = true` 时文字用强调色（egui 的 `strong` 即「加深颜色」）。
+/// 表格的**列布局**：各列宽度与对齐方式。整表共用，每一行拿到的都是同一份。
 ///
-/// 每个单元格先按列宽**显式占位**（`allocate_ui_with_layout`，高度给 0、
-/// 内容向下撑开），再在内部按列对齐画文字——宽度是我们算出来的，
-/// 不依赖任何布局施舍；行高自动取最高单元格，顶部对齐。
+/// 打包成结构而不是拆成两个平铺参数，是因为 [`table_row`] 的参数个数已经
+/// 顶到 clippy 的 7 个上限（`src/lib.rs` 把告警升成了硬错误）。而这两个值
+/// 语义上本就是一对「列的定义」，合成一个反而更好读。
+#[derive(Clone, Copy)]
+struct ColumnLayout<'a> {
+    widths: &'a [f32],
+    aligns: &'a [CellAlignView],
+}
+
+/// 表格的一行：表头底色 + 列间竖线 + 行底线 + 单元格行内富文本。
+///
+/// # 为什么自己画网格线
+///
+/// 早先只在表头下画一条横线，表体各行之间**没有任何分隔**：一个单元格
+/// 内容折成三行时，它与下一行的边界只能靠行距去猜，多行单元格里尤其糊。
+/// 现在三样都补齐——列间竖线、每行底线、表头底色。
+///
+/// # 竖线为什么在行画完之后才补
+///
+/// 每行里各单元格的高度**不相等**（多行单元格比单行的矮邻居高），
+/// 若在单元格分配时顺手画竖线，线只能占到自己那一格的高度，行内就成了一段段
+/// 长短不齐的短线。故先把各列分界点的 x 记下来，等整行矩形出来后再统一画到
+/// 行高——线是齐的。画在文字之上也无妨：分界点落在列与列之间的空隙里。
+///
+/// # 行距
+///
+/// 相邻行的间距已由 `draw_table` 置 0（否则竖线会在行交界处断开），
+/// 纵向留白改由这里的 `pad_y` 提供。
 fn table_row(
     ui: &mut Ui,
     theme: &Theme,
     cells: &[String],
-    widths: &[f32],
-    aligns: &[CellAlignView],
+    cell_spans: &[Vec<SpanView>],
+    cols_layout: ColumnLayout<'_>,
     header: bool,
+    bottom_line: bool,
 ) {
-    let size = theme.metrics.preview_font_size;
-    ui.horizontal(|ui| {
-        for (c, cell) in cells.iter().enumerate().take(widths.len()) {
-            let w = widths[c];
-            let align = align_of(aligns.get(c));
-            ui.allocate_ui_with_layout(
-                egui::vec2(w, 0.0),
-                Layout::left_to_right(Align::TOP),
-                |ui| {
-                    ui.add_space(TABLE_CELL_PAD);
-                    ui.with_layout(Layout::top_down(align), |ui| {
-                        ui.set_min_width(w - 2.0 * TABLE_CELL_PAD);
-                        let mut text = RichText::new(cell).size(size);
-                        if header {
-                            text = text.strong();
-                        }
-                        ui.label(text);
-                    });
-                    ui.add_space(TABLE_CELL_PAD);
-                },
-            );
-        }
+    let ColumnLayout { widths, aligns } = cols_layout;
+    let m = theme.metrics;
+    let size = m.preview_font_size;
+    let line_height = size * m.preview_line_height;
+    let pad_y = m.space_xs.max(2.0);
+    let cols = widths.len().min(cells.len());
+    // 表头底色：让「哪一行是表头」不只靠颜色加深来承担——
+    // 深色主题里加粗几乎与正文同色，一眼分不出表头与数据行。
+    let bg = if header {
+        theme.bg_tertiary
+    } else {
+        egui::Color32::TRANSPARENT
+    };
+
+    // 各列分界点（绝对 x），行画完后统一补竖线。
+    let mut seps: Vec<f32> = Vec::with_capacity(cols);
+    let frame = egui::Frame::new().fill(bg).show(ui, |ui| {
+        // 显式对齐列间距与 `table_column_distribution` 的预算口径：
+        // 那里按 [`TABLE_COL_GAP`] 预留了间距，靠 egui 的默认 item_spacing
+        // 恰好等于 8.0 只是巧合，改主题间距就会让列宽与预算对不上。
+        ui.spacing_mut().item_spacing.x = TABLE_COL_GAP;
+        ui.horizontal(|ui| {
+            for (c, cell) in cells.iter().enumerate().take(cols) {
+                let w = widths[c];
+                let align = align_of(aligns.get(c));
+                let spans = cell_spans.get(c).map_or(&[][..], Vec::as_slice);
+                let res = ui.allocate_ui_with_layout(
+                    egui::vec2(w, 0.0),
+                    Layout::left_to_right(Align::TOP),
+                    |ui| {
+                        ui.add_space(TABLE_CELL_PAD);
+                        ui.with_layout(Layout::top_down(align), |ui| {
+                            ui.set_min_width(w - 2.0 * TABLE_CELL_PAD);
+                            ui.add_space(pad_y);
+                            // 单元格文本走行内富文本：`| a **粗** |` 里的粗体
+                            // 之前被当作纯文本直接打印，与正文里的粗体表现不一致。
+                            render_inline_text(
+                                ui,
+                                theme,
+                                cell,
+                                spans,
+                                Typography {
+                                    size,
+                                    line_height,
+                                    // 表头用 `strong` 基准色（egui 的「强调」=
+                                    // 加深颜色而非换粗体字形，与旧实现观感一致）。
+                                    base_style: if header { "strong" } else { "" },
+                                },
+                                egui::Sense::hover(),
+                            );
+                            ui.add_space(pad_y);
+                        });
+                        ui.add_space(TABLE_CELL_PAD);
+                    },
+                );
+                if c + 1 < cols {
+                    // 落在两列之间的空隙中点：贴住某一列会让线看起来
+                    // 「属于左边那格」。
+                    seps.push(res.response.rect.right() + TABLE_COL_GAP * 0.5);
+                }
+            }
+        });
     });
+
+    let rect = frame.response.rect;
+    for x in seps {
+        ui.painter()
+            .vline(x, rect.y_range(), hairline(theme.border));
+    }
+    if bottom_line {
+        ui.painter()
+            .hline(rect.x_range(), rect.bottom(), hairline(theme.border));
+    }
 }
 
 /// 列对齐枚举 → egui 对齐。
@@ -1109,29 +1344,171 @@ fn draw_toc(
     ui.add_space(m.space_xs);
 }
 
+/// 脚注定义：`[1] 正文` 形式，小字 + 次级色，行内样式照常生效。
+///
+/// # 标签为什么要单独画
+///
+/// 解析器把 `[^1]: 脚注内容` 收成 `Footnote { label: "1" }`，**正文里不含
+/// `[^1]`**（那是标签，被 pulldown 单独给出）。若只画 `content`，用户看到的
+/// 是一条没有编号的孤立句子，与正文里的 `[^1]` 引用对不上号；
+/// 若把标签拼进 `content`，它又会参与搜索命中与字数统计。
+/// 故由渲染层在这里把两者并排画出来。
 fn draw_footnote(ui: &mut Ui, theme: &Theme, block: &BlockView) {
-    ui.label(
-        RichText::new(&block.content)
-            .size(theme.metrics.preview_font_size - 2.0)
-            .color(theme.text_secondary)
-            .italics(),
-    );
+    let m = theme.metrics;
+    let size = m.preview_font_size - 2.0;
+    ui.horizontal_top(|ui| {
+        if let Some(label) = block.label.as_deref().filter(|l| !l.is_empty()) {
+            ui.label(
+                RichText::new(format!("[{label}]"))
+                    .size(size)
+                    .color(theme.syn_marker),
+            );
+        }
+        ui.with_layout(Layout::top_down(Align::LEFT), |ui| {
+            ui.set_min_width(ui.available_width().max(0.0));
+            render_inline_text(
+                ui,
+                theme,
+                &block.content,
+                &block.spans,
+                Typography {
+                    size,
+                    line_height: size * m.preview_line_height,
+                    base_style: "quote",
+                },
+                egui::Sense::hover(),
+            );
+        });
+    });
 }
 
-/// 数学公式：结构化公式卡（零依赖，不做像素级排版）。
+/// 定义列表（`术语` + `: 定义`）：术语加粗、定义缩进在术语下方。
 ///
-/// 编辑器内不内嵌 KaTeX / MathJax——那会引入 JS 运行时与网络依赖。
-/// 这里给出的是「可辨认的公式源码 + 类型标注」：行内公式随正文基线排版，
-/// 块级公式独立居中成卡。用户要排版效果时导出 HTML，由浏览器侧渲染。
+/// 不套项目符号：定义列表的语义是「词条—释义」，画成 `• 术语: 定义`
+/// 就与普通无序列表混同了，而且术语与释义的从属关系在横向上会被拉平。
+fn draw_definition_list(ui: &mut Ui, theme: &Theme, block: &BlockView) {
+    let m = theme.metrics;
+    let size = m.preview_font_size;
+    let line_height = size * m.preview_line_height;
+    for entry in &block.definitions {
+        // 术语：用与标题同族的强调色，与下面的释义拉开层次。
+        render_inline_text(
+            ui,
+            theme,
+            &entry.term,
+            &entry.term_spans,
+            Typography {
+                size,
+                line_height,
+                base_style: "strong",
+            },
+            egui::Sense::hover(),
+        );
+        for body in &entry.definitions {
+            ui.horizontal_top(|ui| {
+                // 释义缩进一格（与列表的缩进刻度同源），并画一条短竖线
+                // 作为「属于上面那个术语」的视觉连缀。
+                let indent = m.space_lg;
+                ui.add_space(indent);
+                let (bar, _) = ui.allocate_exact_size(
+                    egui::vec2(QUOTE_BAR_W, ui.available_height().max(line_height)),
+                    egui::Sense::hover(),
+                );
+                ui.painter().vline(
+                    bar.center().x,
+                    bar.y_range(),
+                    Stroke::new(1.0_f32, theme.border),
+                );
+                ui.add_space(m.space_xs);
+                ui.with_layout(Layout::top_down(Align::LEFT), |ui| {
+                    ui.set_min_width(ui.available_width().max(0.0));
+                    render_inline_text(
+                        ui,
+                        theme,
+                        &body.text,
+                        &body.spans,
+                        Typography {
+                            size,
+                            line_height,
+                            base_style: "",
+                        },
+                        egui::Sense::hover(),
+                    );
+                });
+            });
+        }
+        ui.add_space(m.space_xs);
+    }
+}
+
+/// 数学公式：**内置排版引擎**渲染（见 [`super::math`]）。
+///
+/// # 这次改了什么
+///
+/// 旧实现只把公式源码用等宽字打出来，并在旁边写「导出 HTML 后由浏览器渲染」——
+/// 用户看到的是 `\int_0^1 x^2 dx` 这串字符，而不是积分式。这正是问题 3 的根因：
+/// **解析层一直是对的**（`Math { display: true }` 与公式本体都拿到了），
+/// 缺的是渲染。
+///
+/// 现在：
+/// - 排版成功 → 用内置引擎画成二维公式（分数线、上下标、根号、矩阵都各就各位）；
+/// - 排版失败（子集外的写法）→ **回退**到源码卡，并**写明原因**
+///   （`\notarealcommand` 这类不支持的命令名会出现在提示里）。
+///
+/// # 为什么保留「复制」
+///
+/// 排版后的公式是**图**，选不中也复制不了。用户把公式贴到别处时需要的仍是
+/// LaTeX 源码，故按钮留着。
 fn draw_math(ui: &mut Ui, theme: &Theme, block: &BlockView) {
+    let m = theme.metrics;
     let display = block.display.unwrap_or(false);
-    let body = RichText::new(&block.content)
-        .font(FontId::monospace(theme.metrics.preview_font_size))
-        .color(theme.syn_code);
+    // 块级公式放大一档：它是版面上的「展示元素」，与正文同号会显得局促。
+    let size = if display {
+        m.preview_font_size * 1.12
+    } else {
+        m.preview_font_size
+    };
+    let layout = {
+        let ui_ref: &Ui = ui;
+        let measure = move |text: &str, size: f32| {
+            ui_ref
+                .painter()
+                .layout_no_wrap(
+                    text.to_owned(),
+                    FontId::proportional(size),
+                    egui::Color32::WHITE,
+                )
+                .size()
+                .x
+        };
+        super::math::layout(&block.content, size, display, &measure)
+    };
+
+    let Ok(math_layout) = layout else {
+        // 子集外的写法：退回源码卡，并**说明为什么**没排版。
+        // 只显示源码、不说原因，用户会以为是自己公式写错了。
+        draw_unrendered_source(
+            ui,
+            theme,
+            block,
+            "公式",
+            layout.as_ref().err().map(ToString::to_string),
+        );
+        return;
+    };
 
     if !display {
-        // 行内公式跟正文走，不套框，避免打断段落节奏。
-        ui.label(body);
+        // 行内公式：跟随正文基线，不套框。
+        let h = super::math::fitted_height(&math_layout, ui.available_width());
+        let (rect, _) =
+            ui.allocate_exact_size(egui::vec2(ui.available_width(), h), egui::Sense::hover());
+        super::math::paint(
+            ui.painter(),
+            rect,
+            &math_layout,
+            theme.text_primary,
+            Align2::LEFT_CENTER,
+        );
         return;
     }
 
@@ -1139,14 +1516,14 @@ fn draw_math(ui: &mut Ui, theme: &Theme, block: &BlockView) {
         .fill(theme.code_bg)
         .corner_radius(CornerRadius::same(6))
         .inner_margin(egui::Margin::symmetric(
-            theme.metrics.pane_padding as i8,
-            theme.metrics.space_md as i8,
+            m.pane_padding as i8,
+            m.space_md as i8,
         ))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label(
                     RichText::new("公式")
-                        .size(theme.metrics.ui_font_size - 1.0)
+                        .size(m.ui_font_size - 1.0)
                         .color(theme.text_secondary),
                 );
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -1155,27 +1532,111 @@ fn draw_math(ui: &mut Ui, theme: &Theme, block: &BlockView) {
                     }
                 });
             });
-            ui.add(egui::Label::new(body).selectable(true));
+            let h = super::math::fitted_height(&math_layout, ui.available_width());
+            let (rect, _) =
+                ui.allocate_exact_size(egui::vec2(ui.available_width(), h), egui::Sense::hover());
+            super::math::paint(
+                ui.painter(),
+                rect,
+                &math_layout,
+                theme.text_primary,
+                Align2::CENTER_CENTER,
+            );
         });
 }
 
-/// 图表（Mermaid）：图表卡 + 等宽源码。
+/// 图表（Mermaid）：**内置布局引擎**渲染（见 [`super::mermaid`]）。
 ///
-/// 与代码块的区别在于**语义标注**：用户写 ` ```mermaid ` 是想出图，
-/// 看到「未渲染的图表源码」比看到一个普通代码块更能解释预期落差。
-/// 真正出图交给导出 HTML（浏览器端 Mermaid 运行时）。
+/// 与公式同一套思路：解析层本来就给出了 `Diagram { kind: "mermaid" }` 与源码，
+/// 旧实现却只把源码当代码块打出来、再附一句「导出后由浏览器渲染」。
+/// 现在直接画成节点—连线图（分层布局 + 正交走线 + 箭头 + 边标签）。
+///
+/// 子集外的图种（`sequenceDiagram` 等）与 `subgraph` 回退到源码卡并说明原因。
 fn draw_diagram(ui: &mut Ui, theme: &Theme, block: &BlockView) {
+    let m = theme.metrics;
     let engine = block.diagram.as_deref().unwrap_or("diagram");
+    let layout = {
+        let ui_ref: &Ui = ui;
+        let measure = move |text: &str, size: f32| {
+            ui_ref
+                .painter()
+                .layout_no_wrap(
+                    text.to_owned(),
+                    FontId::proportional(size),
+                    egui::Color32::WHITE,
+                )
+                .size()
+                .x
+        };
+        super::mermaid::layout(&block.content, m.preview_font_size, &measure)
+    };
+
+    let Ok(graph) = layout else {
+        draw_unrendered_source(
+            ui,
+            theme,
+            block,
+            engine,
+            layout.as_ref().err().map(ToString::to_string),
+        );
+        return;
+    };
 
     egui::Frame::new()
         .fill(theme.code_bg)
         .corner_radius(CornerRadius::same(6))
-        .inner_margin(egui::Margin::same(theme.metrics.pane_padding as i8))
+        .inner_margin(egui::Margin::same(m.pane_padding as i8))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label(
                     RichText::new(engine)
-                        .size(theme.metrics.ui_font_size - 1.0)
+                        .size(m.ui_font_size - 1.0)
+                        .color(theme.text_secondary),
+                );
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if ui.small_button("复制").clicked() {
+                        ui.ctx().copy_text(block.content.clone());
+                    }
+                });
+            });
+            let max_w = ui.available_width();
+            let h = super::mermaid::fitted_height(&graph, max_w);
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(max_w, h), egui::Sense::hover());
+            let style = super::mermaid::MermaidStyle {
+                node_fill: theme.bg_tertiary,
+                node_stroke: theme.border,
+                text: theme.text_primary,
+                edge: theme.text_secondary,
+                label_bg: theme.code_bg,
+            };
+            super::mermaid::paint(ui.painter(), rect, &graph, &style);
+        });
+}
+
+/// 「这块没被渲染」的降级卡：源码 + 类型标注 + **失败原因**。
+///
+/// # 为什么必须带上原因
+///
+/// 只显示源码时用户的下一步动作是「去查 Mermaid / LaTeX 语法」，
+/// 而那多半是浪费时间——**不支持的是本编辑器，不是他的写法**。
+/// 把原因写出来（`不支持的图表写法：sequenceDiagram`）就能立刻说清责任归属。
+fn draw_unrendered_source(
+    ui: &mut Ui,
+    theme: &Theme,
+    block: &BlockView,
+    label: &str,
+    reason: Option<String>,
+) {
+    let m = theme.metrics;
+    egui::Frame::new()
+        .fill(theme.code_bg)
+        .corner_radius(CornerRadius::same(6))
+        .inner_margin(egui::Margin::same(m.pane_padding as i8))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(label)
+                        .size(m.ui_font_size - 1.0)
                         .color(theme.text_secondary),
                 );
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -1185,7 +1646,14 @@ fn draw_diagram(ui: &mut Ui, theme: &Theme, block: &BlockView) {
                 });
             });
             draw_highlighted_code(ui, theme, &block.content, None);
-            ui.weak("图表源码（导出 HTML 后由浏览器渲染）");
+            if let Some(reason) = reason {
+                ui.add_space(m.space_xs);
+                ui.label(
+                    RichText::new(format!("未能排版：{reason}"))
+                        .size(m.ui_font_size - 1.0)
+                        .color(theme.warning),
+                );
+            }
         });
 }
 
