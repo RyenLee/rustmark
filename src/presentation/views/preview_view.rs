@@ -276,10 +276,27 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
                 // 内部的坐标系已经带上了偏移，绝对 y 每帧都不同。
                 let mut origin: Option<f32> = None;
                 for block in blocks.iter() {
-                    // `ui.scope` 会返回本块占据的**实际矩形**（等价 `min_rect`），
+                    // `scope_builder` 会返回本块占据的**实际矩形**（等价 `min_rect`），
                     // 比「画之前 / 画之后各读一次光标」稳——后者会被块内部
                     // 自己和 `item_spacing` 的交互骗到。
-                    let res = ui.scope(|ui| draw_block(app, ui, &theme, block, &headings));
+                    //
+                    // # 为什么必须给每个块一个唯一 `id_salt`（否则标题被套红框）
+                    //
+                    // `ui.scope` 产出的子 `Ui`，其 `ui.id()` 恒为「父 ui 的 id + \"child\"」
+                    // ——**同一父级下每个 scope 完全相同**（egui 的 `Ui::new_child`
+                    // 把它作为 `stable_id`，真正唯一的只是内部 `unique_id`）。
+                    // 而 `render_inline_text` 用固定 id `ui.id().with(\"rinline\")`
+                    // 注册可交互区；标题又是唯一带 `Sense::click()` 的内联文本
+                    // （点击标题 → 编辑区跳到对应行）。于是文章里**第二个起**每个
+                    // 标题都与前一个撞 id，egui 的 `Context::check_for_id_clash`
+                    // 便给两端各套一个红框，并在旁边画出
+                    // 「🔥 First/Second use of widget ID …」；鼠标移到那条红字上
+                    // 还会弹出一大段解释 ID 冲突、建议改用 `ui.push_id` 的提示。
+                    // `id_salt` 正是 `ui.push_id` 的等价物（也是 egui 提示里给的解法）：
+                    // 传入 `block.id`（单次解析内唯一）后，各块子树 id 互不相同。
+                    let res = ui.scope_builder(egui::UiBuilder::new().id_salt(block.id), |ui| {
+                        draw_block(app, ui, &theme, block, &headings)
+                    });
                     let rect = res.response.rect;
                     let base = *origin.get_or_insert(rect.top());
                     rects.push(BlockRect {
@@ -557,6 +574,12 @@ fn render_inline_text(
     }
     // 手工排版 + 绘制：比 `ui.add(Label)` 多一步，但能精确控制折行宽度，
     // 且为「命中区 / 点击」等扩展留好位置（见图表链接的 `draw_diagram`）。
+    //
+    // 命中区 id 用调用方 ui 的 id + 固定盐 `"rinline"`：**要求每个块子树
+    // 的 `ui.id()` 唯一**（`show()` 里已用 `block.id` 作 `id_salt`）。
+    // 若同一父级下多次调用且 sense 可交互（如标题的 `Sense::click()`），
+    // id 会相撞 —— egui 会画出红框与「Double use of widget ID」提示
+    // （2026-10-10 曾因此让预览标题被套红框，改 `show()` 的 `id_salt` 修复）。
     let galley = ui.painter().layout_job(job);
     let (_id, rect) = ui.allocate_space(galley.size());
     ui.painter().galley(rect.min, galley, base.color);

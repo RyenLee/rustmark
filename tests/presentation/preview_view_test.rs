@@ -778,3 +778,87 @@ fn wheel_outside_the_preview_pane_does_not_scroll_it() {
         "指针不在预览区上时不该滚动预览（否则滚轮会被两侧抢）"
     );
 }
+
+// ============================================================================
+// 预览块的 egui 控件 ID 必须互不相同（回归：标题被套红框）
+// ============================================================================
+//
+// # 这个缺陷长什么样、为什么必须用「绘制指令」来锁
+//
+// 预览每个块都跑在 `ui.scope(...)` 里，而 egui 给 scope 子 `Ui` 的
+// `ui.id()` 恒为「父 id + \"child\"」——**同一次渲染里每个块的 `ui.id()` 完全相同**。
+// `render_inline_text` 又用固定 id `ui.id().with(\"rinline\")` 注册可交互区。
+// 于是「多个标题」会把同一个 id 注册多次，触发 egui 的
+// `Context::check_for_id_clash`：它给冲突控件画**红色矩形**，并画出
+// 「🔥 First/Second use of widget ID …」，鼠标悬停那段红字还会弹出一大段
+// 解释 ID 冲突的提示。用户看到的就是「预览区标题文案出现红框并附带提示」。
+//
+// 这类缺陷在数据结构层面完全看不出来（块、span、文本全都正确），
+// 只能像编辑区渲染用例那样从本帧 `FullOutput::shapes` 里找证据。
+
+/// 一帧里 egui 为「ID 冲突」画出的红色矩形数量与冲突文字。
+fn id_clash_evidence(shapes: &[egui::epaint::ClippedShape]) -> (usize, Vec<String>) {
+    fn walk(shape: &egui::epaint::Shape, rects: &mut usize, texts: &mut Vec<String>) {
+        match shape {
+            // 冲突框是「1px 红色描边」的矩形；正常绘制里没有这种红描边。
+            egui::epaint::Shape::Rect(r) => {
+                let c = r.stroke.color;
+                if r.stroke.width > 0.0 && c.r() > 180 && c.g() < 100 && c.b() < 100 {
+                    *rects += 1;
+                }
+            }
+            egui::epaint::Shape::Text(t) => texts.push(t.galley.text().to_string()),
+            egui::epaint::Shape::Vec(inner) => {
+                for s in inner {
+                    walk(s, rects, texts);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut rects = 0;
+    let mut texts = Vec::new();
+    for c in shapes {
+        walk(&c.shape, &mut rects, &mut texts);
+    }
+    (rects, texts)
+}
+
+/// 跑一帧真实渲染并把「ID 冲突」证据取回来。
+fn render_and_scan(app: &mut EditorApp, ctx: &egui::Context) -> (usize, Vec<String>) {
+    let input = egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(
+            egui::pos2(0.0, 0.0),
+            egui::vec2(1280.0, 800.0),
+        )),
+        ..Default::default()
+    };
+    let _ = ctx.run(input.clone(), |_| {}); // 装载字库
+    let mut last = (0usize, Vec::new());
+    // 多跑几帧：窗口/滚动区首帧会走 sizing pass。
+    for _ in 0..3 {
+        let out = ctx.run(input.clone(), |ctx| {
+            rustmark::presentation::theme::mapper::apply(ctx, &app.ui.theme);
+            rustmark::presentation::views::main_view::show(app, ctx);
+        });
+        last = id_clash_evidence(&out.shapes);
+    }
+    last
+}
+
+/// 多个标题（每条都是 `Sense::click()` 的内联文本）不得撞出 ID 冲突红框。
+#[test]
+fn preview_headings_do_not_clash_ids() {
+    let (_dir, mut app) = app_with("# 一级标题\n\n## 二级标题\n\n正文段落。\n\n### 三级标题\n");
+    let ctx = egui::Context::default();
+    let (red_rects, texts) = render_and_scan(&mut app, &ctx);
+    let clash_texts: Vec<&String> = texts
+        .iter()
+        .filter(|t| t.contains("use of widget ID") || t.contains("🔥"))
+        .collect();
+    assert!(
+        red_rects == 0 && clash_texts.is_empty(),
+        "预览出现 egui ID 冲突：红框 {red_rects} 个、冲突文字 {clash_texts:?}。\
+         根因通常是某个块的子树没有唯一 id_salt（见 preview_view::show 的 scope_builder）。"
+    );
+}
