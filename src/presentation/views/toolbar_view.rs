@@ -268,55 +268,86 @@ pub fn editor_toolbar_groups() -> Vec<(&'static str, Vec<UiAction>)> {
     ]
 }
 
-/// 编辑区工具栏：渲染 [`MenuGroup::Format`] 的**全部**动作，按作用分组成下拉菜单。
+/// 编辑区工具栏：渲染 [`MenuGroup::Format`] 的**全部**动作。
 ///
-/// # 为什么是「分组下拉」而不是铺按钮
+/// # 「格式」平铺、其余分组下拉
 ///
-/// 18 个格式动作若全铺成按钮，完整文案约 1270pt，已超 1280 窗口的可用宽，
-/// 窄编辑区里必被裁掉（被裁 = 这个动作不存在）。改为分组下拉后，工具栏只占
-/// 几个下拉标题的宽度。下拉项复用应用级菜单同一套 `menu_row_width` / `menu_item`
-/// 排版，文案与快捷键同样不重叠。
+/// 「格式」分组（加粗 / 斜体 / 删除线 / 行内代码 / 插入链接）是**最高频**的动作，
+/// 每次排版都要反复点；把它们塞进下拉，每用一次都要先展开菜单，慢且反直觉。
+/// 故这一组**直接平铺成按钮**（见 `draw_format_buttons`），其余低频分组
+/// （插入 / 列表结构 / 行操作）仍用下拉，避免整条工具栏被 18 个按钮挤爆、
+/// 窄窗口里反而点不到（被裁 = 这个动作不存在）。
 ///
 /// 工具栏位于**编辑区顶部**（上下布局：工具栏在上、文本在下），作用域与编辑区
 /// 内容一致，见 `editor_view::show`。
 pub fn draw_editor_toolbar(app: &mut EditorApp, ui: &mut Ui) {
     let m = app.theme().metrics;
     let mut pending: Option<UiAction> = None;
-    // 横向滚动而非换行：窗口很窄时仍能把每个下拉点出来；够宽时不出现滚动条。
+    // 横向滚动而非换行：窗口很窄时仍能把每个按钮 / 下拉点出来；够宽时不出现滚动条。
     egui::ScrollArea::horizontal()
         .id_salt("editor-toolbar-scroll")
         .show(ui, |ui| {
             // 与应用级菜单栏同款修法：行高给足（`editor_toolbar_height`），
-            // 所有下拉按钮在同一高度内居中——否则每个按钮比前一个低一点，
-            // 第一个菜单项明显偏高（见 `draw_app_menu_bar` 的注释）。
+            // 所有控件在同一高度内居中——否则每个控件比前一个低一点，
+            // 第一个明显偏高（见 `draw_app_menu_bar` 的注释）。
             ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                 // 间距规范：左缘内边距取 `space_md`（与应用级菜单栏同值，
-                // 也与预览区标题栏同一条左边线），组与组之间同为 `space_md`
-                //（只在组之间加，末尾不加——末尾那份间距会让整行视觉重心
-                // 偏左，右侧白边看着比左侧宽）。
+                // 也与预览区标题栏同一条左边线）。
                 ui.add_space(m.space_md);
                 for (i, (title, actions)) in editor_toolbar_groups().into_iter().enumerate() {
                     if i > 0 {
                         ui.add_space(m.space_md);
                     }
-                    let row_w = menu_row_width(ui, app, &actions);
-                    let mut clicked = None;
-                    egui::ComboBox::from_id_salt(("editor-toolbar", title))
-                        .selected_text(title)
-                        .show_ui(ui, |ui| {
-                            for action in &actions {
-                                if menu_item(ui, app, *action, row_w).clicked() {
-                                    clicked = Some(*action);
+                    if title == "格式" {
+                        // 高频动作平铺成按钮，省去「先展开下拉」这一步。
+                        if let Some(act) = draw_format_buttons(app, ui, &actions) {
+                            pending = pending.or(Some(act));
+                        }
+                    } else {
+                        let row_w = menu_row_width(ui, app, &actions);
+                        let mut clicked = None;
+                        egui::ComboBox::from_id_salt(("editor-toolbar", title))
+                            .selected_text(title)
+                            .show_ui(ui, |ui| {
+                                for action in &actions {
+                                    if menu_item(ui, app, *action, row_w).clicked() {
+                                        clicked = Some(*action);
+                                    }
                                 }
-                            }
-                        });
-                    pending = pending.or(clicked);
+                            });
+                        pending = pending.or(clicked);
+                    }
                 }
             });
         });
     if let Some(action) = pending {
         app.execute(action);
     }
+}
+
+/// 把「格式」分组的动作平铺成按钮。
+///
+/// 按钮文案取动作自身 [`UiAction::label`]，但去掉结尾的省略号
+/// （`插入链接…` → `链接`）——按钮上的省略号是「会弹窗」的暗示，平铺按钮
+/// 点了直接作用到光标处，不再需要那个提示，留着反而占宽。
+///
+/// 返回被点击的动作（没有则为 `None`），由调用方统一走 `app.execute`
+/// （与应用级菜单、快捷键、命令面板同一条路径，保证「三入口一致」）。
+fn draw_format_buttons(
+    _app: &mut EditorApp,
+    ui: &mut Ui,
+    actions: &[UiAction],
+) -> Option<UiAction> {
+    let mut hit = None;
+    for action in actions {
+        let label = action.label().trim_end_matches('…');
+        // `ui.button` 默认带内边距与最小尺寸，整条工具栏等高由外层
+        // `with_layout(..., Align::Center)` 兜住——按钮本身不必再调尺寸。
+        if ui.button(label).clicked() {
+            hit = Some(*action);
+        }
+    }
+    hit
 }
 
 // ============================================================================

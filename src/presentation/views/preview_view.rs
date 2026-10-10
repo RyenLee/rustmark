@@ -15,8 +15,12 @@
 //! 1. 任务列表的复选框——点击回写源码（走 `ReplaceRangeCommand`，与编辑区同源，
 //!    因此可撤销、可参与领域撤销栈）；
 //! 2. 代码块的复制按钮——把块内容放进剪贴板；
-//! 3. 链接——**本期不处理**：`BlockView` 只有纯文本，链接的 URL 未下沉到 DTO，
-//!    故不假装可点击（宁可显示成普通文本，也不要点了没反应）。
+//! 3. 链接——正文内的 Markdown 链接**不处理**：`BlockView` 只有纯文本，
+//!    链接的 URL 未下沉到 DTO，故不假装可点击（宁可显示成普通文本，
+//!    也不要点了没反应）；
+//! 4. 图表内链接——**已处理**：Mermaid 图表经 `mermaid::layout` 返回
+//!    `hotspots`，`draw_diagram` 把它们映射成可点击交互区，点击在新标签页打开
+//!    （覆盖 `click` 指令与标签内 `[文本](url)` 两类来源）。
 //!
 //! # 缓存
 //!
@@ -252,27 +256,17 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
     } else {
         0.0
     };
-    let out = ScrollArea::vertical()
+    // 预览区需要**双向**滚动：纵向看长文，横向看超宽内容（不折行的代码块、
+    // 比面板宽的图表）。`ScrollArea::both()` 的 `direction_enabled` 是
+    // `[true, true]`，故两个方向都开滚动条。
+    //
+    // `auto_shrink` 必须**两向都关**：默认 `Vec2b::TRUE` 会把滚动区收缩到
+    // 内容尺寸——横向收缩到内容宽度正是之前「预览区滚不动」缺陷的根因
+    // （见上一段历史注释）。两向都关后滚动区占满面板宽高，正文在面板宽度内
+    // 折行、超宽内容（长代码行 / 宽图表）则出现底部横向滚动条。
+    let out = ScrollArea::both()
         .id_salt("preview-scroll")
-        // ⚠️ 必须关掉**横向**自动收缩。写 `.auto_shrink([false, true])` 不是
-        // 为了腾地方，而是修一个「预览区滚不动」的缺陷：
-        //
-        // `ScrollArea::vertical()` 的 `direction_enabled` 是 `[false, true]`
-        // （横向关、纵向开），而 `auto_shrink` 默认 `Vec2b::TRUE` 两个方向都开。
-        // 于是横向落进 egui 的这一支（`containers/scroll_area.rs`，0.33.3）：
-        //
-        //   (false, true) => content_size[d]   // **收缩到内容宽度**
-        //
-        // 滚动区因此只有正文那么宽。实测（本机 1000×640、默认主题）：
-        // 面板可用 348pt，纯段落文档的内容宽 81.5pt，滚轮只有落在这 81.5pt
-        // 里才算「悬停在滚动区上」（`is_hovering_outer_rect` 用 `outer_rect`
-        // 判定），右侧那 260 多 pt 的空白上是滚不动的——用户看到的正是
-        // 「预览区滚不动、下半截内容看不到」。横向关掉后滚动区占满面板宽度，
-        // 在预览区任意位置滚轮都生效。
-        //
-        // 纵向仍保持自动收缩：内容不足一屏时不该占满高度（否则会出现
-        // 一条永远拖不动的空滚动条）。
-        .auto_shrink([false, true])
+        .auto_shrink([false, false])
         .vertical_scroll_offset(start_y)
         .show(ui, |ui| {
             ui.vertical(|ui| {
@@ -337,24 +331,27 @@ fn draw_block(
     block: &BlockView,
     headings: &[HeadingEntry],
 ) {
+    // 预览区也跟随「自动换行」开关：开 → 正文在面板宽度内折行；关 → 不折行，
+    // 长行靠新增的底部横向滚动条查看（与编辑区行为一致）。
+    let wrap = app.editor.word_wrap;
     match block.kind.as_str() {
         "heading" => draw_heading(app, ui, theme, block),
-        "paragraph" => draw_paragraph(ui, theme, block),
-        "quote" => draw_quote(ui, theme, block),
+        "paragraph" => draw_paragraph(ui, theme, block, wrap),
+        "quote" => draw_quote(ui, theme, block, wrap),
         "code_block" => draw_code_block(app, ui, theme, block),
-        "list" => draw_list(ui, theme, block),
+        "list" => draw_list(ui, theme, block, wrap),
         "task_list" => draw_task_list(app, ui, theme, block),
         "table" => {
             // 结构化缺失（理论上不该发生）时退回纯文本，总比空白好。
             match &block.table {
                 Some(table) => draw_table(ui, theme, table),
-                None => draw_paragraph(ui, theme, block),
+                None => draw_paragraph(ui, theme, block, wrap),
             }
         }
         "image" => draw_image(app, ui, theme, block),
         "rule" => draw_rule(ui, theme),
-        "footnote" => draw_footnote(ui, theme, block),
-        "definition_list" => draw_definition_list(ui, theme, block),
+        "footnote" => draw_footnote(ui, theme, block, wrap),
+        "definition_list" => draw_definition_list(ui, theme, block, wrap),
         "math" => draw_math(ui, theme, block),
         "diagram" => draw_diagram(ui, theme, block),
         "toc" => draw_toc(app, ui, theme, block, headings),
@@ -492,6 +489,7 @@ fn render_inline_text(
     spans: &[SpanView],
     typo: Typography<'_>,
     sense: egui::Sense,
+    wrap_width: f32,
 ) -> egui::Response {
     let Typography {
         size,
@@ -503,55 +501,66 @@ fn render_inline_text(
     // `- [x] **重点**` 里已勾选的项仍要能看出哪几个词原本是粗体——只把样式
     // 替换掉会让勾选这个动作顺手抹掉用户写的格式信息。
     let done = base_style == "task_done";
-    // 无样式片段：走单标签快路径（与旧实现完全一致，零额外开销）。
-    if spans.is_empty() {
-        let mut text = RichText::new(content).size(size).color(base.color);
-        if done {
-            text = text.strikethrough();
-        }
-        return ui.add(egui::Label::new(text).sense(sense));
-    }
+
+    // 统一走 `LayoutJob`：有 / 无行内样式都先攒出一个 galley 再手工绘制。
+    // 「自动换行开 / 关」只由 `wrap_width` 一个值决定（关 = `INFINITY`），
+    // 不再依赖 `ui.add(Label)` 那套默认折行逻辑——那样关不掉折行。
     let mut job = LayoutJob {
         wrap: TextWrapping {
-            max_width: ui.available_width().max(0.0),
+            max_width: wrap_width.max(0.0),
             ..Default::default()
         },
         ..Default::default()
     };
     let len = content.len();
     let mut cursor = 0usize;
-    for span in spans {
-        // 越界 / 落在多字节字符中间的区间会被吸附或退化为空——跳过而不是崩。
-        let Some((start, end)) =
-            clamp_to_char_boundaries(content, span.range.start.min(len), span.range.end.min(len))
-        else {
-            continue;
-        };
-        let start = start.max(cursor);
-        let end = end.max(start);
-        if start > cursor {
-            job.append(&content[cursor..start], 0.0, base.clone());
+    if spans.is_empty() {
+        let mut fmt = base.clone();
+        if done {
+            fmt = done_overlay(theme, fmt);
         }
-        if end > start {
-            let mut fmt = span_format(theme, &span.style, size, line_height);
-            if done {
-                fmt = done_overlay(theme, fmt);
-            }
-            // 行内公式剥掉 `$` / `$$` 分隔符：它们是语法，不是内容。
-            // 不剥的话预览里会显示成 `$E=mc^2$`，看起来像没解析成功。
-            let slice = if span.style == "math" {
-                strip_math_delimiters(&content[start..end])
-            } else {
-                &content[start..end]
+        job.append(content, 0.0, fmt);
+    } else {
+        for span in spans {
+            // 越界 / 落在多字节字符中间的区间会被吸附或退化为空——跳过而不是崩。
+            let Some((start, end)) = clamp_to_char_boundaries(
+                content,
+                span.range.start.min(len),
+                span.range.end.min(len),
+            ) else {
+                continue;
             };
-            job.append(slice, 0.0, fmt);
+            let start = start.max(cursor);
+            let end = end.max(start);
+            if start > cursor {
+                job.append(&content[cursor..start], 0.0, base.clone());
+            }
+            if end > start {
+                let mut fmt = span_format(theme, &span.style, size, line_height);
+                if done {
+                    fmt = done_overlay(theme, fmt);
+                }
+                // 行内公式剥掉 `$` / `$$` 分隔符：它们是语法，不是内容。
+                // 不剥的话预览里会显示成 `$E=mc^2$`，看起来像没解析成功。
+                let slice = if span.style == "math" {
+                    strip_math_delimiters(&content[start..end])
+                } else {
+                    &content[start..end]
+                };
+                job.append(slice, 0.0, fmt);
+            }
+            cursor = end.max(cursor);
         }
-        cursor = end.max(cursor);
+        if cursor < len {
+            job.append(&content[cursor..], 0.0, base.clone());
+        }
     }
-    if cursor < len {
-        job.append(&content[cursor..], 0.0, base);
-    }
-    ui.add(egui::Label::new(job).sense(sense))
+    // 手工排版 + 绘制：比 `ui.add(Label)` 多一步，但能精确控制折行宽度，
+    // 且为「命中区 / 点击」等扩展留好位置（见图表链接的 `draw_diagram`）。
+    let galley = ui.painter().layout_job(job);
+    let (_id, rect) = ui.allocate_space(galley.size());
+    ui.painter().galley(rect.min, galley, base.color);
+    ui.interact(rect, ui.id().with("rinline"), sense)
 }
 
 /// 给一个行内格式叠上「已完成」装饰（次级色 + 删除线）。
@@ -610,6 +619,13 @@ fn draw_heading(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, block: &BlockVi
     });
     // 行内样式（`**粗体**` / `` `代码` `` / `<kbd>` …）：有片段时走富文本路径，
     // 没有则走原来的单标签路径。两条路径都带点击感应用于「点击标题跳转」。
+    // 标题随正文一起跟随「自动换行」开关。
+    let wrap = app.editor.word_wrap;
+    let max_w = if wrap {
+        ui.available_width()
+    } else {
+        f32::INFINITY
+    };
     let resp = render_inline_text(
         ui,
         theme,
@@ -621,6 +637,7 @@ fn draw_heading(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, block: &BlockVi
             base_style: "heading",
         },
         egui::Sense::click(),
+        max_w,
     );
     if resp.clicked() {
         app.ui.sync.request_click(block.id);
@@ -640,8 +657,13 @@ fn draw_heading(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, block: &BlockVi
 
 /// 段落：按可用宽度折行；行内样式（粗体 / 行内代码 / 键帽 / 高亮 / 上下标）
 /// 由 [`render_inline_text`] 按片段排版。
-fn draw_paragraph(ui: &mut Ui, theme: &Theme, block: &BlockView) {
+fn draw_paragraph(ui: &mut Ui, theme: &Theme, block: &BlockView, wrap: bool) {
     let size = theme.metrics.preview_font_size;
+    let max_w = if wrap {
+        ui.available_width()
+    } else {
+        f32::INFINITY
+    };
     render_inline_text(
         ui,
         theme,
@@ -653,6 +675,7 @@ fn draw_paragraph(ui: &mut Ui, theme: &Theme, block: &BlockView) {
             base_style: "",
         },
         egui::Sense::hover(),
+        max_w,
     );
 }
 
@@ -660,7 +683,7 @@ fn draw_paragraph(ui: &mut Ui, theme: &Theme, block: &BlockView) {
 ///
 /// 注意：引用块的 `content` 通常是空的（正文在它的子段落块里，见解析器注释），
 /// 此时这里只画一根色条作为视觉容器。
-fn draw_quote(ui: &mut Ui, theme: &Theme, block: &BlockView) {
+fn draw_quote(ui: &mut Ui, theme: &Theme, block: &BlockView, wrap: bool) {
     egui::Frame::new()
         .fill(theme.bg_tertiary)
         .inner_margin(egui::Margin::symmetric(
@@ -679,6 +702,11 @@ fn draw_quote(ui: &mut Ui, theme: &Theme, block: &BlockView) {
                     Stroke::new(QUOTE_BAR_W, theme.syn_quote),
                 );
                 if !block.content.trim().is_empty() {
+                    let max_w = if wrap {
+                        ui.available_width()
+                    } else {
+                        f32::INFINITY
+                    };
                     render_inline_text(
                         ui,
                         theme,
@@ -691,6 +719,7 @@ fn draw_quote(ui: &mut Ui, theme: &Theme, block: &BlockView) {
                             base_style: "quote",
                         },
                         egui::Sense::hover(),
+                        max_w,
                     );
                 }
             });
@@ -743,7 +772,9 @@ fn draw_highlighted_code(
     text: &str,
     spans: Option<&[crate::application::dto::SpanView]>,
 ) {
-    let wrap_width = ui.available_width();
+    // 代码**不折行**（`INFINITY`）：长代码行超出面板宽时由预览区底部横向滚动条
+    // 查看，而不是把一行代码从中间折断（折行会破坏缩进可读性）。
+    let wrap_width = f32::INFINITY;
     let job = highlighted_code_job(theme, text, spans, wrap_width);
 
     // 唯一 id 保证每个代码块的选择状态互相独立。
@@ -842,7 +873,7 @@ fn bullet_for(depth: u8) -> &'static str {
 /// `BlockView` 当初根本没带层级信息。现在解析器把整棵列表树**拍平**进
 /// 同一个 `items`（见其 `root_list_index`），层级只存在于 `ListItemView::depth`：
 /// 想从 `text` 的前导空格反推是行不通的（pulldown 已把标记与缩进吃掉）。
-fn draw_list(ui: &mut Ui, theme: &Theme, block: &BlockView) {
+fn draw_list(ui: &mut Ui, theme: &Theme, block: &BlockView, wrap: bool) {
     let marker_w = list_marker_width(theme);
     for item in block.items.iter() {
         ui.horizontal(|ui| {
@@ -861,13 +892,14 @@ fn draw_list(ui: &mut Ui, theme: &Theme, block: &BlockView) {
                 )
                 .halign(Align::RIGHT),
             );
-            draw_item_text(ui, theme, item);
+            draw_item_text(ui, theme, item, wrap);
         });
     }
 }
 
 /// 任务列表：复选框可点击，点击后回写源码。
 fn draw_task_list(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, block: &BlockView) {
+    let wrap = app.editor.word_wrap;
     for item in block.items.iter() {
         let mut checked = item.checked.unwrap_or(false);
         ui.horizontal(|ui| {
@@ -875,7 +907,7 @@ fn draw_task_list(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, block: &Block
             if ui.checkbox(&mut checked, "").changed() {
                 toggle_task(app, item, checked);
             }
-            draw_item_text(ui, theme, item);
+            draw_item_text(ui, theme, item, wrap);
         });
     }
 }
@@ -912,8 +944,13 @@ pub fn task_marker_offset(text: &str, start: usize, end: usize) -> Option<usize>
 
 /// 列表项文本：走行内富文本（`- **粗体**` 必须与正文里的粗体一致），
 /// 已勾选的项叠上删除线 + 次级色。
-fn draw_item_text(ui: &mut Ui, theme: &Theme, item: &ListItemView) {
+fn draw_item_text(ui: &mut Ui, theme: &Theme, item: &ListItemView, wrap: bool) {
     let size = theme.metrics.preview_font_size;
+    let max_w = if wrap {
+        ui.available_width()
+    } else {
+        f32::INFINITY
+    };
     render_inline_text(
         ui,
         theme,
@@ -929,6 +966,7 @@ fn draw_item_text(ui: &mut Ui, theme: &Theme, item: &ListItemView) {
             },
         },
         egui::Sense::hover(),
+        max_w,
     );
 }
 
@@ -1171,6 +1209,8 @@ fn table_row(
                                     base_style: if header { "strong" } else { "" },
                                 },
                                 egui::Sense::hover(),
+                                // 单元格宽度固定，文本在格子内折行（不随全局开关）。
+                                ui.available_width(),
                             );
                             ui.add_space(pad_y);
                         });
@@ -1353,7 +1393,7 @@ fn draw_toc(
 /// 是一条没有编号的孤立句子，与正文里的 `[^1]` 引用对不上号；
 /// 若把标签拼进 `content`，它又会参与搜索命中与字数统计。
 /// 故由渲染层在这里把两者并排画出来。
-fn draw_footnote(ui: &mut Ui, theme: &Theme, block: &BlockView) {
+fn draw_footnote(ui: &mut Ui, theme: &Theme, block: &BlockView, wrap: bool) {
     let m = theme.metrics;
     let size = m.preview_font_size - 2.0;
     ui.horizontal_top(|ui| {
@@ -1366,6 +1406,11 @@ fn draw_footnote(ui: &mut Ui, theme: &Theme, block: &BlockView) {
         }
         ui.with_layout(Layout::top_down(Align::LEFT), |ui| {
             ui.set_min_width(ui.available_width().max(0.0));
+            let max_w = if wrap {
+                ui.available_width()
+            } else {
+                f32::INFINITY
+            };
             render_inline_text(
                 ui,
                 theme,
@@ -1377,6 +1422,7 @@ fn draw_footnote(ui: &mut Ui, theme: &Theme, block: &BlockView) {
                     base_style: "quote",
                 },
                 egui::Sense::hover(),
+                max_w,
             );
         });
     });
@@ -1386,12 +1432,17 @@ fn draw_footnote(ui: &mut Ui, theme: &Theme, block: &BlockView) {
 ///
 /// 不套项目符号：定义列表的语义是「词条—释义」，画成 `• 术语: 定义`
 /// 就与普通无序列表混同了，而且术语与释义的从属关系在横向上会被拉平。
-fn draw_definition_list(ui: &mut Ui, theme: &Theme, block: &BlockView) {
+fn draw_definition_list(ui: &mut Ui, theme: &Theme, block: &BlockView, wrap: bool) {
     let m = theme.metrics;
     let size = m.preview_font_size;
     let line_height = size * m.preview_line_height;
     for entry in &block.definitions {
         // 术语：用与标题同族的强调色，与下面的释义拉开层次。
+        let term_max_w = if wrap {
+            ui.available_width()
+        } else {
+            f32::INFINITY
+        };
         render_inline_text(
             ui,
             theme,
@@ -1403,6 +1454,7 @@ fn draw_definition_list(ui: &mut Ui, theme: &Theme, block: &BlockView) {
                 base_style: "strong",
             },
             egui::Sense::hover(),
+            term_max_w,
         );
         for body in &entry.definitions {
             ui.horizontal_top(|ui| {
@@ -1422,6 +1474,11 @@ fn draw_definition_list(ui: &mut Ui, theme: &Theme, block: &BlockView) {
                 ui.add_space(m.space_xs);
                 ui.with_layout(Layout::top_down(Align::LEFT), |ui| {
                     ui.set_min_width(ui.available_width().max(0.0));
+                    let body_max_w = if wrap {
+                        ui.available_width()
+                    } else {
+                        f32::INFINITY
+                    };
                     render_inline_text(
                         ui,
                         theme,
@@ -1433,6 +1490,7 @@ fn draw_definition_list(ui: &mut Ui, theme: &Theme, block: &BlockView) {
                             base_style: "",
                         },
                         egui::Sense::hover(),
+                        body_max_w,
                     );
                 });
             });
@@ -1610,6 +1668,43 @@ fn draw_diagram(ui: &mut Ui, theme: &Theme, block: &BlockView) {
                 label_bg: theme.code_bg,
             };
             super::mermaid::paint(ui.painter(), rect, &graph, &style);
+
+            // 图表内超链接可点击：把 mermaid 返回的命中区（左上角原点、
+            // 已归一化，与图元同一坐标系）按 `paint` 完全相同的缩放 + 平移
+            // 变换到屏幕坐标，再注册成可点击交互区。覆盖三类来源：
+            // ① `click A href "url"` 指令（按节点 id 命中整块节点）；
+            // ② 节点 / 参与者 / 类名 / 任务名里写的 `[文本](url)`；
+            // ③ 时序图消息文案里写的 `[文本](url)`。
+            // 三种图种（graph / sequence / class / gantt）都经 `finalize`
+            // 产出 `hotspots`，这里无需区分图种。
+            //
+            // 命中区随 `paint` 的 `scale` / `origin` 同步计算，故缩放与
+            // 横向居中两种情况下点击位置都精确对齐绘制位置。
+            let scale = if graph.width > max_w && graph.width > 0.0 {
+                max_w / graph.width
+            } else {
+                1.0
+            };
+            let origin = egui::Pos2::new(
+                rect.left() + (rect.width() - graph.width * scale).max(0.0) * 0.5,
+                rect.top(),
+            );
+            for (i, (hot, url)) in graph.click_targets().iter().enumerate() {
+                // 屏幕坐标下的命中矩形（与绘制同一变换）。
+                let screen = egui::Rect::from_min_max(
+                    origin + hot.min.to_vec2() * scale,
+                    origin + hot.max.to_vec2() * scale,
+                );
+                let resp = ui.interact(screen, ui.id().with(("mhot", i)), egui::Sense::click());
+                if resp.hovered() {
+                    // 指到可点击区域时换成手型，提示「这里能点」。
+                    ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::PointingHand);
+                }
+                if resp.clicked() {
+                    // 新标签页打开：外部链接不打断当前文档阅读。
+                    ui.ctx().open_url(egui::OpenUrl::new_tab(url.clone()));
+                }
+            }
         });
 }
 
