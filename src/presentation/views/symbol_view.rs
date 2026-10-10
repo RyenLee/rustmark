@@ -45,9 +45,11 @@ pub fn show(app: &mut EditorApp, ctx: &Context) {
         .default_width(WIDTH)
         .default_height(HEIGHT)
         .show(ctx, |ui| body(app, ui));
-    if !ctx.memory(|m| m.has_focus(egui::Id::new(SYMBOL_INPUT_ID)))
-        && !ctx.memory(|m| m.has_focus(egui::Id::new("rustmark.overlay.symbol")))
-    {
+    // 打开即聚焦筛选框，且**只给一次**（边沿触发）。
+    // 「当前没焦点就请求」的写法恒为真（`Memory::has_focus` 认不到窗口 id），
+    // 会每帧抢焦点、让用户没法把焦点移到面板里的别处。
+    // 详见 `DialogUiState::take_open_focus`。
+    if app.dialog.take_open_focus(Overlay::Symbol) {
         ctx.memory_mut(|m| m.request_focus(egui::Id::new(SYMBOL_INPUT_ID)));
     }
     if !open {

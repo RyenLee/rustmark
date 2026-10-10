@@ -41,11 +41,13 @@ pub fn show(app: &mut EditorApp, ctx: &Context) {
         .default_width(WIDTH)
         .default_height(HEIGHT)
         .show(ctx, |ui| body(app, ui));
-    // 焦点只在「面板刚拿到焦点」时给一次，否则每帧请求会让用户
-    // 无法把焦点移到过滤框之外（表现为「点哪儿都不上焦点」）。
-    if !ctx.memory(|m| m.has_focus(egui::Id::new(FILTER_INPUT_ID)))
-        && !ctx.memory(|m| m.has_focus(egui::Id::new("rustmark.overlay.shortcut_overview")))
-    {
+    // 焦点只在「浮层刚打开」时给一次，否则会让用户无法把焦点移到过滤框
+    // 之外（表现为「点哪儿都不上焦点」）。
+    //
+    // 判据必须是**打开事件**（`take_open_focus` 的边沿），而不是
+    // 「过滤框当前没有焦点」——后者恒为真：`Memory::has_focus` 认不到
+    // 窗口（`Area`）的 id。详见 `DialogUiState::take_open_focus` 的文档。
+    if app.dialog.take_open_focus(Overlay::ShortcutOverview) {
         ctx.memory_mut(|m| m.request_focus(egui::Id::new(FILTER_INPUT_ID)));
     }
     if !open {

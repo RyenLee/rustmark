@@ -87,11 +87,13 @@ pub fn show(app: &mut EditorApp, ctx: &Context) {
         .show(ctx, |ui| body(app, ui));
     // 打开后把焦点交给第一个输入控件（仅「外观」分区有它）。
     //
-    // 条件是「当前没有焦点」而不是「每帧都请求」：每帧请求会让用户无法
-    // 把焦点移到别的控件上（每帧都被抢回来），而那种表现是「点哪儿都不上焦点」。
+    // 条件是**打开事件**而不是「当前没有焦点」：后者每帧都成立
+    //（`Memory::has_focus` 认不到窗口（`Area`）的 id），会把焦点每帧抢回来，
+    // 用户点哪儿都不上焦点。开关顺序也重要——分区判断放在前面短路，
+    // 这样「打开时不在外观分区、之后切过去」仍能拿到那次唯一的焦点。
+    // 详见 `DialogUiState::take_open_focus` 的文档。
     if app.settings_ui.section == SettingsTab::Appearance
-        && !ctx.memory(|m| m.has_focus(egui::Id::new(FONT_INPUT_ID)))
-        && !ctx.memory(|m| m.has_focus(egui::Id::new("rustmark.overlay.settings")))
+        && app.dialog.take_open_focus(Overlay::Settings)
     {
         ctx.memory_mut(|m| m.request_focus(egui::Id::new(FONT_INPUT_ID)));
     }

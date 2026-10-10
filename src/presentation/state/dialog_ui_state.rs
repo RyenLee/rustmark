@@ -122,12 +122,44 @@ pub struct DialogUiState {
     open: Vec<Overlay>,
     /// 需要关闭的浮层（`Esc` 的消费标记）。
     pending_close: Option<Overlay>,
+    /// 已经申请过「打开即聚焦」的浮层（一次性闩锁）。
+    ///
+    /// # 为什么不写成「当前没有焦点就每帧请求」
+    ///
+    /// 那种写法看着更稳（焦点丢了会自己补回来），实际**恒为真**：
+    /// `Memory::has_focus(id)` 只认**控件** id，而 `egui::Window` 的 id
+    /// 属于 `Area`——egui 全库只有 `TextEdit` / `DragValue` 会
+    /// `request_focus`，没有任何地方会让窗口 id 成为「有焦点的控件」。
+    /// 于是 `!has_focus(窗口 id)` 永远成立，「打开时给一次」退化成
+    /// 「每帧都抢」：用户点进同一浮层里的**第二个**输入框会被立刻拽回第一个。
+    /// 导出浮层的「文件名」框就因此一个字也打不进去（而单输入框的浮层
+    /// 看起来正常，所以这个坑很晚才暴露）。
+    ///
+    /// 故改为**边沿触发**：浮层打开时登记一次，视图取走后不再重复申请。
+    /// 重新打开会重新登记（见 [`Self::open`]）。
+    focus_granted: Vec<Overlay>,
 }
 
 impl DialogUiState {
     /// 构造默认状态（无浮层）。
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// 浮层是否**刚打开且还没申请过聚焦**；返回 `true` 的同时记下已申请。
+    ///
+    /// 视图应在画完浮层之后调用，用来决定「本帧要不要把焦点交给输入框」。
+    /// 每帧调用是安全的：除打开后的第一次外都返回 `false`。
+    ///
+    /// 刻意不做「取不到焦点就再试一次」的补偿：那需要区分「控件还没画出来」
+    /// 与「用户已经自己点了别处」，而两者在 egui 里无法区分——
+    /// 猜错的代价正是本方法存在的原因（每帧抢焦点）。
+    pub fn take_open_focus(&mut self, overlay: Overlay) -> bool {
+        if self.focus_granted.contains(&overlay) {
+            return false;
+        }
+        self.focus_granted.push(overlay);
+        true
     }
 
     /// 是否有任何浮层打开。
@@ -149,6 +181,10 @@ impl DialogUiState {
     ///
     /// 重复打开同一浮层时**不**重复入栈，否则栈里会出现两项相同浮层，
     /// `Esc` 一次关不掉。
+    ///
+    /// 同时**重新登记**「打开即聚焦」（见 [`Self::take_open_focus`]）：
+    /// 已打开的浮层被再次打开（如 `Ctrl+F` 时查找面板本就在）属于
+    /// 「用户又唤起了它」，此时把光标送回输入框正是他想要的。
     pub fn open(&mut self, overlay: Overlay) {
         if self.is_open(overlay) {
             // 已打开：提到栈顶（最近使用语义），不重复入栈——
@@ -171,6 +207,8 @@ impl DialogUiState {
             return false;
         };
         self.open.remove(index);
+        // 顺手撤掉「打开即聚焦」的登记：下次打开要能重新给一次焦点。
+        self.focus_granted.retain(|o| *o != overlay);
         true
     }
 
@@ -178,6 +216,7 @@ impl DialogUiState {
     pub fn close_all(&mut self) {
         self.open.clear();
         self.pending_close = None;
+        self.focus_granted.clear();
     }
 
     /// 请求关闭栈顶浮层（`Esc` 走这条路径）。
@@ -205,5 +244,87 @@ impl DialogUiState {
     /// 文档切换后关闭全部浮层（避免对已关闭文档的浮层残留）。
     pub fn reset_for_new_document(&mut self) {
         self.close_all();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 「打开即聚焦」是**边沿触发**：只给一次，之后每帧都返回 `false`。
+    ///
+    /// 这条是导出浮层「点不进文件名框」的回归防线：若哪天有人把视图里的
+    /// 判断改回 `!m.has_focus(...)`，本方法就不会再被当成一次性闩锁用，
+    /// 而 `focus_granted` 的语义会在这里先红。
+    #[test]
+    fn open_focus_is_granted_once_per_open() {
+        let mut state = DialogUiState::new();
+        state.open(Overlay::Export);
+
+        assert!(state.take_open_focus(Overlay::Export), "打开后应给一次");
+        for _ in 0..3 {
+            assert!(
+                !state.take_open_focus(Overlay::Export),
+                "同一轮打开里只能给一次，否则每帧抢焦点"
+            );
+        }
+    }
+
+    /// 关掉再打开要能重新给一次焦点。
+    #[test]
+    fn closing_and_reopening_grants_focus_again() {
+        let mut state = DialogUiState::new();
+        state.open(Overlay::Export);
+        assert!(state.take_open_focus(Overlay::Export));
+
+        state.close(Overlay::Export);
+        state.open(Overlay::Export);
+        assert!(
+            state.take_open_focus(Overlay::Export),
+            "重新打开应重新给一次焦点"
+        );
+    }
+
+    /// 重复打开**同一**浮层（已打开时再次触发动作）也要重新给焦点。
+    #[test]
+    fn reopening_an_already_open_overlay_grants_focus_again() {
+        let mut state = DialogUiState::new();
+        state.open(Overlay::Find);
+        assert!(state.take_open_focus(Overlay::Find));
+
+        // 面板已打开时再按一次 `Ctrl+F`：属于「又唤起了它」。
+        state.open(Overlay::Find);
+        assert!(state.take_open_focus(Overlay::Find));
+    }
+
+    /// 关掉全部浮层会撤掉登记（切文档后不得把焦点留给旧浮层）。
+    #[test]
+    fn close_all_clears_the_focus_latch() {
+        let mut state = DialogUiState::new();
+        state.open(Overlay::Settings);
+        assert!(state.take_open_focus(Overlay::Settings));
+
+        state.close_all();
+
+        state.open(Overlay::Settings);
+        assert!(
+            state.take_open_focus(Overlay::Settings),
+            "`close_all` 之后重新打开应重新给一次"
+        );
+    }
+
+    /// 各浮层的登记互不干扰。
+    #[test]
+    fn the_latch_is_per_overlay() {
+        let mut state = DialogUiState::new();
+        state.open(Overlay::Settings);
+        state.open(Overlay::About);
+
+        assert!(state.take_open_focus(Overlay::About));
+        assert!(!state.take_open_focus(Overlay::About));
+        assert!(
+            state.take_open_focus(Overlay::Settings),
+            "另一个浮层的登记不该被牵连"
+        );
     }
 }

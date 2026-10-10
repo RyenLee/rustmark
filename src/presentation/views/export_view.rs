@@ -43,6 +43,17 @@ const HEIGHT: f32 = 430.0;
 /// 输出目录输入框的固定 `Id`（打开后的焦点落点 + 可测锚点）。
 pub const OUTPUT_DIR_INPUT_ID: &str = "rustmark.export.dir";
 
+/// 文件名输入框的固定 `Id`。
+///
+/// 与 [`OUTPUT_DIR_INPUT_ID`] 一样必须是**显式** id，而不是 let egui 按布局
+/// 位置自动生成：
+///
+/// 1. 自动 id 随控件在布局中的位置变化，浮层里加一行控件就可能换 id，
+///    光标位置与撤销栈会跟着丢；
+/// 2. 测试需要能问出「这个框能不能被选中」——egui 0.33 没有文本回读接口
+///    （`ctx.debug_text` 是写入方向），控件状态是唯一稳定的外部可观察量。
+pub const FILE_STEM_INPUT_ID: &str = "rustmark.export.stem";
+
 /// 绘制导出对话框。
 pub fn show(app: &mut EditorApp, ctx: &Context) {
     let mut open = true;
@@ -69,11 +80,13 @@ pub fn show(app: &mut EditorApp, ctx: &Context) {
     }
     // 打开后把焦点交给输出路径输入框：导出是一次性动作，
     // 用户最可能先改的就是「存到哪」。
-    if app.export_ui.error.is_none()
-        && app.export_ui.notice.is_none()
-        && !ctx.memory(|m| m.has_focus(egui::Id::new(OUTPUT_DIR_INPUT_ID)))
-        && !ctx.memory(|m| m.has_focus(egui::Id::new("rustmark.overlay.export")))
-    {
+    //
+    // **只给一次**（边沿触发）。这里绝不能用「输出路径框当前没有焦点就请求」
+    // 当守卫：`Memory::has_focus` 只认控件 id，而窗口（`Area`）的 id 永远不会
+    // 成为「有焦点的控件」，那个条件恒为真 → 每帧都抢 → 用户点进下面的
+    // 「文件名」框会被立刻拽回来，一个字也打不进去。
+    // 详见 `DialogUiState::take_open_focus` 的文档。
+    if app.dialog.take_open_focus(Overlay::Export) {
         ctx.memory_mut(|m| m.request_focus(egui::Id::new(OUTPUT_DIR_INPUT_ID)));
     }
 }
@@ -153,6 +166,7 @@ fn path_rows(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
             ui.label("文件名");
             ui.add(
                 egui::TextEdit::singleline(&mut app.export_ui.file_stem)
+                    .id(egui::Id::new(FILE_STEM_INPUT_ID))
                     .desired_width(320.0)
                     .hint_text("文档名"),
             )

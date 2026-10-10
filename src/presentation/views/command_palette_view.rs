@@ -50,9 +50,11 @@ pub fn show(app: &mut EditorApp, ctx: &Context) {
         .default_height(HEIGHT)
         .show(ctx, |ui| body(app, ui));
     // 打开即聚焦搜索框：用户的下一个动作一定是打字。
-    if !ctx.memory(|m| m.has_focus(egui::Id::new(COMMAND_PALETTE_INPUT_ID)))
-        && !ctx.memory(|m| m.has_focus(egui::Id::new("rustmark.overlay.command_palette")))
-    {
+    //
+    // 只给一次（边沿触发）：「当前没有焦点才请求」那种写法恒为真——
+    // `Memory::has_focus` 认不到窗口（`Area`）的 id，于是每帧都抢焦点，
+    // 用户没法把焦点移到面板里的别处。详见 `DialogUiState::take_open_focus`。
+    if app.dialog.take_open_focus(Overlay::CommandPalette) {
         ctx.memory_mut(|m| m.request_focus(egui::Id::new(COMMAND_PALETTE_INPUT_ID)));
     }
     if !open {

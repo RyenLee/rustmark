@@ -31,7 +31,7 @@ use rustmark::presentation::shortcuts::registry::UiAction;
 use rustmark::presentation::state::dialog_ui_state::Overlay;
 use rustmark::presentation::state::export_ui_state::ExportFormatChoice;
 use rustmark::presentation::state::scroll_sync_state::Side;
-use rustmark::presentation::views::export_view::OUTPUT_DIR_INPUT_ID;
+use rustmark::presentation::views::export_view::{FILE_STEM_INPUT_ID, OUTPUT_DIR_INPUT_ID};
 use rustmark::presentation::views::{main_view, overlays};
 use rustmark::shared::geometry::{ByteOffset, TextRange};
 
@@ -645,5 +645,175 @@ fn long_capture_e2e_stitches_segments_into_one_png() {
         image.height(),
         800,
         "高度应等于内容高（末段重叠行必须被丢弃，否则是 900）"
+    );
+}
+
+// ————————————————————————————————————————————————————————————
+// 焦点归属：同一浮层里的两个输入框必须能各选各的
+// ————————————————————————————————————————————————————————————
+//
+// 症状：点「文件名」输入框，光标立刻跳回「输出路径」输入框，
+// 一个字都打不进去——导出的文件名改不了。
+//
+// 根因不是布局，是 `show()` 里那句「打开后把焦点交给输出路径」的守卫：
+//
+//     !m.has_focus(窗口 id)
+//
+// `Memory::has_focus` 只认**控件** id，而 `egui::Window` 的 id 属于 `Area`——
+// egui 内部只有 `TextEdit` / `DragValue` 会 `request_focus`，没有任何地方
+// 会让窗口 id 成为「有焦点的控件」。所以那个条件**恒为真**，
+// 「打开时给一次」退化成「每帧都抢」，同一浮层里的第二个输入框永远拿不到焦点。
+//
+// 两条用例分工：一条钉「别抢回来」（纯焦点层面，最接近根因），
+// 一条钉「真的点得中」（走指针事件，最接近用户手上的动作）。
+
+/// 跑一帧（可带输入事件）。
+fn run_frame(ctx: &egui::Context, app: &mut EditorApp, events: Vec<egui::Event>) {
+    let mut input = frame_input();
+    input.events = events;
+    let _ = ctx.run(input, |ctx| {
+        rustmark::presentation::theme::mapper::apply(ctx, &app.ui.theme);
+        main_view::show(app, ctx);
+    });
+}
+
+fn press_at(pos: egui::Pos2) -> egui::Event {
+    egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers: egui::Modifiers::default(),
+    }
+}
+
+fn release_at(pos: egui::Pos2) -> egui::Event {
+    egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: egui::Modifiers::default(),
+    }
+}
+
+/// 打开导出浮层并跑够两帧（焦点请求隔一帧兑现）。
+fn open_export(ctx: &egui::Context, app: &mut EditorApp) {
+    for _ in 0..2 {
+        run_frame(ctx, app, Vec::new());
+    }
+    app.execute(UiAction::Export);
+    assert!(app.dialog.is_open(Overlay::Export), "动作应打开导出浮层");
+    for _ in 0..2 {
+        run_frame(ctx, app, Vec::new());
+    }
+}
+
+/// 焦点一旦移到别的输入框，就不得被拽回输出路径框。
+#[test]
+fn export_dialog_does_not_steal_focus_back_from_the_file_name_box() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_dir(&dir);
+    let (_cfg, mut app) = app_with_out(&out);
+    let ctx = egui::Context::default();
+
+    open_export(&ctx, &mut app);
+    assert!(
+        ctx.memory(|m| m.has_focus(egui::Id::new(OUTPUT_DIR_INPUT_ID))),
+        "打开后焦点应先落在输出路径框"
+    );
+
+    // 用户把光标移进「文件名」框（等价于点中了它）。
+    ctx.memory_mut(|m| m.request_focus(egui::Id::new(FILE_STEM_INPUT_ID)));
+    run_frame(&ctx, &mut app, Vec::new());
+
+    assert!(
+        ctx.memory(|m| m.has_focus(egui::Id::new(FILE_STEM_INPUT_ID))),
+        "焦点被拽回了输出路径框：用户在「文件名」框里一个字也打不进去"
+    );
+}
+
+/// 走真实指针事件：点中「文件名」框后焦点要留在那里。
+#[test]
+fn export_dialog_file_name_box_can_actually_be_selected() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_dir(&dir);
+    let (_cfg, mut app) = app_with_out(&out);
+    let ctx = egui::Context::default();
+
+    open_export(&ctx, &mut app);
+    let rect = ctx
+        .read_response(egui::Id::new(FILE_STEM_INPUT_ID))
+        .expect("文件名输入框应已被布局")
+        .rect;
+    let pos = rect.center();
+
+    run_frame(
+        &ctx,
+        &mut app,
+        vec![egui::Event::PointerMoved(pos), press_at(pos)],
+    );
+    run_frame(
+        &ctx,
+        &mut app,
+        vec![egui::Event::PointerMoved(pos), release_at(pos)],
+    );
+    assert!(
+        ctx.memory(|m| m.has_focus(egui::Id::new(FILE_STEM_INPUT_ID))),
+        "点中「文件名」框后焦点应落在那里"
+    );
+
+    // 再跑一帧：确认不是「只在这一帧侥幸成立」，而是真的稳住了。
+    run_frame(&ctx, &mut app, Vec::new());
+    assert!(
+        ctx.memory(|m| m.has_focus(egui::Id::new(FILE_STEM_INPUT_ID))),
+        "下一帧焦点又被抢走：用户无法在「文件名」框里连续输入"
+    );
+}
+
+/// 点中「文件名」框后敲进去的字要真的落进文件名。
+///
+/// 前两条钉的是「焦点在不在」——但焦点在≠打得进去（egui 里每个字符都要
+/// 过 `TextEdit` 的焦点检查）。这条走完整通路：点击 → 键盘事件 → 状态变更 →
+/// 「将导出到 …」跟着更新。若哪天又在中间某帧把焦点抢走，这里会先红。
+#[test]
+fn typing_into_the_file_name_box_actually_edits_the_file_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_dir(&dir);
+    let (_cfg, mut app) = app_with_out(&out);
+    let ctx = egui::Context::default();
+
+    open_export(&ctx, &mut app);
+    let before = app.export_ui.file_stem.clone();
+    let rect = ctx
+        .read_response(egui::Id::new(FILE_STEM_INPUT_ID))
+        .expect("文件名输入框应已被布局")
+        .rect;
+    let pos = rect.center();
+
+    run_frame(
+        &ctx,
+        &mut app,
+        vec![egui::Event::PointerMoved(pos), press_at(pos)],
+    );
+    run_frame(
+        &ctx,
+        &mut app,
+        vec![egui::Event::PointerMoved(pos), release_at(pos)],
+    );
+    run_frame(&ctx, &mut app, vec![egui::Event::Text("z".to_string())]);
+
+    assert!(
+        app.export_ui.file_stem.contains('z'),
+        "敲进去的字符没落进文件名（{before:?} → {:?}）：输入框实际不可编辑",
+        app.export_ui.file_stem
+    );
+    assert_eq!(
+        app.export_ui.file_stem.len(),
+        before.len() + 1,
+        "应恰好插入一个字符"
+    );
+    assert!(
+        app.export_ui.resolved_path.contains('z'),
+        "文件名变了，「将导出到 …」也要跟着变：{}",
+        app.export_ui.resolved_path
     );
 }
