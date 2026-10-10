@@ -132,6 +132,27 @@ fn continuous_editor_scroll_keeps_ownership() {
     assert_eq!(sync.owner(now), Some(Side::Editor));
 }
 
+/// 编辑区「把光标滚进视口」是**程序性**滚动，不得驱动预览区。
+///
+/// 场景：在光标即将滚出视口的那一行按回车，egui 会带动画地把光标滚回来
+/// （连续数帧位移）。若不声明成程序性位移，同步会把它当成用户手势、一帧一次
+/// 地把预览区拉到映射位置：编辑区平滑滚、预览区逐帧跳，两栏同时在动 = 界面闪烁。
+#[test]
+fn programmatic_editor_scroll_does_not_drive_preview() {
+    let mut sync = ScrollSync::new();
+    sync.observe(0, 0.0, 0.0);
+
+    // 模拟「文本变化 → egui 自动滚到光标」的连续几帧。
+    sync.note_programmatic_scroll(Side::Editor, 16);
+    for frame in 1..=6 {
+        let editor = frame as f32 * 20.0;
+        assert_eq!(sync.observe(16 + frame * 8, editor, 0.0), None);
+    }
+    // 用户真的去滚编辑区时（窗口过期后）仍然要能驱动预览。
+    let now = 16 + 6 * 8 + SUPPRESS_MS + 1;
+    assert_eq!(sync.observe(now, 200.0, 0.0), Some(Side::Editor));
+}
+
 /// 无归属时两侧同时位移（异常）→ 不驱动任何一侧，宁可不动也不互相打架。
 #[test]
 fn simultaneous_movement_without_owner_drives_nothing() {

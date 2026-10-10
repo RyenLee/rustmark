@@ -294,9 +294,33 @@ pub fn transform_insert(old: &str, edit: &mut TextEdit) -> bool {
     // 列表续行：插入内容含换行且前一行是列表项
     if edit.inserted.contains('\n') {
         let line = line_before(old, edit.byte_start);
-        if let Some((_, marker)) = list_marker(line) {
-            edit.inserted.push_str(&marker);
-            edit.cursor_char += marker.chars().count();
+        if let Some((mlen, marker)) = list_marker(line) {
+            // 空列表项（行内只有标记，如 "- " / "  - " / "1. "）——
+            // 标准编辑器行为：这次回车应当**退出列表**，而不是再续一个空项。
+            // 否则用户永远无法用回车离开列表（每按一次都多一个 "- "）。
+            // 做法：把替换区间起点拉到标记起始（即本行行首），连同标记一起删掉，
+            // 只插入一个换行；光标落到该空行。仅对「纯插入、无选区」生效，
+            // 选区 + 回车（替换选中内容）不触发此分支。
+            //
+            // 「空项」判定：当前行的标记之后是否还有非空内容。
+            // 注意 `list_marker` 返回的是 `(缩进长度, 下一行标记)`——无序时首字段
+            // 只是缩进长（故当前标记长 = `mlen + 2`，即「缩进 + "- "」）；
+            // 有序时首字段已是当前完整标记长（`mlen`），但「下一行标记」是递增后的
+            // （"2. "）。两者都不能直接当「当前标记长」来切尾巴，故据「下一行标记
+            // 是否以数字开头」区分：有序 → 当前标记长 = `mlen`；无序 → `mlen + 2`。
+            let ordered = marker.chars().next().is_some_and(|c| c.is_ascii_digit());
+            let cur_marker_len = if ordered { mlen } else { mlen + 2 };
+            let line_start = edit.byte_start.saturating_sub(line.len());
+            let after_marker = &line[cur_marker_len.min(line.len())..];
+            let is_empty_item = edit.byte_start == edit.byte_end && after_marker.trim().is_empty();
+            if is_empty_item {
+                edit.byte_start = line_start;
+                edit.inserted = "\n".to_string();
+                edit.cursor_char = byte_to_char(old, line_start) + 1;
+            } else {
+                edit.inserted.push_str(&marker);
+                edit.cursor_char += marker.chars().count();
+            }
             changed = true;
         }
     }
@@ -452,5 +476,80 @@ mod tests {
         };
         assert!(!transform_insert(old, &mut edit));
         assert_eq!(edit.inserted, "x");
+    }
+
+    #[test]
+    fn transform_empty_list_item_exits_list() {
+        // 光标点在一个空无序列表项 "- " 的末尾（字符 2 / 字节 2）。
+        // 回车应「退出列表」：把 "- " 整段删掉、只留一个空行，光标落到该空行。
+        let old = "- ";
+        let mut edit = TextEdit {
+            byte_start: 2,
+            byte_end: 2,
+            inserted: "\n".to_string(),
+            cursor_char: 3,
+            anchor_char: None,
+        };
+        assert!(transform_insert(old, &mut edit));
+        // 标记被移除、不再续出新的 "- "
+        assert_eq!(edit.inserted, "\n");
+        // 替换区间起点被拉到行首（标记起始），删掉整段 "- "
+        assert_eq!(edit.byte_start, 0);
+        // 光标落在空行上：行首字符索引 0 + 换行 1
+        assert_eq!(edit.cursor_char, 1);
+    }
+
+    #[test]
+    fn transform_indented_empty_list_item_exits() {
+        // 缩进的空无序列表项 "  - "（2 空格 + "- " = 4 字节），光标在末尾。
+        let old = "  - ";
+        let mut edit = TextEdit {
+            byte_start: 4,
+            byte_end: 4,
+            inserted: "\n".to_string(),
+            cursor_char: 5,
+            anchor_char: None,
+        };
+        assert!(transform_insert(old, &mut edit));
+        // 标记被移除、不再续出新的 "- "
+        assert_eq!(edit.inserted, "\n");
+        // 替换区间起点被拉到行首（标记起始），删掉整段 "  - "
+        assert_eq!(edit.byte_start, 0);
+        // 光标落在空行上：行首字符索引 0 + 换行 1
+        assert_eq!(edit.cursor_char, 1);
+    }
+
+    #[test]
+    fn transform_empty_ordered_list_item_exits() {
+        // 空有序列表项 "1. "（光标在末尾，字节 3），回车退出列表。
+        let old = "1. ";
+        let mut edit = TextEdit {
+            byte_start: 3,
+            byte_end: 3,
+            inserted: "\n".to_string(),
+            cursor_char: 4,
+            anchor_char: None,
+        };
+        assert!(transform_insert(old, &mut edit));
+        assert_eq!(edit.inserted, "\n");
+        assert_eq!(edit.byte_start, 0);
+        assert_eq!(edit.cursor_char, 1);
+    }
+
+    #[test]
+    fn transform_nonempty_list_item_continues() {
+        // 非空列表项仍续行：回车补出下一行标记。
+        let old = "- hello";
+        let mut edit = TextEdit {
+            byte_start: 7,
+            byte_end: 7,
+            inserted: "\n".to_string(),
+            cursor_char: 8,
+            anchor_char: None,
+        };
+        assert!(transform_insert(old, &mut edit));
+        assert_eq!(edit.inserted, "\n- ");
+        // 起点不变（只续行，不删已有内容）
+        assert_eq!(edit.byte_start, 7);
     }
 }

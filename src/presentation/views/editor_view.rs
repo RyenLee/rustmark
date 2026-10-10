@@ -278,7 +278,28 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
                     && let Some(mut edit) = editor_ops::diff_replace(&prev, &app.editor_text)
                 {
                     editor_ops::transform_insert(&prev, &mut edit);
+                    // 关键：把「旧文本 + 编辑」拼成与领域完全一致的最终串，
+                    // 直接写回 `editor_text`，然后再发领域命令。这样 `flush_edit`
+                    // 就**不必再从领域整篇回读**——那次回读会在每一帧把绑定给
+                    // egui 的字符串整体替换一遍，迫使 egui 的 `TextEdit` 每敲一个
+                    // 键就重新推导光标 / 选区 / 撤销栈，表现为编辑区闪烁；列表
+                    // 续行时还会让标记「晚一帧才弹出来」。此处就地拼出最终串，
+                    // egui 与领域内容瞬时一致，下游 `flush_edit` 跳过回读。
+                    //
+                    // `edit.byte_start/end` 是相对 `prev`（旧文本）的字节边界，
+                    // 经 `transform_insert` 后仍是 `prev` 的合法边界（空项退出分支
+                    // 把起点拉到了行首），故切片安全。
+                    let bs = edit.byte_start.min(prev.len());
+                    let be = edit.byte_end.min(prev.len());
+                    app.editor_text = format!("{}{}{}", &prev[..bs], edit.inserted, &prev[be..]);
                     app.flush_edit(edit);
+                    // 文本一变，egui 就会「把光标滚进视口」（带动画、连续数帧）。
+                    // 那是程序为了光标可见而滚的，用户并没有滚，故必须声明成
+                    // 程序性位移——否则滚动同步会把它当成用户手势，一帧一次地把
+                    // 预览区拉到映射位置（编辑区平滑滚、预览区逐帧跳），
+                    // 两栏同时在动即用户看到的「界面闪烁」。
+                    let now_ms = app.services.markdown.now().millis();
+                    app.ui.sync.note_programmatic_scroll(Side::Editor, now_ms);
                 }
             });
         });

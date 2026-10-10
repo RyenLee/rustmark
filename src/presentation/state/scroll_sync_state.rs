@@ -259,6 +259,29 @@ impl ScrollSync {
         }
     }
 
+    /// 声明「该侧本帧的位移是**程序性**的，不是用户手势」。
+    ///
+    /// # 为什么需要它
+    ///
+    /// egui 的 `TextEdit` 一旦自行改了文本，就会调 `ui.scroll_to_rect` 把光标
+    /// 滚进视口——这个滚动**带动画**、横跨好几帧（见 `egui` 的
+    /// `text_edit::builder`：`if response.changed() { ui.scroll_to_rect(...) }`）。
+    /// 它是程序为了「让光标可见」而滚的，用户并没有滚。
+    ///
+    /// 若不声明，滚动同步会把它判成「用户在滚编辑区」，于是**一帧一次**地把
+    /// 预览区拉到映射位置：编辑区在平滑滚动，预览区却逐帧跳变，两栏同时在动
+    /// ——观感就是整个界面在闪烁。光标即将滚出视口的那一帧按回车最容易触发，
+    /// 而「在哪一行会滚出视口」取决于窗口高度与滚动位置，故用户感受是
+    /// 「随机在某一行按回车会闪」。
+    ///
+    /// # 做法
+    ///
+    /// 与回声抑制同源：把**对侧**宣告为主动方，本侧位移在抑制窗口内一律视为
+    /// 回声（`is_suppressed` 为真 → `observe` 返回 `None`）。
+    pub fn note_programmatic_scroll(&mut self, side: Side, now_ms: u64) {
+        self.claim(side.other(), now_ms);
+    }
+
     /// 记一次已执行的驱动（调试面板）。
     pub fn record_drive(&mut self, side: Side) {
         self.drive_count += 1;

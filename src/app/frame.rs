@@ -1912,6 +1912,13 @@ impl EditorApp {
     }
 
     /// 把一次文本编辑（来自 egui 的 diff 或纯变换）写入领域。
+    ///
+    /// 注意：**本方法不再整篇回读领域内容到 `editor_text`**——那是旧实现里
+    /// 每敲一个键就触发一次「从领域重读全文并整体覆盖绑定字符串」的操作，
+    /// 会迫使 egui 的 `TextEdit` 每帧重新推导光标 / 选区 / 撤销栈，表现为编辑区
+    /// 闪烁（见 `editor_view::show` 第 5 步的配套说明）。调用方（编辑区）已把
+    /// `editor_text` 同步成与领域一致的最终串，这里只负责：写领域、标记预览需要
+    /// 重解析（防抖起点）、记下光标、清除 egui 撤销栈。
     pub(crate) fn flush_edit(&mut self, edit: editor_ops::TextEdit) {
         let Some(id) = self.active_doc else { return };
         // 用字节区间切片必须合法——`diff_replace` 已保证 `byte_start ≤ byte_end`
@@ -1925,7 +1932,11 @@ impl EditorApp {
             range,
             text: edit.inserted,
         });
-        self.refresh_text();
+        // 文本被改写 = 内容可能已变 → 重置预览防抖的计时起点。
+        // 刻意放在这里（而非 `refresh_text` 内部）：编辑入口有十几处，漏任何一处
+        // 都会让防抖退化；全部调用点都是命令 / 事件驱动的（不是每帧）。
+        let now_ms = self.services.markdown.now().millis();
+        self.preview.mark_edited(now_ms);
         self.pending_cursor = Some((
             edit.cursor_char,
             edit.anchor_char.unwrap_or(edit.cursor_char),
