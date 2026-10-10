@@ -277,9 +277,9 @@ fn pane_header(ui: &mut Ui, theme: &Theme) {
     let height = m.editor_toolbar_height;
     ui.allocate_ui(egui::vec2(ui.available_width(), height), |ui| {
         ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-            // 与编辑区工具栏同一条左边线（`space_sm`，见 `draw_editor_toolbar`）：
+            // 与编辑区工具栏同一条左边线（`space_md`，见 `draw_editor_toolbar`）：
             // 两栏内容从同一竖线起，顶栏才像「一对」。
-            ui.add_space(m.space_sm);
+            ui.add_space(m.space_md);
             ui.strong("预览");
         });
     });

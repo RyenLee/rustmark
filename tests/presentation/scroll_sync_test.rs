@@ -71,6 +71,29 @@ fn echo_within_suppress_window_is_ignored() {
     assert_eq!(sync.observe(48, 200.0, 410.0), None);
 }
 
+/// 镜像防回弹用例：预览区驱动编辑区后，编辑区的变化同样**不得**反向驱动预览区。
+///
+/// 回归：`(true, false)` 分支原本没有抑制检查——用户滚预览一帧后，程序写入
+/// 编辑区的偏移在下一帧被误判为「用户在滚编辑区」，预览被拉回映射位置。
+/// 预览内容比编辑区高时（图片多的文档），映射位置远在预览底部之上，
+/// 表现为「预览底部滚不到、超出的内容不可见」。
+#[test]
+fn editor_echo_of_preview_drive_is_also_suppressed() {
+    let mut sync = ScrollSync::new();
+    sync.observe(0, 0.0, 0.0);
+    // t=16：用户滚预览区到 600，预览区成为主动方。
+    assert_eq!(sync.observe(16, 0.0, 600.0), Some(Side::Preview));
+    // t=32：程序把编辑区写到 42（回声）——必须被抑制，而不是反向驱动预览。
+    assert_eq!(sync.observe(32, 42.0, 600.0), None);
+    // t=48：回声的余波同样抑制。
+    assert_eq!(sync.observe(48, 44.0, 600.0), None);
+    // 窗口过期后，编辑区的真实手势照常取得主动权。
+    assert_eq!(
+        sync.observe(16 + SUPPRESS_MS + 1, 90.0, 600.0),
+        Some(Side::Editor)
+    );
+}
+
 /// 抑制窗口过期后，另一侧可以重新取得主动权（否则预览区将永久无法滚动）。
 #[test]
 fn ownership_expires_after_suppress_window() {

@@ -672,3 +672,64 @@ fn clicking_a_toolbar_button_runs_its_action() {
         "点击「{bold}」应插入加粗标记，实际内容：{after:?}"
     );
 }
+
+// ============================================================================
+// 回归：菜单按钮必须等高同排（第一个菜单项不得偏高）
+// ============================================================================
+
+/// 顶栏四个下拉按钮的**文字顶边必须一致**。
+///
+/// 回归：`ui.horizontal` 的初始行高只有 `interact_size.y`（18pt），而
+/// `ComboBox` 按钮实际高约 23pt——行高比按钮矮时，egui 把每个按钮在
+/// 「被前一个按钮撑高的行」里重新居中，逐个「下楼梯」，第一个菜单项
+/// 明显偏高（实测顶边差约 5pt，与后续各项样式不一致）。
+/// 修法：整行先占满 `topbar_height`，按钮在同一高度内居中（见
+/// `draw_app_menu_bar`）。此用例把「等高同排」钉死。
+#[test]
+fn app_menu_buttons_share_one_row() {
+    let (_dir, mut app) = app_with_open_document();
+    let ctx = fresh_ctx();
+    let painted = run_frame(&ctx, &mut app, vec![]);
+
+    let labels = ["文件", "编辑", "视图", "设置"];
+    let mut tops = Vec::new();
+    for label in labels {
+        let r = rect_of(&painted, label).unwrap_or_else(|| panic!("顶栏应有「{label}」菜单项"));
+        // 只统计顶栏区域内的命中（侧栏标签也叫「文件」，但本用例已关侧栏）。
+        if r.top() < top_region_height(&app) {
+            tops.push(r.top());
+        }
+    }
+    assert_eq!(tops.len(), 4, "四个下拉都应可见：{tops:?}");
+    let lo = tops.iter().cloned().fold(f32::MAX, f32::min);
+    let hi = tops.iter().cloned().fold(f32::MIN, f32::max);
+    assert!(
+        hi - lo < 1.0,
+        "菜单按钮顶部不齐（第一个菜单项偏高）：tops={tops:?}"
+    );
+}
+
+/// 编辑区工具栏的下拉按钮同样必须等高同排（同一缺陷的第二个现场）。
+#[test]
+fn editor_toolbar_buttons_share_one_row() {
+    let (_dir, mut app) = app_with_open_document();
+    let ctx = fresh_ctx();
+    let painted = run_frame(&ctx, &mut app, vec![]);
+
+    let labels = ["格式", "插入", "行操作"];
+    let mut tops = Vec::new();
+    for label in labels {
+        let r = rect_of(&painted, label).unwrap_or_else(|| panic!("工具栏应有「{label}」分组"));
+        // 只统计编辑区工具栏那一行（在顶栏区域之下）。
+        if r.top() > top_region_height(&app) {
+            tops.push(r.top());
+        }
+    }
+    assert_eq!(tops.len(), 3, "三个分组下拉都应可见：{tops:?}");
+    let lo = tops.iter().cloned().fold(f32::MAX, f32::min);
+    let hi = tops.iter().cloned().fold(f32::MIN, f32::max);
+    assert!(
+        hi - lo < 1.0,
+        "工具栏按钮顶部不齐（第一个菜单项偏高）：tops={tops:?}"
+    );
+}

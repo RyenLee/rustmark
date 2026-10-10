@@ -33,6 +33,11 @@ const ROW_HEIGHT: f32 = 24.0;
 const INDENT_STEP: f32 = 14.0;
 /// 行左侧基础内边距（对齐原型 `paddingLeft: 6`）。
 const ROW_PAD: f32 = 6.0;
+/// 大纲行右侧**行号预留宽**（点）。
+///
+/// 标题占位时要把它从可用宽里扣掉，右侧的行号才有地方站；超过四位数的
+/// 行号（10000+ 行的文档）会向左侵占标题的截断省略号，可接受。
+const OUTLINE_LINE_NO_W: f32 = 30.0;
 /// 搜索输入框的固定 `Id`（焦点落点 + 可测锚点）。
 pub const SEARCH_INPUT_ID: &str = "rustmark.sidebar.search";
 
@@ -214,11 +219,15 @@ fn file_row(
             } else {
                 ui.add_space(12.0);
             }
-            ui.label(RichText::new(&row.name).color(if is_selected {
-                theme.accent
-            } else {
-                theme.text_primary
-            }));
+            // 文件名同样截断：与大纲同一缺陷类，长文件名会撑出侧栏。
+            ui.add(
+                egui::Label::new(RichText::new(&row.name).color(if is_selected {
+                    theme.accent
+                } else {
+                    theme.text_primary
+                }))
+                .truncate(),
+            );
         })
         .response;
     // 选中 / 菜单高亮画成一整条固定高度的底色（对齐原型 `.row.active`）：
@@ -459,7 +468,17 @@ fn outline_tab(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
                             RichText::new("#".repeat(item.level as usize))
                                 .color(theme.text_secondary),
                         );
-                        ui.label(text);
+                        // 标题占「剩余宽 − 行号预留」并**截断**：过长的标题不再把
+                        // 固定宽的侧栏撑出一条不可见的黑边（SidePanel 是
+                        // `exact_width`，溢出内容只会被裁掉）。
+                        let avail = (ui.available_width() - OUTLINE_LINE_NO_W).max(0.0);
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(avail, 0.0),
+                            Layout::left_to_right(Align::Center),
+                            |ui| {
+                                ui.add(egui::Label::new(text).truncate());
+                            },
+                        );
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             ui.weak(item.line.to_string());
                         });
@@ -550,6 +569,9 @@ fn search_tab(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
 }
 
 /// 三个搜索开关。
+///
+/// 开关是**双态**的：选中后再点一次是取消，不是无操作（旧实现里
+/// `clicked() && !on` 把「已开启时再点」整个吞掉，开关点不灭）。
 fn toggle_row(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
     let options = app.sidebar.search_options;
     ui.horizontal(|ui| {
@@ -564,12 +586,15 @@ fn toggle_row(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
                 .selectable_label(on, text)
                 .on_hover_text(toggle.hint())
                 .clicked()
-                && !on
             {
                 app.sidebar.search_options = options.toggled(toggle);
             }
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            // 一键重置：三个开关全部关闭。已全关时置灰（点了没反应会让人
+            // 以为按钮坏了，置灰则明示「已是默认状态」）。
+            ui.add_enabled(!options.is_plain(), egui::Button::new("重置").small())
+                .on_hover_text("关闭全部搜索选项（区分大小写 / 全字匹配 / 正则）");
             ui.weak(format!("{} 条结果", count_hits(app)));
         });
     });

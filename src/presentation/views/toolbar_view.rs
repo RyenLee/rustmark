@@ -29,7 +29,7 @@
 //! 文案与键位都来自同一个 [`UiAction`] 的 `label()` / `ShortcutRegistry::display_for()`。
 //! 想让某个动作不上菜单，只能从动作表里删它——那样快捷键和命令面板会**同时**消失。
 
-use egui::{Context, Ui};
+use egui::{Align, Context, Layout, Ui};
 
 use crate::app::frame::EditorApp;
 use crate::presentation::shortcuts::registry::{MenuGroup, UiAction};
@@ -80,30 +80,46 @@ pub fn show(app: &mut EditorApp, ctx: &Context) {
 ///
 /// 格式编排（[`MenuGroup::Format`]）**不在这里**——它属于编辑区顶部的编辑区工具栏，
 /// 作用域不同，见文件头的作用域表。
+///
+/// # 为什么整行要先占一个 `topbar_height` 的容器
+///
+/// `ui.horizontal` 的初始行高只有 `interact_size.y`（18pt），而 `ComboBox`
+/// 按钮实际高约 23pt（文案 + 上下内边距）。行高比按钮矮时，egui 会把每个
+/// 按钮「在当前行高内居中」——行高又随前一个按钮被撑高——于是每个按钮都比
+/// 前一个低一点、逐个「下楼梯」，**第一个菜单项明显偏高**（实测 top 差约 5pt，
+/// 且顶栏与编辑区工具栏两处都如此）。先把行的可用高度给足（垂直预算本就
+/// 规定菜单栏占 [`Metrics::topbar_height`]），所有按钮在同一高度内居中，
+/// 自然等高同排。
 fn draw_app_menu_bar(app: &mut EditorApp, ui: &mut Ui) {
+    let m = app.theme().metrics;
     let mut pending: Option<UiAction> = None;
-    ui.horizontal(|ui| {
-        for group in MenuGroup::APP_LEVEL {
-            let actions: Vec<UiAction> = UiAction::ALL
-                .iter()
-                .copied()
-                .filter(|action| action.group() == *group)
-                .collect();
-            // 先量、后画：见 `menu_row_width` 的注释（弹出层宽度 ≠ 内容宽度）。
-            let row_w = menu_row_width(ui, app, &actions);
+    ui.allocate_ui(egui::vec2(ui.available_width(), m.topbar_height), |ui| {
+        ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+            // 左缘内边距与组间距同为 `space_md`：第一个菜单项与后续各项的
+            // 左右间距完全一致（行首不额外缩、组间不额外空）。
+            ui.add_space(m.space_md);
+            for group in MenuGroup::APP_LEVEL {
+                let actions: Vec<UiAction> = UiAction::ALL
+                    .iter()
+                    .copied()
+                    .filter(|action| action.group() == *group)
+                    .collect();
+                // 先量、后画：见 `menu_row_width` 的注释（弹出层宽度 ≠ 内容宽度）。
+                let row_w = menu_row_width(ui, app, &actions);
 
-            let mut clicked = None;
-            egui::ComboBox::from_id_salt(("menu", group))
-                .selected_text(group.label())
-                .show_ui(ui, |ui| {
-                    for action in &actions {
-                        if menu_item(ui, app, *action, row_w).clicked() {
-                            clicked = Some(*action);
+                let mut clicked = None;
+                egui::ComboBox::from_id_salt(("menu", group))
+                    .selected_text(group.label())
+                    .show_ui(ui, |ui| {
+                        for action in &actions {
+                            if menu_item(ui, app, *action, row_w).clicked() {
+                                clicked = Some(*action);
+                            }
                         }
-                    }
-                });
-            pending = pending.or(clicked);
-        }
+                    });
+                pending = pending.or(clicked);
+            }
+        });
     });
     // 统一在此执行：菜单项与工具栏、快捷键、命令面板走**同一条**路径，
     // 这正是「三入口一致」得以成立的地方。
@@ -264,17 +280,21 @@ pub fn editor_toolbar_groups() -> Vec<(&'static str, Vec<UiAction>)> {
 /// 工具栏位于**编辑区顶部**（上下布局：工具栏在上、文本在下），作用域与编辑区
 /// 内容一致，见 `editor_view::show`。
 pub fn draw_editor_toolbar(app: &mut EditorApp, ui: &mut Ui) {
+    let m = app.theme().metrics;
     let mut pending: Option<UiAction> = None;
     // 横向滚动而非换行：窗口很窄时仍能把每个下拉点出来；够宽时不出现滚动条。
     egui::ScrollArea::horizontal()
         .id_salt("editor-toolbar-scroll")
         .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                // 间距规范：左缘内边距取 `space_sm`（与预览区标题栏同一条左边线），
-                // 组与组之间取 `space_md`（只在组之间加，末尾不加——
-                // 末尾那份间距会让整行视觉重心偏左，右侧白边看着比左侧宽）。
-                let m = app.theme().metrics;
-                ui.add_space(m.space_sm);
+            // 与应用级菜单栏同款修法：行高给足（`editor_toolbar_height`），
+            // 所有下拉按钮在同一高度内居中——否则每个按钮比前一个低一点，
+            // 第一个菜单项明显偏高（见 `draw_app_menu_bar` 的注释）。
+            ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                // 间距规范：左缘内边距取 `space_md`（与应用级菜单栏同值，
+                // 也与预览区标题栏同一条左边线），组与组之间同为 `space_md`
+                //（只在组之间加，末尾不加——末尾那份间距会让整行视觉重心
+                // 偏左，右侧白边看着比左侧宽）。
+                ui.add_space(m.space_md);
                 for (i, (title, actions)) in editor_toolbar_groups().into_iter().enumerate() {
                     if i > 0 {
                         ui.add_space(m.space_md);

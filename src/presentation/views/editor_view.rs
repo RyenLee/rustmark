@@ -47,11 +47,11 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
     // 编辑区顶部工具栏：按工具作用分组的下拉菜单（问题 3）。贴在编辑区顶部、
     // 文本上方（上下布局），作用域与编辑区内容一致；预览区也可独立占满剩余宽度。
     //
-    // 垂直居中：下拉按钮高度 = `interact_size.y`，剩余空间上下均分——
-    // 工具栏行高（34）比按钮高，顶对齐会让按钮「贴着天花板」。
+    // 垂直居中由 `draw_editor_toolbar` 内部完成（行高给足后按钮在其中居中），
+    // 这里不再用 `add_space` 手工垫高——那个写法依赖「按钮高 = interact_size.y」
+    // 的假设，按钮实际更高时会与下拉阶梯化（首个菜单项偏高）叠加。
     let tb_h = theme.metrics.editor_toolbar_height;
     ui.allocate_ui(egui::vec2(ui.available_width(), tb_h), |ui| {
-        ui.add_space(((tb_h - ui.spacing().interact_size.y) / 2.0).max(0.0));
         crate::presentation::views::toolbar_view::draw_editor_toolbar(app, ui);
     });
     ui.separator();
@@ -276,8 +276,17 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
 ///
 /// 现改为：行号**不是**独立控件，而是按编辑器**本帧真实排版结果**画上去的——
 /// [`mapper::line_tops`] 给出编辑器逐行 `Galley` 的顶边（含折行，折行那一行
-/// 更高），配合 `galley_pos`（文本左上角）换算成屏幕坐标，再用等宽字体右对齐
-/// 描画。于是「行号行距 = 正文行距」按构造成立，与字体 / 换行都无关。
+/// 更高），配合 `galley_pos`（文本左上角）换算成屏幕坐标。
+///
+/// # 为什么按「行带垂直居中」而不是「行顶对齐」
+///
+/// 每个行号锚定在**本行的行带**（`tops[i] .. tops[i+1]`，即上一行顶到
+/// 下一行顶）的垂直中心上。正文行的字形落在行带的**基线**上，而基线位置
+/// 取决于该行实际用到的字体：中文经系统字体回退后，其 ascent 比纯等宽
+/// 数字高出一截——若行号与行带**顶**对齐，数字会整体浮在文字上方，
+/// 在行距紧凑时看起来就像与上一行文字重叠（中文的有序列表行行行相邻，
+/// 最明显）。按行带居中后，行号的光学位置与文字无关地落在本行正中，
+/// 对任何字体度量都稳定。
 fn paint_gutter(
     ui: &Ui,
     theme: &crate::presentation::theme::builtin::Theme,
@@ -301,10 +310,14 @@ fn paint_gutter(
         let Some(&top) = tops.get(i) else {
             break;
         };
-        let y = galley_pos.y + top;
+        let Some(&bottom) = tops.get(i + 1) else {
+            break;
+        };
+        // 行带的垂直中心：与字体度量无关的「本行正中」。
+        let y = galley_pos.y + (top + bottom) * 0.5;
         // 只画落在可视区内的行号：大文档里绝大部分行在视口之外，
         // 无谓地 `format!` 每一行会拖慢滚动。
-        if y + font_size < clip.top() || y > clip.bottom() {
+        if y + font_size < clip.top() || y - font_size > clip.bottom() {
             continue;
         }
         let color = if i == cursor_line {
@@ -314,7 +327,7 @@ fn paint_gutter(
         };
         painter.text(
             egui::pos2(gutter_rect.right() - 6.0, y),
-            egui::Align2::RIGHT_TOP,
+            egui::Align2::RIGHT_CENTER,
             format!("{i}"),
             font.clone(),
             color,

@@ -217,8 +217,17 @@ impl ScrollSync {
 
         match (e_moved, p_moved) {
             (true, false) => {
-                self.claim(Side::Editor, now_ms);
-                Some(Side::Editor)
+                // 与下方 (false, true) 分支对称：编辑区的位移也可能是
+                // 「程序驱动编辑区」的回声（用户正在滚预览、上一帧写进
+                // 编辑区的目标偏移这一帧落地）。不抑制的话，回声会被当成
+                // 用户手势反向驱动预览区——预览被拉回映射位置，其底部
+                // （超出编辑区映射范围的部分）永远滚不到。
+                if self.is_suppressed(now_ms, Side::Editor) {
+                    None
+                } else {
+                    self.claim(Side::Editor, now_ms);
+                    Some(Side::Editor)
+                }
             }
             (false, true) => {
                 if self.is_suppressed(now_ms, Side::Preview) {
