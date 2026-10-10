@@ -872,6 +872,7 @@ fn inline_style_str(style: InlineStyle) -> &'static str {
         InlineStyle::Mark => "mark",
         InlineStyle::Subscript => "sub",
         InlineStyle::Superscript => "sup",
+        InlineStyle::FootnoteRef => "footnote_ref",
     }
 }
 

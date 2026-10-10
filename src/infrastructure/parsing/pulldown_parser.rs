@@ -272,6 +272,13 @@ struct OpenBlock {
     style: Option<InlineStyle>,
     /// 该块已收集到的行内样式片段（相对本帧 `content` 的字节区间）。
     spans: Vec<InlineSpan>,
+    /// 本帧刚吞掉一个段落，**下一段**的文字到达时要先补一个换行分隔。
+    ///
+    /// 多段脚注体（`[^1]: 第一段` 换行缩进续 `第二段`）的两个段落都会被
+    /// 本帧吞掉；不加分隔的话两段文字会连成「第一段第二段」（实测）。
+    /// 标记在**段落闭合**时挂上、在下一次 [`push_content`] 写入时消费——
+    /// 这样分隔只出现在两段**之间**，末尾不会多出一个换行。
+    pending_break: bool,
 }
 
 impl OpenBlock {
@@ -308,6 +315,7 @@ impl OpenBlock {
             image_mark: None,
             style: None,
             spans: Vec::new(),
+            pending_break: false,
         }
     }
 
@@ -356,6 +364,14 @@ fn push_content(stack: &mut [OpenBlock], s: &str, style: Option<InlineStyle>) {
     let style = if s.is_empty() { None } else { style };
     // 先读出来，避免随后可变借用期间再借用 `stack`。
     let target_is_owner = stack[target].absorbs_text();
+    // 段落间的分隔（见 `pending_break`）：上一段刚结束，先补一个换行
+    // 再写入本段文字——**必须**在记片段起点之前做，否则片段区间会错位。
+    if stack[target].pending_break {
+        stack[target].pending_break = false;
+        if !stack[target].content.is_empty() {
+            stack[target].content.push('\n');
+        }
+    }
     let start = stack[target].content.len();
     stack[target].content.push_str(s);
     if let Some(style) = style
@@ -369,6 +385,12 @@ fn push_content(stack: &mut [OpenBlock], s: &str, style: Option<InlineStyle>) {
     if !target_is_owner
         && let Some(owner) = stack[..target].iter().rposition(OpenBlock::absorbs_text)
     {
+        if stack[owner].pending_break {
+            stack[owner].pending_break = false;
+            if !stack[owner].content.is_empty() {
+                stack[owner].content.push('\n');
+            }
+        }
         let ostart = stack[owner].content.len();
         stack[owner].content.push_str(s);
         if let Some(style) = style {
@@ -1110,9 +1132,14 @@ impl MarkdownParser for PulldownMarkdownParser {
                     // 回流给外层的脚注 / 定义帧；若这里再让它成块，文档流里就
                     // 会多出一个游离段落，预览中脚注内容会**显示两遍**
                     // （实测：`[Paragraph, Footnote, Paragraph]`）。
+                    //
+                    // 同时挂上 `pending_break`：若后面**还有**段落被同一帧吞掉，
+                    // 下一段的文字到达时先补一个换行，两段才不会连成一处
+                    // （实测 `[^m]: 第一段` + 缩进续段 → `"第一段第二段"`）。
                     if matches!(open.kind, Some(BlockKind::Paragraph))
-                        && absorbing_index(&stack).is_some()
+                        && let Some(owner) = absorbing_index(&stack)
                     {
+                        stack[owner].pending_break = true;
                         continue;
                     }
 
@@ -1284,7 +1311,15 @@ impl MarkdownParser for PulldownMarkdownParser {
                     );
                 }
                 Event::FootnoteReference(label) => {
-                    push_content(&mut stack, &format!("[^{label}]"), None);
+                    // 内容保留 `[^1]` 原文（搜索 / 字数看到的是用户写的字符），
+                    // 但**挂上脚注引用样式**：渲染层据此把它换成上标标号，
+                    // 否则正文里会以原始 Markdown 形态显示 `[^1]`——
+                    // 看起来就像「脚注没渲染」（实测）。
+                    push_content(
+                        &mut stack,
+                        &format!("[^{label}]"),
+                        Some(InlineStyle::FootnoteRef),
+                    );
                 }
                 // 任务列表标记：落到**列表项**帧（列表项已能收集自己的文本），
                 // 并记录该 `Range` 的勾选状态以便 S6-05 渲染复选框、回写源码。

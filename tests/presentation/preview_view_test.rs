@@ -634,6 +634,251 @@ fn math_and_diagram_are_actually_rendered_not_fallback_cards() {
     assert!(graph.width > 0.0 && graph.height > 0.0);
 }
 
+/// 问题 2 回归：**最常规的流程图写法**不得把节点排重复。
+///
+/// # 根因
+///
+/// 「先定义带标签的节点，再按 id 把它们串起来」是流程图最常见的写法：
+///
+/// ```text
+/// graph LR
+///   A[长方形] -- 链接 --> B((圆))
+///   A --> C(圆角长方形)
+///   B --> D{菱形}
+///   C --> D
+/// ```
+///
+/// 这里 `A`（以及 B / C / D）被**引用**了两次：一次带标签定义，一次是裸 id。
+/// 解析器此前用「节点的显示文本」做查重键，于是裸 id 那次查不到已有节点
+/// （文本 `A` ≠ 文本 `长方形`），又建了一个只显示 `A` 的空壳——
+/// 4 个节点的图被排成 **8 个框**，连线也被引到重复的空壳上。
+/// 在预览里看就是「流程图渲染失效」：多出一圈莫名其妙的框、连线错位。
+///
+/// 修复后同一个 id 只对应一个节点，故这里断言版面里恰好 4 个节点框。
+#[test]
+fn canonical_flowchart_renders_each_node_exactly_once() {
+    const DOC: &str = "```mermaid\n\
+        graph LR\n\
+        \x20 A[长方形] -- 链接 --> B((圆))\n\
+        \x20 A --> C(圆角长方形)\n\
+        \x20 B --> D{菱形}\n\
+        \x20 C --> D\n\
+        ```\n";
+
+    let (_dir, mut app) = app_with(DOC);
+    let ctx = egui::Context::default();
+    render(&mut app, &ctx, 3);
+
+    let diagram = app
+        .preview
+        .blocks
+        .iter()
+        .find(|b| b.kind == "diagram")
+        .expect("这段 mermaid 应产出图表块（而不是降级成源码卡）");
+
+    let measure = |t: &str, size: f32| t.chars().count() as f32 * size * 0.5;
+    let layout = rustmark::presentation::views::mermaid::layout(&diagram.content, 14.0, &measure)
+        .unwrap_or_else(|e| panic!("这张图必须能排版：{e}"));
+
+    assert_eq!(
+        layout.node_count(),
+        4,
+        "4 个节点的流程图被排成了 {} 个节点框——同一个 id 被重复引用时又建了新节点",
+        layout.node_count()
+    );
+}
+
+// ============================================================================
+// 脚注的渲染回归（问题：预览区注脚等内容的渲染失效）
+// ============================================================================
+
+/// 只渲染**预览区**一帧，取回全部文字绘制指令。
+///
+/// 走 `main_view` 会把编辑区的**源码**也画进帧里——源码里当然有 `[^1]`，
+/// 会污染「预览里有没有画出原始语法」的判断。单独渲染预览区没有这个噪声。
+fn preview_frame_texts(app: &mut EditorApp, ctx: &egui::Context) -> Vec<String> {
+    let input = egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(1280.0, 800.0),
+        )),
+        ..Default::default()
+    };
+    let _ = ctx.run(input.clone(), |_| {}); // 装载字库
+    let mut texts = Vec::new();
+    for _ in 0..3 {
+        let out = ctx.run(input.clone(), |ctx| {
+            rustmark::presentation::theme::mapper::apply(ctx, &app.ui.theme);
+            egui::CentralPanel::default().show(ctx, |ui| {
+                rustmark::presentation::views::preview_view::show(app, ui);
+            });
+        });
+        texts.clear();
+        fn walk(s: &egui::epaint::Shape, t: &mut Vec<String>) {
+            match s {
+                egui::epaint::Shape::Text(x) => t.push(x.galley.text().to_string()),
+                egui::epaint::Shape::Vec(v) => v.iter().for_each(|y| walk(y, t)),
+                _ => {}
+            }
+        }
+        for clipped in &out.shapes {
+            walk(&clipped.shape, &mut texts);
+        }
+    }
+    texts
+}
+
+/// 正文里的脚注引用必须渲染成**标号**，而不是原始语法 `[^1]`。
+///
+/// # 根因
+///
+/// pulldown 把 `[^1]` 作为独立的 `FootnoteReference` 事件给出，解析器此前
+/// 把它当作**无样式**的普通文本并进段落——预览拿到的就是一段写着 `[^1]`
+/// 的正文，画出来自然是原始 Markdown 形态，看上去就像「脚注没渲染」。
+///
+/// # 修复
+///
+/// 引用文本挂上新样式 `footnote_ref`：内容里仍保留 `[^1]` 原文
+/// （搜索 / 字数统计看到的是用户写的字符，与「行内公式补回 `$`」同一取向），
+/// 渲染层把显示文本换成标号 `1`（小一号字 + 链接色），与脚注定义区的
+/// `[1]` 标签对应。
+#[test]
+fn footnote_reference_renders_as_a_mark_not_raw_syntax() {
+    const DOC: &str = "正文里有一个脚注[^1]。\n\n[^1]: 脚注内容 **加粗**。\n";
+    let (_dir, mut app) = app_with(DOC);
+    let ctx = egui::Context::default();
+    let texts = preview_frame_texts(&mut app, &ctx);
+
+    // ---- DTO 层：引用必须带上 `footnote_ref` 样式，且区间正好盖住 `[^1]` ----
+    let para = app
+        .preview
+        .blocks
+        .iter()
+        .find(|b| b.kind == "paragraph")
+        .expect("应有正文段落块");
+    let span = para
+        .spans
+        .iter()
+        .find(|s| s.style == "footnote_ref")
+        .expect("脚注引用应带 footnote_ref 样式——否则渲染层无从识别");
+    assert_eq!(
+        &para.content[span.range.start..span.range.end],
+        "[^1]",
+        "片段应正好盖住 `[^1]` 原文（content 保持可搜索的原文）"
+    );
+
+    // ---- 绘制层：原始语法不得出现，标号与定义区都要在 ----
+    let joined = texts.join("\n");
+    assert!(
+        !joined.contains("[^"),
+        "预览区不应出现原始脚注语法 `[^`：{texts:?}"
+    );
+    assert!(
+        texts.iter().any(|t| t.contains("正文里有一个脚注1。")),
+        "引用应显示为标号（`…脚注1。`），实际：{texts:?}"
+    );
+    assert!(
+        texts.iter().any(|t| t.contains("[1]")),
+        "脚注定义区的 `[1]` 标签应仍在（与正文标号对应）：{texts:?}"
+    );
+    assert!(
+        texts.iter().any(|t| t.contains("脚注内容")),
+        "脚注定义正文应显示：{texts:?}"
+    );
+}
+
+/// 列表项里的脚注引用同样要渲染成标号。
+///
+/// 列表项的行内样式走的是「项帧自己收集」的另一条通路（与段落不同），
+/// 若那条通路漏挂样式，就会出现「段落里的引用正常、列表里的还是原文」。
+#[test]
+fn footnote_reference_inside_a_list_item_renders_too() {
+    const DOC: &str = "- 项目一[^l]\n- 项目二\n\n[^l]: 列表脚注\n";
+    let (_dir, mut app) = app_with(DOC);
+    let ctx = egui::Context::default();
+    preview_frame_texts(&mut app, &ctx);
+
+    let item = app
+        .preview
+        .blocks
+        .iter()
+        .flat_map(|b| b.items.iter())
+        .find(|i| i.text.contains("项目一"))
+        .expect("应有含脚注引用的列表项");
+    let span = item
+        .spans
+        .iter()
+        .find(|s| s.style == "footnote_ref")
+        .expect("列表项里的脚注引用也应带 footnote_ref 样式");
+    assert_eq!(
+        &item.text[span.range.start..span.range.end],
+        "[^l]",
+        "片段应正好盖住 `[^l]`"
+    );
+
+    let texts = preview_frame_texts(&mut app, &ctx);
+    assert!(
+        texts.iter().any(|t| t.contains("项目一l")),
+        "列表项里的引用应显示为标号（`项目一l`），实际：{texts:?}"
+    );
+    assert!(
+        !texts.join("\n").contains("[^"),
+        "预览区不应出现原始脚注语法：{texts:?}"
+    );
+}
+
+/// 多段脚注体的两段之间必须有换行分隔。
+///
+/// `[^m]: 第一段` 换行缩进续写 `第二段` 时，pulldown 给出**两个段落**事件，
+/// 两段都会被脚注帧吞掉（否则预览里会显示两遍）。此前吞掉时直接拼接，
+/// 两段文字连成「第一段第二段」。现在段与段之间补一个换行，
+/// 且**补在片段起点之前**——样式区间不能因为插了换行而错位。
+#[test]
+fn multi_paragraph_footnote_body_keeps_a_paragraph_break() {
+    const DOC: &str = "正文[^m]。\n\n[^m]: 第一段\n\n    **第二段**（缩进续段）\n";
+    let (_dir, mut app) = app_with(DOC);
+    let ctx = egui::Context::default();
+    preview_frame_texts(&mut app, &ctx);
+
+    let note = app
+        .preview
+        .blocks
+        .iter()
+        .find(|b| b.kind == "footnote")
+        .expect("应有脚注块");
+    assert_eq!(
+        note.content, "第一段\n第二段（缩进续段）",
+        "两段之间应有换行分隔"
+    );
+
+    // 换行是插在片段**之前**的，粗体片段必须仍然正好盖住「第二段」。
+    let strong = note
+        .spans
+        .iter()
+        .find(|s| s.style == "strong")
+        .expect("第二段的粗体应传到脚注块");
+    assert_eq!(
+        &note.content[strong.range.start..strong.range.end],
+        "第二段",
+        "插入换行后样式区间错位了"
+    );
+}
+
+/// `footnote_ref_mark` 只剥**完整**的 `[^…]`，剥不动就原样返回。
+///
+/// 保守策略与 `strip_math_delimiters` 同源：解析边界与渲染边界不一致时
+/// 可能拿到半个引用，剥错比不剥更糟（剥空会让字符凭空消失）。
+#[test]
+fn footnote_ref_mark_strips_only_complete_references() {
+    let f = rustmark::presentation::views::preview_view::footnote_ref_mark;
+    assert_eq!(f("[^1]"), "1");
+    assert_eq!(f("[^脚注A]"), "脚注A", "标号可以是任意非空文本");
+    assert_eq!(f("[^]"), "[^]", "空标号不动——宁可显示原文也不剥空");
+    assert_eq!(f("[1]"), "[1]", "缺 `^` 就不是脚注引用");
+    assert_eq!(f("[^1"), "[^1", "缺右括号不动");
+    assert_eq!(f("普通文本"), "普通文本");
+}
+
 // ============================================================================
 // 问题 1 的回归：预览区必须能滚
 // ============================================================================

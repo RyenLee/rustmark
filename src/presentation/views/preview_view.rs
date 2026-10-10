@@ -473,6 +473,14 @@ fn span_format(theme: &Theme, style: &str, size: f32, line_height: f32) -> TextF
             font_id: FontId::proportional(size * 0.78),
             ..base
         },
+        // 脚注引用 `[^1]`：与上下标同一近似——小一号字 + 链接色。
+        // 它本质是文中指向脚注定义的交叉引用，用链接色才能传达「可对应」；
+        // 显示文本由 `footnote_ref_mark` 换成标号 `1`（剥掉 `[^` `]` 语法）。
+        "footnote_ref" => TextFormat {
+            color: theme.syn_link,
+            font_id: FontId::proportional(size * 0.78),
+            ..base
+        },
         _ => base,
     }
 }
@@ -559,10 +567,12 @@ fn render_inline_text(
                 }
                 // 行内公式剥掉 `$` / `$$` 分隔符：它们是语法，不是内容。
                 // 不剥的话预览里会显示成 `$E=mc^2$`，看起来像没解析成功。
-                let slice = if span.style == "math" {
-                    strip_math_delimiters(&content[start..end])
-                } else {
-                    &content[start..end]
+                // 脚注引用同理：`[^1]` 换成标号 `1`（上标小字 + 链接色），
+                // 否则正文里会以原始 Markdown 形态显示 `[^1]`。
+                let slice = match span.style.as_str() {
+                    "math" => strip_math_delimiters(&content[start..end]),
+                    "footnote_ref" => footnote_ref_mark(&content[start..end]),
+                    _ => &content[start..end],
                 };
                 job.append(slice, 0.0, fmt);
             }
@@ -616,6 +626,28 @@ pub fn strip_math_delimiters(s: &str) -> &str {
     let k = open.min(close).min(2);
     let (start, end) = (lead + k, trail - k);
     if end <= start { s } else { &s[start..end] }
+}
+
+/// 把脚注引用 `[^1]` 的显示文本换成**标号** `1`。
+///
+/// `[^` 与 `]` 是语法不是内容：正文里显示 `[^1]` 看起来就像「脚注没渲染」。
+/// 主流渲染器（GitHub 等）把它画成上标数字，这里同样只留标号，字号缩小、
+/// 用链接色（见 `span_format` 的 `"footnote_ref"`），与脚注定义区的 `[1]`
+/// 标签对应。内容里保留的仍是 `[^1]` 原文，搜索 / 字数不受影响。
+///
+/// 只在**两端成对**时才剥（与 [`strip_math_delimiters`] 同一保守策略）：
+/// 片段若不是完整的 `[^…]`（解析边界与渲染边界不一致时可能发生），
+/// 原样返回比剥错更安全。
+///
+/// `pub` 是为了让表现层用例直接断言。
+pub fn footnote_ref_mark(s: &str) -> &str {
+    let Some(body) = s.strip_prefix("[^") else {
+        return s;
+    };
+    let Some(label) = body.strip_suffix(']') else {
+        return s;
+    };
+    if label.is_empty() { s } else { label }
 }
 
 // ============================================================================
