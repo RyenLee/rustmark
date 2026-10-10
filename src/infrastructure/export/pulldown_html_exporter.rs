@@ -40,28 +40,26 @@ use crate::domain::export::aggregate::ExportJob;
 use crate::domain::export::errors::ExportError;
 use crate::domain::export::services::{Exporter, TocBuilder};
 use crate::domain::export::value_objects::{ExportFormat, TocEntry};
+use crate::infrastructure::parsing::pulldown_parser::{desugar_image_sizes, parser_options};
 use crate::infrastructure::persistence::recent_files_store::atomic_write;
 
 use super::html_sanitize::sanitize_html;
 
 /// 导出用的 pulldown 选项。
 ///
-/// 与 [`crate::infrastructure::parsing::pulldown_parser`] 的选项集**保持一致**：
-/// 若预览支持表格而导出不支持，用户会看到「预览有、导出没有」的不一致。
+/// **直接复用解析器的 [`parser_options`]，不另写一份**：两处各写一份曾导致
+/// 「预览支持上下标、导出不支持」这类不一致（预览有、导出没有）。
 fn export_options() -> Options {
-    Options::ENABLE_TABLES
-        | Options::ENABLE_FOOTNOTES
-        | Options::ENABLE_TASKLISTS
-        | Options::ENABLE_STRIKETHROUGH
-        | Options::ENABLE_GFM
-        // 与解析器 `parser_options` 保持一致：缺这一项时 pulldown 会把 `$...$`
-        // 当普通文本，导出的 HTML 里就没有 `math` 标记了。
-        | Options::ENABLE_MATH
+    parser_options()
 }
 
 /// 渲染 Markdown 正文为 HTML 片段（不含文档骨架）。
 pub fn render_fragment(markdown: &str) -> String {
-    let parser = pulldown_cmark::Parser::new_ext(markdown, export_options());
+    // 与预览走同一套预处理：`![alt](url =30x30)` 这类 CSDN 尺寸后缀要先删掉，
+    // 否则 pulldown 识别不出图片，导出件里会留下一整段原始 Markdown。
+    // 导出不关心源码区间，故这里不需要偏移映射。
+    let (src, _) = desugar_image_sizes(markdown);
+    let parser = pulldown_cmark::Parser::new_ext(&src, export_options());
     let mut buffer = String::new();
     html::push_html(&mut buffer, parser);
     buffer

@@ -462,3 +462,30 @@ fn plain_export_has_no_external_resources() {
     );
     assert!(!html.contains("cdn.jsdelivr.net"), "不应有 CDN 外链");
 }
+
+#[test]
+fn csdn_sized_image_exports_as_a_real_img_tag() {
+    // `![Alt](a.png =30x30)` 不是合法 Markdown（无引号地址遇空白即终止），
+    // 不预处理的话导出件里会留下一整段原始 Markdown。
+    // 导出与预览走**同一套**预处理，避免「预览有图、导出没有」。
+    let fragment = render_fragment("![Alt](a.png =30x30)\n");
+    assert!(
+        fragment.contains("<img src=\"a.png\""),
+        "应导出真正的 img 标签：{fragment}"
+    );
+    assert!(
+        !fragment.contains("=30x30"),
+        "尺寸后缀不应出现在导出件里：{fragment}"
+    );
+}
+
+#[test]
+fn inline_markup_export_matches_preview_capabilities() {
+    // 导出选项直接复用解析器的选项集（单一事实来源）。
+    // 早先两边各写一份，导致预览支持上下标而导出不支持。
+    let fragment = render_fragment("H ~2~ O 与 x ^2^ 都应产出上下标标签\n");
+    assert!(
+        fragment.contains("<sub>") && fragment.contains("<sup>"),
+        "上下标应出现在导出件里：{fragment}"
+    );
+}

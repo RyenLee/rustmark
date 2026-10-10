@@ -9,7 +9,7 @@
 //! 3. **映射稳定性**：`BlockMapper` 对块首/ 块中 / 块尾 / 空隙 / 空输入的返回。
 
 use rustmark::domain::markdown::services::{BlockMapper, MarkdownParser};
-use rustmark::domain::markdown::value_objects::BlockKind;
+use rustmark::domain::markdown::value_objects::{BlockKind, InlineStyle};
 use rustmark::infrastructure::parsing::pulldown_parser::PulldownMarkdownParser;
 use rustmark::shared::geometry::ByteOffset;
 
@@ -600,5 +600,328 @@ fn mermaid_detection_is_case_insensitive_and_lang_scoped() {
         matches!(other[0].kind(), BlockKind::CodeBlock { .. }),
         "相似语言名不应误判为图表，实际 {:?}",
         other[0].kind()
+    );
+}
+
+// ============================================================================
+// 行内格式：快捷键 / 目录 / 高亮 / 上下标（CSDN 示例文档回归）
+// ============================================================================
+//
+// 这批用例守的是同一类缺陷：**pulldown 不认识的写法被原样留在正文里**，
+// 用户在预览里看到的就是「一堆标记符号 + 没渲染的语法」。
+// 三个成因各不相同，逐个钉住：
+//   1. `</kbd>` 在 CommonMark 里不算 HTML → 走普通文本事件；
+//   2. `@[TOC](标题)` 扁平后只剩 `@TOC`，标题丢失；
+//   3. `==高亮==` 没有任何 pulldown 选项，`H~2~O` / `2^10^` 需要前置空白。
+
+/// 取某个块里指定样式的片段文本（按出现顺序）。
+fn span_text(
+    block: &rustmark::domain::markdown::value_objects::RenderedBlock,
+    style: InlineStyle,
+) -> Vec<&str> {
+    block
+        .spans()
+        .iter()
+        .filter(|s| s.style() == style)
+        .map(|s| &block.content()[s.start()..s.end()])
+        .collect()
+}
+
+#[test]
+fn keycap_html_becomes_keycap_spans() {
+    // CSDN 的快捷键写法。两个坑叠在一起：
+    // 开标签 `<kbd>` 走行内 HTML 事件，而闭标签 `</kbd>` 因 `<` 紧挨字母
+    // **不是** CommonMark 的行内 HTML，pulldown 当普通文本吐出来——
+    // 只认 `Event::InlineHtml` 的实现会把 `</kbd>` 原样留在正文里。
+    let blocks = parse("撤销：<kbd>Ctrl</kbd> + <kbd>Z</kbd>\n");
+    assert_eq!(blocks.len(), 1);
+    assert_eq!(
+        blocks[0].content(),
+        "撤销：Ctrl + Z",
+        "标签本身不该出现在正文里"
+    );
+    assert_eq!(span_text(&blocks[0], InlineStyle::Keycap), ["Ctrl", "Z"]);
+}
+
+#[test]
+fn unbalanced_kbd_does_not_leak_into_later_blocks() {
+    // `<kbd>` 没闭合时，合成的键帽帧会一直挂在栈上，把后续**所有**段落
+    // 都染成键帽样式（曾实测整篇变样）。块闭合时必须清掉残留帧。
+    let blocks = parse("<kbd>Ctrl\n\n后续段落\n");
+    let last = blocks.last().expect("应有后续段落");
+    assert_eq!(last.content(), "后续段落");
+    assert!(
+        last.spans().is_empty(),
+        "键帽样式不应泄漏到后续段落：{:?}",
+        last.spans()
+    );
+}
+
+#[test]
+fn toc_directive_becomes_toc_block_carrying_its_title() {
+    // `@[TOC](欢迎)` 在 pulldown 眼里是「文本 @ + 链接 [TOC](欢迎)」，
+    // 扁平后只剩 `@TOC`——括号里的标题只有看**源码**才认得出来。
+    let blocks = parse("@[TOC](欢迎)\n\n# 一级标题\n");
+    assert_eq!(blocks.len(), 2);
+    match blocks[0].kind() {
+        BlockKind::Toc { title } => assert_eq!(title, "欢迎"),
+        other => panic!("期望 Toc，实际 {other:?}"),
+    }
+    // 表现层不允许依赖领域枚举（架构约束），目录标题只能经 `content` 传过去；
+    // 留在扁平内容的 `@TOC` 会让预览把标题显示成「@TOC」。
+    assert_eq!(blocks[0].content(), "欢迎");
+}
+
+#[test]
+fn bare_toc_directive_defaults_to_generic_title() {
+    let blocks = parse("[TOC]\n");
+    match blocks[0].kind() {
+        BlockKind::Toc { title } => assert_eq!(title, "目录"),
+        other => panic!("期望 Toc，实际 {other:?}"),
+    }
+
+    // 大小写不敏感，`[[TOC]]` 也认。
+    let wrapped = parse("[[toc]]\n");
+    assert!(
+        matches!(wrapped[0].kind(), BlockKind::Toc { .. }),
+        "`[[toc]]` 也应识别，实际 {:?}",
+        wrapped[0].kind()
+    );
+}
+
+#[test]
+fn ordinary_paragraph_is_not_mistaken_for_toc() {
+    // 目录判定必须看整段源码，含 `TOC` 字样的正文不能被吃掉。
+    let blocks = parse("这段讲了 TOC 的用法。\n");
+    assert!(
+        matches!(blocks[0].kind(), BlockKind::Paragraph),
+        "含 TOC 字样的正文不应变成目录块，实际 {:?}",
+        blocks[0].kind()
+    );
+}
+
+#[test]
+fn double_equals_becomes_mark_spans() {
+    // pulldown 没有任何「高亮」选项，`==x==` 只能由解析器自己切分。
+    let blocks = parse("==标记文本==\n");
+    assert_eq!(blocks[0].content(), "标记文本", "`==` 不应残留");
+    assert_eq!(span_text(&blocks[0], InlineStyle::Mark), ["标记文本"]);
+}
+
+#[test]
+fn subscript_and_superscript_work_without_surrounding_spaces() {
+    // 中文写作不写空格（`H~2~O` / `2^10^`），而 pulldown 只在定界符
+    // **前面有空白**时才识别（`H ~2~ O` 行、`H~2~O` 不行），故需自行兜底。
+    let sub = parse("H~2~O is是液体。\n");
+    assert_eq!(sub[0].content(), "H2O is是液体。");
+    assert_eq!(span_text(&sub[0], InlineStyle::Subscript), ["2"]);
+
+    let sup = parse("2^10^ 运算\n");
+    assert_eq!(sup[0].content(), "210 运算");
+    assert_eq!(span_text(&sup[0], InlineStyle::Superscript), ["10"]);
+}
+
+#[test]
+fn paired_delimiters_split_across_events_are_still_paired() {
+    // pulldown 会把 `2^10^` 切成 `Text("2^10")` + `Text("^")`——
+    // 定界符的**开与闭分居两个事件**。逐事件扫描时第一段里找不到配对的 `^`
+    // （退回字面量），第二段只剩孤立的 `^` 也配不上，结果是
+    // 「上标没渲染、`^` 却留在正文里」。解析器因此把相邻文本先合并再扫。
+    for text in ["2^10^\n", "x^2^\n", "H~2~O\n", "^10^\n", "2^10^ 运算\n"] {
+        let blocks = parse(text);
+        let content = blocks[0].content();
+        assert!(
+            !content.contains('^') && !content.contains('~'),
+            "{text:?} 的定界符不应残留在正文里，实际 {content:?}"
+        );
+        assert!(
+            !blocks[0].spans().is_empty(),
+            "{text:?} 应产出至少一个样式片段"
+        );
+    }
+}
+
+#[test]
+fn standalone_caret_in_prose_is_still_literal() {
+    // 兜底扫描不能贪心：孤立、配不上对的定界符必须原样保留。
+    let blocks = parse("价格是 3^x 元，另加 ~10% 服务费\n");
+    let content = blocks[0].content();
+    assert!(content.contains("3^x"), "孤立 `^` 应保留：{content:?}");
+    assert!(content.contains("~10%"), "孤立 `~` 应保留：{content:?}");
+}
+
+// ============================================================================
+// CSDN 图片尺寸后缀 `![alt](url =30x30)`
+// ============================================================================
+//
+// 这不是合法 Markdown：无引号的链接地址**一遇空白即终止**，`=30x30`
+// 于是落进括号里成为语法错误，pulldown 索性把整段按普通文本吐出——
+// 用户在预览里看到的是「一长串原始 Markdown，还带着 base64 图片地址」。
+
+#[test]
+fn csdn_image_size_suffix_still_parses_as_image() {
+    let text = "带尺寸的图片: ![Alt](images/a.png =30x30)\n";
+    let blocks = parse(text);
+    assert_eq!(blocks.len(), 1);
+    match blocks[0].kind() {
+        BlockKind::Image { alt, url } => {
+            assert_eq!(alt, "Alt");
+            assert_eq!(url, "images/a.png", "尺寸后缀不应混进图片地址");
+        }
+        other => panic!("期望 Image，实际 {other:?}"),
+    }
+    assert_eq!(blocks[0].content(), "带尺寸的图片: Alt");
+}
+
+#[test]
+fn image_size_suffix_removal_keeps_source_ranges_on_original_text() {
+    // 删后缀会改变字节偏移；块的 `source_range` 必须仍指向**原文**，
+    // 否则点击跳转与滚动同步（FR-02）会整体错位。
+    let text = "带尺寸的图片: ![Alt](images/a.png =30x30)\n";
+    let blocks = parse(text);
+    assert_eq!(
+        &text[blocks[0].source_range().as_usize_range()],
+        "带尺寸的图片: ![Alt](images/a.png =30x30)"
+    );
+}
+
+#[test]
+fn image_size_suffix_removal_keeps_later_blocks_aligned() {
+    // 一处删除会影响其后**所有**偏移，故逐块校验切片。
+    let text = "![A](a.png =1x1)\n\n第二段\n\n![B](b.png =2x2)\n\n第三段\n";
+    let blocks = parse(text);
+    let slices: Vec<String> = blocks
+        .iter()
+        .map(|b| text[b.source_range().as_usize_range()].to_string())
+        .collect();
+    assert_eq!(slices.len(), 4, "实际块：{slices:?}");
+    assert_eq!(slices[0], "![A](a.png =1x1)");
+    assert_eq!(slices[1], "第二段");
+    assert_eq!(slices[2], "![B](b.png =2x2)");
+    assert_eq!(slices[3], "第三段");
+
+    let urls: Vec<String> = blocks
+        .iter()
+        .filter_map(|b| match b.kind() {
+            BlockKind::Image { url, .. } => Some(url.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(urls, ["a.png", "b.png"]);
+}
+
+#[test]
+fn size_like_text_outside_a_link_is_left_alone() {
+    // 只允许改写「链接 / 图片地址之内」的后缀。正文里出现同形状的文字
+    // 绝不能被动到——否则会把用户的内容改坏。
+    let text = "尺寸就写成 a =3x4) 这样\n";
+    let blocks = parse(text);
+    assert_eq!(blocks[0].content(), "尺寸就写成 a =3x4) 这样");
+    assert!(blocks[0].spans().is_empty());
+}
+
+#[test]
+fn size_suffix_inside_a_link_destination_is_also_removed() {
+    // 同样形状出现在普通链接里也要认（CSDN 对链接也允许后缀）。
+    let blocks = parse("[文档](docs/a.md =1x1)\n");
+    match blocks[0].kind() {
+        BlockKind::Paragraph => {
+            assert_eq!(blocks[0].content(), "文档");
+            assert_eq!(span_text(&blocks[0], InlineStyle::Link), ["文档"]);
+        }
+        other => panic!("期望 Paragraph，实际 {other:?}"),
+    }
+}
+
+// ============================================================================
+// 真实样例：CSDN 导出的整篇文档
+// ============================================================================
+
+/// 单条格式的用例各自锁住「认不认」；这条锁的是**互相干扰**。
+///
+/// 一篇文档里键帽、高亮、上下标、带尺寸图片、目录、公式、脚注、表格全都有，
+/// 任何一处漏了状态清理或偏移算错都会在这里露出来
+/// （曾实测：一处未闭合的 `<kbd>` 会把后面**整篇**染成键帽样式）。
+///
+/// 该文件是 `docs/` 下的真实样例而非标准 fixture，缺失时直接跳过，
+/// 不让它成为构建的硬依赖。
+#[test]
+fn real_world_sample_document_parses_cleanly() {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/docs/logs/示例文档.md");
+    let Ok(text) = std::fs::read_to_string(path) else {
+        eprintln!("跳过：样例文档不存在（{path}）");
+        return;
+    };
+    let blocks = parse(&text);
+    assert!(!blocks.is_empty(), "样例文档应解析出块");
+
+    // 1) 区间必须逐块递增且落在字符边界上——偏移一旦漂移，
+    //    点击跳转与滚动同步会整体错位（`FR-02`）。
+    for (i, block) in blocks.iter().enumerate() {
+        let range = block.source_range().as_usize_range();
+        assert!(
+            text.is_char_boundary(range.start) && text.is_char_boundary(range.end),
+            "第 {i} 个块的区间 {range:?} 落在字符中间"
+        );
+        assert!(range.start <= range.end, "第 {i} 个块的区间反了：{range:?}");
+        if i > 0 {
+            assert!(
+                blocks[i - 1].source_range().start() <= block.source_range().start(),
+                "块必须按源码起点升序"
+            );
+        }
+    }
+
+    // 2) 目录：`@[TOC](欢迎)` 的标题必须被认出来。
+    let toc = blocks
+        .iter()
+        .find(|b| matches!(b.kind(), BlockKind::Toc { .. }))
+        .expect("样例文档应有目录块");
+    assert_eq!(toc.content(), "欢迎");
+
+    // 3) 带尺寸后缀的图片也要成为图片块，地址里不能混进 `=30x30`。
+    let images: Vec<&str> = blocks
+        .iter()
+        .filter_map(|b| match b.kind() {
+            BlockKind::Image { url, .. } => Some(url.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(images.len(), 4, "样例文档有四张图片，实际 {images:?}");
+    assert!(
+        images.iter().all(|u| !u.contains("=30x30")),
+        "尺寸后缀不该混进地址：{images:?}"
+    );
+
+    // 4) 各类行内片段都要出现。
+    let styles: Vec<InlineStyle> = blocks
+        .iter()
+        .flat_map(|b| b.spans().iter())
+        .map(|s| s.style())
+        .collect();
+    for expected in [
+        InlineStyle::Keycap,
+        InlineStyle::Mark,
+        InlineStyle::Subscript,
+        InlineStyle::Superscript,
+        InlineStyle::Link,
+        InlineStyle::Code,
+        InlineStyle::Strong,
+    ] {
+        assert!(
+            styles.contains(&expected),
+            "样例文档应产出 {expected:?} 片段"
+        );
+    }
+
+    // 5) 键帽样式**只**应出现在快捷键那两段里。
+    //    泄漏的表现是整篇被染成键帽——这条就是它的回归防线。
+    let keycap_blocks = blocks
+        .iter()
+        .filter(|b| b.spans().iter().any(|s| s.style() == InlineStyle::Keycap))
+        .count();
+    assert!(
+        keycap_blocks <= 3,
+        "键帽样式疑似泄漏到 {keycap_blocks} 个块（样例里只有两段用了 <kbd>）"
     );
 }

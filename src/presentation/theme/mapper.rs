@@ -253,6 +253,8 @@ struct LineLayout {
     wrap: f32,
     /// 上一版所用的查找命中签名（无命中为 0）。
     find_sig: u64,
+    /// 上一版所用的**排版度量**签名（字号 / 行高，见 [`editor_metrics_signature`]）。
+    metrics: u64,
     /// 上一版**是否带语法着色**（OPT-011 ① 防抖期间为 `false`）。
     ///
     /// 必须进缓存键：防抖期内按纯文本排了一版，停手后文本**没变**，
@@ -291,8 +293,39 @@ const LARGE_FILE_BYTES: usize = 500 * 1024;
 // 这是 S6-04「增量高亮」的落点。> 500KB 走降级分支：跳过 span 着色。
 // 真正的「只高亮可视区」需要 viewport，而 `layouter` 接口拿不到滚动位置，
 // 留待阶段 07 真机走查时再做。
-/// 整文档缓存条目：`(主题签名, 全文, 换行宽度, Galley, 查找命中签名, 是否着色)`。
-type WholeCacheEntry = (Option<[u8; 4]>, String, f32, Arc<egui::Galley>, u64, bool);
+/// 整文档缓存条目：`(主题签名, 全文, 换行宽度, Galley, 查找命中签名, 是否着色, 排版度量签名)`。
+type WholeCacheEntry = (
+    Option<[u8; 4]>,
+    String,
+    f32,
+    Arc<egui::Galley>,
+    u64,
+    bool,
+    u64,
+);
+
+/// 编辑区**排版度量**签名：字号与行高。
+///
+/// # 为什么要单独一个签名（不能塞进 [`palette_signature`]）
+///
+/// `palette_signature` 刻意只含颜色，且有测试钉住「改字号不改变配色签名」
+/// （预览区靠它区分「配色变了」与「只是字号变了」，避免无谓重排）。
+/// 但编辑区正相反：字号与行高**就是**排版输入——缓存若只看配色，
+/// 用户在设置里改字号 / 行高后，逐行 Galley 会因「行内容没变」被整批复用，
+/// 表现是「改了设置但编辑区没变」，必须重开文档才生效。
+///
+/// 故此处把两者量化（字号 ×100、行高 ×1000，取整避免浮点抖动）后折叠成
+/// 一个 u64 并进两层缓存的键。
+fn editor_metrics_signature(theme: &Theme) -> u64 {
+    let size = (theme.editor_font_size * 100.0).round() as u64;
+    let line = (theme.editor_line_height * 1000.0).round() as u64;
+    let mut h: u64 = 1469598103934665603;
+    for v in [size, line] {
+        h ^= v;
+        h = h.wrapping_mul(1099511628211);
+    }
+    h
+}
 
 thread_local! {
     static WHOLE_CACHE: RefCell<Option<WholeCacheEntry>> = const { RefCell::new(None) };
@@ -327,10 +360,11 @@ pub fn line_cache_len() -> usize {
 /// 下一帧自然恢复——绝不能凭空猜一个行高，那会让同步**稳定地**错位。
 pub fn line_tops(theme: &Theme, text: &str) -> Option<Vec<f32>> {
     let sig = palette_signature(theme);
+    let metrics = editor_metrics_signature(theme);
     let lines = text.split('\n').count();
     LINE_LAYOUT.with(|c| {
         let c = c.borrow();
-        if !c.valid || c.sig != sig || c.galleys.len() != lines {
+        if !c.valid || c.sig != sig || c.metrics != metrics || c.galleys.len() != lines {
             return None;
         }
         let mut tops = Vec::with_capacity(lines + 1);
@@ -489,15 +523,25 @@ pub fn highlight_layout_with_find(
     // 文本与上一版相同但着色状态变了，必须让两层缓存都失效。
     let large = text.len() > LARGE_FILE_BYTES;
     let colored = !large && spans.is_some_and(|s| !s.is_empty());
+    // 字号 / 行高变了必须重排（见 `editor_metrics_signature` 的文档注释）。
+    let metrics = editor_metrics_signature(theme);
 
-    // 1) 整文档缓存：文本 / 主题 / 换行 / 查找命中 / 着色状态未变 → 直接返回。
-    if let Some((cached_sig, cached_text, cached_wrap, galley, cached_find, cached_colored)) =
-        WHOLE_CACHE.with(|c| c.borrow().clone())
+    // 1) 整文档缓存：文本 / 主题 / 换行 / 查找命中 / 着色状态 / 排版度量未变 → 直接返回。
+    if let Some((
+        cached_sig,
+        cached_text,
+        cached_wrap,
+        galley,
+        cached_find,
+        cached_colored,
+        cached_metrics,
+    )) = WHOLE_CACHE.with(|c| c.borrow().clone())
         && cached_sig == sig
         && cached_text == text
         && cached_wrap == wrap_width
         && cached_find == find_sig
         && cached_colored == colored
+        && cached_metrics == metrics
     {
         return galley;
     }
@@ -535,6 +579,7 @@ pub fn highlight_layout_with_find(
             && c.wrap == wrap_width
             && c.find_sig == find_sig
             && c.colored == colored
+            && c.metrics == metrics
         {
             Some((c.lines.clone(), c.galleys.clone()))
         } else {
@@ -662,6 +707,7 @@ pub fn highlight_layout_with_find(
         c.wrap = wrap_width;
         c.find_sig = find_sig;
         c.colored = colored;
+        c.metrics = metrics;
         c.valid = true;
     });
 
@@ -708,6 +754,7 @@ pub fn highlight_layout_with_find(
             combined.clone(),
             find_sig,
             colored,
+            metrics,
         ));
     });
     LAST_STATS.with(|s| *s.borrow_mut() = stats);
@@ -750,13 +797,25 @@ impl<'a> StyleMapper<'a> {
     /// `heading` 的级别信息编码在字符串里（`heading:3`），
     /// 由应用层的 `SpanStyle::Heading { level }` 格式化而来。
     ///
-    /// 字号通过 [`FontId::size`] 表达——`TextFormat` 没有「相对字号」字段，
-    /// 只能给出绝对磅值，故以 `body` 基准乘 [`heading_scale`]。
+    /// # 为什么编辑区**不**按级别放大字号
+    ///
+    /// 编辑区是「源码视图」：每一行的**行高必须一致**，行号才能与正文逐行对齐。
+    /// 早期实现让标题行用 `body_size × heading_scale(level)`，于是标题行比正文行
+    /// 高出一大截，行号、滚动同步、光标命中都随之错位（行距不再等距）。
+    /// 层级信息改由**颜色**（[`Theme::syn_heading`]）表达——这也是主流编辑器
+    /// （VS Code / Typora 源码模式）的做法：编辑区里标题只是换色，不换字号。
+    /// 预览区才用 [`StyleMapper::heading_scale`] 放大（那是排版视图，见 `preview_view`）。
+    ///
+    /// 行高统一取 [`Theme::editor_line_height`]（外观设置里的「行高」）乘字号：
+    /// `TextFormat::line_height` 一旦给出，epaint 就**不再**按字体度量算行高，
+    /// 于是中英文混排、系统字体回退（CJK 行高天然高于等宽数字）都不会破坏等距——
+    /// 这是「所有内容等高」得以成立的机制。
     pub fn format(&self, style: &str) -> TextFormat {
         let body_size = self.theme.editor_font_size;
         let base = TextFormat {
             color: self.theme.text_primary,
             font_id: egui::FontId::monospace(body_size),
+            line_height: Some(body_size * self.theme.editor_line_height),
             ..Default::default()
         };
 
@@ -764,17 +823,11 @@ impl<'a> StyleMapper<'a> {
             "plain" | "" => base,
 
             // —— Markdown 语义 ——
-            s if s == "heading" || s.starts_with("heading:") => {
-                let level = s
-                    .strip_prefix("heading:")
-                    .and_then(|n| n.parse::<u8>().ok())
-                    .unwrap_or(1);
-                TextFormat {
-                    color: self.theme.syn_heading,
-                    font_id: egui::FontId::monospace(body_size * heading_scale(level)),
-                    ..Default::default()
-                }
-            }
+            // 标题只换色不换字号（见上方文档注释）：行高与正文严格相等。
+            s if s == "heading" || s.starts_with("heading:") => TextFormat {
+                color: self.theme.syn_heading,
+                ..base
+            },
             "strong" => TextFormat {
                 color: self.theme.syn_bold,
                 ..base

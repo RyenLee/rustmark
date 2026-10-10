@@ -187,6 +187,12 @@ pub enum BlockKind {
     ///
     /// ` ```mermaid ` 围栏经解析器识别后落到此处，而非当作普通代码块。
     Diagram { kind: String },
+    /// 目录（`@[TOC](标题)` / `[TOC]`）。
+    ///
+    /// 标题由源码里的括号内容给出（CSDN 的 `@[TOC](欢迎)` 写作 `欢迎`）；
+    /// 目录**条目**不在这里存——它们就是文档里的标题块，表现层按块序列
+    /// 现场收集（标题会随编辑增删，存一份副本必然过期）。
+    Toc { title: String },
     /// 原始 HTML 等尚未支持的扩展块。
     Raw { marker: String },
 }
@@ -247,6 +253,81 @@ impl BlockKind {
     }
 }
 
+/// 行内文本的样式类别（用于预览区的行内富文本渲染）。
+///
+/// # 为什么要单独建一个类型，而不是复用高亮用的样式字符串
+///
+/// 高亮的样式字符串（`"keyword"` / `"heading"`）是**表现层**的词表，随主题 /
+/// 语法高亮器变化；而这里的取值是 **Markdown 语义**（强调、行内代码、键帽……），
+/// 由解析结果决定，与主题无关。领域层持有语义、表现层决定长什么样，
+/// 正是分层契约要求的形态。
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+pub enum InlineStyle {
+    /// `**粗体**` / `__粗体__`。
+    Strong,
+    /// `*斜体*` / `_斜体_`。
+    Emphasis,
+    /// `~~删除~~`。
+    Strikethrough,
+    /// 行内代码 `` `code` ``。
+    Code,
+    /// 链接文本 `[文本](url)`。
+    Link,
+    /// 行内公式 `$...$`。
+    Math,
+    /// HTML 键帽 `<kbd>Ctrl</kbd>`（CSDN / 掘金等编辑器的快捷键写法）。
+    Keycap,
+    /// 标记文本 `==高亮==`（pulldown 不支持，由解析器自行切分）。
+    Mark,
+    /// 下标 `H~2~O`。
+    Subscript,
+    /// 上标 `2^10^`。
+    Superscript,
+}
+
+/// 块内的一段样式化文本（相对块 `content` 的字节区间）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct InlineSpan {
+    /// 起点字节偏移（相对块 `content`）。
+    start: usize,
+    /// 终点字节偏移（不含，相对块 `content`）。
+    end: usize,
+    /// 样式类别。
+    style: InlineStyle,
+}
+
+impl InlineSpan {
+    /// 构造行内片段。
+    pub const fn new(start: usize, end: usize, style: InlineStyle) -> Self {
+        Self { start, end, style }
+    }
+
+    /// 起点。
+    pub const fn start(&self) -> usize {
+        self.start
+    }
+
+    /// 终点（不含）。
+    pub const fn end(&self) -> usize {
+        self.end
+    }
+
+    /// 样式。
+    pub const fn style(&self) -> InlineStyle {
+        self.style
+    }
+
+    /// 片段长度（字节）。
+    pub const fn len(&self) -> usize {
+        self.end.saturating_sub(self.start)
+    }
+
+    /// 是否为空片段。
+    pub const fn is_empty(&self) -> bool {
+        self.end <= self.start
+    }
+}
+
 /// 一个渲染完成的块。
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct RenderedBlock {
@@ -256,6 +337,13 @@ pub struct RenderedBlock {
     source_range: TextRange,
     /// 该块的纯文本内容（不含 Markdown 标记），供大纲与搜索使用。
     content: String,
+    /// 该块内的行内样式片段（相对 `content` 的区间；无样式时为空）。
+    ///
+    /// 与 `content` **并存**而非替代：`content` 始终是不带标记的纯文本
+    /// （搜索 / 大纲 / 滚动同步都按它取字数与偏移），`spans` 只是叠加在
+    /// 其上的「哪一段是什么样式」。渲染方按区间切片即可，
+    /// 不必再解析一遍 Markdown。
+    spans: Vec<InlineSpan>,
 }
 
 impl RenderedBlock {
@@ -271,7 +359,19 @@ impl RenderedBlock {
             kind,
             source_range,
             content: content.into(),
+            spans: Vec::new(),
         }
+    }
+
+    /// 附带行内样式片段（构造链）。
+    pub fn with_spans(mut self, spans: Vec<InlineSpan>) -> Self {
+        self.spans = spans;
+        self
+    }
+
+    /// 行内样式片段。
+    pub fn spans(&self) -> &[InlineSpan] {
+        &self.spans
     }
 
     /// 块 ID。

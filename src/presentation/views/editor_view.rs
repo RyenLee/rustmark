@@ -58,11 +58,29 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
 
     let line_count = app.editor_text.split('\n').count().max(1);
     let font_size = theme.editor_font_size;
-    // 行号栏开关：默认隐藏（设置「编辑器 → 显示行号栏」可开）。关闭时
-    // 不再占位左侧 44pt，正文从编辑区左缘起——「行号与正文错位」在
-    // CJK 回退字体下无法对所有字体栈保证像素级对齐，隐藏是合理取舍。
+    // 行号栏：宽度按**最大行号的位数实测**（等宽字体），而不是写死 44pt——
+    // 写死会在万行文档里挤掉最后一位、在十行文档里留一片空白。
+    // 左右各留一个 `space_sm` 内边距，行号与正文之间另有一个 `space_sm` 间隔，
+    // 这是「行号不与文字重叠」的横向保障。
+    let gutter_pad = theme.metrics.space_sm;
     let show_gutter = app.editor.line_numbers;
-    let gutter_w = if show_gutter { 44.0 } else { 0.0 };
+    let gutter_w = if show_gutter {
+        let digits = line_count.to_string().len().max(2);
+        let digit_w = ui
+            .painter()
+            .layout_no_wrap(
+                "0".repeat(digits),
+                FontId::monospace(font_size),
+                theme.text_secondary,
+            )
+            .size()
+            .x;
+        digit_w + 2.0 * gutter_pad
+    } else {
+        0.0
+    };
+    // 编辑区内容左缘内边距（与预览区正文同一条左边线）。
+    let content_pad = theme.metrics.space_sm;
 
     // 当前光标所在行（用于高亮当前行号）。
     let cursor_line = current_line_index(&app.editor_text, app.editor.cursor);
@@ -192,6 +210,8 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
         .vertical_scroll_offset(start_y)
         .show(ui, |ui| {
             ui.horizontal(|ui| {
+                // 内容左缘内边距：正文不贴着面板边线（与预览区同级留白）。
+                ui.add_space(content_pad);
                 // 行号栏：先只占住左侧宽度。**数字本帧不在此处画**——
                 // 放到 TextEdit 排版完成之后（见第 3 步），才能用「本帧真实的
                 // 行顶」来定位，彻底消除行号与正文的错位（问题 3）。
@@ -290,6 +310,15 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
 /// [`mapper::line_tops`] 给出编辑器逐行 `Galley` 的顶边（含折行，折行那一行
 /// 更高），配合 `galley_pos`（文本左上角）换算成屏幕坐标。
 ///
+/// # 行高为什么现在是**等距**的（对齐的根本保障）
+///
+/// 编辑区所有内容（标题 / 正文 / 代码 / 列表 / 行内代码）现在共用同一字号与
+/// 同一**显式行高**（`editor_font_size × editor_line_height`，见
+/// [`crate::presentation::theme::mapper::StyleMapper::format`]）。显式行高一旦给出，
+/// epaint 便不再按字体度量算行高——于是「中文回退字体行高更高」不再影响行距，
+/// `tops[i+1] - tops[i]` 恒为同一个常数（除非该行折行）。
+/// 行号按行带垂直居中描画，与正文的基线完全重合，重叠问题从结构上消失。
+///
 /// # 为什么按「行带垂直居中」而不是「行顶对齐」
 ///
 /// 每个行号锚定在**本行的行带**（`tops[i] .. tops[i+1]`，即上一行顶到
@@ -338,7 +367,7 @@ fn paint_gutter(
             theme.text_secondary
         };
         painter.text(
-            egui::pos2(gutter_rect.right() - 6.0, y),
+            egui::pos2(gutter_rect.right() - theme.metrics.space_sm, y),
             egui::Align2::RIGHT_CENTER,
             format!("{i}"),
             font.clone(),

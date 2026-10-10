@@ -29,7 +29,7 @@
 use crate::domain::markdown::errors::ParseError;
 use crate::domain::markdown::services::MarkdownParser;
 use crate::domain::markdown::value_objects::{
-    BlockId, BlockKind, CellAlignment, ListItem, RenderedBlock, TableData,
+    BlockId, BlockKind, CellAlignment, InlineSpan, InlineStyle, ListItem, RenderedBlock, TableData,
 };
 use crate::shared::geometry::{ByteOffset, TextRange};
 use pulldown_cmark::{
@@ -42,15 +42,24 @@ use pulldown_cmark::{
 /// **GFM 表格 / 任务列表 / 脚注在 pulldown-cmark 中是运行期 `Options` 位flag，
 /// 而非 Cargo feature**（已在 ADR-002 记录此事实，极易误解为 feature）。
 /// `ENABLE_GFM` 隐含表格与删除线，但**不含**任务列表与脚注，故仍需显式并列。
-fn parser_options() -> Options {
+///
+/// 导出器（`pulldown_html_exporter`）直接复用本函数，**这是唯一的选项来源**：
+/// 早先两边各写一份，结果预览支持上下标而导出不支持（用户看到「预览有、导出没有」）。
+pub fn parser_options() -> Options {
     Options::ENABLE_TABLES
         | Options::ENABLE_FOOTNOTES
         | Options::ENABLE_TASKLISTS
         | Options::ENABLE_STRIKETHROUGH
         | Options::ENABLE_GFM
+        // 上下标（CSDN / 掘金语法）：`H~2~O`、`2^10^`。
+        // 注意 `ENABLE_SUBSCRIPT` 必须显式开——**关着时 `~x~` 会被当作删除线**
+        // （pulldown 文档明确写了这个回退），于是 `H~2~O` 会显示成被划掉的 2。
+        // 实测 pulldown 只在定界符**前面有空白**时才识别（`H ~2~ O` 能识别、
+        // `H~2~O` 不能），故中文习惯写法仍由 `push_markup_aware` 兜底。
+        | Options::ENABLE_SUBSCRIPT
+        | Options::ENABLE_SUPERSCRIPT
         // 数学公式：`$...$`（行内）/ `$$...$$`（块级）需此选项才会被识别为
         // `Event::InlineMath` / `Event::DisplayMath`（否则按字面文本处理）。
-        // 必须与导出器 `export_options` 保持一致，否则预览有公式、导出没有。
         | Options::ENABLE_MATH
 }
 
@@ -66,13 +75,123 @@ impl PulldownMarkdownParser {
 
     /// 按当前选项集创建**带偏移**的 pulldown 解析器。
     ///
-    /// 导出器（S5-09）复用同一选项集，保证「预览所见」与「导出所得」结构一致——
-    /// 若两者选项不同，用户会看到预览有表格而导出没有。
+    /// 导出器（S5-09）与解析器共用同一份 [`parser_options`]，保证「预览所见」与
+    /// 「导出所得」结构一致——若两者选项不同，用户会看到预览有表格而导出没有。
     ///
     /// 返回 [`OffsetIter`] 而非 `Parser`：只有它的事件流携带 `Range<usize>`，
     /// 而 `source_range` 正是 `FR-02` 的基础。
+    ///
+    /// 注意：调用方若关心**源码区间**，应先把文本交给 [`desugar_image_sizes`]
+    /// 预处理再传进来（`parse` 就是这么做的）。
     pub fn raw_parser(text: &str) -> OffsetIter<'_, DefaultBrokenLinkCallback> {
         Parser::new_ext(text, parser_options()).into_offset_iter()
+    }
+}
+
+/// `=宽x高` 的长度（含前导 `=`，不含尾随的 `)`）；不是该形状时返回 `None`。
+///
+/// 尺寸后缀是 CSDN 的私有扩展（`![alt](url =30x30)`），不是 Markdown。
+fn size_suffix_len(s: &str) -> Option<usize> {
+    let rest = s.strip_prefix('=')?;
+    let digits = |t: &str| t.bytes().take_while(u8::is_ascii_digit).count();
+    let w = digits(rest);
+    if w == 0 {
+        return None;
+    }
+    let rest = rest[w..].strip_prefix('x')?;
+    let h = digits(rest);
+    if h == 0 {
+        return None;
+    }
+    Some(1 + w + 1 + h)
+}
+
+/// `pos` 处是否位于某个链接 / 图片的**无引号地址**之内。
+///
+/// 判据：向前找最近的 `](`，且它与 `pos` 之间不含空白或括号——
+/// 若含空白，说明 `pos` 已经越出了地址（比如落在正文里），
+/// 那就绝不能改写它，否则会把正常文字改坏。
+fn in_link_destination(text: &str, pos: usize) -> bool {
+    let Some(open) = text[..pos].rfind("](") else {
+        return false;
+    };
+    let dest = &text[open + 2..pos];
+    !dest.contains([' ', '\t', '\n', '\r', '(', ')'])
+}
+
+/// 源码预处理：删掉 CSDN 风格的图片尺寸后缀 ` =宽x高`，并给出偏移映射表。
+///
+/// # 为什么必须处理
+///
+/// `![alt](url =30x30)` 不是合法 Markdown：无引号的链接地址**一遇空白即终止**，
+/// `=30x30` 于是落进括号里成为语法错误，pulldown 索性把整段按**普通文本**吐出——
+/// 用户在预览里看到的就是「一长串原始 Markdown，还带着 base64 图片地址」。
+/// 删掉这段后缀后，`![alt](url)` 是标准图片语法，pulldown 正常产出 `Tag::Image`，
+/// 预览与导出都能显示图片。
+///
+/// # 为什么同时返回映射表
+///
+/// 删除会改变字节偏移，而每个块自带的 `source_range` 必须指向**原文**
+/// （点击跳转、滚动同步、增量重解析全靠它）。调用方用 [`SourceOffsets`]
+/// 把 pulldown 给出的偏移还原回原文坐标即可。没有可删时返回借用，
+/// 不做任何分配。
+pub fn desugar_image_sizes(text: &str) -> (std::borrow::Cow<'_, str>, SourceOffsets) {
+    let mut removals: Vec<(usize, usize)> = Vec::new();
+    if text.contains(" =") {
+        let bytes = text.as_bytes();
+        let mut out = String::with_capacity(text.len());
+        // `copied` 是原文中已拷进 `out` 的位置。
+        let mut copied = 0usize;
+        let mut i = 0usize;
+        while i < bytes.len() {
+            if bytes[i] == b' '
+                && in_link_destination(text, i)
+                && let Some(len) = size_suffix_len(&text[i + 1..])
+                && bytes.get(i + 1 + len) == Some(&b')')
+            {
+                out.push_str(&text[copied..i]);
+                // 记的是「处理后」的偏移，供还原用。
+                removals.push((out.len(), 1 + len));
+                i += 1 + len;
+                copied = i;
+                continue;
+            }
+            i += 1;
+        }
+        if !removals.is_empty() {
+            out.push_str(&text[copied..]);
+            return (std::borrow::Cow::Owned(out), SourceOffsets { removals });
+        }
+    }
+    (
+        std::borrow::Cow::Borrowed(text),
+        SourceOffsets {
+            removals: Vec::new(),
+        },
+    )
+}
+
+/// [`desugar_image_sizes`] 的偏移映射表。
+pub struct SourceOffsets {
+    /// `(预处理后文本中的偏移, 该处被删掉的字节数)`，按偏移升序。
+    removals: Vec<(usize, usize)>,
+}
+
+impl SourceOffsets {
+    /// 把「预处理后文本」的偏移还原成「原文」偏移。
+    pub fn to_original(&self, offset: usize) -> usize {
+        offset
+            + self
+                .removals
+                .iter()
+                .take_while(|(at, _)| *at <= offset)
+                .map(|(_, len)| *len)
+                .sum::<usize>()
+    }
+
+    /// 是否发生过预处理（没发生时可跳过一切还原开销）。
+    pub fn is_identity(&self) -> bool {
+        self.removals.is_empty()
     }
 }
 
@@ -120,6 +239,10 @@ struct OpenBlock {
     image: Option<(String, String)>,
     /// `image` 生效时父块 `content` 的长度（用来从后续文本里截出 alt）。
     image_mark: Option<usize>,
+    /// 行内样式帧的样式（仅合成帧与行内样式标签帧有值）。
+    style: Option<InlineStyle>,
+    /// 该块已收集到的行内样式片段（相对本帧 `content` 的字节区间）。
+    spans: Vec<InlineSpan>,
 }
 
 /// 取最内层「会产出块」的栈帧（列表 / 表格 / 段落等）。
@@ -132,20 +255,239 @@ fn nearest_producer(stack: &mut [OpenBlock]) -> Option<&mut OpenBlock> {
         .find(|f| !f.is_item && !f.is_cell && !f.is_inline)
 }
 
-/// 把一段文本并入当前块的 `content`。
+/// 把一段文本并入当前块的 `content`，并（可选）记录行内样式区间。
 ///
 /// 目标是最内层**非行内**帧（规则见模块文档）；列表项与单元格虽非行内，
 /// 但它们会把内容进一步交给父亲，因此若帧栈里还有更外层的列表项 / 单元格，
 /// 也要同步一份——松散列表（`- 项` 之后空一行再写）的文本会落在内部段落帧上，
 /// 不同步的话列表项文本会是空的。
-fn push_content(stack: &mut [OpenBlock], s: &str) {
+///
+/// # 样式区间只记在「会产出块」的帧上
+///
+/// 列表项 / 单元格帧的内容会被父亲吸收成结构（`items` / `cells`），
+/// 没有独立的 `content` 供渲染；给它们记 span 只会在转换时被丢弃。
+/// 故只在最内层**产出块**的帧上记录——列表项在预览里本就不做行内富文本。
+fn push_content(stack: &mut [OpenBlock], s: &str, style: Option<InlineStyle>) {
     let Some(target) = stack.iter().rposition(|f| !f.is_inline) else {
         return;
     };
+    let start = stack[target].content.len();
     stack[target].content.push_str(s);
+    if stack[target].kind.is_some()
+        && let Some(style) = style
+        && !s.is_empty()
+    {
+        stack[target]
+            .spans
+            .push(InlineSpan::new(start, start + s.len(), style));
+    }
     if let Some(owner) = stack[..target].iter().rposition(|f| f.is_item || f.is_cell) {
         stack[owner].content.push_str(s);
     }
+}
+
+/// 取当前生效的行内样式（最内层行内帧的样式；无则 `None`）。
+fn current_inline_style(stack: &[OpenBlock]) -> Option<InlineStyle> {
+    stack
+        .iter()
+        .rev()
+        .find(|f| f.is_inline)
+        .and_then(|f| f.style)
+}
+
+/// 把一段**纯文本**并入当前块，并切分其中的 `==高亮==`。
+///
+/// `==标记文本==` 是 CSDN / 掘金等中文编辑器的常用语法，但 **pulldown-cmark
+/// 没有对应选项**（GFM 也不含它），解析出来就是一段带 `==` 的普通文本；
+/// 不处理的话预览里会原样显示两个等号。规则保守：`==` 必须成对且中间非空。
+fn push_plain_run(stack: &mut [OpenBlock], s: &str) {
+    let style = current_inline_style(stack);
+    if style.is_some_and(|st| st != InlineStyle::Keycap) {
+        // 已处于某种行内样式（粗体 / 代码 / 链接…）内：不再叠标记切分。
+        push_content(stack, s, style);
+        return;
+    }
+    let mut rest = s;
+    while let Some(open) = rest.find("==") {
+        let after = &rest[open + 2..];
+        let Some(close) = after.find("==") else {
+            break;
+        };
+        if close == 0 {
+            // `====` 这类空的标记段：原样保留前两个等号，继续往后找。
+            push_content(stack, &rest[..open + 2], style);
+            rest = &rest[open + 2..];
+            continue;
+        }
+        push_content(stack, &rest[..open], style);
+        push_content(stack, &after[..close], Some(InlineStyle::Mark));
+        rest = &after[close + 2..];
+    }
+    if !rest.is_empty() {
+        push_content(stack, rest, style);
+    }
+}
+
+/// 压入一层合成的「键帽」样式帧（由 `<kbd>` 开启，`</kbd>` 关闭）。
+///
+/// 合成帧不进 `kind`（不产出块），只用来在扫描期间维持「当前是否在键帽里」。
+/// 之所以需要它：`<kbd>` 与 `</kbd>` 可能落在**不同事件**里，状态必须跨事件保留。
+fn push_keycap_frame(stack: &mut Vec<OpenBlock>, start: usize) {
+    stack.push(OpenBlock {
+        kind: None,
+        start,
+        content: String::new(),
+        is_item: false,
+        is_cell: false,
+        is_inline: true,
+        is_task: false,
+        item_checked: None,
+        items: Vec::new(),
+        rows: Vec::new(),
+        current_row: Vec::new(),
+        header: Vec::new(),
+        aligns: Vec::new(),
+        in_head: false,
+        image: None,
+        image_mark: None,
+        style: Some(InlineStyle::Keycap),
+        spans: Vec::new(),
+    });
+}
+
+/// 弹掉栈顶的合成键帽帧（顶层不是键帽帧则忽略）。
+fn pop_keycap_frame(stack: &mut Vec<OpenBlock>) {
+    if stack
+        .last()
+        .is_some_and(|f| f.is_inline && f.style == Some(InlineStyle::Keycap))
+    {
+        stack.pop();
+    }
+}
+
+/// 成对定界符（`~下标~` / `^上标^`）的切分：返回 `(内容, 剩余)`。
+///
+/// 保守条件：内容非空、首尾非空白；紧跟第二个定界符（`~~`）时直接放弃——
+/// 那是删除线，不能误判成下标。
+fn split_paired(tail: &str, delim: char) -> Option<(&str, &str)> {
+    let after = tail.strip_prefix(delim)?;
+    if after.starts_with(delim) {
+        return None;
+    }
+    let end = after.find(delim)?;
+    let inner = &after[..end];
+    if inner.is_empty()
+        || inner.starts_with(char::is_whitespace)
+        || inner.ends_with(char::is_whitespace)
+    {
+        return None;
+    }
+    let consumed = delim.len_utf8() + end + delim.len_utf8();
+    Some((inner, &tail[consumed..]))
+}
+
+/// 行内标记扫描：切开 `<kbd>` / `</kbd>` / `<br>` / `~下标~` / `^上标^`，
+/// 其余部分交给 [`push_plain_run`]（它负责 `==高亮==`）。
+///
+/// # ⚠️ 必须传「合并后的连续文本」，不能逐事件调用
+///
+/// pulldown 会**按自己的需要**把同一段文字切成多个 `Text` 事件，切点毫无
+/// 规律可言。实测 `2^10^` 被切成 `Text("2^10")` + `Text("^")`——
+/// 定界符的**开闭两只分居两个事件**，逐事件扫描时第一段里找不到配对的 `^`
+/// （于是退回字面量），第二段只剩一个孤立的 `^` 也配不上，
+/// 结果就是「上标没渲染、`^` 却原样留在正文里」。
+/// 调用方必须先经 [`flush_inline_text`] 把相邻文本拼成一段再来扫。
+///
+/// # 为什么这些标记必须自己扫
+///
+/// 1. **`</kbd>` 在 CommonMark 里不是行内 HTML**：`Ctrl</kbd>` 的 `<` 前面
+///    紧挨字母，扫描器不认，pulldown 会把它当**普通文本**吐出来。只看
+///    `Event::InlineHtml` 会把 `</kbd>` 原样留在正文里（用户看到的就是
+///    「快捷键这一段没渲染」）。
+/// 2. **`H~2~O` / `2^10^` 同样不被 pulldown 识别**：它的上下标要求定界符
+///    前有空白（实测 `H ~2~ O` 能识别、`H~2~O` 不能），而中文写作习惯恰恰
+///    不写空格。这里按 CSDN 语义补上这一层，两种写法都能渲染。
+fn push_markup_aware(stack: &mut Vec<OpenBlock>, s: &str) {
+    let mut rest = s;
+    while !rest.is_empty() {
+        // 最近的标记起点：`<` / `~` / `^`（`==` 由 `push_plain_run` 内部处理）。
+        let pos = ['<', '~', '^'].iter().filter_map(|m| rest.find(*m)).min();
+        let Some(idx) = pos else {
+            push_plain_run(stack, rest);
+            break;
+        };
+        if idx > 0 {
+            push_plain_run(stack, &rest[..idx]);
+            rest = &rest[idx..];
+            continue;
+        }
+        // 至此 `rest` 以 `<` / `~` / `^` 开头。
+        let head: String = rest.chars().take(6).collect();
+        let head_lower = head.to_ascii_lowercase();
+        if head_lower.starts_with("</kbd") || head_lower.starts_with("<kbd") {
+            match rest.find('>') {
+                Some(gt) => {
+                    if head_lower.starts_with("</") {
+                        pop_keycap_frame(stack);
+                    } else {
+                        push_keycap_frame(stack, 0);
+                    }
+                    rest = &rest[gt + 1..];
+                }
+                None => {
+                    push_plain_run(stack, rest);
+                    break;
+                }
+            }
+            continue;
+        }
+        if head_lower.starts_with("<br") {
+            match rest.find('>') {
+                Some(gt) => {
+                    push_content(stack, "\n", None);
+                    rest = &rest[gt + 1..];
+                }
+                None => {
+                    push_plain_run(stack, rest);
+                    break;
+                }
+            }
+            continue;
+        }
+        if rest.starts_with('~')
+            && let Some((inner, tail)) = split_paired(rest, '~')
+        {
+            push_content(stack, inner, Some(InlineStyle::Subscript));
+            rest = tail;
+            continue;
+        }
+        if rest.starts_with('^')
+            && let Some((inner, tail)) = split_paired(rest, '^')
+        {
+            push_content(stack, inner, Some(InlineStyle::Superscript));
+            rest = tail;
+            continue;
+        }
+        // 其余以 `<` / `~` / `^` 开头的字符：按一个字符的纯文本吃掉，
+        // 保证循环必然前进（落单的 `~` 不会被无限重试）。
+        let one = rest.chars().next().map_or(1, char::len_utf8);
+        push_plain_run(stack, &rest[..one]);
+        rest = &rest[one..];
+    }
+}
+
+/// 把攒下的连续文本一次性交给 [`push_markup_aware`] 扫描，并清空缓冲。
+///
+/// 见 `push_markup_aware` 的文档：pulldown 会把一段文字切成多个事件，
+/// 跨事件的定界符只有在**合并后**才配得上，故解析主循环遇文本类事件只
+/// 追加不处理，遇任何**非文本**事件（块开关、行内代码、公式、换行…）
+/// 才先冲刷——这样既拿到了完整字符串，又不会打乱内容顺序。
+fn flush_inline_text(stack: &mut Vec<OpenBlock>, pending: &mut String) {
+    if pending.is_empty() {
+        return;
+    }
+    let run = std::mem::take(pending);
+    push_markup_aware(stack, &run);
 }
 
 /// 若块内容**整体**就是一个块级公式，返回公式本体（已去 `$$` 与空白）。
@@ -242,6 +584,47 @@ fn block_kind_of(tag: &Tag, ordered: bool) -> Option<BlockKind> {
     Some(kind)
 }
 
+/// 行内标签 → 该标签内文本的样式（非样式标签返回 `None`）。
+///
+/// 这些标签在事件流里同样是 Start/End 配对，但**不产出块**（见
+/// [`block_kind_of`]）。它们的作用是给内部文本打上样式，供预览做行内富文本。
+fn inline_style_of(tag: &Tag) -> Option<InlineStyle> {
+    match tag {
+        Tag::Strong => Some(InlineStyle::Strong),
+        Tag::Emphasis => Some(InlineStyle::Emphasis),
+        Tag::Strikethrough => Some(InlineStyle::Strikethrough),
+        Tag::Link { .. } => Some(InlineStyle::Link),
+        Tag::Subscript => Some(InlineStyle::Subscript),
+        Tag::Superscript => Some(InlineStyle::Superscript),
+        _ => None,
+    }
+}
+
+/// 从段落**源码原文**里识别目录标记，返回目录标题。
+///
+/// 支持 `@[TOC](标题)`（括号内为标题，空括号按「目录」）与 `[TOC]` / `[[TOC]]`。
+///
+/// 必须看源码而不是扁平内容：`@[TOC](欢迎)` 在 pulldown 眼里是
+/// 「文本 `@` + 链接 `[TOC](欢迎)`」，扁平后只剩 `@TOC`——括号里的标题
+/// 与方括号都不见了，从内容里再也认不出来。
+fn toc_title_of_source(src: &str) -> Option<String> {
+    let s = src.trim();
+    let lower = s.to_ascii_lowercase();
+    if lower == "[toc]" || lower == "[[toc]]" {
+        return Some("目录".to_string());
+    }
+    let rest = s
+        .strip_prefix("@[TOC]")
+        .or_else(|| s.strip_prefix("@[toc]"))
+        .or_else(|| s.strip_prefix("@[Toc]"))?;
+    let inner = rest.trim().strip_prefix('(')?.strip_suffix(')')?.trim();
+    Some(if inner.is_empty() {
+        "目录".to_string()
+    } else {
+        inner.to_string()
+    })
+}
+
 /// 去掉列表项文本开头的任务标记（`[x] ` / `[ ] `）。
 ///
 /// 勾选状态已由 [`ListItem::checked`] 单独承载，渲染时画成复选框；
@@ -283,8 +666,29 @@ impl MarkdownParser for PulldownMarkdownParser {
         let mut next_id: u64 = 0;
         // 当前所处的列表是否有序——`Tag::List` 开启时写入，Item 继承之。
         let mut list_ordered = false;
+        // 连续的文本类事件先攒在这里（见 `flush_inline_text`）。
+        let mut pending = String::new();
 
-        for (event, range) in PulldownMarkdownParser::raw_parser(text) {
+        // 预处理：删掉 CSDN 的图片尺寸后缀（`![alt](url =30x30)`），
+        // 否则 pulldown 认不出图片、整段按普通文本吐出。
+        // 删除改变了偏移，故随后用 `offsets` 把事件偏移还原回**原文**坐标——
+        // 块的 `source_range` 必须指向原文，否则点击跳转 / 滚动同步会错位。
+        let (src, offsets) = desugar_image_sizes(text);
+
+        for (event, range) in PulldownMarkdownParser::raw_parser(&src) {
+            let range = offsets.to_original(range.start)..offsets.to_original(range.end);
+            // 文本类事件只入缓冲、不立即处理：pulldown 可能把 `2^10^`
+            // 拆成两个事件，逐事件扫描会漏掉跨事件配对的上下标定界符。
+            // 其余事件一律先冲刷缓冲，保证文本与结构事件的先后顺序不变
+            // （例如 `Start(Image)` 要用 content 长度记 alt 起点）。
+            match &event {
+                Event::Text(t) | Event::Html(t) | Event::InlineHtml(t) => {
+                    pending.push_str(t);
+                    continue;
+                }
+                _ => flush_inline_text(&mut stack, &mut pending),
+            }
+
             match event {
                 // 图片是**行内**标签，但需要独立成块以便 S5-11 按 URL 加载资源，
                 // 故必须先于下方通用的 `Event::Start(tag)` 分支匹配——
@@ -313,6 +717,9 @@ impl MarkdownParser for PulldownMarkdownParser {
                     // 故不能标记为 `is_inline`——否则文本会被并到外层块去。
                     let kind = block_kind_of(&tag, list_ordered);
                     let is_inline = kind.is_none() && !is_item && !is_cell;
+                    // 行内样式标签（粗体 / 链接 / 上下标…）把样式挂在帧上，
+                    // 其内文本按该样式记录（见 `current_inline_style`）。
+                    let style = inline_style_of(&tag);
                     let aligns = match &tag {
                         Tag::Table(a) => a.iter().map(cell_alignment_of).collect(),
                         _ => Vec::new(),
@@ -335,6 +742,8 @@ impl MarkdownParser for PulldownMarkdownParser {
                         in_head: false,
                         image: None,
                         image_mark: None,
+                        style,
+                        spans: Vec::new(),
                     });
                     // 进入表头：把所属表格切到「表头模式」，后续整行归为表头。
                     if opens_head {
@@ -366,6 +775,15 @@ impl MarkdownParser for PulldownMarkdownParser {
                         continue;
                     };
                     let end = range.end;
+                    // 兜底：`<kbd>` 若在本块内没有闭合，键帽帧会一直挂在栈上，
+                    // 把 Keycap 样式泄漏给后面**所有**段落（实测会把整篇染成键帽）。
+                    // 块一闭合就清掉栈顶残留的合成帧——它们只可能来自本块内部。
+                    while stack
+                        .last()
+                        .is_some_and(|f| f.is_inline && f.style == Some(InlineStyle::Keycap))
+                    {
+                        stack.pop();
+                    }
 
                     // ---- 单元格：文本归入所属表格的当前行 ----
                     if open.is_cell {
@@ -447,6 +865,14 @@ impl MarkdownParser for PulldownMarkdownParser {
                     // 放在段落里，但「一个段落只有一条公式」在视觉与语义上都等价于
                     // 独立公式块，交给表现层居中成卡更贴合预期。
                     let promoted_math = math_body_if_standalone(&open.content);
+                    // 目录标记要从**源码原文**识别（扁平后只剩 `@TOC`）。
+                    // 只在「整段就是一个标记」时成立。
+                    let toc = matches!(open.kind, Some(BlockKind::Paragraph))
+                        .then(|| {
+                            text.get(open.start.min(end)..end)
+                                .and_then(toc_title_of_source)
+                        })
+                        .flatten();
                     let kind = open.kind.clone();
 
                     // 列表在闭合时定型：任一列表项带任务标记 → 整个列表是任务列表。
@@ -465,6 +891,9 @@ impl MarkdownParser for PulldownMarkdownParser {
                                 std::mem::take(&mut open.aligns),
                             ),
                         },
+                        (Some(BlockKind::Paragraph), _) if toc.is_some() => BlockKind::Toc {
+                            title: toc.clone().unwrap_or_default(),
+                        },
                         (Some(BlockKind::Paragraph), _) if promoted_math.is_some() => {
                             BlockKind::Math { display: true }
                         }
@@ -479,17 +908,34 @@ impl MarkdownParser for PulldownMarkdownParser {
                     // 区间要在移动 `content` **之前**算好：`range()` 借用 `self`，
                     // 先移走字段再借用会触发 E0382（部分移动后借用）。
                     let range = open.range(end, text);
-                    let content = match promoted_math {
-                        Some(body) if matches!(kind, BlockKind::Math { .. }) => body,
+                    let mut spans = std::mem::take(&mut open.spans);
+                    let content = match (&kind, promoted_math) {
+                        // 公式块的内容换成「公式本体」，区间不再对应 → 丢弃。
+                        (BlockKind::Math { .. }, Some(body)) => {
+                            spans.clear();
+                            body
+                        }
+                        // 目录块的内容就是**标题**。
+                        //
+                        // 为什么不留在 `BlockKind::Toc { title }` 里给表现层读：
+                        // 架构约束（`check-arch`）禁止表现层依赖领域枚举，
+                        // `BlockView` 只带一个扁平 `kind: String` 与 `content`，
+                        // 表现层唯一能拿到的标题来源就是 `content`。
+                        // 而扁平后的内容只剩 `@TOC`（`@[TOC](欢迎)` 中的 `@` 是
+                        // 文本、`[TOC](欢迎)` 是链接，括号里的标题早被吃掉），
+                        // 所以必须在这里把源码里认出来的标题写回去。
+                        // 顺带让大纲 / 搜索能看到目录标题。
+                        (BlockKind::Toc { title }, _) => {
+                            spans.clear();
+                            title.clone()
+                        }
                         _ => open.content,
                     };
 
-                    blocks.push(RenderedBlock::new(
-                        BlockId::from_u64(next_id),
-                        kind,
-                        range,
-                        content,
-                    ));
+                    blocks.push(
+                        RenderedBlock::new(BlockId::from_u64(next_id), kind, range, content)
+                            .with_spans(spans),
+                    );
                     next_id += 1;
                 }
 
@@ -500,37 +946,41 @@ impl MarkdownParser for PulldownMarkdownParser {
                 // 处理 `Text` 时栈顶是**行内**的 `Strong` 帧。若写进去，
                 // 文本会随该帧一起被丢弃——表现为 `content` 出现空洞
                 // （曾实测 `这是 **粗体** 与 ` + "`代码`" + ` 文本` 变成 `这是  与 代码 文本`）。
-                Event::Text(t) => {
-                    push_content(&mut stack, &t);
-                }
+                //
+                // 文本类事件在本轮循环开头已进缓冲并 `continue`，走不到这个分支；
+                // 保留臂只是为了覆盖枚举，并指明它们的去处。
+                Event::Text(_) | Event::Html(_) | Event::InlineHtml(_) => {}
                 Event::Code(t) => {
-                    push_content(&mut stack, &t);
-                }
-                Event::Html(t) | Event::InlineHtml(t) => {
-                    push_content(&mut stack, &t);
+                    // 行内代码：文本保留（搜索 / 大纲看得到），样式记为 Code。
+                    push_content(&mut stack, &t, Some(InlineStyle::Code));
                 }
                 Event::SoftBreak | Event::HardBreak => {
-                    push_content(&mut stack, "\n");
+                    // 换行不带样式：样式片段不跨行，预览按行切分渲染才不会错位。
+                    push_content(&mut stack, "\n", None);
                 }
                 Event::InlineMath(t) => {
                     // 行内公式是**段落内容的一部分**，不独立成块：`$...$` 前后
                     // 通常还有正文，独立成块会把一句话拆成三块、破坏段落语义。
                     // 补回 `$` 分隔符，让 `content` 仍是可搜索的原文。
-                    push_content(&mut stack, &format!("${t}$"));
+                    push_content(&mut stack, &format!("${t}$"), Some(InlineStyle::Math));
                 }
                 Event::DisplayMath(t) => {
                     // 块级公式同理并入当前块内容；`$$` 换行写法在 pulldown 里
                     // 会带上首尾换行，trim 后再补分隔符避免出现空公式。
-                    push_content(&mut stack, &format!("$${}\n$$", t.trim()));
+                    push_content(
+                        &mut stack,
+                        &format!("$${}\n$$", t.trim()),
+                        Some(InlineStyle::Math),
+                    );
                 }
                 Event::FootnoteReference(label) => {
-                    push_content(&mut stack, &format!("[^{label}]"));
+                    push_content(&mut stack, &format!("[^{label}]"), None);
                 }
                 // 任务列表标记：落到**列表项**帧（列表项已能收集自己的文本），
                 // 并记录该 `Range` 的勾选状态以便 S6-05 渲染复选框、回写源码。
                 // 标记文本仍并进内容（`- [x] ` 的勾选状态是 Outliner 与搜索需要的信息）。
                 Event::TaskListMarker(checked) => {
-                    push_content(&mut stack, if checked { "[x] " } else { "[ ] " });
+                    push_content(&mut stack, if checked { "[x] " } else { "[ ] " }, None);
                     if let Some(item) = stack.iter_mut().rev().find(|f| f.is_item) {
                         item.item_checked = Some(checked);
                     }
@@ -557,17 +1007,24 @@ impl MarkdownParser for PulldownMarkdownParser {
             }
         }
 
+        // 收尾冲刷：正常情况下栈已空（文本早已随各块的 End 落盘），
+        // 这里只兜住「文档以未闭合文本结尾」的异常输入。
+        flush_inline_text(&mut stack, &mut pending);
+
         // 防御：若文档以未闭合块结尾（理论上不会），补齐为块而非丢弃内容。
         for open in stack.into_iter().rev() {
             // 只补齐「本应产出块」的标签；行内标签与列表项不补。
             if let Some(kind) = open.kind.clone() {
                 let end = open.start;
-                blocks.push(RenderedBlock::new(
-                    BlockId::from_u64(next_id),
-                    kind,
-                    open.range(end, text),
-                    open.content,
-                ));
+                blocks.push(
+                    RenderedBlock::new(
+                        BlockId::from_u64(next_id),
+                        kind,
+                        open.range(end, text),
+                        open.content,
+                    )
+                    .with_spans(open.spans),
+                );
                 next_id += 1;
             }
         }

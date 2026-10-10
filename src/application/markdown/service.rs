@@ -19,7 +19,7 @@ use crate::domain::markdown::services::{
     BlockMapper, MarkdownParser, SpellChecker, SyntaxHighlighter,
 };
 use crate::domain::markdown::value_objects::{
-    BlockId, BlockKind, CellAlignment, RenderedBlock, SpanStyle,
+    BlockId, BlockKind, CellAlignment, InlineStyle, RenderedBlock, SpanStyle,
 };
 use crate::shared::error::AppError;
 use crate::shared::geometry::ByteOffset;
@@ -805,6 +805,30 @@ fn to_block_view(block: &RenderedBlock) -> BlockView {
             BlockKind::Diagram { kind } => Some(kind.clone()),
             _ => None,
         },
+        spans: block
+            .spans()
+            .iter()
+            .map(|span| SpanView {
+                range: RangeView::new(span.start(), span.end()),
+                style: inline_style_str(span.style()).to_string(),
+            })
+            .collect(),
+    }
+}
+
+/// 行内样式 → 稳定字符串（供表现层分发渲染器）。
+fn inline_style_str(style: InlineStyle) -> &'static str {
+    match style {
+        InlineStyle::Strong => "strong",
+        InlineStyle::Emphasis => "emphasis",
+        InlineStyle::Strikethrough => "strikethrough",
+        InlineStyle::Code => "code",
+        InlineStyle::Link => "link",
+        InlineStyle::Math => "math",
+        InlineStyle::Keycap => "keycap",
+        InlineStyle::Mark => "mark",
+        InlineStyle::Subscript => "sub",
+        InlineStyle::Superscript => "sup",
     }
 }
 
@@ -826,6 +850,8 @@ fn block_kind_str(kind: &BlockKind) -> String {
         // 行内 / 块级公式共用 `math` 类型，由 `BlockView::display` 区分呈现。
         BlockKind::Math { .. } => "math".to_string(),
         BlockKind::Diagram { .. } => "diagram".to_string(),
+        // 目录：`@[TOC](标题)` / `[TOC]`，预览里渲染成可点击的标题列表。
+        BlockKind::Toc { .. } => "toc".to_string(),
         BlockKind::Raw { marker } => format!("raw:{marker}"),
     }
 }

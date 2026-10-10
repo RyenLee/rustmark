@@ -262,6 +262,14 @@ impl WritingGoal {
     }
 }
 
+/// `EditorSettings::show_line_numbers` 的 serde 缺省值（与 `default_settings()` 一致）。
+///
+/// 单独成函数是因为 `#[serde(default = "...")]` 只接受路径：写 `#[serde(default)]`
+/// 会取 `bool::default()`（`false`），与「旧配置也按显示行号读」的意图相反。
+fn default_show_line_numbers() -> bool {
+    true
+}
+
 /// 编辑器设置。
 #[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
 pub struct EditorSettings {
@@ -272,14 +280,14 @@ pub struct EditorSettings {
     spell_check: bool,
     /// 是否显示行号栏。
     ///
-    /// 默认**隐藏**：真实环境里中文经系统字体回退后，行高与等宽缓存的
-    /// 行顶表存在帧级偏差，行号与正文可能错位；行号是辅助信息而非编辑
-    /// 刚需（原型契约 A-01 的核心是语法高亮 + 当前行高亮），故默认关闭，
-    /// 需要时在设置里打开。
+    /// 默认**显示**。行号与正文的对齐由「编辑区所有内容统一字号 + 统一行高」
+    /// 结构性地保证（见 `mapper::StyleMapper::format`）：每行高度恒等于
+    /// `editor_font_size × editor_line_height`，行号按行带垂直居中描画，
+    /// 与中英文字体回退无关。需要更干净的界面时可在设置里关闭。
     ///
-    /// `#[serde(default)]`：**旧配置文件里没有这个字段**，缺了按「隐藏」
-    /// 读出来，而不是让整个配置加载失败（同 `split_ratio`）。
-    #[serde(default)]
+    /// `#[serde(default = "default_show_line_numbers")]`：旧配置文件里没有这个
+    /// 字段，缺了按「显示」读出（与默认设置一致），而不是让配置加载失败。
+    #[serde(default = "default_show_line_numbers")]
     show_line_numbers: bool,
     /// 撤销合并窗口（毫秒），供 [`crate::document::undo::UndoPolicy`] 使用。
     undo_merge_window_ms: u64,
@@ -296,14 +304,14 @@ pub struct EditorSettings {
 
 impl EditorSettings {
     /// 默认设置：4 空格缩进、自动换行、30 秒自动保存、不开拼写检查、
-    /// 行号栏隐藏、400ms 撤销窗口、未设写作目标。
+    /// 显示行号栏、400ms 撤销窗口、未设写作目标。
     pub fn default_settings() -> Self {
         Self {
             tab_size: TabSize::Four,
             word_wrap: true,
             auto_save_interval: Some(30),
             spell_check: false,
-            show_line_numbers: false,
+            show_line_numbers: true,
             undo_merge_window_ms: 400,
             split_ratio: 0.5,
             writing_goal: WritingGoal::default(),

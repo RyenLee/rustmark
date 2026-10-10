@@ -223,6 +223,14 @@ pub struct ThemeView {
     pub custom: Option<CustomThemePaletteView>,
 }
 
+/// `EditorSettingsView::show_line_numbers` 的 serde 缺省值（显示）。
+///
+/// 与领域 `EditorSettings::default_settings()` 保持一致：行号栏默认显示，
+/// 旧配置文件没有这个字段时也按显示读出。
+fn default_show_line_numbers() -> bool {
+    true
+}
+
 /// 编辑器设置视图（与领域 `EditorSettings` 对应）。
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EditorSettingsView {
@@ -234,8 +242,8 @@ pub struct EditorSettingsView {
     pub auto_save_interval: Option<u32>,
     /// 是否启用拼写检查。
     pub spell_check: bool,
-    /// 是否显示行号栏；旧配置缺省按「隐藏」处理（新默认值）。
-    #[serde(default)]
+    /// 是否显示行号栏；与领域默认一致（显示），旧配置缺省同样按显示处理。
+    #[serde(default = "default_show_line_numbers")]
     pub show_line_numbers: bool,
     /// 编辑区 / 预览区分割比例（0.2 ~ 0.8）；旧配置缺省时按 `0.5` 处理。
     #[serde(default)]
@@ -327,7 +335,7 @@ impl SettingsView {
                 word_wrap: true,
                 auto_save_interval: None,
                 spell_check: false,
-                show_line_numbers: false,
+                show_line_numbers: true,
                 split_ratio: 0.5,
                 writing_goal: 0,
             },
@@ -409,6 +417,11 @@ pub struct BlockView {
     pub display: Option<bool>,
     /// 图表引擎名（`kind == "diagram"` 时有值，当前恒为 `"mermaid"`）。
     pub diagram: Option<String>,
+    /// 块内行内样式片段（区间相对 `content`；无样式时为空）。
+    ///
+    /// 复用 [`SpanView`] 的形状（区间 + 样式字符串）：它与编辑区高亮的
+    /// 数据结构同形，表现层只需一套「按区间切段渲染」的代码。
+    pub spans: Vec<SpanView>,
 }
 
 /// 渲染结果视图（预览区整体）。

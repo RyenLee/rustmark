@@ -442,21 +442,73 @@ fn unknown_style_falls_back_to_body_color() {
     }
 }
 
-/// 标题级别必须影响字号（否则大纲里六级标题在预览里一样大）。
+/// **编辑区**所有样式必须共用同一字号与同一行高。
+///
+/// 这是「行号与文字不再重叠」的**结构性**前提：行号栏按「行高 × 行序号」落点，
+/// 只有每一行都真的等高，落点才对得上。
+///
+/// 早期实现让标题行按 `editor_font_size × heading_scale(level)` 放大，
+/// 于是标题行比正文行高出一截——行号每隔几行就与文字错位一次，
+/// 图片 / 代码块亦然（它们各按自己的字体度量算高）。现在行的差异只用**颜色**
+/// 表达，字号与行高严格相等；标题的放大移到**预览区**（排版视图，
+/// 见 [`StyleMapper::heading_scale`]）。
 #[test]
-fn heading_levels_scale_font_size() {
+fn editor_styles_share_one_font_size_and_line_height() {
     let theme = Theme::dark();
     let mapper = StyleMapper::new(&theme);
+    let body = mapper.format("plain");
 
-    let h1 = mapper.format("heading:1").font_id.size;
-    let h3 = mapper.format("heading:3").font_id.size;
-    let h6 = mapper.format("heading:6").font_id.size;
+    for style in [
+        "plain",
+        "",
+        "heading",
+        "heading:1",
+        "heading:3",
+        "heading:6",
+        "strong",
+        "emphasis",
+        "strikethrough",
+        "code",
+        "link",
+        "image",
+        "quote",
+        "list_marker",
+        "table_border",
+        "keyword",
+        "string",
+        "comment",
+    ] {
+        let format = mapper.format(style);
+        assert_eq!(
+            format.font_id.size, body.font_id.size,
+            "{style:?} 的字号必须与正文一致，否则该行会高于其他行"
+        );
+        assert_eq!(
+            format.line_height, body.line_height,
+            "{style:?} 的行高必须与正文一致，否则行号会与文字错位"
+        );
+    }
 
-    assert!(h1 > h3, "h1 应大于 h3：{h1} vs {h3}");
-    assert!(h3 > h6, "h3 应大于 h6：{h3} vs {h6}");
+    // 行高确实来自外观设置（字号 × 「行高」），而不是字体自身度量——
+    // 后者会随系统字体回退而变（CJK 字体行高天然高于等宽数字）。
+    let expected = theme.editor_font_size * theme.editor_line_height;
+    assert_eq!(
+        body.line_height,
+        Some(expected),
+        "编辑区行高应等于 editor_font_size × editor_line_height"
+    );
+}
 
-    // 无级别信息时按 h1 处理。
-    assert_eq!(mapper.format("heading").font_id.size, h1);
+/// 标题在编辑区**只换颜色**，级别信息不再改变字号。
+#[test]
+fn heading_style_in_editor_changes_color_only() {
+    let theme = Theme::dark();
+    let mapper = StyleMapper::new(&theme);
+    let body = mapper.format("plain");
+    let h1 = mapper.format("heading:1");
+
+    assert_ne!(h1.color, body.color, "标题应有区别于正文的颜色");
+    assert_eq!(h1.font_id, body.font_id, "标题字号不应随级别变化");
 }
 
 /// 标题取色一致（所有级别同色，与原型一致）。

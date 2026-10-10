@@ -220,3 +220,142 @@ fn table_distribution_degenerate_inputs_are_handled() {
         "全空表应均分可用宽且有限：{empty:?}"
     );
 }
+
+// ============================================================================
+// 端到端：示例文档里的「非标准但常见」写法必须一路渲染到预览区
+// ============================================================================
+//
+// 上面各条测的是纯函数。这里补一条**从源码到预览块再到真实帧**的通路用例：
+// 解析出来的样式片段要能穿过应用层映射（`BlockView.spans`），
+// 并且在预览区的真实渲染里不崩。两处静默失效只有这条路能挡住：
+//   1. 解析认了、DTO 没带过去 → 预览仍是纯文本；
+//   2. `render_inline_text` 把片段区间切进多字节字符中间 → panic。
+
+use std::sync::Arc;
+
+use crate::support::fake_dialog::FakeDialog;
+use rustmark::app::bootstrap::{ConfigPaths, Services};
+use rustmark::app::frame::EditorApp;
+use rustmark::application::document::commands::ReplaceRangeCommand;
+use rustmark::shared::geometry::{ByteOffset, TextRange};
+
+/// 示例文档片段：目录 / 键帽 / 高亮 / 上下标 / 带尺寸图片 / 公式全都在。
+const SAMPLE: &str = "\
+@[TOC](欢迎)
+
+# 一级标题
+
+## 二级标题
+
+撤销：<kbd>Ctrl</kbd> + <kbd>Z</kbd>
+
+==标记文本==、H~2~O、2^10^ 运算、[链接](https://example.com)、`代码`
+
+带尺寸的图片: ![Alt](images/a.png =30x30)
+
+$$E = mc^2$$
+";
+
+/// 造一个装好 `content` 的应用。
+fn app_with(content: &str) -> (tempfile::TempDir, EditorApp) {
+    let dir = tempfile::tempdir().expect("应可创建临时目录");
+    let services = Services::assemble_with_dialogs(
+        ConfigPaths::in_dir(dir.path()),
+        Arc::new(FakeDialog::new()),
+    )
+    .expect("装配应成功");
+    let mut app = EditorApp::new(services, false);
+    let id = app.ensure_document().expect("应能开出空白文档");
+    app.services
+        .documents
+        .replace_range(ReplaceRangeCommand {
+            id,
+            range: TextRange::new(ByteOffset::new(0), ByteOffset::new(0)),
+            text: content.to_string(),
+        })
+        .expect("写入内容应成功");
+    app.refresh_text();
+    (dir, app)
+}
+
+/// 跑 `n` 帧真实渲染，返回 (最后一帧绘制量, 最后一帧里的文字 shape 数)。
+fn render(app: &mut EditorApp, ctx: &egui::Context, n: usize) -> usize {
+    let mut last = 0;
+    for _ in 0..n.max(2) {
+        let out = ctx.run(egui::RawInput::default(), |ctx| {
+            rustmark::presentation::theme::mapper::apply(ctx, &app.ui.theme);
+            rustmark::presentation::views::main_view::show(app, ctx);
+        });
+        last = out.shapes.len();
+    }
+    last
+}
+
+/// 所有行内格式都要穿过应用层映射，落到预览块的 `spans` 上。
+#[test]
+fn sample_document_reaches_preview_blocks_with_its_inline_styles() {
+    let (_dir, mut app) = app_with(SAMPLE);
+    let ctx = egui::Context::default();
+    render(&mut app, &ctx, 2);
+
+    let blocks = &app.preview.blocks;
+    assert!(!blocks.is_empty(), "首帧应已解析出块");
+
+    // 目录：`@[TOC](欢迎)` 必须变成独立块，且标题来自括号内容
+    // （表现层读不到领域枚举里的 `title`，只能靠 `content`）。
+    let toc = blocks
+        .iter()
+        .find(|b| b.kind == "toc")
+        .expect("应产出目录块");
+    assert_eq!(toc.content, "欢迎", "目录标题应取自 `@[TOC](欢迎)` 的括号");
+
+    // 带尺寸的图片要真的成为图片块，且地址里不能混进 `=30x30`。
+    let image = blocks
+        .iter()
+        .find(|b| b.kind == "image")
+        .expect("带尺寸后缀的图片也应成为图片块");
+    assert_eq!(image.url.as_deref(), Some("images/a.png"));
+
+    // 每一类行内样式都要在某个块的 spans 里出现过。
+    let styles: Vec<&str> = blocks
+        .iter()
+        .flat_map(|b| b.spans.iter())
+        .map(|s| s.style.as_str())
+        .collect();
+    for expected in ["keycap", "mark", "sub", "sup", "link", "code"] {
+        assert!(
+            styles.contains(&expected),
+            "样式 {expected:?} 未传到预览块，实际 {styles:?}"
+        );
+    }
+}
+
+/// 片段区间必须落在字符边界上：切片越界会 panic，预览整栏变白。
+#[test]
+fn inline_spans_land_on_char_boundaries() {
+    let (_dir, mut app) = app_with(SAMPLE);
+    let ctx = egui::Context::default();
+    render(&mut app, &ctx, 2);
+
+    for block in &app.preview.blocks {
+        for span in &block.spans {
+            assert!(
+                block.content.is_char_boundary(span.range.start)
+                    && block.content.is_char_boundary(span.range.end),
+                "块 {:?} 的片段 {:?} 落在字符中间，切片会 panic",
+                block.kind,
+                span.range
+            );
+            assert!(span.range.start < span.range.end, "空片段没有意义");
+        }
+    }
+}
+
+/// 真实帧渲染不崩（含目录卡片、键帽、高亮、上下标、图片占位）。
+#[test]
+fn sample_document_renders_a_real_frame() {
+    let (_dir, mut app) = app_with(SAMPLE);
+    let ctx = egui::Context::default();
+    let shapes = render(&mut app, &ctx, 3);
+    assert!(shapes > 0, "预览应产出绘制指令");
+}

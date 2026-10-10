@@ -28,16 +28,28 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
+use egui::text::{LayoutJob, TextFormat, TextWrapping};
 use egui::{Align, CornerRadius, FontId, Layout, RichText, ScrollArea, Stroke, Ui};
 
 use crate::app::frame::EditorApp;
 use crate::application::document::registry::DocumentContentProvider;
-use crate::application::dto::{BlockView, CellAlignView, ListItemView, TableView};
+use crate::application::dto::{BlockView, CellAlignView, ListItemView, SpanView, TableView};
 use crate::application::markdown::queries::{HighlightSnippetQuery, RenderPreviewQuery};
 use crate::presentation::state::scroll_sync_state::{BlockRect, Side};
 use crate::presentation::theme::builtin::Theme;
 use crate::presentation::theme::mapper::StyleMapper;
 use crate::shared::geometry::clamp_to_char_boundaries;
+
+/// 目录条目（`draw_toc` 用）：文档里一个标题块的位置与文本。
+#[derive(Clone, Debug)]
+struct HeadingEntry {
+    /// 标题级别（1–6）。
+    level: u8,
+    /// 标题文本。
+    text: String,
+    /// 对应块 ID（点击目录项时用于请求滚动到该块）。
+    id: u64,
+}
 
 /// 代码块在源码没写语言时的标签。
 const CODE_NO_LANG: &str = "text";
@@ -223,6 +235,18 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
     //    `take` 是零拷贝的，渲染结束后原样放回。
     let blocks = std::mem::take(&mut app.preview.blocks);
 
+    // 目录条目：由**当前块序列**现场收集（标题会随编辑增删，存一份副本必然过期）。
+    // 含 `toc` 块自身之外的标题，顺序与文档一致。
+    let headings: Vec<HeadingEntry> = blocks
+        .iter()
+        .filter(|b| b.kind == "heading")
+        .map(|b| HeadingEntry {
+            level: b.level.unwrap_or(1).clamp(1, 6),
+            text: b.content.clone(),
+            id: b.id,
+        })
+        .collect();
+
     let start_y = if app.preview.scroll_y.is_finite() {
         app.preview.scroll_y
     } else {
@@ -242,7 +266,7 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
                     // `ui.scope` 会返回本块占据的**实际矩形**（等价 `min_rect`），
                     // 比「画之前 / 画之后各读一次光标」稳——后者会被块内部
                     // 自己和 `item_spacing` 的交互骗到。
-                    let res = ui.scope(|ui| draw_block(app, ui, &theme, block));
+                    let res = ui.scope(|ui| draw_block(app, ui, &theme, block, &headings));
                     let rect = res.response.rect;
                     let base = *origin.get_or_insert(rect.top());
                     rects.push(BlockRect {
@@ -287,7 +311,13 @@ fn pane_header(ui: &mut Ui, theme: &Theme) {
 }
 
 /// 按块类型分发渲染器。
-fn draw_block(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, block: &BlockView) {
+fn draw_block(
+    app: &mut EditorApp,
+    ui: &mut Ui,
+    theme: &Theme,
+    block: &BlockView,
+    headings: &[HeadingEntry],
+) {
     match block.kind.as_str() {
         "heading" => draw_heading(app, ui, theme, block),
         "paragraph" => draw_paragraph(ui, theme, block),
@@ -307,8 +337,170 @@ fn draw_block(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, block: &BlockView
         "footnote" => draw_footnote(ui, theme, block),
         "math" => draw_math(ui, theme, block),
         "diagram" => draw_diagram(ui, theme, block),
+        "toc" => draw_toc(app, ui, theme, block, headings),
         other => draw_raw(ui, theme, block, other),
     }
+}
+
+// ============================================================================
+// 行内富文本
+// ============================================================================
+
+/// 行内样式 → `TextFormat`（预览字号体系，与编辑区度量无关）。
+///
+/// 刻意**不复用** `StyleMapper::format`：那个函数的字号取自
+/// `theme.editor_font_size`（编辑区设置），且带编辑区的行高——直接拿来渲染预览
+/// 会让预览字号跟随编辑区设置漂移。这里显式用预览字号族，并统一给出
+/// `line_height`，使同一段文本里的不同样式**不改变行高**（上下标变小也不撑行）。
+fn span_format(theme: &Theme, style: &str, size: f32, line_height: f32) -> TextFormat {
+    let base = TextFormat {
+        color: theme.text_primary,
+        font_id: FontId::proportional(size),
+        line_height: Some(line_height),
+        ..Default::default()
+    };
+    match style {
+        // 标题基准样式（调用方给出标题字号）：只需换色，字号由 `size` 决定。
+        "heading" => TextFormat {
+            color: theme.syn_heading,
+            ..base
+        },
+        // 引用基准样式：次级色 + 斜体（与旧实现的观感一致）。
+        "quote" => TextFormat {
+            color: theme.syn_quote,
+            italics: true,
+            ..base
+        },
+        "strong" => TextFormat {
+            color: theme.syn_bold,
+            ..base
+        },
+        "emphasis" => TextFormat {
+            color: theme.syn_italic,
+            italics: true,
+            ..base
+        },
+        "strikethrough" => TextFormat {
+            color: theme.text_secondary,
+            strikethrough: Stroke::new(1.0_f32, theme.text_secondary),
+            ..base
+        },
+        "code" => TextFormat {
+            color: theme.syn_code,
+            background: theme.code_bg,
+            font_id: FontId::monospace(size),
+            ..base
+        },
+        "link" => TextFormat {
+            color: theme.syn_link,
+            underline: Stroke::new(1.0_f32, theme.syn_link),
+            ..base
+        },
+        "math" => TextFormat {
+            color: theme.syn_code,
+            font_id: FontId::monospace(size),
+            ..base
+        },
+        // 键帽：等宽 + 底色，视觉上是一枚小按键。
+        "keycap" => TextFormat {
+            color: theme.syn_code,
+            background: theme.code_bg,
+            font_id: FontId::monospace(size * 0.92),
+            ..base
+        },
+        // 高亮 ==标记==：叠一层查找命中的底色（语义同为「此处被标出」）。
+        "mark" => TextFormat {
+            color: theme.text_primary,
+            background: theme.find_bg,
+            ..base
+        },
+        // 上下标：epaint 无基线位移，用略小字号近似（行高由 `base.line_height`
+        // 固定，故不会把行撑高、不破坏与相邻行的对齐）。
+        "sub" | "sup" => TextFormat {
+            color: theme.text_secondary,
+            font_id: FontId::proportional(size * 0.78),
+            ..base
+        },
+        _ => base,
+    }
+}
+
+/// 渲染一段可带行内样式的文本（`spans` 为空时等价于普通 `label`）。
+///
+/// # 为什么用 `LayoutJob` 而不是「一段一个 `ui.label`」
+///
+/// 逐段铺控件会让折行只发生在段与段之间，一段长文本照样整段溢出；
+/// 而 `LayoutJob` 把整行交给 epaint 排版，**折行、行高、对齐都由它统一处理**，
+/// 与普通段落完全一致。这也是段落渲染只有一条代码路径的原因——
+/// 无样式时段数为零，`job` 退化成「一整段纯文本」，与旧实现等价。
+///
+/// 区间一律吸附到字符边界：`spans` 来自解析器，而编辑器里文本可能在
+/// 150ms 防抖窗口内又变过，越界切片会 panic（本项目 `panic = "abort"`）。
+/// 一段行内文本的排版参数：字号、行高、基准样式。
+///
+/// 三者总是一起决定 `TextFormat`（字号与行高还必须成对——行高一旦给出，
+/// epaint 就不再按字体度量算行高），打包传递可避免把行高错配给另一个字号。
+#[derive(Clone, Copy)]
+struct Typography<'a> {
+    size: f32,
+    line_height: f32,
+    base_style: &'a str,
+}
+
+fn render_inline_text(
+    ui: &mut Ui,
+    theme: &Theme,
+    content: &str,
+    spans: &[SpanView],
+    typo: Typography<'_>,
+    sense: egui::Sense,
+) -> egui::Response {
+    let Typography {
+        size,
+        line_height,
+        base_style,
+    } = typo;
+    let base = span_format(theme, base_style, size, line_height);
+    // 无样式片段：走单标签快路径（与旧实现完全一致，零额外开销）。
+    if spans.is_empty() {
+        return ui.add(
+            egui::Label::new(RichText::new(content).size(size).color(base.color)).sense(sense),
+        );
+    }
+    let mut job = LayoutJob {
+        wrap: TextWrapping {
+            max_width: ui.available_width().max(0.0),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let len = content.len();
+    let mut cursor = 0usize;
+    for span in spans {
+        // 越界 / 落在多字节字符中间的区间会被吸附或退化为空——跳过而不是崩。
+        let Some((start, end)) =
+            clamp_to_char_boundaries(content, span.range.start.min(len), span.range.end.min(len))
+        else {
+            continue;
+        };
+        let start = start.max(cursor);
+        let end = end.max(start);
+        if start > cursor {
+            job.append(&content[cursor..start], 0.0, base.clone());
+        }
+        if end > start {
+            job.append(
+                &content[start..end],
+                0.0,
+                span_format(theme, &span.style, size, line_height),
+            );
+        }
+        cursor = end.max(cursor);
+    }
+    if cursor < len {
+        job.append(&content[cursor..], 0.0, base);
+    }
+    ui.add(egui::Label::new(job).sense(sense))
 }
 
 // ============================================================================
@@ -333,14 +525,19 @@ fn draw_heading(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, block: &BlockVi
         3 => m.space_md,
         _ => m.space_sm,
     });
-    let resp = ui.add(
-        egui::Label::new(
-            RichText::new(&block.content)
-                .size(size)
-                .color(theme.syn_heading)
-                .strong(),
-        )
-        .sense(egui::Sense::click()),
+    // 行内样式（`**粗体**` / `` `代码` `` / `<kbd>` …）：有片段时走富文本路径，
+    // 没有则走原来的单标签路径。两条路径都带点击感应用于「点击标题跳转」。
+    let resp = render_inline_text(
+        ui,
+        theme,
+        &block.content,
+        &block.spans,
+        Typography {
+            size,
+            line_height: size * theme.metrics.preview_line_height,
+            base_style: "heading",
+        },
+        egui::Sense::click(),
     );
     if resp.clicked() {
         app.ui.sync.request_click(block.id);
@@ -358,15 +555,21 @@ fn draw_heading(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, block: &BlockVi
     }
 }
 
-/// 段落：按可用宽度折行。
+/// 段落：按可用宽度折行；行内样式（粗体 / 行内代码 / 键帽 / 高亮 / 上下标）
+/// 由 [`render_inline_text`] 按片段排版。
 fn draw_paragraph(ui: &mut Ui, theme: &Theme, block: &BlockView) {
-    ui.label(
-        RichText::new(&block.content)
-            .size(theme.metrics.preview_font_size)
-            .color(theme.text_primary)
-            .line_height(Some(
-                theme.metrics.preview_font_size * theme.metrics.preview_line_height,
-            )),
+    let size = theme.metrics.preview_font_size;
+    render_inline_text(
+        ui,
+        theme,
+        &block.content,
+        &block.spans,
+        Typography {
+            size,
+            line_height: size * theme.metrics.preview_line_height,
+            base_style: "",
+        },
+        egui::Sense::hover(),
     );
 }
 
@@ -393,11 +596,18 @@ fn draw_quote(ui: &mut Ui, theme: &Theme, block: &BlockView) {
                     Stroke::new(QUOTE_BAR_W, theme.syn_quote),
                 );
                 if !block.content.trim().is_empty() {
-                    ui.label(
-                        RichText::new(&block.content)
-                            .italics()
-                            .color(theme.syn_quote)
-                            .size(theme.metrics.preview_font_size),
+                    render_inline_text(
+                        ui,
+                        theme,
+                        &block.content,
+                        &block.spans,
+                        Typography {
+                            size: theme.metrics.preview_font_size,
+                            line_height: theme.metrics.preview_font_size
+                                * theme.metrics.preview_line_height,
+                            base_style: "quote",
+                        },
+                        egui::Sense::hover(),
                     );
                 }
             });
@@ -829,6 +1039,76 @@ fn draw_rule(ui: &mut Ui, theme: &Theme) {
 }
 
 /// 脚注定义：小字 + 次级色。
+/// 目录（`@[TOC](标题)` / `[TOC]`）：标题列表 + 点击跳转。
+///
+/// # 条目为什么现场收集
+///
+/// `headings` 由 `show()` 从**本帧的块序列**收集，而不是解析期写死在目录块里：
+/// 标题会随编辑增删、改名，任何副本都会在下一帧过期；而目录**本来就该**
+/// 与当前文档结构一致（这正是它存在的意义）。
+fn draw_toc(
+    app: &mut EditorApp,
+    ui: &mut Ui,
+    theme: &Theme,
+    block: &BlockView,
+    headings: &[HeadingEntry],
+) {
+    let m = theme.metrics;
+    let title = if block.content.trim().is_empty() {
+        "目录"
+    } else {
+        block.content.trim()
+    };
+    egui::Frame::new()
+        .fill(theme.bg_tertiary)
+        .corner_radius(CornerRadius::same(6))
+        .inner_margin(egui::Margin::symmetric(
+            m.pane_padding as i8,
+            m.space_md as i8,
+        ))
+        .show(ui, |ui| {
+            ui.label(
+                RichText::new(title)
+                    .strong()
+                    .size(m.preview_font_size)
+                    .color(theme.text_primary),
+            );
+            ui.add_space(m.space_sm);
+            if headings.is_empty() {
+                ui.weak("（文档里还没有标题）");
+                return;
+            }
+            for h in headings {
+                // 缩进按层级递进（一级不缩进）：层级感靠左缘位置表达。
+                let indent = (h.level.saturating_sub(1)) as f32 * m.space_md;
+                let resp = ui
+                    .horizontal(|ui| {
+                        ui.add_space(indent);
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(&h.text)
+                                    .size(m.preview_font_size - 1.0)
+                                    .color(if h.level <= 2 {
+                                        theme.text_primary
+                                    } else {
+                                        theme.text_secondary
+                                    }),
+                            )
+                            .sense(egui::Sense::click()),
+                        )
+                    })
+                    .inner;
+                if resp.clicked() {
+                    app.ui.sync.request_click(h.id);
+                }
+                if resp.hovered() {
+                    ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::PointingHand);
+                }
+            }
+        });
+    ui.add_space(m.space_xs);
+}
+
 fn draw_footnote(ui: &mut Ui, theme: &Theme, block: &BlockView) {
     ui.label(
         RichText::new(&block.content)
