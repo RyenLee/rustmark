@@ -487,6 +487,7 @@ fn set_writing_goal(app: &mut EditorApp, goal: u32) {
                 word_wrap: view.word_wrap,
                 auto_save_interval: view.auto_save_interval,
                 spell_check: view.spell_check,
+                show_line_numbers: view.show_line_numbers,
                 split_ratio: view.split_ratio,
                 writing_goal: goal,
             },

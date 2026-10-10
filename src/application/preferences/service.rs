@@ -242,6 +242,7 @@ fn to_editor(view: &EditorSettingsView) -> AppResult<EditorSettings> {
         view.word_wrap,
         view.auto_save_interval,
         view.spell_check,
+        view.show_line_numbers,
         400,
         view.split_ratio,
         // 目标在领域层饱和到上限：界面填多大都不会让设置保存失败（V11-05）。
@@ -285,6 +286,7 @@ fn to_editor_view(editor: &EditorSettings) -> EditorSettingsView {
         word_wrap: editor.word_wrap(),
         auto_save_interval: editor.auto_save_interval(),
         spell_check: editor.spell_check(),
+        show_line_numbers: editor.show_line_numbers(),
         split_ratio: editor.split_ratio(),
         writing_goal: editor.writing_goal().words(),
     }

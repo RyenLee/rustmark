@@ -80,27 +80,32 @@ fn editor_galley_width(shapes: &[ClippedShape], needle: &str) -> f32 {
 fn wrap_on_reflows_with_window_width() {
     let (dir, mut app) = app_fixture();
     let file = dir.path().join("long.md");
-    // 一段超长、无换行的连续文本（足够在 1204px 处折成多行）。
+    // 一段超长、无换行的连续文本。
     let long = "长串".repeat(200);
     std::fs::write(&file, &long).expect("写文件应成功");
     app.open_path(&file.to_string_lossy()).expect("打开应成功");
-    app.editor.word_wrap = true;
 
     let needle = &long[0..12]; // 6 个汉字，仅出现在编辑区正文。
+    // 基准：同窗口**不折行**的排版宽（长串一行铺开，数千 px）。
+    // 阈值不写死像素——编辑区可用宽随布局（如行号栏开关、侧栏比例）变化，
+    // 与「不折行」对比才能表达「已折行」的本意且不随布局改动失效。
+    app.editor.word_wrap = false;
+    let unwrapped = editor_galley_width(&render_at(&mut app, 1280.0), needle);
+
+    app.editor.word_wrap = true;
     let w1280 = editor_galley_width(&render_at(&mut app, 1280.0), needle);
     let w640 = editor_galley_width(&render_at(&mut app, 640.0), needle);
 
+    assert!(
+        unwrapped > 2000.0,
+        "不折行时长串应铺成超宽单行：{unwrapped}"
+    );
     assert!(w1280 > 0.0, "应能在画面上找到编辑区内容 galley");
-    // 两种宽度下都应明显小于面板宽（已折行，而非一整行铺开）。
+    // 折行后必须显著小于不折行的排版宽（说明确实折成了多行）。
     assert!(
-        w1280 < 1250.0,
-        "换行开 @1280：排版宽 {w1280} 应远小于面板宽（应在窗口内折行）"
+        w1280 < unwrapped / 2.0,
+        "换行开 @1280：排版宽 {w1280} 应远小于不折行的 {unwrapped}（应在窗口内折行）"
     );
-    assert!(
-        w640 < 700.0,
-        "换行开 @640：排版宽 {w640} 应远小于面板宽（应在窗口内折行）"
-    );
-    // 较窄窗口的排版宽应更小 —— 即「拖拽窗口宽，文本随宽度重排」必须成立。
     assert!(
         w640 < w1280,
         "较窄窗口排版宽 {w640} 应小于较宽窗口 {w1280}（随窗口重排）"

@@ -378,6 +378,8 @@ impl EditorApp {
         };
         // 分割比例以持久化配置为权威来源：用户拖过的比例重启后仍生效。
         app.ui.split_ratio = settings.editor.split_ratio.clamp(SPLIT_MIN, SPLIT_MAX);
+        // 行号栏开关同样以持久化配置为权威来源（默认隐藏，见领域 `EditorSettings`）。
+        app.editor.line_numbers = settings.editor.show_line_numbers;
         app
     }
 
@@ -2216,6 +2218,7 @@ impl EditorApp {
             word_wrap: view.editor.word_wrap,
             auto_save_interval: view.editor.auto_save_interval,
             spell_check: view.editor.spell_check,
+            show_line_numbers: view.editor.show_line_numbers,
         }
     }
 
@@ -2328,6 +2331,7 @@ impl EditorApp {
             word_wrap: snapshot.word_wrap,
             auto_save_interval: snapshot.auto_save_interval,
             spell_check: snapshot.spell_check,
+            show_line_numbers: snapshot.show_line_numbers,
             split_ratio: self.settings().editor.split_ratio,
             // 设置页尚未提供写作目标输入框，保存时沿用当前值，避免被 0 覆盖。
             writing_goal: self.settings().editor.writing_goal,
@@ -2366,6 +2370,8 @@ impl EditorApp {
         self.ui
             .set_theme(builtin::resolve(&self.settings().theme, self.system_dark));
         self.reload_shortcut_registry();
+        // 行号栏的会话开关同样回到回滚基准（与主题/快捷键同理由：取消即还原）。
+        self.editor.line_numbers = self.settings().editor.show_line_numbers;
         // **在这里**关浮层，而不是让调用方关：三条关闭路径
         // （取消按钮 / 标题栏 × / Esc）必须得到同样结果。
         // 放在调用方的话，Esc 那条路径（`CloseOverlay` 直接

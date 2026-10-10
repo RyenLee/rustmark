@@ -102,6 +102,8 @@ pub struct Snapshot {
     pub auto_save_interval: Option<u32>,
     /// 拼写检查。
     pub spell_check: bool,
+    /// 是否显示行号栏。
+    pub show_line_numbers: bool,
 }
 
 impl Snapshot {
@@ -277,6 +279,7 @@ mod tests {
             word_wrap: true,
             auto_save_interval: Some(2),
             spell_check: false,
+            show_line_numbers: false,
         }
     }
 

@@ -234,6 +234,9 @@ pub struct EditorSettingsView {
     pub auto_save_interval: Option<u32>,
     /// 是否启用拼写检查。
     pub spell_check: bool,
+    /// 是否显示行号栏；旧配置缺省按「隐藏」处理（新默认值）。
+    #[serde(default)]
+    pub show_line_numbers: bool,
     /// 编辑区 / 预览区分割比例（0.2 ~ 0.8）；旧配置缺省时按 `0.5` 处理。
     #[serde(default)]
     pub split_ratio: f32,
@@ -324,6 +327,7 @@ impl SettingsView {
                 word_wrap: true,
                 auto_save_interval: None,
                 spell_check: false,
+                show_line_numbers: false,
                 split_ratio: 0.5,
                 writing_goal: 0,
             },

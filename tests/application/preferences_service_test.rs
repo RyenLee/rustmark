@@ -83,6 +83,7 @@ fn set_editor_valid_persists() {
             word_wrap: false,
             auto_save_interval: Some(10),
             spell_check: true,
+            show_line_numbers: false,
             split_ratio: 0.5,
             writing_goal: 500,
         },
@@ -102,6 +103,7 @@ fn set_editor_goal_beyond_max_saturates_instead_of_failing() {
             word_wrap: true,
             auto_save_interval: None,
             spell_check: false,
+            show_line_numbers: false,
             split_ratio: 0.5,
             // 远超领域上限：必须饱和到 1_000_000，而不是让保存失败（V11-05）。
             writing_goal: u32::MAX,
@@ -124,6 +126,7 @@ fn set_editor_invalid_tab_size_fails() {
             word_wrap: false,
             auto_save_interval: Some(10),
             spell_check: true,
+            show_line_numbers: false,
             split_ratio: 0.5,
             writing_goal: 0,
         },

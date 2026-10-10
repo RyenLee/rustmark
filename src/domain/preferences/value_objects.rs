@@ -270,6 +270,17 @@ pub struct EditorSettings {
     /// 自动保存间隔（秒）；`None` 表示关闭自动保存。
     auto_save_interval: Option<u32>,
     spell_check: bool,
+    /// 是否显示行号栏。
+    ///
+    /// 默认**隐藏**：真实环境里中文经系统字体回退后，行高与等宽缓存的
+    /// 行顶表存在帧级偏差，行号与正文可能错位；行号是辅助信息而非编辑
+    /// 刚需（原型契约 A-01 的核心是语法高亮 + 当前行高亮），故默认关闭，
+    /// 需要时在设置里打开。
+    ///
+    /// `#[serde(default)]`：**旧配置文件里没有这个字段**，缺了按「隐藏」
+    /// 读出来，而不是让整个配置加载失败（同 `split_ratio`）。
+    #[serde(default)]
+    show_line_numbers: bool,
     /// 撤销合并窗口（毫秒），供 [`crate::document::undo::UndoPolicy`] 使用。
     undo_merge_window_ms: u64,
     /// 编辑区 / 预览区分割比例（0.2 ~ 0.8），持久化以记住用户拖拽结果。
@@ -284,13 +295,15 @@ pub struct EditorSettings {
 }
 
 impl EditorSettings {
-    /// 默认设置：4 空格缩进、自动换行、30 秒自动保存、不开拼写检查、400ms 撤销窗口、未设写作目标。
+    /// 默认设置：4 空格缩进、自动换行、30 秒自动保存、不开拼写检查、
+    /// 行号栏隐藏、400ms 撤销窗口、未设写作目标。
     pub fn default_settings() -> Self {
         Self {
             tab_size: TabSize::Four,
             word_wrap: true,
             auto_save_interval: Some(30),
             spell_check: false,
+            show_line_numbers: false,
             undo_merge_window_ms: 400,
             split_ratio: 0.5,
             writing_goal: WritingGoal::default(),
@@ -298,11 +311,15 @@ impl EditorSettings {
     }
 
     /// 构造设置。
+    // 参数与 [`EditorSettingsView`] 的字段一一对应，收敛成结构体会让
+    // 调用点失去编译期「漏传即错」的保障（同 `find_replace_ui_state` 的先例）。
+    #[allow(clippy::too_many_arguments)]
     pub const fn new(
         tab_size: TabSize,
         word_wrap: bool,
         auto_save_interval: Option<u32>,
         spell_check: bool,
+        show_line_numbers: bool,
         undo_merge_window_ms: u64,
         split_ratio: f32,
         writing_goal: WritingGoal,
@@ -312,6 +329,7 @@ impl EditorSettings {
             word_wrap,
             auto_save_interval,
             spell_check,
+            show_line_numbers,
             undo_merge_window_ms,
             split_ratio,
             writing_goal,
@@ -336,6 +354,11 @@ impl EditorSettings {
     /// 是否启用拼写检查。
     pub const fn spell_check(&self) -> bool {
         self.spell_check
+    }
+
+    /// 是否显示行号栏。
+    pub const fn show_line_numbers(&self) -> bool {
+        self.show_line_numbers
     }
 
     /// 撤销合并窗口（毫秒）。

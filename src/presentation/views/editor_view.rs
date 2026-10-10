@@ -58,7 +58,11 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
 
     let line_count = app.editor_text.split('\n').count().max(1);
     let font_size = theme.editor_font_size;
-    let gutter_w = 44.0;
+    // 行号栏开关：默认隐藏（设置「编辑器 → 显示行号栏」可开）。关闭时
+    // 不再占位左侧 44pt，正文从编辑区左缘起——「行号与正文错位」在
+    // CJK 回退字体下无法对所有字体栈保证像素级对齐，隐藏是合理取舍。
+    let show_gutter = app.editor.line_numbers;
+    let gutter_w = if show_gutter { 44.0 } else { 0.0 };
 
     // 当前光标所在行（用于高亮当前行号）。
     let cursor_line = current_line_index(&app.editor_text, app.editor.cursor);
@@ -191,10 +195,15 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
                 // 行号栏：先只占住左侧宽度。**数字本帧不在此处画**——
                 // 放到 TextEdit 排版完成之后（见第 3 步），才能用「本帧真实的
                 // 行顶」来定位，彻底消除行号与正文的错位（问题 3）。
-                let (gutter_rect, _) = ui.allocate_exact_size(
-                    egui::vec2(gutter_w, ui.available_height()),
-                    egui::Sense::hover(),
-                );
+                // 关闭时不做任何占位：零宽占位也会插入 item_spacing，
+                // 让正文凭空左移一个间距。
+                let gutter_rect = show_gutter.then(|| {
+                    let (rect, _) = ui.allocate_exact_size(
+                        egui::vec2(gutter_w, ui.available_height()),
+                        egui::Sense::hover(),
+                    );
+                    rect
+                });
 
                 let editor = TextEdit::multiline(&mut app.editor_text)
                     .id(EditorApp::editor_id())
@@ -221,15 +230,18 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
 
                 // 3) 行号：用**本帧真实排版的行顶**（含折行）+ 文本原点描画，
                 //    使每个行号精确落在其对应文本行上（问题 3）。
-                paint_gutter(
-                    ui,
-                    &theme,
-                    gutter_rect,
-                    editor.galley_pos,
-                    &app.editor_text,
-                    cursor_line,
-                    font_size,
-                );
+                //    开关关闭（默认）时跳过——见 `show_gutter` 处的注释。
+                if let Some(gutter_rect) = gutter_rect {
+                    paint_gutter(
+                        ui,
+                        &theme,
+                        gutter_rect,
+                        editor.galley_pos,
+                        &app.editor_text,
+                        cursor_line,
+                        font_size,
+                    );
+                }
 
                 // 4) 光标 / 选区同步（egui 给的是字符索引，存成字节偏移）。
                 if let Some(range) = editor.cursor_range {

@@ -340,6 +340,16 @@ fn editor(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
             app.apply_editor_field(|e| e.word_wrap = on);
         }
     });
+    // 行号栏：**会话开关立即生效**（与 word_wrap 不同——那要重启或状态栏
+    // 切换才对编辑区生效，这里不能照抄）。持久化值在启动时播种进会话
+    // 状态（`EditorApp::new`），故复选框读会话值即可与设置页其它项一致。
+    field(ui, theme, "行号栏", |ui| {
+        let mut on = app.editor.line_numbers;
+        if ui.checkbox(&mut on, "在编辑区左侧显示行号").changed() {
+            app.editor.line_numbers = on;
+            app.apply_editor_field(|e| e.show_line_numbers = on);
+        }
+    });
     field(ui, theme, "自动保存", |ui| {
         let mut interval = view.auto_save_interval.unwrap_or(0);
         if ui

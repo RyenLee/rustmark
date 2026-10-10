@@ -31,6 +31,11 @@ pub struct EditorUiState {
     /// 自动换行。
     pub word_wrap: bool,
     /// 显示行号栏。
+    ///
+    /// 默认 `false`（隐藏）：真实环境里中文经系统字体回退后行高与等宽
+    /// 缓存的行顶表有帧级偏差，行号与正文可能错位；持久化开关在领域
+    /// `EditorSettings::show_line_numbers`，启动时由 [`crate::app::frame::EditorApp::new`]
+    /// 播种到本字段。
     pub line_numbers: bool,
     /// 拼写检查开关（P2）。
     pub spell_check: bool,
@@ -41,7 +46,7 @@ impl EditorUiState {
     pub fn new() -> Self {
         Self {
             word_wrap: true,
-            line_numbers: true,
+            line_numbers: false,
             ..Default::default()
         }
     }
