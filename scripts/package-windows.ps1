@@ -1,0 +1,77 @@
+# 打包 Windows 便携版（S9-04）。
+#
+# 产物形态：**portable zip**（无安装器开销；需求 §8.1 体积优先于安装体验）。
+# 用法：scripts\package-windows.ps1 [-Version 1.0.0]
+#   -Version 缺省时取 Cargo.toml 的 package.version。
+# 产出：dist\rustmark-v<version>-windows-x64.zip + 同名 .sha256。
+#
+# 校验：打包后核对 zip 体积 ≤ 10 MB（红线）并生成 SHA256；
+# 纯净虚拟机启动验证属发布演练步骤（docs/release.md），本脚本不做 GUI 冒烟。
+
+param(
+    [string]$Version = ""
+)
+
+$ErrorActionPreference = "Stop"
+
+# 定位仓库根（脚本在 scripts/ 下）。
+$root = Split-Path -Parent $PSScriptRoot
+Set-Location $root
+
+# 版本号注入：显式参数优先，否则读 Cargo.toml。
+if (-not $Version) {
+    $Version = (Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"(.+)"' |
+        Select-Object -First 1).Matches[0].Groups[1].Value
+}
+if (-not $Version) { throw "无法确定版本号（Cargo.toml 解析失败）" }
+Write-Host "打包版本：v$Version"
+
+# 构建 release（panic=abort / lto 等由 [profile.release] 统一控制）。
+cargo build --release --bin rustmark
+if ($LASTEXITCODE -ne 0) { throw "cargo build --release 失败" }
+
+# 产物路径随是否显式 target triple 而不同：默认 `target/release/`，
+# 配置了默认三元组（本仓库开发机的 .cargo 配置）则为
+# `target/<triple>/release/`。两处都找，找不到才报错。
+$exe = @(Get-ChildItem -Path target -Recurse -Filter rustmark.exe |
+    Where-Object { $_.FullName -match '\\release\\' -and $_.FullName -notmatch '\\deps\\' } |
+    Select-Object -First 1).FullName
+if (-not $exe) { throw "未找到 rustmark.exe（target/**/release/ 下均无）" }
+Write-Host "产物：$exe"
+
+# 组装便携包：exe + 首次运行说明。
+$staging = "dist/staging"
+if (Test-Path $staging) { Remove-Item -Recurse -Force $staging }
+New-Item -ItemType Directory -Path $staging | Out-Null
+Copy-Item $exe "$staging/rustmark.exe"
+@"
+rustmark v$Version（Windows 便携版）
+
+直接运行 rustmark.exe 即可，无需安装。
+设置与草稿保存在 %APPDATA%\rustmark\，删除该目录即完全卸载。
+
+本包未做代码签名：首次运行如遇 SmartScreen 提示，请点「更多信息 → 仍要运行」，
+并核对 SHA256 与发布页 checksums 一致。
+"@ | Set-Content -Path "$staging/README.txt" -Encoding UTF8
+
+# 压缩（Compress-Archive 用系统自带的 zip 实现，不引入外部依赖）。
+$out = "dist/rustmark-v$Version-windows-x64.zip"
+if (Test-Path $out) { Remove-Item -Force $out }
+Compress-Archive -Path "$staging/*" -DestinationPath $out
+Remove-Item -Recurse -Force $staging
+
+# 体积门禁：红线 10 MB（与 CI SIZE_LIMIT_BYTES 同源）。
+$limitBytes = 10485760
+$size = (Get-Item $out).Length
+$mb = [math]::Round($size / 1MB, 3)
+Write-Host "产物：$out（$size 字节 ≈ $mb MB）"
+if ($size -gt $limitBytes) {
+    throw "体积超红线：$size > $limitBytes 字节（10 MB）"
+}
+
+# SHA256 校验和（格式与 sha256sum -c 兼容：<hash>  <filename>）。
+$hash = (Get-FileHash $out -Algorithm SHA256).Hash.ToLower()
+$line = "$hash  $(Split-Path -Leaf $out)"
+Set-Content -Path "$out.sha256" -Value $line -Encoding ASCII
+Write-Host "SHA256：$line"
+Write-Host "打包完成。"

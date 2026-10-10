@@ -1,0 +1,229 @@
+//! 撤销 / 重做：**每个 Document 私有的**值对象（S3-08）。
+//!
+//! # 为什么是 per-Document 而不是全局
+//!
+//! 原型（`markdown-editor-prototype`）用一个全局 `lastCommit` 时间戳驱动撤销合并，
+//! 导致「在 A 文档打字 → 切到 B 文档 → 立刻撤销」会撤销到**错误文档的历史**，
+//! 表现为跨文件写坏数据。本设计把撤销栈与合并窗口状态一起放进 `Document` 聚合，
+//! 从类型系统层面消除这一整类缺陷：两个文档**不可能**共享合并状态。
+//!
+//! # 契约
+//!
+//! - 调用方在**执行编辑之前**调用 [`UndoStack::push`]，传入编辑前的快照；
+//! - `undo` / `redo` 由调用方传入「当前快照」，返回「应恢复到的快照」；
+//! - 合并只在**同一栈内、同一类型、同一时间窗**内发生。
+
+use crate::shared::geometry::TextRange;
+use crate::shared::time::Timestamp;
+
+use super::value_objects::ModificationKind;
+
+/// 撤销栈的合并与容量策略。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct UndoPolicy {
+    /// 合并窗口（毫秒）：窗口内连续的同类编辑合并为一个撤销点。
+    merge_window_ms: u64,
+    /// 撤销栈最大深度；超出后**丢弃最旧**的快照。
+    max_depth: usize,
+}
+
+impl UndoPolicy {
+    /// 默认策略：400ms 合并窗口（需求文档 §10 的初值），最大深度 200。
+    pub const fn default_policy() -> Self {
+        Self {
+            merge_window_ms: 400,
+            max_depth: 200,
+        }
+    }
+
+    /// 自定义策略；`max_depth` 为 0 时按 1 处理（至少保留一个撤销点）。
+    pub fn new(merge_window_ms: u64, max_depth: usize) -> Self {
+        Self {
+            merge_window_ms,
+            max_depth: max_depth.max(1),
+        }
+    }
+
+    /// 合并窗口（毫秒）。
+    pub const fn merge_window_ms(&self) -> u64 {
+        self.merge_window_ms
+    }
+
+    /// 撤销栈最大深度。
+    pub const fn max_depth(&self) -> usize {
+        self.max_depth
+    }
+}
+
+impl Default for UndoPolicy {
+    fn default() -> Self {
+        Self::default_policy()
+    }
+}
+
+/// 撤销快照：某一时刻的完整文本与选区。
+///
+/// 之所以存**完整文本**而非反向补丁：撤销合并需要任意取回「某次编辑之前的全文」，
+/// 且文本规模在目标场景（≤ 1 MB）下可接受；阶段 08 若实测成为热点，
+/// 再在本类型内部改为补丁链，**对外 API 不变**。
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Snapshot {
+    content: String,
+    selection: Option<TextRange>,
+    at: Timestamp,
+}
+
+impl Snapshot {
+    /// 构造快照。
+    pub fn new(content: impl Into<String>, selection: Option<TextRange>, at: Timestamp) -> Self {
+        Self {
+            content: content.into(),
+            selection,
+            at,
+        }
+    }
+
+    /// 快照文本。
+    pub fn content(&self) -> &str {
+        &self.content
+    }
+
+    /// 快照时刻的选区。
+    pub const fn selection(&self) -> Option<TextRange> {
+        self.selection
+    }
+
+    /// 快照时刻。
+    pub const fn at(&self) -> Timestamp {
+        self.at
+    }
+}
+
+/// 撤销 / 重做栈（每文档一份）。
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct UndoStack {
+    undo: Vec<Snapshot>,
+    redo: Vec<Snapshot>,
+    policy: UndoPolicy,
+    /// 上一次记录的编辑类型与时刻——**随栈一起归属文档**，绝不共享。
+    last_kind: Option<ModificationKind>,
+    last_at: Option<Timestamp>,
+}
+
+impl UndoStack {
+    /// 按策略构造一个空栈。
+    pub fn new(policy: UndoPolicy) -> Self {
+        Self {
+            undo: Vec::new(),
+            redo: Vec::new(),
+            policy,
+            last_kind: None,
+            last_at: None,
+        }
+    }
+
+    /// 使用默认策略构造空栈。
+    pub fn with_default_policy() -> Self {
+        Self::new(UndoPolicy::default_policy())
+    }
+
+    /// 记录「编辑发生之前」的状态。
+    ///
+    /// - `before`：编辑前的快照；
+    /// - `kind`：即将执行的编辑类型。
+    ///
+    /// 返回 `true` 表示**已与上一次编辑合并**（未产生新撤销点）；`false` 表示已入栈。
+    ///
+    /// 合并条件（三者同时满足）：
+    /// ① 上一次编辑也是插入类；② 距上一次记录在 `merge_window_ms` 之内（含端点）；
+    /// ③ 上一次记录就发生在**本栈**（由类型归属保证，跨文档不可能合并）。
+    pub fn push(&mut self, before: Snapshot, kind: ModificationKind) -> bool {
+        let merged = matches!(
+            (self.last_kind, self.last_at),
+            (Some(last_kind), Some(last_at))
+                if last_kind.mergeable_with(kind)
+                    && before.at().within(last_at, self.policy.merge_window_ms)
+        );
+
+        if merged {
+            // 滚动窗口：以本次时间作为新的窗口起点，未入栈。
+            self.last_at = Some(before.at());
+            return true;
+        }
+
+        let at = before.at();
+        self.undo.push(before);
+        if self.undo.len() > self.policy.max_depth {
+            self.undo.remove(0);
+        }
+        // 新的编辑使重做链失效（标准撤销语义）。
+        self.redo.clear();
+        self.last_kind = Some(kind);
+        self.last_at = Some(at);
+        false
+    }
+
+    /// 撤销一步：弹出最近一次「编辑前的状态」，并把 `current` 压入重做栈。
+    ///
+    /// 栈空时返回 `None`（**不报错**——「没有可撤销的操作」通常是正常的 UI 状态，
+    /// 而 [`crate::domain::document::errors::DocumentError::UndoStackEmpty`] 用于调用方
+    /// 需要向用户解释的场景）。
+    pub fn undo(&mut self, current: Snapshot) -> Option<Snapshot> {
+        let previous = self.undo.pop()?;
+        self.redo.push(current);
+        self.reset_merge_state();
+        Some(previous)
+    }
+
+    /// 重做一步：弹出最近一次被撤销的状态，并把 `current` 压入撤销栈。
+    pub fn redo(&mut self, current: Snapshot) -> Option<Snapshot> {
+        let next = self.redo.pop()?;
+        self.undo.push(current);
+        self.reset_merge_state();
+        Some(next)
+    }
+
+    /// 是否可撤销。
+    pub fn can_undo(&self) -> bool {
+        !self.undo.is_empty()
+    }
+
+    /// 是否可重做。
+    pub fn can_redo(&self) -> bool {
+        !self.redo.is_empty()
+    }
+
+    /// 当前撤销栈深度（已合并的连续插入只算一个）。
+    pub fn undo_depth(&self) -> usize {
+        self.undo.len()
+    }
+
+    /// 当前重做栈深度。
+    pub fn redo_depth(&self) -> usize {
+        self.redo.len()
+    }
+
+    /// 清空重做栈（例如文档被外部程序改写，历史不再可信）。
+    pub fn clear_redo(&mut self) {
+        self.redo.clear();
+    }
+
+    /// 当前策略。
+    pub const fn policy(&self) -> UndoPolicy {
+        self.policy
+    }
+
+    /// 重置合并窗口状态。
+    ///
+    /// 撤销 / 重做之后必须与上一次编辑「断开」，否则撤销后立刻输入会与撤销前的输入合并。
+    fn reset_merge_state(&mut self) {
+        self.last_kind = None;
+        self.last_at = None;
+    }
+}
+
+impl Default for UndoStack {
+    fn default() -> Self {
+        Self::with_default_policy()
+    }
+}

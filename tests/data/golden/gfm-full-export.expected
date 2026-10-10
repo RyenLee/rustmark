@@ -1,0 +1,116 @@
+[DOCTYPE ok]
+[charset ok]
+[含 style 块]
+<body>
+<h1>GFM 全特性语料（golden）</h1>
+<blockquote>
+<p>本文件是 <code>tests/integration/golden_test.rs</code> 的固定输入。
+<strong>修改前必须先跑一次测试看diff</strong>，确认是有意变更再更新期望值
+（流程见 <code>CONTRIBUTING.md</code>）。</p>
+</blockquote>
+<h2>标题</h2>
+<h1>一级标题</h1>
+<h2>二级标题</h2>
+<h3>三级标题</h3>
+<h1>Setext 风格标题</h1>
+<h2>另一个 Setext</h2>
+<h2>段落与换行</h2>
+<p>第一段，包含 <code>行内代码</code>、<strong>粗体</strong>、<em>斜体</em>、<del>删除线</del>、
+<a href="https://example.com">链接</a> 与裸链接 https://example.com/auto 。</p>
+<p>第二段。
+同一段落后跟两个空格的硬换行。</p>
+<h2>列表</h2>
+<ul>
+<li>无序项1</li>
+<li>无序项2
+<ul>
+<li>嵌套项 2.1</li>
+<li>嵌套项 2.2</li>
+</ul>
+</li>
+<li>无序项3</li>
+</ul>
+<ol>
+<li>有序项 1</li>
+<li>有序项 2
+<ol>
+<li>嵌套有序 2.1</li>
+<li>嵌套有序 2.2</li>
+</ol>
+</li>
+<li>有序项 3</li>
+</ol>
+<h2>任务列表</h2>
+<ul>
+<li><input disabled type="checkbox" checked />
+已完成的任务</li>
+<li><input disabled type="checkbox" />
+未完成的任务</li>
+<li><input disabled type="checkbox" checked />
+大写 X 也应视为完成</li>
+<li><input disabled type="checkbox" />
+带 <strong>粗体</strong> 的未完成任务</li>
+</ul>
+<h2>引用</h2>
+<blockquote>
+<p>这是引用。
+引用有多行。</p>
+</blockquote>
+<blockquote>
+<p>嵌套引用：</p>
+<blockquote>
+<p>里面的引用。</p>
+</blockquote>
+</blockquote>
+<h2>代码</h2>
+<p>行内 <code>code with &lt;html&gt; &amp; "quotes"</code>。</p>
+<pre><code class="language-rust">fn main() {
+    let s = "字符串里的 // 不是注释";
+    // 真正的注释
+    println!("{s}");
+}
+</code></pre>
+<pre><code>无语言标记的围栏
+</code></pre>
+<h2>GFM 表格</h2>
+<table><thead><tr><th>左对齐</th><th>居中</th><th>右对齐</th></tr></thead><tbody>
+<tr><td>a</td><td>b</td><td>c</td></tr>
+<tr><td>1</td><td>2</td><td>3</td></tr>
+<tr><td>包含 <code>code</code></td><td><strong>粗</strong></td><td><img alt /></td></tr>
+</tbody></table>
+<h2>分割线</h2>
+<hr />
+<hr />
+<hr />
+<h2>图片</h2>
+<p><img alt="替代文本" /></p>
+<p><img alt="图片带标题" title="这是 title" /></p>
+<h2>链接引用</h2>
+<p><a href="https://example.com/ref" title="引用标题">引用式链接</a></p>
+<h2>脚注</h2>
+<p>这是带脚注的句子<sup class="footnote-reference"><a href="#1">1</a></sup>，还有另一个<sup class="footnote-reference"><a href="#long">2</a></sup>。</p>
+<div class="footnote-definition" id="1"><sup class="footnote-definition-label">1</sup>
+<p>脚注一的内容。</p>
+</div>
+<div class="footnote-definition" id="long"><sup class="footnote-definition-label">2</sup>
+<p>脚注二的内容，
+跨多行的脚注。</p>
+</div>
+<h2>HTML 内联</h2>
+<div align="center">
+  <strong>原始 HTML 块</strong>
+</div>
+<p>段落中的 内联 HTML。</p>
+
+<h2>特殊字符</h2>
+<ul>
+<li>星号 _ 下划线 ` 反引号 # 井号 [ 方括号 ] ( 圆括号 )</li>
+</ul>
+<blockquote>
+<p>引用里的 \ 反斜杠</p>
+</blockquote>
+<p><a href="https://autolink.example.com">https://autolink.example.com</a></p>
+<p>© &amp; &lt;实体&gt;</p>
+
+</body>
+</html>

@@ -1,0 +1,294 @@
+//! Workspace 用例服务测试（S4-07）。
+//!
+//! 覆盖：扫描文件树、最近文件（去重 / 上限 20）、标签页（脏文档不关闭）、
+//! 跨文件搜索（覆盖草稿、单文件上限 50、总上限 300）。
+
+use std::sync::{Arc, RwLock};
+
+use rustmark::application::dto::{CloseDecisionView, FileEntryView};
+use rustmark::application::workspace::commands::*;
+use rustmark::application::workspace::queries::*;
+use rustmark::application::workspace::service::{
+    MAX_HITS_PER_FILE, MAX_TOTAL_HITS, WorkspaceAppService,
+};
+use rustmark::domain::workspace::aggregate::Workspace;
+use rustmark::domain::workspace::value_objects::{EntryKind, WorkspaceEntry};
+use rustmark::shared::ids::{DocumentId, WorkspaceId};
+use rustmark::shared::path::FilePath;
+
+use super::fakes::*;
+
+fn fp(s: &str) -> FilePath {
+    FilePath::new(s).unwrap()
+}
+
+type DynBus = Arc<dyn rustmark::shared::event::EventBus>;
+
+struct WsFixture {
+    service: WorkspaceAppService,
+    repo: Arc<InMemoryWorkspaceRepository>,
+    provider: Arc<FakeDocumentContentProvider>,
+    clock: Arc<FakeClock>,
+}
+
+fn build() -> WsFixture {
+    let repo = Arc::new(InMemoryWorkspaceRepository::new());
+    let provider = Arc::new(FakeDocumentContentProvider::new());
+    let bus: DynBus = Arc::new(InMemoryEventBus::new());
+    let fake_clock = Arc::new(FakeClock::new(1000));
+    let clock: Arc<dyn rustmark::shared::time::Clock> = fake_clock.clone();
+    let workspace = Arc::new(RwLock::new(Workspace::new(WorkspaceId::new())));
+    let service = WorkspaceAppService::new(
+        repo.clone(),
+        provider.clone(),
+        bus.clone(),
+        clock,
+        workspace,
+        WorkspaceId::new(),
+    );
+    WsFixture {
+        service,
+        repo,
+        provider,
+        clock: fake_clock,
+    }
+}
+
+#[test]
+fn scan_tree_returns_entries() {
+    let f = build();
+    f.repo.seed_entry(WorkspaceEntry::file(fp("/d/a.md")));
+    f.repo.seed_entry(WorkspaceEntry::file(fp("/d/b.md")));
+
+    let entries: Vec<FileEntryView> = f
+        .service
+        .scan_tree(ScanTreeCommand {
+            root: fp("/d"),
+            max_depth: 2,
+        })
+        .unwrap();
+    assert_eq!(entries.len(), 2);
+    assert!(entries.iter().all(|e| !e.is_directory));
+}
+
+#[test]
+fn touch_recent_then_list() {
+    let f = build();
+    f.service
+        .touch_recent(TouchRecentCommand {
+            path: fp("/d/a.md"),
+        })
+        .unwrap();
+    let recents = f.service.list_recent(ListRecentQuery).unwrap();
+    assert_eq!(recents.len(), 1);
+    assert_eq!(recents[0].path, fp("/d/a.md"));
+}
+
+#[test]
+fn recent_files_dedupe_and_limit_to_20() {
+    let f = build();
+    for i in 0..25 {
+        // 时间戳必须递增，否则「最近使用降序」在同刻记录下无法区分先后。
+        f.clock.set(1000 + i as u64);
+        f.service
+            .touch_recent(TouchRecentCommand {
+                path: fp(&format!("/d/file_{i}.md")),
+            })
+            .unwrap();
+    }
+    let recents = f.service.list_recent(ListRecentQuery).unwrap();
+    assert_eq!(
+        recents.len(),
+        20,
+        "最近文件不得超过上限 20（领域层 RecentFiles 保证）"
+    );
+    // 最近一次 touch 的排在最前。
+    assert_eq!(recents[0].path, fp("/d/file_24.md"));
+}
+
+#[test]
+fn forget_recent_removes_entry() {
+    let f = build();
+    f.service
+        .touch_recent(TouchRecentCommand {
+            path: fp("/d/a.md"),
+        })
+        .unwrap();
+    f.service
+        .forget_recent(ForgetRecentCommand {
+            path: fp("/d/a.md"),
+        })
+        .unwrap();
+    assert!(f.service.list_recent(ListRecentQuery).unwrap().is_empty());
+}
+
+#[test]
+fn tab_close_dirty_asks_for_save() {
+    let f = build();
+    let doc_id = DocumentId::new();
+    f.service.open_tab(OpenTabCommand { doc_id }).unwrap();
+    assert_eq!(f.service.list_tabs(ListTabsQuery).unwrap().len(), 1);
+
+    let decision = f
+        .service
+        .close_tab(CloseTabCommand {
+            doc_id,
+            dirty: true,
+        })
+        .unwrap();
+    assert_eq!(decision, CloseDecisionView::NeedsSave);
+    assert_eq!(f.service.list_tabs(ListTabsQuery).unwrap().len(), 1);
+}
+
+#[test]
+fn tab_close_clean_removes() {
+    let f = build();
+    let doc_id = DocumentId::new();
+    f.service.open_tab(OpenTabCommand { doc_id }).unwrap();
+    let decision = f
+        .service
+        .close_tab(CloseTabCommand {
+            doc_id,
+            dirty: false,
+        })
+        .unwrap();
+    assert_eq!(decision, CloseDecisionView::Closed);
+    assert!(f.service.list_tabs(ListTabsQuery).unwrap().is_empty());
+}
+
+#[test]
+fn force_close_tab_removes_regardless() {
+    let f = build();
+    let doc_id = DocumentId::new();
+    f.service.open_tab(OpenTabCommand { doc_id }).unwrap();
+    f.service
+        .force_close_tab(ForceCloseTabCommand { doc_id })
+        .unwrap();
+    assert!(f.service.list_tabs(ListTabsQuery).unwrap().is_empty());
+}
+
+/// 装配若干磁盘文件并扫描，供搜索用例使用。
+fn seed_files(f: &WsFixture, paths: &[&str], content: &str) {
+    for p in paths {
+        f.repo
+            .seed_entry(WorkspaceEntry::new(fp(p), EntryKind::File));
+        f.repo.seed_file(fp(p), content);
+    }
+    f.service
+        .scan_tree(ScanTreeCommand {
+            root: fp("/d"),
+            max_depth: 4,
+        })
+        .unwrap();
+}
+
+#[test]
+fn search_finds_disk_content() {
+    let f = build();
+    seed_files(&f, &["/d/a.md"], "hello world from disk");
+
+    let result = f
+        .service
+        .search(SearchQuery {
+            pattern: "world".to_string(),
+            regex: false,
+            case_sensitive: false,
+            whole_word: false,
+        })
+        .unwrap();
+    assert_eq!(result.hits.len(), 1);
+    assert_eq!(result.hits[0].line, 0);
+    assert!(!result.truncated);
+}
+
+#[test]
+fn search_covers_unsaved_draft_over_disk() {
+    let f = build();
+    // 同一路径既有磁盘旧内容，又有未保存草稿；检索必须命中草稿。
+    let path = fp("/d/conflict.md");
+    f.provider.insert(
+        DocumentId::new(),
+        "needle in the draft copy",
+        1,
+        Some(path.clone()),
+    );
+    f.repo
+        .seed_entry(WorkspaceEntry::new(path.clone(), EntryKind::File));
+    f.repo
+        .seed_file(path.clone(), "no needle on the stale disk copy");
+    f.repo
+        .seed_entry(WorkspaceEntry::new(fp("/d/other.md"), EntryKind::File));
+    f.repo
+        .seed_file(fp("/d/other.md"), "needle also appears on disk");
+    f.service
+        .scan_tree(ScanTreeCommand {
+            root: fp("/d"),
+            max_depth: 4,
+        })
+        .unwrap();
+
+    let result = f
+        .service
+        .search(SearchQuery {
+            pattern: "needle".to_string(),
+            regex: false,
+            case_sensitive: false,
+            whole_word: false,
+        })
+        .unwrap();
+    assert_eq!(result.hits.len(), 2, "草稿与另一磁盘文件都应命中");
+    let draft_hit = result
+        .hits
+        .iter()
+        .find(|h| h.snippet.contains("draft"))
+        .expect("必须命中未保存草稿而非磁盘旧内容");
+    assert_eq!(draft_hit.path, path);
+}
+
+#[test]
+fn search_caps_hits_per_file() {
+    let f = build();
+    let content: String = "apple ".repeat(60);
+    seed_files(&f, &["/d/a.md"], &content);
+
+    let result = f
+        .service
+        .search(SearchQuery {
+            pattern: "apple".to_string(),
+            regex: false,
+            case_sensitive: false,
+            whole_word: false,
+        })
+        .unwrap();
+    assert_eq!(
+        result.hits.len(),
+        MAX_HITS_PER_FILE,
+        "单文件命中不得超过 50（上限保护，避免阻塞 UI 帧）"
+    );
+    assert!(!result.truncated);
+}
+
+#[test]
+fn search_caps_total_hits() {
+    let f = build();
+    let content: String = "apple ".repeat(60);
+    seed_files(
+        &f,
+        &[
+            "/d/a.md", "/d/b.md", "/d/c.md", "/d/d.md", "/d/e.md", "/d/f.md", "/d/g.md",
+        ],
+        &content,
+    );
+
+    let result = f
+        .service
+        .search(SearchQuery {
+            pattern: "apple".to_string(),
+            regex: false,
+            case_sensitive: false,
+            whole_word: false,
+        })
+        .unwrap();
+    assert_eq!(result.hits.len(), MAX_TOTAL_HITS, "总命中不得超过 300");
+    assert!(result.truncated, "超过总上限必须标记截断");
+}

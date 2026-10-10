@@ -1,0 +1,65 @@
+[DOCTYPE ok]
+[charset ok]
+[含 style 块]
+<body>
+<h1>中文混排语料（golden）</h1>
+<blockquote>
+<p>用于验证 <strong>UTF-8 字节偏移</strong> 与 <strong>CRLF</strong> 处理。
+解析器的<code>source_range</code> 是字节区间，中文占 3 字节，
+若实现误用字符索引，本文件会立刻暴露错位。</p>
+</blockquote>
+<h2>中文标题</h2>
+<h3>第三节：中文标题测试</h3>
+<h2>中英文混排</h2>
+<p>这是一段中文，夹着 English words 和数字 12345。</p>
+<p>中英 mixed 混排 with punctuation，像这样：逗号，句号。括号（像这样）。引号「如此」。</p>
+<h2>全角与半角</h2>
+<p>ＡＢＣ１２３（ 全角字符）</p>
+<p>abc123（半角字符）</p>
+<p>混合：Rust 的所有权（ownership）与 借用（borrowing）。</p>
+<h2>中文代码块</h2>
+<pre><code class="language-rust">fn 计算总和(数字: &amp;[i32]) -&gt; i32 {
+    // 注释里有中文
+    let mut 总和 = 0;
+    for 项 in 数字 {
+        总和 += 项;
+    }
+    总和
+}
+</code></pre>
+<h2>中文表格</h2>
+<table><thead><tr><th>名称</th><th>类型</th><th>说明</th></tr></thead><tbody>
+<tr><td>文档</td><td>聚合</td><td>编辑器状态</td></tr>
+<tr><td>偏好</td><td>聚合</td><td>用户设置</td></tr>
+</tbody></table>
+<h2>中文任务列表</h2>
+<ul>
+<li><input disabled type="checkbox" checked />
+已完成：解析器实现</li>
+<li><input disabled type="checkbox" />
+未完成：表现层接线</li>
+</ul>
+<h2>边界：中文后的插入点</h2>
+<p>中文段落末尾。</p>
+<p>这一行用于验证：中文（3 字节）与 ASCII（1 字节）混合时，
+<code>ByteOffset</code> 与字符索引不能混用。</p>
+<h2>表情与符号</h2>
+<p>✓ 完成 ✗ 失败 → 箭头 ← 反向 ⟶ 长箭头</p>
+<p>« 引号 » ‹ 单引号 ›</p>
+<p>数学：α + β = γ，角度 90°。</p>
+
+<div class="toc">
+<a class="toc-item toc-level-1" href="#中文混排语料golden">中文混排语料（golden）</a>
+<a class="toc-item toc-level-2" href="#中文标题">中文标题</a>
+<a class="toc-item toc-level-3" href="#第三节中文标题测试">第三节：中文标题测试</a>
+<a class="toc-item toc-level-2" href="#中英文混排">中英文混排</a>
+<a class="toc-item toc-level-2" href="#全角与半角">全角与半角</a>
+<a class="toc-item toc-level-2" href="#中文代码块">中文代码块</a>
+<a class="toc-item toc-level-2" href="#中文表格">中文表格</a>
+<a class="toc-item toc-level-2" href="#中文任务列表">中文任务列表</a>
+<a class="toc-item toc-level-2" href="#边界中文后的插入点">边界：中文后的插入点</a>
+<a class="toc-item toc-level-2" href="#表情与符号">表情与符号</a>
+</div>
+
+</body>
+</html>

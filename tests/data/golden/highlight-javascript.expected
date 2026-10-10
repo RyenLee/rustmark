@@ -1,0 +1,9 @@
+片段数: 8
+0..5 Keyword "const"
+6..7 Variable "a"
+8..9 Operator "="
+10..12 String "`t"
+14..15 Number "1"
+16..17 String "`"
+19..34 Comment "/* 块注释 */"
+35..49 Function "console.log(a)"

@@ -1,0 +1,15 @@
+//! 组合根与调度层测试（阶段 06 · S6-01）。
+//!
+//! 组合根是**唯一**能同时看见四个层的地方，也就是分层约束失效时
+//! **第一个能察觉**的地方。这类代码天然难测（依赖具体实现），
+//! 但恰恰因此更必须测：装配顺序错、provider 拿错、
+//! 配置路径写错这类问题，只有在这里才看得见。
+
+#[path = "../support/mod.rs"]
+mod support;
+
+mod bootstrap_test;
+mod crash_log_test;
+mod dialog_runner_test;
+mod frame_test;
+mod routing_exporter_test;

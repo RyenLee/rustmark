@@ -1,0 +1,9 @@
+片段数: 8
+0..2 Keyword "fn"
+3..7 Function "main"
+16..19 Keyword "let"
+23..26 Keyword "i32"
+27..28 Operator "="
+29..30 Number "1"
+32..42 Comment "// 注释\n"
+55..59 String "\"{}\""

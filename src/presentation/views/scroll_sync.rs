@@ -1,0 +1,254 @@
+//! 双向滚动同步的**几何映射与驱动**（阶段 06 · S6-06 / FR-02）。
+//!
+//! # 两段式映射
+//!
+//! 两侧都只知道像素，而 `MapScrollQuery` 只认**块 ID 与字节偏移**，
+//! 所以每个方向都要做两次换算：
+//!
+//! ```text
+//!   编辑区 ──► 预览区
+//!     ScrollArea 偏移（点）
+//!       → 由行顶表反查行号 → 该行起始字节偏移
+//!       → MapScrollQuery → (块 ID, 块内比例)
+//!       → 由块矩形插值出 y → 预览区 ScrollArea 偏移
+//!
+//!   预览区 ──► 编辑区
+//!     ScrollArea 偏移 → 命中块 ID → MapScrollQuery → 块源码起始字节
+//!       → 反查行号 → 行顶 y → 编辑区 ScrollArea 偏移
+//! ```
+//!
+//! # 为什么不用「按比例同步」
+//!
+//! 最简单的实现是 `预览偏移 = 编辑偏移 / 编辑最大偏移 × 预览最大偏移`。
+//! 它零成本，但一遇到高度分布不均就失效：文档前半段是代码（行矮）、
+//! 后半段是图片（块高），比例同步会让预览停在完全无关的段落上，
+//! 直接违反验收标准「误差 ≤ 1 块」。块映射 + 块内插值才有这个保证。
+//!
+//! # 本模块的测试策略
+//!
+//! 所有换算都是**纯函数**（不碰 egui），故可单元测试；
+//! 只有 [`apply`] 需要 `EditorApp`，它本身不含判定逻辑。
+
+use crate::app::frame::EditorApp;
+use crate::application::markdown::queries::{MapScrollQuery, ScrollSource, ScrollTarget};
+use crate::presentation::state::scroll_sync_state::{BlockRect, PaneGeometry, Side};
+use crate::presentation::theme::mapper;
+
+/// 目标点与视口顶部之间留出的余量（点）。
+///
+/// 贴到 0 会让目标块紧贴视口上沿，视觉上「顶到头」；
+/// 留一点余量既好看，也让上一块的末尾露出来，便于确认上下文。
+pub const TARGET_MARGIN: f32 = 8.0;
+
+/// 命中判定时从视口顶部再往下探的距离（点）。
+///
+/// 块与块之间有 4px 间隔（预览区 `add_space(4.0)`）；
+/// 不偏移的话，视口顶恰好落在间隔里会命中**上一块**，
+/// 表现为「滚过去了一点，编辑区却还停在上一段」。
+pub const HIT_BIAS: f32 = 2.0;
+
+/// 把滚动偏移夹到合法区间。
+///
+/// 非有限值（NaN / ∞）一律归零：`ScrollArea` 的偏移一旦被写成 NaN，
+/// 会被持久化进 egui 的状态，此后**再也回不到正常值**（夹紧对 NaN 无效）。
+pub fn clamp_scroll(target: f32, geom: PaneGeometry) -> f32 {
+    if !target.is_finite() {
+        return 0.0;
+    }
+    target.clamp(0.0, geom.max_offset())
+}
+
+/// 「块 ID + 块内比例」→ 预览区滚动偏移。
+///
+/// 块内按比例插值：编辑区在一块内部往下滚时，预览区也线性跟随，
+/// 而不是「进了这块就吸顶、块内不动」——后者在长段落上会显得卡顿。
+///
+/// 块 ID 不在当前矩形表里时返回 `None`（文档刚重解析，矩形还没采到）。
+pub fn offset_for_block(
+    rects: &[BlockRect],
+    id: u64,
+    ratio: f32,
+    geom: PaneGeometry,
+    margin: f32,
+) -> Option<f32> {
+    let rect = rects.iter().find(|r| r.id == id)?;
+    let ratio = if ratio.is_finite() {
+        ratio.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let y = rect.top + rect.height() * ratio;
+    Some(clamp_scroll(y - margin, geom))
+}
+
+/// 预览区某个偏移处命中的块（自上而下第一个下边界超过该偏移的块）。
+///
+/// 用「下边界 > offset」而不是「区间包含」：块与块之间有空隙，
+/// 落在空隙里时应算作**下一块**（视口顶已经越过上一块的底了）。
+pub fn block_at_offset(rects: &[BlockRect], offset: f32) -> Option<u64> {
+    rects.iter().find(|r| r.bottom > offset).map(|r| r.id)
+}
+
+/// 每行起始的字节偏移。
+///
+/// 末元素是文本长度哨兵，保证「行号 = 行数」时仍能安全取到偏移
+/// （滚动到底部时反查出的行号就等于行数；没有哨兵会越界，
+/// 而 `panic = "abort"` 下越界等于直接终止进程）。
+///
+/// **哨兵只在需要时补**。文本以 `\n` 结尾时，`split('\n')` 拆出的
+/// 末行本身就是空行、其行首恰好等于 `text.len()`，此时再补一个就会
+/// 出现重复元素，而 [`line_of_offset`] 用的是 `partition_point`：
+///
+/// ```text
+///   starts = [0, 3, 6, 6]   offset = 6 → 命中 4 个 → 行号 3
+///   starts = [0, 3, 6]      offset = 6 → 命中 3 个 → 行号 2  ✅
+/// ```
+///
+/// 三行文档算出「第 4 行」，跳转与滚动同步都会落到不存在的行上。
+pub fn line_start_offsets(text: &str) -> Vec<usize> {
+    let mut starts = Vec::with_capacity(text.split('\n').count() + 1);
+    let mut cursor = 0usize;
+    for line in text.split('\n') {
+        starts.push(cursor);
+        cursor += line.len() + 1; // 跨过 '\n'（单字节）
+    }
+    // 末行起点已经等于文本长度时**不重复补**（见上文）。
+    if starts.last() != Some(&text.len()) {
+        starts.push(text.len());
+    }
+    starts
+}
+
+/// 由 y（点）反查所在行号。
+///
+/// `tops` 末元素是总高，故结果可能等于行数——调用方用它取
+/// [`line_start_offsets`] 的哨兵（文本长度），不会越界。
+pub fn line_at_y(tops: &[f32], y: f32) -> usize {
+    if tops.is_empty() {
+        return 0;
+    }
+    let idx = tops.partition_point(|t| *t <= y);
+    idx.saturating_sub(1).min(tops.len() - 1)
+}
+
+/// 由字节偏移反查所在行号（语义同 [`line_at_y`]）。
+pub fn line_of_offset(starts: &[usize], offset: usize) -> usize {
+    if starts.is_empty() {
+        return 0;
+    }
+    let idx = starts.partition_point(|s| *s <= offset);
+    idx.saturating_sub(1).min(starts.len() - 1)
+}
+
+// ============================================================================
+// 驱动
+// ============================================================================
+
+/// 每帧在**两侧都渲染完之后**调用一次，完成一次同步。
+///
+/// 放在两侧之后是因为：同步要读两侧**本帧真实**的偏移，
+/// 而 `ScrollArea` 的偏移只有在它的 `show` 结束后才确定
+/// （用户滚轮的增量是在 `show` 内部才叠加的）。
+pub fn apply(app: &mut EditorApp, now_ms: u64) {
+    // 无论是否同步都要观测：`last` 一旦停更，下次开启同步时
+    // 累积的位移会被当成一次巨大的用户手势，预览会猛跳一下。
+    let driver = app
+        .ui
+        .sync
+        .observe(now_ms, app.editor.scroll_y, app.preview.scroll_y);
+    let click = app.ui.sync.take_click();
+
+    // 预览关掉 / 专注模式 / 大文件降级时没有可同步的对侧。
+    let enabled = app.ui.sync.enabled
+        && app.ui.preview_visible
+        && !app.ui.focus_mode
+        && !app.preview.degraded;
+    if !enabled {
+        return;
+    }
+
+    // 点击跳转是离散事件，优先于连续滚动。
+    if let Some(block_id) = click {
+        if drive_editor(app, Some(block_id)) {
+            app.ui.sync.record_drive(Side::Preview);
+        }
+        return;
+    }
+
+    let Some(side) = driver else {
+        return;
+    };
+    let done = match side {
+        Side::Editor => drive_preview(app),
+        Side::Preview => drive_editor(app, None),
+    };
+    if done {
+        app.ui.sync.record_drive(side);
+    }
+}
+
+/// 编辑区 → 预览区。
+fn drive_preview(app: &mut EditorApp) -> bool {
+    let Some(doc_id) = app.active_doc else {
+        return false;
+    };
+    let theme = app.theme().clone();
+    let Some(tops) = mapper::line_tops(&theme, &app.editor_text) else {
+        return false;
+    };
+    let starts = line_start_offsets(&app.editor_text);
+    let line = line_at_y(&tops, app.editor.scroll_y);
+    let offset = starts.get(line).copied().unwrap_or(0);
+
+    let Ok(ScrollTarget::Preview { block_id, ratio }) =
+        app.services.markdown.map_scroll(MapScrollQuery {
+            doc_id,
+            source: ScrollSource::Editor { offset },
+        })
+    else {
+        return false;
+    };
+
+    let geom = app.ui.sync.geometry(Side::Preview);
+    let Some(target) = offset_for_block(&app.preview.rects, block_id, ratio, geom, TARGET_MARGIN)
+    else {
+        return false;
+    };
+    app.preview.scroll_y = target;
+    true
+}
+
+/// 预览区 → 编辑区。
+///
+/// `block_id` 为 `Some` 时来自**点击**（标题），为 `None` 时取视口顶部命中的块。
+fn drive_editor(app: &mut EditorApp, block_id: Option<u64>) -> bool {
+    let Some(doc_id) = app.active_doc else {
+        return false;
+    };
+    let id = match block_id {
+        Some(id) => id,
+        None => match block_at_offset(&app.preview.rects, app.preview.scroll_y + HIT_BIAS) {
+            Some(id) => id,
+            None => return false,
+        },
+    };
+
+    let Ok(ScrollTarget::Editor { offset }) = app.services.markdown.map_scroll(MapScrollQuery {
+        doc_id,
+        source: ScrollSource::Preview { block_id: id },
+    }) else {
+        return false;
+    };
+
+    let theme = app.theme().clone();
+    let Some(tops) = mapper::line_tops(&theme, &app.editor_text) else {
+        return false;
+    };
+    let starts = line_start_offsets(&app.editor_text);
+    let line = line_of_offset(&starts, offset);
+    let y = tops.get(line).copied().unwrap_or(0.0);
+
+    let geom = app.ui.sync.geometry(Side::Editor);
+    app.editor.scroll_y = clamp_scroll(y - TARGET_MARGIN, geom);
+    true
+}

@@ -1,0 +1,9 @@
+片段数: 8
+0..3 Keyword "def"
+4..5 Function "f"
+6..7 Variable "x"
+14..23 Comment "'''doc'''"
+28..34 Keyword "return"
+37..38 Operator "+"
+39..40 Number "1"
+42..51 Comment "# 加一\n"

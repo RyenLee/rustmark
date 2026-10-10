@@ -1,0 +1,22 @@
+//! presentation::views 模块声明。
+
+pub mod about_view;
+pub mod command_palette_view;
+pub mod diff_view;
+pub mod editor_ops;
+pub mod editor_view;
+pub mod export_view;
+pub mod find_replace_view;
+pub mod main_view;
+pub mod overlays;
+pub mod preview_view;
+pub mod quick_open_view;
+pub mod scroll_sync;
+pub mod settings_view;
+pub mod shortcut_overview_view;
+pub mod sidebar_view;
+pub mod stats_view;
+pub mod status_bar_view;
+pub mod symbol_view;
+pub mod toolbar_view;
+pub mod welcome_view;

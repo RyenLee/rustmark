@@ -1,0 +1,362 @@
+//! `FsWorkspaceRepository` 与 `RecentFilesStore` 单测（S5-05）。
+
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use rustmark::domain::workspace::repository::WorkspaceRepository;
+use rustmark::domain::workspace::value_objects::{EntryKind, RecentFile};
+use rustmark::infrastructure::persistence::fs_workspace_repository::{
+    FsWorkspaceRepository, TraversalRules,
+};
+use rustmark::infrastructure::persistence::recent_files_store::RecentFilesStore;
+use rustmark::shared::error::AppError;
+use rustmark::shared::path::FilePath;
+use rustmark::shared::time::Timestamp;
+
+/// 测试用临时目录守卫。
+pub struct TempDir(PathBuf);
+
+impl TempDir {
+    pub fn new(tag: &str) -> Self {
+        let unique = format!(
+            "rustmark-ws-{tag}-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        );
+        let path = std::env::temp_dir().join(unique.replace(['(', ')', ' '], ""));
+        let _ = fs::remove_dir_all(&path);
+        fs::create_dir_all(&path).expect("应能创建临时目录");
+        Self(path)
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.0
+    }
+
+    /// 在目录下创建一个文件（含父目录）。
+    pub fn write(&self, relative: &str, content: &str) -> PathBuf {
+        let target = self.0.join(relative);
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent).expect("应能创建父目录");
+        }
+        fs::write(&target, content).expect("应能写文件");
+        target
+    }
+
+    pub fn mkdir(&self, relative: &str) -> PathBuf {
+        let target = self.0.join(relative);
+        fs::create_dir_all(&target).expect("应能创建目录");
+        target
+    }
+}
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+fn fp(disk: &Path) -> FilePath {
+    FilePath::new(disk.to_string_lossy().replace('\\', "/")).expect("临时路径应合法")
+}
+
+fn repo_in(dir: &TempDir) -> FsWorkspaceRepository {
+    FsWorkspaceRepository::new(dir.path().join("recent.toml"))
+}
+
+// ---------------------------------------------------------------------------
+// 目录遍历
+// ---------------------------------------------------------------------------
+
+#[test]
+fn scan_lists_nested_files_within_depth_limit() {
+    let dir = TempDir::new("scan-nested");
+    dir.write("a.md", "a");
+    dir.write("sub/b.md", "b");
+    dir.write("sub/deep/c.md", "c");
+
+    let repo = repo_in(&dir);
+    let entries = repo.scan(&fp(dir.path()), 5).expect("扫描应成功");
+
+    let names: Vec<String> = entries
+        .iter()
+        .map(|e| e.path().file_name().to_string())
+        .collect();
+    for expected in ["a.md", "b.md", "c.md"] {
+        assert!(
+            names.contains(&expected.to_string()),
+            "应包含 {expected}，实际：{names:?}"
+        );
+    }
+}
+
+#[test]
+fn scan_depth_zero_returns_only_top_level() {
+    let dir = TempDir::new("scan-depth0");
+    dir.write("top.md", "t");
+    dir.write("sub/inner.md", "i");
+
+    let repo = repo_in(&dir);
+    let entries = repo.scan(&fp(dir.path()), 0).expect("扫描应成功");
+    let names: Vec<String> = entries
+        .iter()
+        .map(|e| e.path().file_name().to_string())
+        .collect();
+
+    assert!(names.contains(&"top.md".to_string()), "应含顶层文件");
+    assert!(
+        !names.contains(&"inner.md".to_string()),
+        "深度 0 不应递归到子目录，实际：{names:?}"
+    );
+}
+
+#[test]
+fn scan_skips_hidden_and_ignored_directories() {
+    let dir = TempDir::new("scan-ignore");
+    dir.write("visible.md", "v");
+    dir.write(".hidden.md", "h");
+    dir.write(".git/config", "git stuff");
+    dir.write("node_modules/pkg/index.js", "js");
+    dir.write("target/debug/bin", "rust");
+
+    let repo = repo_in(&dir);
+    let entries = repo.scan(&fp(dir.path()), 5).expect("扫描应成功");
+    let names: Vec<String> = entries
+        .iter()
+        .map(|e| e.path().file_name().to_string())
+        .collect();
+
+    assert!(names.contains(&"visible.md".to_string()), "普通文件应保留");
+    for unwanted in [".hidden.md", ".git", "node_modules", "target"] {
+        assert!(
+            !names.contains(&unwanted.to_string()),
+            "{unwanted} 应被过滤，实际：{names:?}"
+        );
+    }
+}
+
+#[test]
+fn scan_entries_are_sorted_directories_first() {
+    let dir = TempDir::new("scan-order");
+    dir.write("zebra.md", "z");
+    dir.write("alpha.md", "a");
+    dir.mkdir("m_dir");
+
+    let repo = repo_in(&dir);
+    let entries = repo.scan(&fp(dir.path()), 1).expect("扫描应成功");
+
+    let names: Vec<String> = entries
+        .iter()
+        .map(|e| e.path().file_name().to_string())
+        .collect();
+    assert_eq!(
+        names,
+        vec!["m_dir", "alpha.md", "zebra.md"],
+        "应目录在前、同层按名称升序（确定性顺序，不能依赖文件系统返回序）"
+    );
+    // 目录必须被标成 `Directory`——文件树据此建层级。
+    // 曾经这里断言的是 `EntryKind::File`（与上一行的顺序断言自相矛盾），
+    // 把「目录被标成文件」的缺陷锁进了测试：文件树因此完全无法建层级。
+    assert_eq!(entries[0].kind(), EntryKind::Directory);
+    assert_eq!(entries[0].path().file_name().to_string(), "m_dir");
+    assert!(
+        entries[1..].iter().all(|e| e.kind() == EntryKind::File),
+        "只有首个（目录）应是 Directory，其余都是文件"
+    );
+}
+
+#[test]
+fn scan_respects_max_entries_limit() {
+    let dir = TempDir::new("scan-limit");
+    for i in 0..50 {
+        dir.write(&format!("f{i:03}.md"), "x");
+    }
+    let rules = TraversalRules {
+        max_entries: 10,
+        ..TraversalRules::default()
+    };
+    let repo = repo_in(&dir).with_rules(rules);
+
+    let entries = repo.scan(&fp(dir.path()), 1).expect("扫描应成功");
+    assert_eq!(entries.len(), 10, "超大目录必须截断，否则文件树会卡死");
+}
+
+#[test]
+fn scan_missing_root_returns_io_error() {
+    let dir = TempDir::new("scan-missing");
+    let repo = repo_in(&dir);
+    let missing = fp(&dir.path().join("does-not-exist"));
+
+    let error = repo
+        .scan(&missing, 3)
+        .expect_err("扫描不存在的根目录必须失败");
+    assert!(
+        error.to_string().contains("does-not-exist"),
+        "错误应含路径，实际：{error}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 内容读取（搜索用）
+// ---------------------------------------------------------------------------
+
+#[test]
+fn read_content_normalizes_crlf_and_strips_bom() {
+    let dir = TempDir::new("read-content");
+    let target = dir.path().join("win.md");
+    let mut raw = vec![0xEF, 0xBB, 0xBF];
+    raw.extend_from_slice(b"line1\r\nline2");
+    fs::write(&target, raw).expect("应能写原始字节");
+
+    let repo = repo_in(&dir);
+    let content = repo.read_content(&fp(&target)).expect("读取应成功");
+    assert_eq!(
+        content, "line1\nline2",
+        "搜索读到的内容必须与编辑器一致（去BOM、CRLF→LF），否则行号会错位"
+    );
+}
+
+#[test]
+fn read_content_missing_file_returns_io_error() {
+    let dir = TempDir::new("read-missing");
+    let repo = repo_in(&dir);
+    assert!(repo.read_content(&fp(&dir.path().join("nope.md"))).is_err());
+}
+
+// ---------------------------------------------------------------------------
+// 最近文件持久化
+// ---------------------------------------------------------------------------
+
+fn recent(path: &str, at: u64) -> RecentFile {
+    RecentFile::new(FilePath::new(path).unwrap(), Timestamp::from_millis(at))
+}
+
+#[test]
+fn recent_files_roundtrip_through_disk() {
+    let dir = TempDir::new("recent-roundtrip");
+    let store = RecentFilesStore::new(dir.path().join("recent.toml"));
+
+    assert!(
+        store.load().expect("首次加载应成功").is_empty(),
+        "文件不存在时应返回空列表而非报错"
+    );
+
+    let items = vec![recent("/docs/a.md", 1000), recent("/docs/b.md", 2000)];
+    store.save(&items).expect("保存应成功");
+
+    let loaded = store.load().expect("加载应成功");
+    assert_eq!(loaded, items, "往返必须一致");
+}
+
+#[test]
+fn recent_files_are_capped_at_limit() {
+    let dir = TempDir::new("recent-cap");
+    let store = RecentFilesStore::with_limit(dir.path().join("recent.toml"), 3);
+
+    let items: Vec<RecentFile> = (0..10).map(|i| recent(&format!("/f{i}.md"), i)).collect();
+    store.save(&items).expect("保存应成功");
+
+    let loaded = store.load().expect("加载应成功");
+    assert_eq!(loaded.len(), 3, "超出上限的条目必须在写盘时就裁掉");
+}
+
+#[test]
+fn corrupt_recent_file_falls_back_to_empty_and_keeps_backup() {
+    let dir = TempDir::new("recent-corrupt");
+    let store = RecentFilesStore::new(dir.path().join("recent.toml"));
+    store.save(&[recent("/a.md", 1)]).expect("保存应成功");
+
+    // 模拟损坏：写入非法 TOML。
+    fs::write(store.path(), "这不是合法的 TOML [[[").expect("应能写损坏内容");
+
+    let loaded = store.load().expect("损坏文件不应导致加载失败");
+    assert!(
+        loaded.is_empty(),
+        "损坏时按 ADR-003 回退为空列表（可用性优先于最近文件本身）"
+    );
+
+    let backups: Vec<String> = fs::read_dir(dir.path())
+        .expect("应能列出目录")
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|n| n.contains(".corrupt-"))
+        .collect();
+    assert_eq!(
+        backups.len(),
+        1,
+        "损坏内容必须被备份以留待排查，实际：{backups:?}"
+    );
+}
+
+#[test]
+fn empty_recent_file_is_treated_as_empty_list() {
+    let dir = TempDir::new("recent-empty");
+    let store = RecentFilesStore::new(dir.path().join("recent.toml"));
+    fs::write(store.path(), "   \n  ").expect("应能写空白内容");
+    assert!(store.load().expect("空白文件应按空列表处理").is_empty());
+}
+
+#[test]
+fn recent_file_without_version_field_defaults() {
+    let dir = TempDir::new("recent-noversion");
+    let store = RecentFilesStore::new(dir.path().join("recent.toml"));
+    // 手写一个缺 `version` 的旧格式文件（v0），验证迁移路径不报错。
+    // 注意 `FilePath` 是 newtype，serde 把它序列化成嵌套表 `{ raw = "..." }`，
+    // 这里必须与真实格式一致，否则测的是「另一种形状」而非迁移逻辑。
+    fs::write(
+        store.path(),
+        "[[items]]\nlast_opened = 42\n\n[items.path]\nraw = \"/legacy.md\"\n",
+    )
+    .expect("应能写旧格式");
+
+    let loaded = store.load().expect("缺version 应按 v0 迁移而非报错");
+    assert_eq!(loaded.len(), 1);
+    assert_eq!(loaded[0].path().as_str(), "/legacy.md");
+}
+
+#[test]
+fn unknown_fields_in_recent_file_are_ignored() {
+    let dir = TempDir::new("recent-unknown");
+    let store = RecentFilesStore::new(dir.path().join("recent.toml"));
+    // 未来版本新增的字段不应导致旧版本读取失败（ADR-003 的前向兼容要求）。
+    fs::write(
+        store.path(),
+        "version = 99\nfuture_field = \"x\"\n\n[[items]]\nlast_opened = 7\n\n[items.path]\nraw = \"/f.md\"\nextra = 1\n",
+    )
+    .expect("应能写含未知字段的内容");
+
+    let loaded = store.load().expect("未知字段应被忽略而非报错");
+    assert_eq!(loaded.len(), 1, "未知字段不应导致数据丢失");
+}
+
+#[test]
+fn workspace_repository_delegates_recent_to_store() {
+    let dir = TempDir::new("ws-recent");
+    let repo = repo_in(&dir);
+    let items = vec![recent("/x.md", 5)];
+
+    repo.save_recent(&items).expect("保存最近文件应成功");
+    assert_eq!(repo.load_recent().expect("读取应成功"), items);
+}
+
+#[test]
+fn recent_save_creates_missing_parent_directory() {
+    let dir = TempDir::new("recent-mkdir");
+    let nested = dir.path().join("config/sub/recent.toml");
+    let store = RecentFilesStore::new(&nested);
+    store.save(&[recent("/a.md", 1)]).expect("应自动创建父目录");
+    assert!(nested.exists());
+}
+
+#[test]
+fn read_content_error_is_io_variant() {
+    let dir = TempDir::new("read-err-kind");
+    let repo = repo_in(&dir);
+    let error: AppError = repo
+        .read_content(&fp(&dir.path().join("ghost.md")))
+        .expect_err("应失败");
+    assert!(
+        matches!(error, AppError::Io { .. }),
+        "磁盘读取失败必须是 Io 变体，实际：{error:?}"
+    );
+}

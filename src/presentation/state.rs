@@ -1,0 +1,17 @@
+//! presentation::state 模块声明。
+
+pub mod app_ui_state;
+pub mod command_palette_ui_state;
+pub mod dialog_ui_state;
+pub mod diff_ui_state;
+pub mod editor_ui_state;
+pub mod export_ui_state;
+pub mod find_replace_ui_state;
+pub mod preview_ui_state;
+pub mod quick_open_ui_state;
+pub mod scroll_sync_state;
+pub mod settings_ui_state;
+pub mod shortcut_overview_ui_state;
+pub mod sidebar_ui_state;
+pub mod status_bar_ui_state;
+pub mod symbol_ui_state;

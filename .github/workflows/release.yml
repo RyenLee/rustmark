@@ -1,0 +1,117 @@
+name: Release
+
+# S9-04 / S9-06：打 tag → 三平台构建打包 → 聚合校验和 → 创建 Release。
+#
+# 触发：`git tag v1.0.0 && git push origin v1.0.0`（tag 必须以 v 开头，
+# 版本号遵循语义化版本；tag 名与 Cargo.toml 的 version 不一致会 fail——
+# 防止「tag 打错版本」产出一批命名错误的产物）。
+#
+# 签名（S9-05）：默认**不签名**。macOS 侧若仓库 secrets 配置了
+# MACOS_CERTIFICATE / MACOS_CERTIFICATE_PWD，脚本自动切换正式签名；
+# Windows 暂无签名步骤（SmartScreen 提示必须在 Release Notes 说明）。
+# 私钥严禁入仓：只经 secrets 注入，`.gitignore` 已排除证书文件。
+
+on:
+  push:
+    tags:
+      - "v*"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: package (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            script: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/package-windows.ps1
+            artifact_glob: dist/rustmark-v*-windows-*.zip
+          - os: macos-latest
+            script: bash scripts/package-macos.sh
+            artifact_glob: "dist/rustmark-v*-macos*"
+          - os: ubuntu-20.04
+            script: bash scripts/package-linux.sh
+            artifact_glob: "dist/rustmark-v*-linux-x64*"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.99.0
+
+      - uses: Swatinem/rust-cache@v2
+
+      # tag 版本与 Cargo.toml 一致性守卫：防「tag 打错版本」整批产物报废。
+      - name: Verify tag matches Cargo.toml version
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          CARGO_VERSION="$(sed -n 's/^version[[:space:]]*=[[:space:]]*"\(.*\)"/\1/p' Cargo.toml | head -1)"
+          if [ "$TAG" != "$CARGO_VERSION" ]; then
+            echo "::error::tag v$TAG 与 Cargo.toml version $CARGO_VERSION 不一致"
+            exit 1
+          fi
+
+      - name: Build & package
+        shell: bash
+        run: ${{ matrix.script }}
+        env:
+          # macOS 正式签名（可选）：secret 配置了才生效，否则脚本走 ad-hoc。
+          CERT_IDENTITY: ${{ secrets.MACOS_CERT_IDENTITY }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.os }}
+          path: |
+            dist/rustmark-v*
+          if-no-files-found: error
+
+  release:
+    name: create release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist-all
+
+      - name: Aggregate checksums
+        shell: bash
+        run: |
+          mkdir -p dist
+          find dist-all -type f \( -name 'rustmark-v*' -o -name '*.sha256' \) -exec mv {} dist/ \;
+          # 汇总校验和：一行一文件，用户可 `sha256sum -c SHA256SUMS`。
+          cat dist/*.sha256 | sort -k2 > dist/SHA256SUMS
+          rm -f dist/*.sha256
+          cat dist/SHA256SUMS
+
+      # S9-06：Release Notes 按 commit message 的 [S{阶段}-{编号}] 自动归组。
+      # 「生成」与「上传」分离：脚本产 markdown，gh 创建 release。
+      # 逻辑落在 tools/gen_release_notes.py（而非内联 heredoc），便于离线演练：
+      # `python tools/release_dryrun.py` 会用构造的 subject 列表验证归组正确性。
+      - name: Generate release notes (grouped by phase tag)
+        shell: bash
+        run: |
+          python3 tools/gen_release_notes.py --tag "${GITHUB_REF_NAME}" > dist/RELEASE_NOTES.md
+          cat dist/RELEASE_NOTES.md
+
+      - name: Create release
+        shell: bash
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "rustmark ${GITHUB_REF_NAME}" \
+            --notes-file dist/RELEASE_NOTES.md \
+            dist/rustmark-v* dist/SHA256SUMS
+        env:
+          GH_TOKEN: ${{ github.token }}

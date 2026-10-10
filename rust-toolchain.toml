@@ -1,0 +1,6 @@
+[toolchain]
+# 需求文档 §1.2 / CONSTR-01：Rust 2024 Edition / 1.99.0+
+# 本机实测：cargo/rustc 1.99.0，`edition = "2024"` + `rust-version = "1.99"` 已验证可用
+channel = "1.99.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

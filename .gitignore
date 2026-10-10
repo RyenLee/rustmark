@@ -1,0 +1,27 @@
+# 构建产物
+/target/
+**/*.rs.bk
+
+# 本地临时验证目录
+.tmp-verify/
+
+# 本地覆盖配置与密钥（严禁入库）
+*.local.toml
+*.p12
+*.pfx
+*.cer
+*.key
+.env
+
+# 编辑器与系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 本地运行时/智能体数据（含本机绝对路径，非源码）
+.workbuddy/
+.agent/
+
+# 发布构建产物（由 release workflow 重新生成，非源码）
+/dist/

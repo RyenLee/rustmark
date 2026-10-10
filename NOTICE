@@ -1,0 +1,31 @@
+rustmark
+Copyright 2026 rustmark contributors
+
+This product is dual-licensed under MIT OR Apache-2.0
+(see LICENSE-MIT and LICENSE-APACHE); you may choose either license.
+
+This product includes third-party software and data:
+
+* egui / eframe (MIT OR Apache-2.0) — immediate mode GUI framework
+* wgpu (MIT OR Apache-2.0) — WebGPU graphics backend
+* pulldown-cmark (MIT OR Apache-2.0) — Markdown parsing
+* syntect (MIT OR Apache-2.0) — syntax highlighting;
+  bundled syntax definition dump (packdump) from syntect, MIT OR Apache-2.0
+* ropey (MIT OR Apache-2.0) — rope text buffer
+* image (MIT OR Apache-2.0) — image decoding
+* rfd (MIT OR Apache-2.0) — native file dialogs
+* serde / toml (MIT OR Apache-2.0) — configuration serialization
+* thiserror / anyhow (MIT OR Apache-2.0) — error handling
+* ropey's bundled crates and transitive dependencies are covered by their
+  respective permissive licenses; the full machine-readable inventory can be
+  audited with `cargo deny check licenses` (configuration in deny.toml).
+
+Data files vendored in this repository:
+
+* `src/infrastructure/persistence/gbk_table.bin` — GBK double-byte
+  encoding table, generated from public Unicode/WHATWG encoding indexes.
+* `src/infrastructure/persistence/gb18030_ranges.bin` — GB18030 four-byte
+  linear mapping table, generated from the WHATWG Encoding Standard's
+  `index-gb18030-ranges` table (public domain specification data).
+* `src/infrastructure/spell/words.txt` — English word list vendored for
+  the spell checker (project-specific compilation of common words).

@@ -1,0 +1,10 @@
+片段数: 9
+0..8 Keyword "template"
+9..17 Keyword "typename"
+23..26 Function "max"
+29..30 Variable "a"
+34..35 Variable "b"
+39..45 Keyword "return"
+48..49 Operator ">"
+52..53 Operator "?"
+56..57 Operator ":"

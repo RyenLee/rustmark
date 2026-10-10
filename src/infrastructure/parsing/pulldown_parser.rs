@@ -1,0 +1,581 @@
+//! `pulldown-cmark` 版 Markdown 解析器（S5-02）。
+//!
+//! # 核心职责：把事件流转成「带源码区间的块序列」
+//!
+//! 领域层 [`MarkdownParser`] 要求每个 [`RenderedBlock`] 携带真实的
+//! `source_range`（字节区间）。这是 `FR-02`（双向滚动同步）与 `FR-03`（增量高亮）
+//! 的前提——没有它，表现层只能重解析全文来定位，性能目标（`NFR-PERF-06`
+//! 10KB ≤ 5ms）无法达成。
+//!
+//! pulldown-cmark 的事件流是**流式**的，只有 `into_offset_iter()` 版本才携带
+//! `Range<usize>`。本实现按「块级 Start 开栈、对应 End 出栈」配对来推导区间：
+//! Start 的偏移是块的**开始**，End 的偏移是块的**结束**。
+//!
+//! # 为什么必须用栈，不能只记「上一个 Start」
+//!
+//! 三处让简单写法失效：
+//! 1. 列表项可**嵌套**（`- a` 里嵌列表），`Item` 与 `List` 交错开闭；
+//! 2. `TableHead` 之后**没有** `TableBody` 标签，表体行直接跟在后面；
+//! 3. 标题虽然是自闭合语义，事件流里仍表现为 `Start` + `End` 一对。
+//!
+//! 故本实现维护一个显式的 [`OpenBlock`] 栈，End 到来时弹出栈顶配对。
+//!
+//! # 任务列表的定型时机
+//!
+//! `Tag::Item` 到底是普通列表项还是任务列表项，要看它内部是否出现
+//! `Event::TaskListMarker`——该事件在 `End(Item)` **之前**才到达。
+//! 因此 Item 在闭合时才能定型，故栈项上挂 `is_task` 标记。
+
+use crate::domain::markdown::errors::ParseError;
+use crate::domain::markdown::services::MarkdownParser;
+use crate::domain::markdown::value_objects::{
+    BlockId, BlockKind, CellAlignment, ListItem, RenderedBlock, TableData,
+};
+use crate::shared::geometry::{ByteOffset, TextRange};
+use pulldown_cmark::{
+    CodeBlockKind, DefaultBrokenLinkCallback, Event, HeadingLevel, OffsetIter, Options, Parser,
+    Tag, TagEnd,
+};
+
+/// 解析器使用的 pulldown-cmark 选项集（对应需求文档 §3.1 的 P0 特性）。
+///
+/// **GFM 表格 / 任务列表 / 脚注在 pulldown-cmark 中是运行期 `Options` 位flag，
+/// 而非 Cargo feature**（已在 ADR-002 记录此事实，极易误解为 feature）。
+/// `ENABLE_GFM` 隐含表格与删除线，但**不含**任务列表与脚注，故仍需显式并列。
+fn parser_options() -> Options {
+    Options::ENABLE_TABLES
+        | Options::ENABLE_FOOTNOTES
+        | Options::ENABLE_TASKLISTS
+        | Options::ENABLE_STRIKETHROUGH
+        | Options::ENABLE_GFM
+        // 数学公式：`$...$`（行内）/ `$$...$$`（块级）需此选项才会被识别为
+        // `Event::InlineMath` / `Event::DisplayMath`（否则按字面文本处理）。
+        // 必须与导出器 `export_options` 保持一致，否则预览有公式、导出没有。
+        | Options::ENABLE_MATH
+}
+
+/// 基于 `pulldown-cmark` 的 Markdown 解析器。
+#[derive(Clone, Copy, Debug, Default)]
+pub struct PulldownMarkdownParser;
+
+impl PulldownMarkdownParser {
+    /// 构造解析器。
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// 按当前选项集创建**带偏移**的 pulldown 解析器。
+    ///
+    /// 导出器（S5-09）复用同一选项集，保证「预览所见」与「导出所得」结构一致——
+    /// 若两者选项不同，用户会看到预览有表格而导出没有。
+    ///
+    /// 返回 [`OffsetIter`] 而非 `Parser`：只有它的事件流携带 `Range<usize>`，
+    /// 而 `source_range` 正是 `FR-02` 的基础。
+    pub fn raw_parser(text: &str) -> OffsetIter<'_, DefaultBrokenLinkCallback> {
+        Parser::new_ext(text, parser_options()).into_offset_iter()
+    }
+}
+
+/// 栈上的一项：一个尚未闭合的块级 Start。
+///
+/// # `is_item` / `is_cell` 为什么不再混入 `is_inline`
+///
+/// 早期版本把「列表项」与「单元格」一律按行内标签处理（只进栈保配平、不收集内容），
+/// 结果所有文本都被并进了外层块的 `content`：列表变成 `"项一项二"`，
+/// 表格变成 `"列A列B1234"`（S6-05 实测），预览区无法还原结构。
+/// 故这两类现在**各自收集自己的文本**，在闭合时归入父块的 `items` / `current_row`，
+/// 同时也并入父块的 `content`（保持搜索与大纲所需的扁平文本）。
+struct OpenBlock {
+    /// 该块产出的领域类型；`None` 表示该标签**不产出块**（行内标签 / 列表项 / 单元格）。
+    kind: Option<BlockKind>,
+    /// 该块在源码中的开始偏移。
+    start: usize,
+    /// 该块已收集到的纯文本内容（供大纲与搜索）。
+    content: String,
+    /// 该标签是否为**不产出块**的标签（行内标签；列表项与单元格另有用例）。
+    is_inline: bool,
+    /// 该 `Start` 是否为 `Tag::Item`（列表项，需把内容归入所属列表的 `items`）。
+    is_item: bool,
+    /// 该 `Start` 是否为 `Tag::TableCell`（单元格，需把内容归入表格当前行）。
+    is_cell: bool,
+    /// 该列表（或其任一列表项）内是否出现 `TaskListMarker`。
+    is_task: bool,
+    /// 该列表项是否已出现 `TaskListMarker`（决定 `checked` 取值）。
+    item_checked: Option<bool>,
+    /// 该列表已收集到的列表项（含任务标记状态与源码区间）。
+    items: Vec<ListItem>,
+    /// 表格已收集到的完整表体行。
+    rows: Vec<Vec<String>>,
+    /// 表格正在收集的一行（单元格逐个追加，行闭合时整体归入 `rows` 或表头）。
+    current_row: Vec<String>,
+    /// 表格的表头行。
+    header: Vec<String>,
+    /// 表格每列的对齐方式（来自 `Tag::Table(aligns)`）。
+    aligns: Vec<CellAlignment>,
+    /// 当前是否处于 `TableHead` 之内（决定表体行归入表头还是表体）。
+    in_head: bool,
+    /// 该项是否为独立图片（`Tag::Image` 需要单独成块）。
+    ///
+    /// 值为 `(alt 或 title, url)`。
+    image: Option<(String, String)>,
+    /// `image` 生效时父块 `content` 的长度（用来从后续文本里截出 alt）。
+    image_mark: Option<usize>,
+}
+
+/// 取最内层「会产出块」的栈帧（列表 / 表格 / 段落等）。
+///
+/// 列表项与单元格只收集文本、不产出块，故要跳过它们去找真正承载结构的父亲。
+fn nearest_producer(stack: &mut [OpenBlock]) -> Option<&mut OpenBlock> {
+    stack
+        .iter_mut()
+        .rev()
+        .find(|f| !f.is_item && !f.is_cell && !f.is_inline)
+}
+
+/// 把一段文本并入当前块的 `content`。
+///
+/// 目标是最内层**非行内**帧（规则见模块文档）；列表项与单元格虽非行内，
+/// 但它们会把内容进一步交给父亲，因此若帧栈里还有更外层的列表项 / 单元格，
+/// 也要同步一份——松散列表（`- 项` 之后空一行再写）的文本会落在内部段落帧上，
+/// 不同步的话列表项文本会是空的。
+fn push_content(stack: &mut [OpenBlock], s: &str) {
+    let Some(target) = stack.iter().rposition(|f| !f.is_inline) else {
+        return;
+    };
+    stack[target].content.push_str(s);
+    if let Some(owner) = stack[..target].iter().rposition(|f| f.is_item || f.is_cell) {
+        stack[owner].content.push_str(s);
+    }
+}
+
+/// 若块内容**整体**就是一个块级公式，返回公式本体（已去 `$$` 与空白）。
+///
+/// 判定条件刻意保守：必须以 `$$` 开头、以 `$$` 结尾，且两者之间非空。
+/// 段落里混排的公式（如「由 $$x$$ 可知」）不走这条路——它属于正文，
+/// 拆成独立块会割裂语义。内部还含 `$$` 时同样拒绝（那不是合法的块级公式）。
+fn math_body_if_standalone(content: &str) -> Option<String> {
+    let inner = content.trim().strip_prefix("$$")?.strip_suffix("$$")?;
+    let inner = inner.trim();
+    if inner.is_empty() || inner.contains("$$") {
+        return None;
+    }
+    Some(inner.to_string())
+}
+
+impl OpenBlock {
+    /// 以开闭偏移构造 `source_range`。
+    ///
+    /// 结束偏移取 `max(end, start)`：pulldown 对空块（如空列表项）可能给出
+    /// `end == start`，此时区间长度为 0，与领域层允许的「零长度块」语义一致
+    /// （`BlockMapper` 对其返回比例 0.0，即滚动到块顶）。
+    ///
+    /// `source` 用于裁掉区间末尾的换行：pulldown 的 `End` 偏移**包含**块后的 `\n`
+    /// （`"# 标题\n\n正文"` 的标题区间是 `0..8` 而非 `0..7`）。若不裁掉，
+    /// 相邻两个块的区间会在空行处**重叠**，而
+    /// [`BlockMapper::blocks_in_range`]（`FR-03` 增量重渲染的依据）
+    /// 以「有交集」判定选中块，重叠就会把无关块纳入重渲染。
+    fn range(&self, end: usize, source: &str) -> TextRange {
+        let start = self.start.min(end);
+        let mut stop = end.max(self.start);
+        //逐字节回退掉块后的换行（可能有多个连续空行）；只退到 `start` 为止，
+        // 保证零长度块仍是零长度而非下溢。
+        while stop > start {
+            match source.as_bytes().get(stop - 1) {
+                Some(b'\n') | Some(b'\r') => stop -= 1,
+                _ => break,
+            }
+        }
+        TextRange::new(ByteOffset::new(start), ByteOffset::new(stop))
+    }
+}
+
+/// 把 pulldown 的**块级**标签映射为领域层 [`BlockKind`]。
+///
+/// 返回 `None` 表示该标签**不单独产出块**，分两类：
+/// - `Tag::Item`：其内容已由内部的段落块覆盖，若自己也成块会在大纲 / 滚动映射里
+///   产生「列表项」这一层噪声节点；
+/// - **行内**标签（强调、链接、删除线等）：它们在事件流里同样是 Start/End 配对，
+///   但**不是块级结构**——必须与Item 一样「进出栈但不产出块」。
+///   若漏判这类标签，段落里的 `**粗体**` 会凭空多出一个 `Raw` 块。
+fn block_kind_of(tag: &Tag, ordered: bool) -> Option<BlockKind> {
+    let kind = match tag {
+        Tag::Paragraph => BlockKind::Paragraph,
+        Tag::Heading { level, .. } => BlockKind::Heading {
+            level: heading_level_of(*level),
+        },
+        Tag::BlockQuote(_) => BlockKind::Quote,
+        Tag::CodeBlock(kind) => {
+            if let CodeBlockKind::Fenced(lang) = kind
+                && !lang.is_empty()
+                && lang.to_ascii_lowercase() == "mermaid"
+            {
+                // Mermaid 图表：` ```mermaid ` 围栏不应被当作普通代码块，
+                // 而是落到专用 `Diagram` 变体，预览区以图表卡呈现、导出保留原样。
+                return Some(BlockKind::Diagram {
+                    kind: "mermaid".to_string(),
+                });
+            }
+            BlockKind::CodeBlock {
+                lang: match kind {
+                    CodeBlockKind::Fenced(lang) if !lang.is_empty() => Some(lang.to_string()),
+                    _ => None,
+                },
+            }
+        }
+        Tag::HtmlBlock => BlockKind::Raw {
+            marker: "html".to_string(),
+        },
+        Tag::List(_) => BlockKind::List {
+            ordered,
+            items: Vec::new(),
+        },
+        Tag::FootnoteDefinition(_) => BlockKind::Footnote,
+        Tag::Table(aligns) => BlockKind::Table {
+            data: TableData::new(
+                Vec::new(),
+                Vec::new(),
+                aligns.iter().map(cell_alignment_of).collect(),
+            ),
+        },
+        _ => return None,
+    };
+    Some(kind)
+}
+
+/// 去掉列表项文本开头的任务标记（`[x] ` / `[ ] `）。
+///
+/// 勾选状态已由 [`ListItem::checked`] 单独承载，渲染时画成复选框；
+/// 若文本里再留一份 `[x] ` 就会重复显示。未标记的项原样返回。
+fn strip_task_marker(text: &str) -> String {
+    let s = text.trim_start();
+    if let Some(rest) = s.strip_prefix("[x] ").or_else(|| s.strip_prefix("[ ] ")) {
+        return rest.trim_start().to_string();
+    }
+    s.to_string()
+}
+
+/// pulldown 的列对齐转为自有枚举。
+fn cell_alignment_of(align: &pulldown_cmark::Alignment) -> CellAlignment {
+    match align {
+        pulldown_cmark::Alignment::None => CellAlignment::None,
+        pulldown_cmark::Alignment::Left => CellAlignment::Left,
+        pulldown_cmark::Alignment::Center => CellAlignment::Center,
+        pulldown_cmark::Alignment::Right => CellAlignment::Right,
+    }
+}
+
+/// pulldown 的 `HeadingLevel` 转为 1-based 级别。
+fn heading_level_of(level: HeadingLevel) -> u8 {
+    match level {
+        HeadingLevel::H1 => 1,
+        HeadingLevel::H2 => 2,
+        HeadingLevel::H3 => 3,
+        HeadingLevel::H4 => 4,
+        HeadingLevel::H5 => 5,
+        HeadingLevel::H6 => 6,
+    }
+}
+
+impl MarkdownParser for PulldownMarkdownParser {
+    fn parse(&self, text: &str) -> Result<Vec<RenderedBlock>, ParseError> {
+        let mut blocks: Vec<RenderedBlock> = Vec::new();
+        let mut stack: Vec<OpenBlock> = Vec::new();
+        let mut next_id: u64 = 0;
+        // 当前所处的列表是否有序——`Tag::List` 开启时写入，Item 继承之。
+        let mut list_ordered = false;
+
+        for (event, range) in PulldownMarkdownParser::raw_parser(text) {
+            match event {
+                // 图片是**行内**标签，但需要独立成块以便 S5-11 按 URL 加载资源，
+                // 故必须先于下方通用的 `Event::Start(tag)` 分支匹配——
+                // 后者会吃掉所有 Start 标签，导致此分支永远不可达。
+                // pulldown 的 `Tag::Image` 只给出 `title`（`url "标题"` 里的标题），
+                // **没有 alt**——alt 是写在 `![这里](url)` 方括号里的文本，
+                // 以普通 Text 事件夹在 Start(Image) 与 End(Image) 之间。
+                // 故记录 Start 时父块 content 的长度，到 End 时取增量即为 alt。
+                Event::Start(Tag::Image {
+                    dest_url, title, ..
+                }) => {
+                    if let Some(top) = stack.last_mut() {
+                        top.image_mark = Some(top.content.len());
+                        top.image = Some((title.to_string(), dest_url.to_string()));
+                    }
+                }
+
+                Event::Start(tag) => {
+                    // `Tag::List(Some(_))` 表示有序列表。
+                    if let Tag::List(first) = tag {
+                        list_ordered = first.is_some();
+                    }
+                    let is_item = matches!(tag, Tag::Item);
+                    let is_cell = matches!(tag, Tag::TableCell);
+                    // 列表项与单元格要各自收集文本（见 `OpenBlock` 的类型注释），
+                    // 故不能标记为 `is_inline`——否则文本会被并到外层块去。
+                    let kind = block_kind_of(&tag, list_ordered);
+                    let is_inline = kind.is_none() && !is_item && !is_cell;
+                    let aligns = match &tag {
+                        Tag::Table(a) => a.iter().map(cell_alignment_of).collect(),
+                        _ => Vec::new(),
+                    };
+                    let opens_head = matches!(tag, Tag::TableHead);
+                    stack.push(OpenBlock {
+                        kind,
+                        start: range.start,
+                        content: String::new(),
+                        is_item,
+                        is_cell,
+                        is_inline,
+                        is_task: false,
+                        item_checked: None,
+                        items: Vec::new(),
+                        rows: Vec::new(),
+                        current_row: Vec::new(),
+                        header: Vec::new(),
+                        aligns,
+                        in_head: false,
+                        image: None,
+                        image_mark: None,
+                    });
+                    // 进入表头：把所属表格切到「表头模式」，后续整行归为表头。
+                    if opens_head {
+                        let len = stack.len();
+                        if len >= 2 {
+                            stack[len - 2].in_head = true;
+                        }
+                    }
+                }
+
+                // 图片闭合：此刻方括号里的文本已并入父块 content，
+                // 用 Start 时记下的长度把它截出来，覆盖掉占位用的 title。
+                Event::End(TagEnd::Image) => {
+                    if let Some(top) = stack.last_mut()
+                        && let Some(mark) = top.image_mark.take()
+                    {
+                        let captured = top.content[mark..].trim().to_string();
+                        if !captured.is_empty()
+                            && let Some((alt, _)) = top.image.as_mut()
+                        {
+                            *alt = captured;
+                        }
+                    }
+                }
+
+                Event::End(tag_end) => {
+                    let Some(mut open) = stack.pop() else {
+                        // 事件流不应出现无 Start 的 End；防御性跳过而非 panic。
+                        continue;
+                    };
+                    let end = range.end;
+
+                    // ---- 单元格：文本归入所属表格的当前行 ----
+                    if open.is_cell {
+                        let cell = open.content.trim().to_string();
+                        if let Some(table) = nearest_producer(&mut stack) {
+                            // 单元格文本归表格的扁平 `content`：搜索与大纲要能命中表格里的字
+                            // （单元格现在自己收集文本，不并入 content 的话它会变空）。
+                            table.content.push_str(&cell);
+                            table.current_row.push(cell);
+                        }
+                        continue;
+                    }
+
+                    // ---- 表格行：整体归入表体 ----
+                    //
+                    // 注意 pulldown 的**表头行不带 TableRow 包裹**：序列是
+                    // `Start(TableHead) 单元格… End(TableHead)`，
+                    // 之后才出现第一个 `Start(TableRow)`。故表头要由
+                    // `End(TableHead)` 收口，不能指望收到一次 TableRow。
+                    if matches!(tag_end, TagEnd::TableRow) {
+                        if let Some(table) = nearest_producer(&mut stack) {
+                            if table.in_head {
+                                table.header = std::mem::take(&mut table.current_row);
+                            } else {
+                                table.rows.push(std::mem::take(&mut table.current_row));
+                            }
+                        }
+                        continue;
+                    }
+
+                    // ---- 表头结束：当前行就是表头，随后切回表体模式 ----
+                    if matches!(tag_end, TagEnd::TableHead) {
+                        if let Some(table) = nearest_producer(&mut stack) {
+                            table.header = std::mem::take(&mut table.current_row);
+                            table.in_head = false;
+                        }
+                        continue;
+                    }
+
+                    // 列表项在闭合时定型（TaskListMarker 此刻已到达）：
+                    // 收成一个 `ListItem` 归入所属列表，同时把文本并入列表的
+                    // 扁平 `content`（搜索与大纲仍能看到整段列表文字）。
+                    if open.is_item {
+                        let item = ListItem::new(
+                            strip_task_marker(&open.content),
+                            open.item_checked,
+                            open.range(end, text),
+                        );
+                        if let Some(list) = nearest_producer(&mut stack) {
+                            list.is_task |= open.item_checked.is_some();
+                            list.content.push_str(&open.content);
+                            list.items.push(item);
+                        }
+                        continue;
+                    }
+
+                    // 其余行内标签（强调 / 链接 / 删除线 / 图片的 alt 文本等）：
+                    // 进出栈即可，**不产出块**——它们的文本已由内层块收集。
+                    if open.is_inline {
+                        continue;
+                    }
+
+                    // 图片：产出携带 `alt` / `url` 的独立块（供 S5-11 加载资源）。
+                    if let Some((alt, url)) = open.image.take() {
+                        blocks.push(RenderedBlock::new(
+                            BlockId::from_u64(next_id),
+                            BlockKind::Image { alt, url },
+                            open.range(end, text),
+                            open.content,
+                        ));
+                        next_id += 1;
+                        continue;
+                    }
+
+                    // 表格结构：`current_row` / `rows` / `header` 已在单元格与行
+                    // 闭合时收集完毕，此处一并装进 `TableData`。
+                    //
+                    // 整段只有一个块级公式时升级为 `Math` 块：pulldown 把 `$$...$$`
+                    // 放在段落里，但「一个段落只有一条公式」在视觉与语义上都等价于
+                    // 独立公式块，交给表现层居中成卡更贴合预期。
+                    let promoted_math = math_body_if_standalone(&open.content);
+                    let kind = open.kind.clone();
+
+                    // 列表在闭合时定型：任一列表项带任务标记 → 整个列表是任务列表。
+                    let kind = match (kind, open.is_task) {
+                        (Some(BlockKind::List { .. }), true) => BlockKind::TaskList {
+                            items: std::mem::take(&mut open.items),
+                        },
+                        (Some(BlockKind::List { ordered, .. }), false) => BlockKind::List {
+                            ordered,
+                            items: std::mem::take(&mut open.items),
+                        },
+                        (Some(BlockKind::Table { .. }), _) => BlockKind::Table {
+                            data: TableData::new(
+                                std::mem::take(&mut open.header),
+                                std::mem::take(&mut open.rows),
+                                std::mem::take(&mut open.aligns),
+                            ),
+                        },
+                        (Some(BlockKind::Paragraph), _) if promoted_math.is_some() => {
+                            BlockKind::Math { display: true }
+                        }
+                        (Some(kind), _) => kind,
+                        // `kind` 为 None 说明是无需产出块的标签，已在上面 continue。
+                        (None, _) => continue,
+                    };
+
+                    // 公式块的content 存**公式本体**（不含`$$`），
+                    // 表现层直接展示 / 复制，无需再剥分隔符。
+                    //
+                    // 区间要在移动 `content` **之前**算好：`range()` 借用 `self`，
+                    // 先移走字段再借用会触发 E0382（部分移动后借用）。
+                    let range = open.range(end, text);
+                    let content = match promoted_math {
+                        Some(body) if matches!(kind, BlockKind::Math { .. }) => body,
+                        _ => open.content,
+                    };
+
+                    blocks.push(RenderedBlock::new(
+                        BlockId::from_u64(next_id),
+                        kind,
+                        range,
+                        content,
+                    ));
+                    next_id += 1;
+                }
+
+                // ---- 行内事件：文本并入**最近的产出块**的栈帧 ----
+                //
+                // 注意不能简单地写入 `stack.last_mut()`：`这是 **粗体**` 这样的文本
+                // 在事件流里是 `Start(Paragraph) Text Start(Strong) Text End(Strong) Text`，
+                // 处理 `Text` 时栈顶是**行内**的 `Strong` 帧。若写进去，
+                // 文本会随该帧一起被丢弃——表现为 `content` 出现空洞
+                // （曾实测 `这是 **粗体** 与 ` + "`代码`" + ` 文本` 变成 `这是  与 代码 文本`）。
+                Event::Text(t) => {
+                    push_content(&mut stack, &t);
+                }
+                Event::Code(t) => {
+                    push_content(&mut stack, &t);
+                }
+                Event::Html(t) | Event::InlineHtml(t) => {
+                    push_content(&mut stack, &t);
+                }
+                Event::SoftBreak | Event::HardBreak => {
+                    push_content(&mut stack, "\n");
+                }
+                Event::InlineMath(t) => {
+                    // 行内公式是**段落内容的一部分**，不独立成块：`$...$` 前后
+                    // 通常还有正文，独立成块会把一句话拆成三块、破坏段落语义。
+                    // 补回 `$` 分隔符，让 `content` 仍是可搜索的原文。
+                    push_content(&mut stack, &format!("${t}$"));
+                }
+                Event::DisplayMath(t) => {
+                    // 块级公式同理并入当前块内容；`$$` 换行写法在 pulldown 里
+                    // 会带上首尾换行，trim 后再补分隔符避免出现空公式。
+                    push_content(&mut stack, &format!("$${}\n$$", t.trim()));
+                }
+                Event::FootnoteReference(label) => {
+                    push_content(&mut stack, &format!("[^{label}]"));
+                }
+                // 任务列表标记：落到**列表项**帧（列表项已能收集自己的文本），
+                // 并记录该 `Range` 的勾选状态以便 S6-05 渲染复选框、回写源码。
+                // 标记文本仍并进内容（`- [x] ` 的勾选状态是 Outliner 与搜索需要的信息）。
+                Event::TaskListMarker(checked) => {
+                    push_content(&mut stack, if checked { "[x] " } else { "[ ] " });
+                    if let Some(item) = stack.iter_mut().rev().find(|f| f.is_item) {
+                        item.item_checked = Some(checked);
+                    }
+                }
+
+                // 分割线：pulldown 把它作为独立事件（无配对标签），
+                // 故当场产出一个 `Rule` 块，区间取事件自带偏移
+                //（同样裁掉尾随换行，避免与相邻块区间重叠）。
+                Event::Rule => {
+                    let mut stop = range.end;
+                    while stop > range.start
+                        && matches!(text.as_bytes().get(stop - 1), Some(b'\n') | Some(b'\r'))
+                    {
+                        stop -= 1;
+                    }
+                    blocks.push(RenderedBlock::new(
+                        BlockId::from_u64(next_id),
+                        BlockKind::Rule,
+                        TextRange::new(ByteOffset::new(range.start), ByteOffset::new(stop)),
+                        String::new(),
+                    ));
+                    next_id += 1;
+                }
+            }
+        }
+
+        // 防御：若文档以未闭合块结尾（理论上不会），补齐为块而非丢弃内容。
+        for open in stack.into_iter().rev() {
+            // 只补齐「本应产出块」的标签；行内标签与列表项不补。
+            if let Some(kind) = open.kind.clone() {
+                let end = open.start;
+                blocks.push(RenderedBlock::new(
+                    BlockId::from_u64(next_id),
+                    kind,
+                    open.range(end, text),
+                    open.content,
+                ));
+                next_id += 1;
+            }
+        }
+
+        // 领域层契约：块必须按 `source_range.start` 升序排列，否则
+        // `BlockMapper::offset_to_block` 的查找会失效（`FR-02` 依赖此前提）。
+        blocks.sort_by_key(|block| (block.source_range().start(), block.id()));
+
+        Ok(blocks)
+    }
+}

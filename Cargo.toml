@@ -1,0 +1,182 @@
+[package]
+name = "rustmark"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+license = "MIT OR Apache-2.0"
+description = "原生轻量级 Markdown 编辑器（Rust 2024 + egui + wgpu）"
+publish = false
+
+# 项目有两个二进制目标（rustmark 编辑器 / check-arch 架构校验器），
+# 不设 default-run 时 `cargo run` 会报「无法确定要运行哪个二进制」。
+# 设为 rustmark 后，裸 `cargo run` 即等价于 `cargo run --bin rustmark`。
+default-run = "rustmark"
+
+# 需求文档 §7.1 未列出 lib.rs，但集成测试（tests/domain 等）必须能引用 crate 内模块，
+# 故采用 lib + bin 双目标：src/lib.rs 声明全部模块，src/main.rs 仅作为薄入口调用 crate::app。
+[lib]
+name = "rustmark"
+path = "src/lib.rs"
+
+[[bin]]
+name = "rustmark"
+path = "src/main.rs"
+
+[[bin]]
+name = "check-arch"
+path = "src/bin/check-arch.rs"
+
+[dependencies]
+# --- UI（ADR-001：egui 原生，wgpu 后端）---
+# 注意：eframe 0.33.3 的 default 渲染后端是 glow(OpenGL)，需求 §5.1 要求 wgpu，
+# 故关闭 default 并显式启用 wgpu + 必要的平台特性，避免同时编译两个渲染后端。
+egui = { version = "0.33.3", default-features = false, features = ["default_fonts"] }
+eframe = { version = "0.33.3", default-features = false, features = [
+    "accesskit",
+    "default_fonts",
+    "wgpu",
+    "x11",
+    "wayland",
+] }
+
+# --- 解析与高亮（ADR-002）---
+# GFM 表格/任务列表/脚注为运行期 Options，非 feature；html 为 HTML 导出（S5-09）所必需。
+# simd 待三平台验证后再决定是否启用。
+pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
+# syntect 只保留「解析 + 语法集」两项能力：
+# - 不启用 `default-themes`：领域层 SpanStyle 是自有枚举，配色由表现层决定，
+#   主题包（数百 KB）对本项目毫无用处，却会被静态链入产物（S5-03 体积硬指标）。
+# - 不启用 `yaml-load` / `plist-load`：运行期只读内嵌 packdump，从不解析语法源文件。
+# - 保留 `regex-fancy`：纯 Rust 实现，避免 onig（需 C 库与 C 编译器）。
+syntect = { version = "5.3.0", default-features = false, features = [
+    "parsing",
+    "default-syntaxes",
+    "dump-load",
+    "regex-fancy",
+] }
+
+# --- 图片解码（S6-05 预览区显示图片）---
+# `image` 已由 eframe（经 arboard）引入依赖图，直接依赖不额外增大产物体积。
+# 只启用资源加载器白名单里的位图格式；**不启 svg**（SVG 可携带 <script>，
+# 见 asset_loader.rs 的安全说明），且关闭 default 以避开无关编码器。
+image = { version = "0.25", default-features = false, features = [
+    "png",
+    "jpeg",
+    "gif",
+    "webp",
+    "bmp",
+] }
+
+# --- 文本缓冲 ---
+ropey = "1.6.1"
+
+# --- 对话框 ---
+rfd = "0.17.2"
+
+# --- 配置与序列化 ---
+serde = { version = "1", features = ["derive"] }
+toml = "0.9.6"
+
+# --- 错误处理 ---
+thiserror = "2"
+anyhow = "1"
+
+# --- 日志（基础设施层越界告警用；未列入需求 §5.1，已在 docs/dependencies.md 登记）---
+log = "0.4"
+
+# --- wgpu 后端（DEF-03：必须显式声明，否则应用启动即 panic）---
+#
+# 背景：需求 §5.1 要求 wgpu 后端，故对 eframe 关闭了 default（避免同时编译 glow
+# 与 wgpu 两个后端）。但 wgpu 的**后端 feature**（dx12 / metal / vulkan / gles）
+# 只存在于 `wgpu/default`，而启用它的路径是：
+#     eframe/default → egui-wgpu/default → wgpu/default
+# eframe 声明 egui-wgpu 时也用了 `default-features = false`，于是这条链整体断开：
+# wgpu 只剩 `std` + `wgsl`（wgpu-core 编译进来了，但零后端），
+# `wgpu::Instance::new` 直接 panic：
+#     "No wgpu backend feature that is implemented for the target platform was enabled."
+#
+# 结论：**关掉 eframe 的 default 后必须自己补 wgpu 后端 feature**。
+# 这里按平台各启**一个**后端（体积增量最小，见 docs/metrics.md §2.3），
+# 而不是开 `wgpu/default`（那会在每个平台都编译用不到的后端）。
+#
+# `wgpu` 是本已在依赖树内的 crate（经 eframe 引入），此处只是补一份直接声明
+# 以便打开 feature；应用代码不直接调用它，唯一引用是 tests/startup_smoke.rs 的守卫断言。
+[target.'cfg(target_os = "windows")'.dependencies]
+wgpu = { version = "27.0.1", default-features = false, features = ["std", "dx12"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+wgpu = { version = "27.0.1", default-features = false, features = ["std", "metal"] }
+
+[target.'cfg(not(any(target_os = "windows", target_os = "macos")))'.dependencies]
+wgpu = { version = "27.0.1", default-features = false, features = [
+    "std",
+    "vulkan",
+    "gles",
+] }
+
+[dev-dependencies]
+tempfile = "3"
+
+# 需求文档 §8.1 体积优化配置
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+# 阶段 05 出口验收目标（golden 语料 + 性能基线）。
+[[test]]
+name = "integration"
+path = "tests/integration/main.rs"
+
+# 组合根与调度（S6-01）：唯一能同时看见四层的地方，必须有独立测试目标。
+[[test]]
+name = "app"
+path = "tests/app/main.rs"
+
+# ————————————————————————————————————————————————————————————
+# S9-01 · 测试金字塔的显式目标声明
+#
+# 测试按层分目录，每层一个 `main.rs` 入口（harness）。目录即分层：
+# `tests/domain/` 纯领域单测、`tests/application/` fake 依赖用例、
+# `tests/infrastructure/` 适配器与 golden、`tests/integration/` 跨层 +
+# 真实 tempdir、`tests/e2e/` 可自动化端到端；另有 `tests/shared/`
+# （shared 层单测）、`tests/presentation/`（表现层，egui CPU 布局）。
+# 虽然 Cargo 的自动发现也能找到它们，但**显式声明**让「删掉一个入口
+# 文件 = 从构建里移除该层」成为有意识的决定，而不是静默的文件系统巧合。
+# ————————————————————————————————————————————————————————————
+
+[[test]]
+name = "domain"
+path = "tests/domain/main.rs"
+
+[[test]]
+name = "application"
+path = "tests/application/main.rs"
+
+[[test]]
+name = "infrastructure"
+path = "tests/infrastructure/main.rs"
+
+[[test]]
+name = "presentation"
+path = "tests/presentation/main.rs"
+
+[[test]]
+name = "shared"
+path = "tests/shared/main.rs"
+
+[[test]]
+name = "e2e"
+path = "tests/e2e/main.rs"
+
+# 启动冒烟（DEF-03 教训：守「能编译、能过测试、但启动即崩」的配置型缺陷）。
+[[test]]
+name = "startup_smoke"
+path = "tests/startup_smoke.rs"
+
+# 架构校验器自身的验证（S2-07）：零违规 + 注入违规必被检出。
+[[test]]
+name = "arch_violation_fixture"
+path = "tests/arch_violation_fixture.rs"

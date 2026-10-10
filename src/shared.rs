@@ -1,0 +1,25 @@
+//! 共享内核（Shared Kernel）。
+//!
+//! 可被任意层依赖，但自身**不得依赖** `domain` / `application` /
+//! `infrastructure` / `presentation`（见 `.agent/architecture.md`）。
+//!
+//! - [`error`] / [`result`]：统一错误与结果类型
+//! - [`ids`]：强类型标识符
+//! - [`geometry`]：文本坐标值对象
+//! - [`event`]：领域事件与事件总线抽象
+//! - [`dialog`]：原生对话框端口（S5-08）
+//! - [`encoding`]：文本编码标签（纯值，V11-03）
+//! - [`path`]：路径值对象（`FilePath`）
+//! - [`time`]：时间戳与可注入时钟
+
+#![deny(clippy::unwrap_used, clippy::expect_used)]
+
+pub mod dialog;
+pub mod encoding;
+pub mod error;
+pub mod event;
+pub mod geometry;
+pub mod ids;
+pub mod path;
+pub mod result;
+pub mod time;

@@ -1,0 +1,10 @@
+片段数: 9
+0..2 Keyword "if"
+3..8 Function "[ -f "
+8..12 String "\"$1\""
+12..14 Function " ]"
+14..15 Operator ";"
+16..20 Keyword "then"
+23..28 Function "echo "
+28..45 String "\"# not a comment\""
+46..48 Keyword "fi"

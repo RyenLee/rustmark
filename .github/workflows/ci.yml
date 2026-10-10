@@ -1,0 +1,232 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # 手动触发：`size_limit_bytes` 可临时调低，用来验证体积门禁**确实会红**
+  # （验收标准 S8-07：人为把阈值调低可验证门禁 fail）。
+  workflow_dispatch:
+    inputs:
+      size_limit_bytes:
+        description: "体积红线（字节）；默认 10485760 = 10 MB"
+        required: false
+        default: "10485760"
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+  # 体积门禁：红线 10 MB（`§1.2` 硬指标），预警线 8 MB（需求 §8.1）。
+  SIZE_LIMIT_BYTES: ${{ github.event.inputs.size_limit_bytes || '10485760' }}
+  SIZE_WARN_BYTES: '8388608'
+
+jobs:
+  check:
+    name: ${{ matrix.os }} / check + test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-20.04]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.99.0
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo fmt --check
+        run: cargo fmt --check
+
+      - name: cargo clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: cargo check
+        run: cargo check --all-targets
+
+      - name: cargo test
+        run: cargo test --all-targets
+
+      - name: Architecture boundary check
+        run: cargo run --bin check-arch
+
+      - name: cargo build --release
+        run: cargo build --release
+
+      # S8-07 ①：体积门禁。
+      #
+      # 与上一版（只打印不判定）的差别：**超红线即 fail**，预警线只告警。
+      # 阈值可由 `workflow_dispatch` 的 `size_limit_bytes` 覆盖，
+      # 以便人为验证门禁真的会红。
+      - name: Binary size gate
+        shell: bash
+        run: |
+          # 产物路径随是否指定 --target 而不同：显式 target 时为
+          # target/<triple>/release/，否则为 target/release/。此处两者都找。
+          BIN=$(find target -type f \( -name 'rustmark' -o -name 'rustmark.exe' \) \
+                -path '*release*' -not -path '*/deps/*' | head -1)
+          if [ -z "$BIN" ]; then
+            echo "::error::未找到 release 产物，体积门禁无法判定"
+            exit 1
+          fi
+          SIZE=$(wc -c < "$BIN")
+          MB=$(awk "BEGIN{printf \"%.3f\", $SIZE/1048576}")
+          LIMIT_MB=$(awk "BEGIN{printf \"%.3f\", $SIZE_LIMIT_BYTES/1048576}")
+          WARN_MB=$(awk "BEGIN{printf \"%.3f\", $SIZE_WARN_BYTES/1048576}")
+          echo "release 产物：$BIN"
+          echo "字节数：$SIZE（${MB} MB）｜预警线 ${WARN_MB} MB，红线 ${LIMIT_MB} MB"
+          {
+            echo "### 体积（${{ matrix.os }}）"
+            echo ""
+            echo "- 产物：$BIN"
+            echo "- 字节数：**$SIZE**（${MB} MB）"
+            echo "- 预警线 ${WARN_MB} MB / 红线 ${LIMIT_MB} MB"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$SIZE" -gt "$SIZE_LIMIT_BYTES" ]; then
+            echo "::error::release 产物 ${MB} MB 超过红线 ${LIMIT_MB} MB（$SIZE > $SIZE_LIMIT_BYTES 字节）"
+            exit 1
+          fi
+          if [ "$SIZE" -gt "$SIZE_WARN_BYTES" ]; then
+            echo "::warning::release 产物 ${MB} MB 已超过预警线 ${WARN_MB} MB，距红线仅剩 $((SIZE_LIMIT_BYTES - SIZE)) 字节"
+          fi
+
+      # S8-07 ③：`cargo bloat` 逐 crate 归因作为构建摘要。
+      #
+      # 装在 CI 上要现编译，失败或超时都不该让整个 CI 变红（它只是诊断信息），
+      # 故 `continue-on-error`。
+      - name: cargo bloat summary
+        shell: bash
+        continue-on-error: true
+        run: |
+          cargo install cargo-bloat --locked
+          {
+            echo "### 逐 crate 体积归因（cargo bloat --crates 15）"
+            echo ""
+            echo '```'
+            cargo bloat --release --bin rustmark --crates 15 || echo "(cargo bloat 不可用)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # S8-07 ②：性能冒烟。
+  #
+  # 跑两类自带阈值断言的用例：
+  #   - `measure_*`：10KB 解析 / 语法集加载 / 编辑区高亮帧 / 1MB 降级帧等微基准；
+  #   - `large_*`：1MB 全文查找 / 解析 / 首屏 / 滚动映射的耗时门禁（V11-13 裁定：
+  #     这些门禁阈值**只在 release 生效**，故必须在此 release 步骤里跑，否则
+  #     debug 的 `check` job 会因 debug 吞吐偏低而误判）。
+  # 它们超阈值会 fail。选 Linux 单平台：跨平台的绝对数字不可比（需求 §8 风险表
+  # 已注明「基准不稳定导致 CI 抖动」→ 标记为仅 Linux 必过）。
+  perf:
+    name: perf smoke (linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.99.0
+
+      - uses: Swatinem/rust-cache@v2
+
+      # release 下跑：debug 吞吐低 40%，会把达标项误判为不达标。
+      # `--test-threads=1`：基准与 CPU 争抢敏感，并行跑会互相污染。
+      - name: Micro-benchmarks (release)
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --release --test integration -- --nocapture --test-threads=1 measure large \
+            | tee integration-perf.log
+          cargo test --release --test presentation -- --nocapture --test-threads=1 measure \
+            | tee presentation-perf.log
+          {
+            echo "### 性能冒烟（release / Linux）"
+            echo ""
+            echo '```'
+            grep -h '\[metrics\]' integration-perf.log presentation-perf.log || echo "(无 metrics 输出)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # S9-02：覆盖率门禁。
+  #
+  # 单平台（Linux）足够：覆盖率是代码属性，不是平台属性；
+  # 三平台各跑一遍 llvm-cov 只是三倍的时间换不出三倍的信息。
+  # 门禁判定在 tools/coverage_gate.py（整体 ≥70%、领域 ≥90%，
+  # 2% 缓冲区内 WARN），排除清单与理由见 docs/testing.md。
+  coverage:
+    name: coverage gate (linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.99.0
+          components: llvm-tools-preview
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-llvm-cov
+        run: cargo install cargo-llvm-cov --locked
+
+      - name: Generate coverage report
+        run: |
+          # V11-13：全文查找性能用例的耗时门禁已改为只在 release 生效，
+          # debug（含覆盖率插桩）下仅打印指标，不再需要 --skip 掩去。
+          cargo llvm-cov --all-targets --lcov --output-path lcov.info --
+
+      - name: Coverage gate
+        shell: bash
+        run: |
+          python3 tools/coverage_gate.py lcov.info | tee coverage-summary.txt
+          {
+            echo "### 覆盖率门禁"
+            echo ""
+            echo '```'
+            cat coverage-summary.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # S9-06：离线预发布演练。
+  #
+  # 完整演练需要远端与三平台真机（docs/release.md §4），CI 补不了这一半。
+  # 但**不依赖远端**的环节——版本守卫（含红路径）、校验和汇总与校验（含篡改
+  # 红路径）、Release Notes 阶段归组、无私钥入仓、回滚步骤——可由
+  # tools/release_dryrun.py 常态化验证，防发布流程腐化。
+  # 无 dist/ 产物时校验和项自动 WARN 跳过（不计失败），其余项照常判定。
+  release-dryrun:
+    name: release dry-run (linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Offline release dry-run
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 tools/release_dryrun.py | tee dryrun-summary.txt
+          {
+            echo "### 离线预发布演练（S9-06）"
+            echo ""
+            echo '```'
+            cat dryrun-summary.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  deny:
+    name: licenses / advisories
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.99.0
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked || true
+      - name: cargo deny check
+        run: cargo deny check licenses advisories bans sources

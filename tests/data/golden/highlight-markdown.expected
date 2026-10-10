@@ -1,0 +1,6 @@
+片段数: 5
+2..8 Heading { level: 1 } "标题"
+10..12 Strong "**"
+18..20 Strong "**"
+24..25 Code "`"
+31..32 Code "`"
