@@ -8,12 +8,12 @@
 //! |---|---|---|
 //! | HTML | ✅ 可用 | `PulldownHtmlExporter`，含 TOC 与内联图片 |
 //! | Markdown | ✅ 可用 | 直接写源码 |
-//! | PDF | ⛔ 界面暂未开放 | 基础设施已就绪（系统打印管线，ADR-004）；开放决策记 v1.1 |
+//! | PDF | ✅ 可用（V11-04） | 装有 Edge / Chrome 时直接落盘；否则经系统打印对话框 |
 //! | 图片 | ✅ 可用（P2） | **视口截图**：截取当前预览区所见 |
 //!
-//! PDF **仍出现在选择列表里**，但标注不可用并说明原因。
-//! 从列表里删掉会让用户以为这功能从不存在；而「存在但明确告知尚未实现」
-//! 才诚实（也与应用层 `create_job`、基础设施 `RoutingExporter` 的错误文案一致）。
+//! PDF 的两种产出方式要在用户点导出**之前**讲清楚
+//!（`ExportFormatChoice::pdf_caveat`）：「目标 `.pdf` 没出现」在经对话框那条路上是
+//! **正常**的，不预告就会被当成失败。
 //!
 //! # 图片导出：视口截图与整篇长图
 //!
@@ -363,10 +363,11 @@ fn run_export(app: &mut EditorApp, pixels_per_point: f32) {
     };
     match app.export_current_document(request, &path) {
         Ok(result) => {
-            if app.export_ui.format == ExportFormatChoice::Pdf {
-                // PDF 的 `bytes` 恒为 0（产物由系统打印对话框产出，本进程
-                // 拿不到最终大小）。显示「已导出 xxx（0 字节）」会让人以为失败，
-                // 故改述实际行动：已调起打印，请到对话框里另存为 PDF（V11-04）。
+            if app.export_ui.format == ExportFormatChoice::Pdf && result.bytes == 0 {
+                // PDF 有两种产出方式，靠 `bytes` 区分：
+                // - 直接落盘（无头内核）：`bytes > 0`，走下面的通用文案；
+                // - 经系统打印对话框：本进程拿不到最终大小，`bytes` 恒为 0。
+                //   显示「已导出 xxx（0 字节）」会让人以为失败，故改述实际行动。
                 app.export_ui.succeed(format!(
                     "已生成打印用 HTML 并调起系统打印（目标 {}）：请在对话框中选择「另存为 PDF」",
                     result.output_path.as_str()

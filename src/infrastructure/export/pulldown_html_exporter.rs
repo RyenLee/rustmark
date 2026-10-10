@@ -126,20 +126,24 @@ pre,table,img{page-break-inside:avoid}}
 
 /// 组装完整 HTML 文档。
 ///
+/// `extra_style` 追加在 [`PAGE_STYLE`] **之后**（同名规则后者胜），
+/// 打印专用规则（`@page` 纸张尺寸）靠它注入——放在前面会被基础样式压住。
+///
 /// 正文含公式 / Mermaid 图表时，`<head>` 注入对应的渲染资源（见
 /// [`runtime_resources`]）：没有这类内容时**不注入任何外链**，
 /// 普通文档的导出件保持「零脚本」性质。
-fn wrap_document(title: &str, body: &str) -> String {
+fn wrap_document(title: &str, body: &str, extra_style: &str) -> String {
     format!(
         "<!DOCTYPE html>\n<html lang=\"zh-CN\">\n<head>\n\
 <meta charset=\"utf-8\">\n\
 <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n\
 <title>{title}</title>\n\
-<style>\n{style}\n</style>\n\
+<style>\n{style}\n{extra}</style>\n\
 {resources}\
 </head>\n<body>\n{body}\n</body>\n</html>\n",
         title = escape_text(title),
         style = PAGE_STYLE,
+        extra = extra_style,
         resources = runtime_resources(body),
         body = body,
     )
@@ -230,8 +234,11 @@ window.addEventListener('DOMContentLoaded', function () {
 /// 故没有脚本注入面。这一点必须在注释里写明，否则后人会
 /// 「为了安全」给这里也加上清洗——而清洗会连本导出器生成的
 /// `<style>` 一起剥掉，打印出来就是无样式的裸文档。
-pub fn build_printable_document(title: &str, body: &str) -> String {
-    wrap_document(title, body)
+///
+/// `extra_style` 是**打印专用**样式的追加位（目前用于把用户选的纸张尺寸
+/// 写成 `@page`）。导出 HTML 的读者是浏览器、纸张由浏览器决定，故那边不传。
+pub fn build_printable_document(title: &str, body: &str, extra_style: &str) -> String {
+    wrap_document(title, body, extra_style)
 }
 
 /// 文本转义（用于标题等文本节点）。
@@ -273,7 +280,7 @@ impl PulldownHtmlExporter {
         };
         // 只清洗**正文 + TOC**（不可信来源），骨架在清洗之外。
         let safe_body = sanitize_html(&with_toc);
-        wrap_document(&title, &safe_body)
+        wrap_document(&title, &safe_body, "")
     }
 }
 

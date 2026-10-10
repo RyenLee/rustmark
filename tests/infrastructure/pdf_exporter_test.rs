@@ -10,22 +10,36 @@ use std::sync::{Arc, Mutex};
 use rustmark::domain::export::aggregate::ExportJob;
 use rustmark::domain::export::errors::ExportError;
 use rustmark::domain::export::services::Exporter;
-use rustmark::domain::export::value_objects::{ExportFormat, ExportOptions};
+use rustmark::domain::export::value_objects::{ExportFormat, ExportOptions, PageSize};
 use rustmark::infrastructure::export::system_pdf_exporter::{
-    CommandProbe, PathProbe, PrintDispatcher, SystemPdfExporter,
+    CommandProbe, PathProbe, PrintDispatcher, PrintOutcome, SystemPdfExporter,
 };
 use rustmark::shared::ids::{DocumentId, JobId};
 use rustmark::shared::path::FilePath;
 
-/// 只认白名单里命令的假探测器。
+/// 只认白名单里命令 / 路径的假探测器。
 struct FakeProbe {
     available: Vec<&'static str>,
+    /// 「磁盘上存在」的绝对路径。
+    ///
+    /// 单独一份而不是复用 `available`：Chromium 系浏览器装在固定位置、
+    /// **不进 PATH**，探测它的方式与探测 `powershell` / `lp` 不同。
+    files: Vec<&'static str>,
 }
 
 impl FakeProbe {
     fn with(commands: &[&'static str]) -> Self {
         Self {
             available: commands.to_vec(),
+            files: Vec::new(),
+        }
+    }
+
+    /// 假机器上装了一个 Chromium 系浏览器（路径与真机候选一致）。
+    fn with_browser(browser: &'static str) -> Self {
+        Self {
+            available: Vec::new(),
+            files: vec![browser],
         }
     }
 
@@ -33,6 +47,7 @@ impl FakeProbe {
     fn empty() -> Self {
         Self {
             available: Vec::new(),
+            files: Vec::new(),
         }
     }
 }
@@ -41,40 +56,68 @@ impl CommandProbe for FakeProbe {
     fn exists(&self, command: &str) -> bool {
         self.available.contains(&command)
     }
+
+    fn path_exists(&self, path: &str) -> bool {
+        self.files.contains(&path)
+    }
 }
 
-/// 记录型打印调度：不碰系统，只记下「被要求打印哪个文件」（V11-04）。
+/// 真机上 Edge 的默认安装路径（候选列表里的第一条）。
+const EDGE_PATH: &str = r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe";
+/// 真机上 Chrome 的默认安装路径。
+const CHROME_PATH: &str = r"C:\Program Files\Google\Chrome\Application\chrome.exe";
+
+/// 记录型打印调度：不碰系统，只记下「被要求打印什么、目标在哪」（V11-04）。
 ///
-/// PDF 开放后，真实调度会弹出打印对话框——测试里必须替换掉这一步，
+/// 真实调度会真的调起浏览器 / 弹打印对话框——测试里必须替换掉这一步，
 /// 否则 CI 会被弹窗挂住。
 struct FakeDispatcher {
-    calls: Mutex<Vec<PathBuf>>,
-    fail: bool,
+    calls: Mutex<Vec<(PathBuf, PathBuf)>>,
+    /// 调度的结果：`Ok` 里是要回报的产物形态。
+    outcome: Result<PrintOutcome, String>,
 }
 
 impl FakeDispatcher {
-    fn ok() -> Self {
+    /// 直接落盘 PDF 的调度（模拟「本机有 Edge / Chrome」）。
+    fn writes(bytes: u64) -> Self {
         Self {
             calls: Mutex::new(Vec::new()),
-            fail: false,
+            outcome: Ok(PrintOutcome::Wrote(bytes)),
         }
     }
 
-    fn printed(&self) -> Vec<PathBuf> {
+    /// 交给系统对话框的调度（模拟「只有 PowerShell / lp」）。
+    fn delegates() -> Self {
+        Self {
+            calls: Mutex::new(Vec::new()),
+            outcome: Ok(PrintOutcome::Delegated),
+        }
+    }
+
+    /// 调度失败。
+    fn failing() -> Self {
+        Self {
+            calls: Mutex::new(Vec::new()),
+            outcome: Err("模拟：系统打印命令失败".to_string()),
+        }
+    }
+
+    fn printed(&self) -> Vec<(PathBuf, PathBuf)> {
         self.calls.lock().expect("调度记录锁").clone()
     }
 }
 
 impl PrintDispatcher for FakeDispatcher {
-    fn print(&self, html_path: &std::path::Path) -> Result<(), String> {
+    fn print(
+        &self,
+        html_path: &std::path::Path,
+        pdf_path: &std::path::Path,
+    ) -> Result<PrintOutcome, String> {
         self.calls
             .lock()
             .expect("调度记录锁")
-            .push(html_path.to_path_buf());
-        if self.fail {
-            return Err("模拟：系统打印命令失败".to_string());
-        }
-        Ok(())
+            .push((html_path.to_path_buf(), pdf_path.to_path_buf()));
+        self.outcome.clone()
     }
 }
 
@@ -125,17 +168,79 @@ fn current_platform_backend_is_detected_when_available() {
     assert!(backend.reason.is_empty(), "可用时 reason 应为空串");
 }
 
-/// Windows 优先用 PowerShell（系统自带，不依赖用户装了浏览器）。
+/// Windows：**优先**无头 Chromium（Edge → Chrome），它才直接落盘 PDF。
+///
+/// 原实现优先 PowerShell，理由是「系统自带、不依赖浏览器」；但
+/// `Start-Process -Verb PrintTo` 走的是注册表里 `htmlfile\shell\printto`
+/// 指向的 `rundll32 mshtml.dll,PrintHTML`——已废弃的 MSHTML 引擎，
+/// 且必须经打印对话框。本机实测 Edge 的 `--print-to-pdf` 静默产出真 PDF，
+/// 故改为浏览器优先、PowerShell 兜底。
 #[test]
 #[cfg(target_os = "windows")]
-fn windows_prefers_powershell_over_browser() {
+fn windows_prefers_headless_browser_and_reports_direct_writes() {
+    let edge = SystemPdfExporter::detect(&FakeProbe::with_browser(EDGE_PATH));
+    assert!(edge.available);
+    assert_eq!(edge.command, "msedge");
+    assert!(edge.writes_pdf, "无头内核会直接产出 PDF 文件");
+
+    let chrome = SystemPdfExporter::detect(&FakeProbe::with_browser(CHROME_PATH));
+    assert_eq!(chrome.command, "chrome");
+    assert!(chrome.writes_pdf);
+
+    // Edge 与 Chrome 都在时选 Edge（系统预装，覆盖率更高）。
+    let both = FakeProbe {
+        available: Vec::new(),
+        files: vec![EDGE_PATH, CHROME_PATH],
+    };
+    assert_eq!(SystemPdfExporter::detect(&both).command, "msedge");
+}
+
+/// 没有浏览器时退回 PowerShell：仍可用，但要经打印对话框。
+#[test]
+#[cfg(target_os = "windows")]
+fn windows_falls_back_to_powershell_dialog_when_no_browser() {
     let backend = SystemPdfExporter::detect(&FakeProbe::with(&["powershell"]));
     assert!(backend.available);
     assert_eq!(backend.command, "powershell");
+    assert!(
+        !backend.writes_pdf,
+        "`printto` 动词要经系统打印对话框，不能承诺直接落盘"
+    );
 
     // pwsh（PowerShell 7）也应被接受。
     let backend = SystemPdfExporter::detect(&FakeProbe::with(&["pwsh"]));
     assert!(backend.available);
+}
+
+/// `file:///` URL 必须对空格与非 ASCII 做百分号编码。
+///
+/// 不编码的后果不是「报错」而是**静默找错文件**：命令行里的地址在第一个
+/// 空格处就被截断，浏览器打开/打印的是另一个路径（或压根不存在）。
+#[test]
+fn file_url_percent_encodes_spaces_and_non_ascii() {
+    // 纯 ASCII 路径保持原样，只把 `\` 换成 `/`。
+    assert_eq!(
+        rustmark::infrastructure::export::system_pdf_exporter::file_url(std::path::Path::new(
+            r"D:\downloads\Mdown\1.print.html"
+        )),
+        "file:///D:/downloads/Mdown/1.print.html"
+    );
+
+    // 空格 → %20；中文按 UTF-8 逐字节编码。
+    let encoded = rustmark::infrastructure::export::system_pdf_exporter::file_url(
+        std::path::Path::new("D:/我的 文档/1.print.html"),
+    );
+    assert!(
+        encoded.starts_with("file:///D:/"),
+        "盘符与冒号不该被编码：{encoded}"
+    );
+    assert!(encoded.contains("%20"), "空格必须编码：{encoded}");
+    assert!(!encoded.contains(' '), "编码后不该再有裸空格：{encoded}");
+    assert!(encoded.is_ascii(), "编码后应全是 ASCII：{encoded}");
+    assert!(
+        encoded.ends_with("1.print.html"),
+        "末尾的文件名该保持可读：{encoded}"
+    );
 }
 
 /// 非 Windows 平台：`lp` 优先于 `lpstat`。
@@ -194,7 +299,7 @@ fn markdown_format_is_rejected_by_pdf_exporter() {
 fn pdf_export_without_backend_fails_cleanly() {
     // 探测已可注入（V11-04），故这条用例在任何机器上都**确定**地走
     // 「无后端」分支：不再依赖本机有没有装打印服务，也不会误弹打印对话框。
-    let dispatcher = Arc::new(FakeDispatcher::ok());
+    let dispatcher = Arc::new(FakeDispatcher::writes(1));
     let exporter = SystemPdfExporter::with_probe_and_dispatcher(
         Arc::new(FakeProbe::empty()),
         dispatcher.clone(),
@@ -228,12 +333,12 @@ fn real_probe_does_not_panic_and_returns_a_decision() {
     }
 }
 
-/// PDF **开放后**的端到端（V11-04）：打印用 HTML 落盘 → 调起打印 → 返回 0。
+/// PDF **两种产出方式**的端到端：打印用 HTML 落盘 → 调起调度 → 回报大小。
 ///
 /// 用假探测器（假装后端都在）+ 假调度（不碰系统）跑真实链路，
 /// 于是 CI 上既不装打印服务、也不弹对话框，仍能验证整条路径。
 #[test]
-fn pdf_export_writes_print_html_dispatches_print_and_reports_zero_bytes() {
+fn pdf_export_writes_print_html_and_dispatches_to_the_target_path() {
     let dir = tempfile::tempdir().expect("临时目录");
     let target = dir.path().join("doc.pdf");
     let path = FilePath::new(target.to_string_lossy().replace('\\', "/")).expect("路径应合法");
@@ -244,7 +349,7 @@ fn pdf_export_writes_print_html_dispatches_print_and_reports_zero_bytes() {
         ExportFormat::Pdf,
         ExportOptions::default_options(),
     );
-    let dispatcher = Arc::new(FakeDispatcher::ok());
+    let dispatcher = Arc::new(FakeDispatcher::delegates());
     let exporter = SystemPdfExporter::with_probe_and_dispatcher(
         Arc::new(FakeProbe::with(&["powershell", "pwsh", "lp", "lpstat"])),
         dispatcher.clone(),
@@ -254,8 +359,8 @@ fn pdf_export_writes_print_html_dispatches_print_and_reports_zero_bytes() {
         .export("# 标题\n\n正文\n", &job)
         .expect("后端可用 + 调度成功时应成功");
 
-    // 产物由用户在系统对话框里另存，本进程拿不到大小 → 约定返回 0。
-    assert_eq!(bytes, 0, "PDF 不经本进程落盘，bytes 约定为 0");
+    // 交给对话框那条路：产物由用户在对话框里另存，本进程拿不到大小 → 约定返回 0。
+    assert_eq!(bytes, 0, "交对话框时不落盘，bytes 约定为 0");
 
     // 落盘的是**打印用 HTML**（扩展名换成 .print.html），不是 .pdf。
     let html = dir.path().join("doc.print.html");
@@ -267,19 +372,43 @@ fn pdf_export_writes_print_html_dispatches_print_and_reports_zero_bytes() {
     let text = std::fs::read_to_string(&html).expect("打印用 HTML 应可读");
     assert!(text.contains("标题"), "打印用 HTML 应含渲染后的正文");
 
-    // 打印确实被调起一次，且交给它的是打印用 HTML。
+    // 打印确实被调起一次，且同时收到「渲染源」与「目标 PDF」两条信息：
+    // 无头内核需要目标路径才能直接落盘，只给 HTML 路径就退化成只能弹对话框。
     let calls = dispatcher.printed();
     assert_eq!(calls.len(), 1, "应调起一次系统打印");
-    assert_eq!(calls[0], html, "交给打印的必须是打印用 HTML");
+    assert_eq!(calls[0].0, html, "交给打印的必须是打印用 HTML");
+    assert_eq!(calls[0].1, target, "调度端还要知道 PDF 该写到哪");
+}
+
+/// 无头内核直接落盘时，必须回报**真实字节数**而不是 0。
+///
+/// 回报 0 会让界面把一次成功的直接导出说成「请在对话框里另存为 PDF」，
+/// 用户会跑去找一个并不存在的对话框。
+#[test]
+fn pdf_export_reports_real_size_when_written_directly() {
+    let dir = tempfile::tempdir().expect("临时目录");
+    let target = dir.path().join("direct.pdf");
+    let path = FilePath::new(target.to_string_lossy().replace('\\', "/")).expect("路径应合法");
+    let job = ExportJob::new(
+        JobId::new(),
+        DocumentId::new(),
+        path,
+        ExportFormat::Pdf,
+        ExportOptions::default_options(),
+    );
+    let exporter = SystemPdfExporter::with_probe_and_dispatcher(
+        Arc::new(FakeProbe::with_browser(EDGE_PATH)),
+        Arc::new(FakeDispatcher::writes(51_534)),
+    );
+
+    let bytes = exporter.export("# 标题\n", &job).expect("直接落盘应成功");
+    assert_eq!(bytes, 51_534, "应回报内核写出的真实字节数");
 }
 
 /// 调度失败（系统打印命令报错）必须明确报错，不能静默算成功。
 #[test]
 fn pdf_export_reports_dispatch_failure() {
-    let dispatcher = Arc::new(FakeDispatcher {
-        calls: Mutex::new(Vec::new()),
-        fail: true,
-    });
+    let dispatcher = Arc::new(FakeDispatcher::failing());
     let exporter = SystemPdfExporter::with_probe_and_dispatcher(
         Arc::new(FakeProbe::with(&["powershell", "pwsh", "lp", "lpstat"])),
         dispatcher,
@@ -292,5 +421,170 @@ fn pdf_export_reports_dispatch_failure() {
     assert!(
         error.to_string().contains("调用系统打印失败"),
         "错误应指向打印环节，实际：{error}"
+    );
+}
+
+/// 打印用 HTML 必须带上用户选的纸张尺寸（`@page`）。
+///
+/// 界面一直写着「纸张…会写入导出件的 `@page` 规则」，但打印样式表里
+/// 此前**一条 `@page` 都没有**，纸张选项从未生效。无头内核会按 `@page`
+/// 排版（A4 实测 595×842pt、A5 420×595pt），所以这条规则是真的有用的。
+#[test]
+fn print_html_carries_the_chosen_page_size() {
+    let dir = tempfile::tempdir().expect("临时目录");
+    let dest = FilePath::new(
+        dir.path()
+            .join("paper.pdf")
+            .to_string_lossy()
+            .replace('\\', "/"),
+    )
+    .expect("路径应合法");
+
+    let job_for = |size| {
+        ExportJob::new(
+            JobId::new(),
+            DocumentId::new(),
+            dest.clone(),
+            ExportFormat::Pdf,
+            ExportOptions::new(true, true, "default", size, true),
+        )
+    };
+
+    let a4 = SystemPdfExporter::build_print_html("# 标题\n", &job_for(PageSize::A4));
+    assert!(
+        a4.contains("@page{size:A4;"),
+        "A4 的 `@page` 规则缺失：{}",
+        a4.lines()
+            .find(|l| l.contains("@page"))
+            .unwrap_or("<无 @page>")
+    );
+
+    let letter = SystemPdfExporter::build_print_html("# 标题\n", &job_for(PageSize::Letter));
+    assert!(
+        letter.contains("@page{size:letter;"),
+        "Letter 的 `@page` 规则缺失"
+    );
+    assert!(!letter.contains("size:A4"), "换了纸张就不该还留着 A4 规则");
+}
+
+/// Windows 兜底命令：**路径只能走环境变量**，绝不能作为尾随参数。
+///
+/// 这条钉的是用户实际遇到的那个报错。`powershell -Command <脚本> <参数…>`
+/// 的尾随参数**不会**绑进 `$args`——实测
+/// `powershell -NoProfile -Command 'Write-Output "[$args]"' hello world`
+/// 输出 `[]`，且 `hello` / `world` 被当成脚本正文另起语句执行。
+/// 原实现写 `-FilePath $args[0]`，于是 `$args[0]` 恒为 `null`，
+/// `Start-Process` 直接报 `Cannot validate argument on parameter 'FilePath'`。
+///
+/// 这里不真的执行命令（那会弹出打印对话框），只检查命令的构造：
+/// 环境变量里有路径，命令行里没有路径。
+#[test]
+#[cfg(target_os = "windows")]
+fn powershell_fallback_passes_the_path_via_env_not_argv() {
+    let html = std::path::Path::new(r"D:\我的 文档\1.print.html");
+    let command = rustmark::infrastructure::export::system_pdf_exporter::shell_print_command(html);
+
+    let envs: Vec<(String, Option<String>)> = command
+        .get_envs()
+        .map(|(key, value)| {
+            (
+                key.to_string_lossy().into_owned(),
+                value.map(|v| v.to_string_lossy().into_owned()),
+            )
+        })
+        .collect();
+    assert!(
+        envs.iter()
+            .any(|(key, value)| key == "RUSTMARK_PRINT_SOURCE"
+                && value.as_deref() == Some(r"D:\我的 文档\1.print.html")),
+        "路径必须经环境变量传入，实际 {envs:?}"
+    );
+
+    let args: Vec<String> = command
+        .get_args()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    assert!(
+        !args
+            .iter()
+            .any(|a| a.contains("print.html") || a.contains("$args")),
+        "路径不能出现在命令行里，脚本也不能引用 `$args`（它拿不到尾随参数）：{args:?}"
+    );
+}
+
+/// 真实链路（需要本机装了 Edge / Chrome，否则跳过）：**走完整的 `export()`**，
+/// 检验磁盘上真的出现一个可用的 PDF。
+///
+/// 这是唯一能挡住「命令拼错、参数被吞、产物没落盘」这类问题的用例——
+/// 用户报的那个 bug 恰恰是**没人跑过真实命令**：单测全程用假调度，
+/// 命令能编译、探测也能通过，直到用户点导出才炸。
+#[test]
+#[cfg(target_os = "windows")]
+fn real_export_writes_a_real_pdf_to_the_chosen_path() {
+    let backend = SystemPdfExporter::detect(&PathProbe);
+    if !backend.writes_pdf {
+        eprintln!(
+            "跳过：本机未探测到 Edge / Chrome（探测结果 {}），真实链路无法验证",
+            backend.command
+        );
+        return;
+    }
+
+    let dir = tempfile::tempdir().expect("临时目录");
+    let target = dir.path().join("real.pdf");
+    let path = FilePath::new(target.to_string_lossy().replace('\\', "/")).expect("路径应合法");
+    let job = ExportJob::new(
+        JobId::new(),
+        DocumentId::new(),
+        path,
+        ExportFormat::Pdf,
+        ExportOptions::default_options(),
+    );
+
+    let bytes = SystemPdfExporter::new()
+        .export("# 中文标题\n\n正文探针\n", &job)
+        .expect(
+            "无头内核应能产出 PDF\
+             （若在受限沙箱里运行，子进程可能被静默拦截——换普通终端重跑）",
+        );
+
+    // 1) 用户选的路径上出现了真 PDF，且回报的字节数与磁盘一致。
+    let raw = std::fs::read(&target).expect("PDF 应落在用户选的路径上");
+    assert_eq!(
+        &raw[..5],
+        b"%PDF-",
+        "产物不是 PDF（头部为 {:?}）",
+        String::from_utf8_lossy(&raw[..5.min(raw.len())])
+    );
+    assert_eq!(
+        bytes as u64,
+        raw.len() as u64,
+        "回报的字节数必须与落盘文件一致（界面会把它显示给用户）"
+    );
+    assert!(
+        raw.len() > 1000,
+        "PDF 太小，八成是空文档：{} 字节",
+        raw.len()
+    );
+
+    // 2) `@page{size:A4}` 必须被内核尊重：A4 ≈ 595×842pt（Letter 是 612×792）。
+    //    MediaBox 在 PDF 里是明文，直接找它并取出四个数，避免引入 PDF 解析依赖。
+    let text = String::from_utf8_lossy(&raw);
+    let at = text.find("/MediaBox").expect("PDF 里应有 /MediaBox");
+    // PDF 是二进制，`at + 80` 可能落在字符中间；取不到就退回尾部切片。
+    let window = text
+        .get(at..(at + 80).min(text.len()))
+        .unwrap_or(&text[at..]);
+    let media_box: Vec<f32> = window
+        .split(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .filter(|part| !part.is_empty())
+        .filter_map(|part| part.parse().ok())
+        .collect();
+    assert!(media_box.len() >= 4, "MediaBox 应有四个数：{media_box:?}");
+    let (width, height) = (media_box[2], media_box[3]);
+    // 容差 2pt：A4 的精确值是 595.276×841.89pt，内核给的是四舍五入后的点数。
+    assert!(
+        (width - 595.0).abs() < 2.0 && (height - 842.0).abs() < 2.0,
+        "纸张没按 `@page` 走（A4 应约 595×842pt，Letter 是 612×792）：{width}×{height}pt"
     );
 }
