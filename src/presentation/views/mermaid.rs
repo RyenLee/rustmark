@@ -1633,7 +1633,18 @@ fn seq_ensure(parts: &mut Vec<(String, String)>, id: &str) {
     }
 }
 
-/// 在字符串里定位时序箭头，返回 `(起点下标, 算子长度, 形态)`。
+/// 在字符串里定位时序箭头，返回 `(起点**字节**下标, 算子**字节**长度, 形态)`。
+///
+/// # 为什么必须返回字节下标（而非字符下标）
+///
+/// 调用方 [`parse_seq_message`] 拿这三个值去切**原字符串**
+/// （`&line[..idx]` / `&line[idx + oplen..]`），而 `&str` 的下标是**字节**。
+/// 若这里按 `chars()` 数出字符下标，含中文的行就会切进多字节字符中间——
+/// `&line[..2]` 落在 `李`（占 3 字节）内部，直接 panic（`panic = "abort"`
+/// 崩进程，见崩溃报告 `crash-20261010152913`，触发源码 `李四->>张三: …`）。
+///
+/// 算子全是纯 ASCII，按 `char_indices()` 扫到的字节位置天然落在字符边界上，
+/// 故既安全、又能把字节长度 `pat.len()` 直接交给调用方做切片。
 fn parse_seq_arrow(s: &str) -> Option<(usize, usize, SeqHead)> {
     let ops: &[(&str, SeqHead)] = &[
         ("-->>", SeqHead::Dotted),
@@ -1642,12 +1653,10 @@ fn parse_seq_arrow(s: &str) -> Option<(usize, usize, SeqHead)> {
         ("--x", SeqHead::Cross),
         ("->", SeqHead::Solid),
     ];
-    let chars: Vec<char> = s.chars().collect();
-    for i in 0..chars.len() {
+    for (i, _) in s.char_indices() {
         for (pat, head) in ops {
-            let p: Vec<char> = pat.chars().collect();
-            if chars.len() >= i + p.len() && chars[i..i + p.len()] == p[..] {
-                return Some((i, p.len(), *head));
+            if s[i..].starts_with(pat) {
+                return Some((i, pat.len(), *head));
             }
         }
     }
@@ -1657,10 +1666,14 @@ fn parse_seq_arrow(s: &str) -> Option<(usize, usize, SeqHead)> {
 /// 解析一条消息行：`A->>B: text` 等。
 fn parse_seq_message(line: &str) -> Option<(String, String, String, SeqHead)> {
     let (idx, oplen, head) = parse_seq_arrow(line)?;
+    // 取箭头**之前**的部分作发送方。用 `char::is_alphanumeric`（Unicode 版）
+    // 而不是 `is_ascii_alphanumeric`：中文参与者名（`李四->>张三`）也是合法 id，
+    // ASCII 版会把 `李四` 整段过滤成空串——图仍能画出来，但发送方丢失，
+    // 消息箭头从「无名」发出，等于静默画错。
     let from: String = line[..idx]
         .trim()
         .chars()
-        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
+        .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '-')
         .collect();
     let rest = &line[idx + oplen..];
     let (to, label) = match rest.find(':') {
@@ -2074,13 +2087,18 @@ fn parse_rel(t: &str) -> Option<Rel> {
         Some(c) => (&t[..c], Some(t[c + 1..].trim().to_string())),
         None => (t, None),
     };
-    let chars: Vec<char> = rel_part.chars().collect();
-    for i in 0..chars.len() {
+    // 与 [`parse_seq_arrow`] 同一坑：原来按 `chars()` 数出**字符**下标 `i`，
+    // 却拿它去切 `rel_part`（`&str`，下标是**字节**）。关系两端含中文时
+    // （如 `用户 --> 订单`）字符数 < 字节数，`&rel_part[..i]` 会落进多字节
+    // 字符内部 → panic（`panic = "abort"` 崩进程）。
+    // 算子全是纯 ASCII，改按 `char_indices()` 取字节位置，并用
+    // `rel_part[i..].starts_with(pat)` 做匹配——下标与切片双方同为字节，
+    // 无需再引入 `Vec<char>`。
+    for (i, _) in rel_part.char_indices() {
         for (pat, kind) in ops {
-            let p: Vec<char> = pat.chars().collect();
-            if chars.len() >= i + p.len() && chars[i..i + p.len()] == p[..] {
+            if rel_part[i..].starts_with(pat) {
                 let a = rel_part[..i].trim().to_string();
-                let b = rel_part[i + p.len()..].trim().to_string();
+                let b = rel_part[i + pat.len()..].trim().to_string();
                 return Some(Rel {
                     a,
                     b,
@@ -2727,6 +2745,36 @@ mod tests {
         assert!(l.width > 0.0);
         assert!(l.height > 0.0);
         assert!(prim_count(&l) > 0);
+    }
+
+    /// 回归：含**中文**参与者名的时序图曾直接崩进程。
+    ///
+    /// 触发链：`parse_seq_arrow` 返回**字符**下标，`parse_seq_message` 却拿它
+    /// 当**字节**下标切 `&line[..idx]`——`李四` 之后的 `idx=2` 落在 `李`
+    /// （3 字节）内部，`&str` 切片 panic（`panic = "abort"` 崩进程）。
+    /// 见崩溃报告 `crash-20261010152913`（消息：end byte index 2 is not a
+    /// char boundary; it is inside '李'）。
+    #[test]
+    fn sequence_with_chinese_actor_names_does_not_panic() {
+        let msg = parse_seq_message("李四->>张三: 你好").expect("应解析出消息");
+        assert_eq!(msg.0, "李四", "发送方应是中文名 `李四`");
+        assert_eq!(msg.1, "张三", "接收方应是中文名 `张三`");
+        assert_eq!(msg.2, "你好");
+        // 整条布局链路同样不得 panic（崩溃正是走 layout → parse_sequence）。
+        let l = lay("sequenceDiagram\n李四->>张三: 你好吗\n张三-->>李四: 我很好\n");
+        assert!(l.width > 0.0 && l.height > 0.0);
+    }
+
+    /// 回归：含中文的**类图关系**行曾同样崩在切片上（`parse_rel` 同源缺陷）。
+    #[test]
+    fn class_relation_with_chinese_names_does_not_panic() {
+        let l = lay("classDiagram\n用户 --> 订单\n订单 <|-- 退款单\n");
+        assert!(l.width > 0.0 && l.height > 0.0);
+        // 关系两端应被完整切出（未被错位截断）。
+        let m = parse_class("classDiagram\n用户 --> 订单\n").expect("解析类图");
+        assert_eq!(m.rels.len(), 1);
+        assert_eq!(m.rels[0].a, "用户");
+        assert_eq!(m.rels[0].b, "订单");
     }
 
     #[test]
