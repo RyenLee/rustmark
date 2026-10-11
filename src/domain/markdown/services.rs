@@ -149,4 +149,28 @@ pub trait SpellChecker: Send + Sync {
 
     /// 该词典是否可用；不可用时调用方应跳过检查而非报错。
     fn is_available(&self) -> bool;
+
+    /// 给一个已判错的词返回「你可能想输入」的候选（按**贴近程度**降序）。
+    ///
+    /// # 为什么与 [`Self::check`] 分开
+    ///
+    /// `check` 每帧都可能被调用（输一个字符就重查一遍），它的返回类型刻意保持
+    /// `Copy + Eq`（[`Misspelling`] 只带区间），好让表现层每帧比对上一帧的标记集。
+    /// 而建议**只在用户右键某个错词时**才需要，携带 `String` 无所谓。
+    /// 把两者绑在一起会让「每帧比对」背上堆分配的代价。
+    ///
+    /// # 边界语义
+    ///
+    /// - `word` 应为**小写纯字母**词；大小写与非字母由调用方归一化。
+    /// - 找不到候选时返回**空集**（不是错误）。宁可不给建议，也不给错的——
+    ///   一条离谱的建议比没有建议更伤信任。
+    /// - `limit` 为 0 时返回空集；调用方用它控制菜单长度。
+    /// - 默认实现返回空集：允许「只判错、不提建议」的最小实现存在。
+    fn suggest(&self, word: &str, limit: usize) -> Vec<String> {
+        let _ = (word, limit);
+        Vec::new()
+    }
 }
+
+/// 编译期断言：跨层 trait 必须 `Send + Sync`（`.agent/conventions.md` §三-9）。
+fn _assert_spell_checker_send_sync<T: SpellChecker + Send + Sync>() {}

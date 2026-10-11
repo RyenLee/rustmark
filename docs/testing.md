@@ -34,6 +34,20 @@
 - 全量**测试执行**耗时约 25s（release 构建另计）；连续 3 次运行结果一致
   是 S9-01 的稳定性验收，见任务清单状态段。
 
+> **当前状态（2026-10-10 深夜实测，务必先读）**：`cargo test --all-targets` 为
+> **1519 passed / 7 failed / 1 ignored**，**不是全绿**（V11-06~09 四项新增用例
+> 全部通过，通过数由 1195 增至 1519，失败的仍是下列 7 项既有红）。
+> 7 项失败分三类：
+> ① `presentation` 的 4 条 `top_menu_test` —— 工具栏「格式」组已**平铺为按钮**
+> （提交 `4838d22`），测试仍按「分组下拉标题」定位，属**期望滞后于代码**；
+> ② `integration` 的 2 条语料快照（`chinese/gfm ..._parses_to_stable_snapshot`）——
+> 解析器新增 `header_spans`/`rows_spans`/`depth`/`ordinal`/`spans` 字段后
+> `{:?}` 快照文本已变，`tests/data/golden/*.expected` 未重生成，属**期望滞后**；
+> ③ `infrastructure` 的 `real_export_writes_a_real_pdf_to_the_chosen_path` ——
+> 无头 Edge 在本机/沙箱**不产出 PDF**（手工验证同样零产物），属**环境限制**。
+> ①② 由 **V11-14** 修复（修完「全绿」判据才可信），③ 见 **V11-15**。
+> 本节其余数字（覆盖率、25s 耗时等）为 2026-10-09 快照，未复测。
+
 ---
 
 ## 2. 覆盖率门禁

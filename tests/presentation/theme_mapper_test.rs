@@ -817,6 +817,7 @@ fn resolve_custom_palette_overrides_core_colors() {
             code_bg: "#444444".to_string(),
             border: "#555555".to_string(),
             selection_bg: "#666666".to_string(),
+            ..Default::default()
         }),
     };
     let theme = resolve(&view, false);
@@ -861,8 +862,92 @@ fn resolve_custom_light_background_is_light_mode() {
             code_bg: "#ECECEC".to_string(),
             border: "#D4D4D4".to_string(),
             selection_bg: "#007ACC".to_string(),
+            ..Default::default()
         }),
     };
     let theme = resolve(&view, false);
     assert!(!theme.is_dark(), "浅色背景应解析为 Light 模式");
+}
+
+// ----------------------------------------------------------------------------
+// V11-09 · 语法高亮细粒度配色
+// ----------------------------------------------------------------------------
+
+/// 构造「深色背景 + 指定语法覆盖」的自定义主题视图。
+fn custom_view(syn_heading: Option<&str>) -> ThemeView {
+    ThemeView {
+        kind: "custom".to_string(),
+        font_family: String::new(),
+        font_size: 14.0,
+        line_height: 1.6,
+        custom: Some(rustmark::application::dto::CustomThemePaletteView {
+            syn_heading: syn_heading.map(str::to_string),
+            ..Default::default()
+        }),
+    }
+}
+
+/// 显式给出的语法色要覆盖基线。
+#[test]
+fn custom_syntax_override_takes_effect() {
+    let theme = resolve(&custom_view(Some("#FF0000")), false);
+    assert_eq!(
+        theme.syn_heading,
+        Color32::from_rgb(0xFF, 0x00, 0x00),
+        "显式覆盖的语法色必须生效"
+    );
+    // 其余未覆盖项仍是内置深色主题的值（默认调色板背景是深色）。
+    assert_eq!(theme.syn_link, Theme::dark().syn_link);
+}
+
+/// 未覆盖的语法色跟随**深色**基线（默认调色板背景为深色）。
+#[test]
+fn unspecified_syntax_colors_follow_dark_base() {
+    let theme = resolve(&custom_view(None), false);
+    assert_eq!(theme.syn_heading, Theme::dark().syn_heading);
+    assert_eq!(theme.syn_code, Theme::dark().syn_code);
+}
+
+/// 浅色背景的自定义主题，未覆盖的语法色必须跟随**浅色**基线——
+/// 否则浅底上会残留深色主题的浅色语法色，糊成一片（V11-09 要修的正是这条）。
+#[test]
+fn light_custom_background_uses_light_syntax_colors() {
+    let mut view = custom_view(None);
+    if let Some(p) = view.custom.as_mut() {
+        p.bg_primary = "#FFFFFF".to_string();
+    }
+    let theme = resolve(&view, false);
+    assert!(!theme.is_dark());
+    assert_eq!(
+        theme.syn_heading,
+        Theme::light().syn_heading,
+        "浅色背景应取浅色主题的语法色"
+    );
+    assert_eq!(theme.syn_link, Theme::light().syn_link);
+    // 与深色主题确实不同，证明「跟随」不是巧合命中。
+    assert_ne!(Theme::light().syn_heading, Theme::dark().syn_heading);
+}
+
+/// 非法 `#RRGGBB` 应退回**基线**（而不是黑色），避免语法色突然变黑看不见。
+#[test]
+fn invalid_syntax_hex_falls_back_to_base() {
+    let theme = resolve(&custom_view(Some("not-a-color")), false);
+    assert_eq!(
+        theme.syn_heading,
+        Theme::dark().syn_heading,
+        "非法色值应退回基线而非黑色"
+    );
+}
+
+/// 任一语法色变化都必须换签名，否则预览缓存不会失效（改了色但预览不变）。
+#[test]
+fn changing_a_syntax_color_invalidates_the_signature() {
+    let base = palette_signature(&Theme::dark());
+    let mut theme = Theme::dark();
+    theme.syn_marker = Color32::from_rgb(0x01, 0x02, 0x03);
+    assert_ne!(
+        palette_signature(&theme),
+        base,
+        "语法色变化必须让配色签名改变"
+    );
 }

@@ -25,12 +25,18 @@ pub enum SidebarTab {
     Outline,
     /// 全局搜索。
     Search,
+    /// 格式检查（lint，V11-08）。
+    Lint,
 }
 
 impl SidebarTab {
     /// 全部标签。
-    pub const ALL: &'static [SidebarTab] =
-        &[SidebarTab::Files, SidebarTab::Outline, SidebarTab::Search];
+    pub const ALL: &'static [SidebarTab] = &[
+        SidebarTab::Files,
+        SidebarTab::Outline,
+        SidebarTab::Search,
+        SidebarTab::Lint,
+    ];
 
     /// 中文显示名。
     pub const fn label(self) -> &'static str {
@@ -38,14 +44,19 @@ impl SidebarTab {
             Self::Files => "文件",
             Self::Outline => "大纲",
             Self::Search => "搜索",
+            Self::Lint => "检查",
         }
     }
 
     /// 由字符串解析（配置持久化用）。
+    ///
+    /// 未知值退回「文件」而不是报错：侧栏标签名可能随版本增删，
+    /// 旧配置里的废弃名不该让整个配置加载失败。
     pub fn parse(raw: &str) -> Self {
         match raw {
             "outline" => Self::Outline,
             "search" => Self::Search,
+            "lint" => Self::Lint,
             _ => Self::Files,
         }
     }

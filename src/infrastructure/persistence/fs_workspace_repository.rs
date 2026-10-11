@@ -254,20 +254,23 @@ impl WorkspaceRepository for FsWorkspaceRepository {
 
     fn remove(&self, path: &FilePath) -> Result<(), AppError> {
         let target = Self::to_path(path);
-        // 目录用 `remove_dir`（非空即失败），文件用 `remove_file`。
-        // 不用 `remove_dir_all`：右键「删除」一个目录就抹掉里面全部内容，
-        // 是几乎必然招致后悔的行为（见 trait 文档）。
-        let result = if target.is_dir() {
-            fs::remove_dir(&target)
+        // V11-06：目录改走 `remove_dir_all`，文件仍走 `remove_file`。
+        //
+        // 原先刻意只删**空**目录（`remove_dir`），理由是「右键删一个目录就抹掉
+        // 里面 200 个文件，用户几乎一定后悔」。该顾虑已由**上游的二次确认**
+        // 承接：侧栏「删除」现在先弹确认框，且文案明说目录里有多少项内容
+        // （见 `EditorApp::delete_confirm_message`）。用户是在知情后点的「是」，
+        // 再要求他先把目录手动清空，只是把确认框已经承担的保护重复一遍，
+        // 并让「删除目录」在非空时永远失败——那才更像程序坏了。
+        let is_dir = target.is_dir();
+        let result = if is_dir {
+            fs::remove_dir_all(&target)
         } else {
             fs::remove_file(&target)
         };
         result.map_err(|e| {
-            if target.is_dir() {
-                AppError::io(format!(
-                    "无法删除目录 {}（目录非空时请先清空）：{e}",
-                    path.as_str()
-                ))
+            if is_dir {
+                AppError::io(format!("无法删除目录 {}：{e}", path.as_str()))
             } else {
                 AppError::io(format!("无法删除 {}：{e}", path.as_str()))
             }

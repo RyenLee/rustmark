@@ -18,5 +18,6 @@ mod pulldown_parser_test;
 mod rope_buffer_test;
 mod rope_prop_test;
 mod spell_checker_test;
+mod spell_suggest_test;
 mod viewport_capture_test;
 mod workspace_repository_test;

@@ -6,8 +6,8 @@
 use rustmark::domain::preferences::aggregate::Preferences;
 use rustmark::domain::preferences::errors::PreferencesError;
 use rustmark::domain::preferences::value_objects::{
-    ActionId, ConflictKind, EditorSettings, Key, KeyCombo, Modifiers, NamedKey, ShortcutBinding,
-    ShortcutTable, TabSize, Theme, ThemeKind, WritingGoal,
+    ActionId, ConflictKind, EditorSettings, Key, KeyCombo, LintSettings, Modifiers, NamedKey,
+    ShortcutBinding, ShortcutTable, TabSize, Theme, ThemeKind, WritingGoal,
 };
 
 fn combo(raw: &str) -> KeyCombo {
@@ -198,6 +198,7 @@ fn preferences_rejects_invalid_editor_settings() {
         400,
         0.5,
         WritingGoal::new(0),
+        LintSettings::all_enabled(),
     );
     assert!(matches!(
         preferences.set_editor(invalid),
@@ -230,6 +231,7 @@ fn preferences_indent_unit_derives_from_tab_size() {
             400,
             0.5,
             WritingGoal::new(0),
+            LintSettings::all_enabled(),
         ))
         .unwrap();
     assert_eq!(preferences.indent_unit(), "        ");
@@ -311,6 +313,7 @@ fn editor_settings_round_trip_through_toml_persists_writing_goal() {
             400,
             0.5,
             WritingGoal::new(1500),
+            LintSettings::all_enabled(),
         ))
         .unwrap();
     // 目标值经由 `EditorSettings` 携带，落到 `Preferences` 里。

@@ -18,6 +18,7 @@
 //! 少一个字段不会报错——所以额外用 `snapshot_covers_every_field` 风格的
 //! 测试在应用层钉住）。
 
+use crate::application::dto::LintRulesView;
 use crate::application::preferences::commands::SettingsSection;
 use crate::presentation::shortcuts::registry::UiAction;
 
@@ -104,6 +105,8 @@ pub struct Snapshot {
     pub spell_check: bool,
     /// 是否显示行号栏。
     pub show_line_numbers: bool,
+    /// 格式检查规则开关（V11-08）。
+    pub lint: LintRulesView,
 }
 
 impl Snapshot {
@@ -280,6 +283,7 @@ mod tests {
             auto_save_interval: Some(2),
             spell_check: false,
             show_line_numbers: false,
+            lint: LintRulesView::default(),
         }
     }
 

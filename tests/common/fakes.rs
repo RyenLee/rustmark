@@ -669,6 +669,10 @@ pub struct FakeSpellChecker {
     available: bool,
     /// 令 `check` 返回 `Err`，用于验证「检查失败应降级为空集而非报错」。
     fail: bool,
+    /// `suggest` 的固定返回值（V11-07）。
+    suggestions: Vec<String>,
+    /// 最近一次 `suggest` 收到的词与上限（断言「应用层传下去的是什么」）。
+    last_suggest: Mutex<Option<(String, usize)>>,
 }
 
 impl FakeSpellChecker {
@@ -679,6 +683,19 @@ impl FakeSpellChecker {
             call_count: Mutex::new(0),
             available: true,
             fail: false,
+            suggestions: Vec::new(),
+            last_suggest: Mutex::new(None),
+        }
+    }
+
+    /// 构造一个「会给建议」的检查器（V11-07）。
+    ///
+    /// 建议与 `hits` 分开注入：应用层要验的是「把哪个词、以什么上限传下去」，
+    /// 与「哪些区间被判错」是两件事。
+    pub fn suggesting(hits: Vec<Misspelling>, suggestions: &[&str]) -> Self {
+        Self {
+            suggestions: suggestions.iter().map(|s| (*s).to_string()).collect(),
+            ..Self::new(hits)
         }
     }
 
@@ -689,6 +706,8 @@ impl FakeSpellChecker {
             call_count: Mutex::new(0),
             available: false,
             fail: false,
+            suggestions: Vec::new(),
+            last_suggest: Mutex::new(None),
         }
     }
 
@@ -699,12 +718,19 @@ impl FakeSpellChecker {
             call_count: Mutex::new(0),
             available: true,
             fail: true,
+            suggestions: Vec::new(),
+            last_suggest: Mutex::new(None),
         }
     }
 
     /// `check` 调用次数（缓存断言用）。
     pub fn call_count(&self) -> usize {
         *self.call_count.lock().unwrap()
+    }
+
+    /// 最近一次 `suggest` 收到的 `(词, 上限)`；未调用过为 `None`。
+    pub fn last_suggest(&self) -> Option<(String, usize)> {
+        self.last_suggest.lock().unwrap().clone()
     }
 }
 
@@ -724,5 +750,10 @@ impl SpellChecker for FakeSpellChecker {
 
     fn is_available(&self) -> bool {
         self.available
+    }
+
+    fn suggest(&self, word: &str, limit: usize) -> Vec<String> {
+        *self.last_suggest.lock().unwrap() = Some((word.to_string(), limit));
+        self.suggestions.clone()
     }
 }

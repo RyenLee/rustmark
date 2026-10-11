@@ -1,15 +1,16 @@
-//! 侧栏视图（S6-11）：文件树 / 大纲 / 在文件中查找三个标签页。
+//! 侧栏视图（S6-11）：文件树 / 大纲 / 在文件中查找 / 格式检查四个标签页。
 //!
-//! # 三个标签的数据来源各不相同，别搞混
+//! # 四个标签的数据来源各不相同，别搞混
 //!
 //! | 标签 | 数据来源 | 刷新时机 |
 //! |---|---|---|
 //! | 文件 | `EditorApp::workspace_entries`（已装载快照） | 打开文件夹 / 文件操作后 |
 //! | 大纲 | `EditorApp::current_outline()`（每次现算） | 文档内容变化时自动跟随 |
 //! | 搜索 | `EditorApp::search_workspace()`（每次真扫盘） | 每次显示搜索标签时 |
+//! | 检查 | `EditorApp::lint_current_document()`（每次现算，V11-08） | 每次显示检查标签时 |
 //!
-//! 文件树**不**每帧扫盘（那是递归 `read_dir`），大纲与搜索**每帧**现算
-//! （前者只解析已缓存的块，后者有 300 条命中上限兜底）。
+//! 文件树**不**每帧扫盘（那是递归 `read_dir`）；大纲、搜索、检查**每帧**现算
+//! （大纲只解析已缓存的块，搜索有 300 条命中上限兜底，检查是 O(行数) 线性扫描）。
 //! 「哪些该缓存、哪些不该」的判据是：**代价高且能被显式失效**才缓存。
 //!
 //! # 右键菜单为什么自己画而不用 `egui::ContextMenu`
@@ -70,6 +71,7 @@ fn draw(app: &mut EditorApp, ui: &mut Ui, ctx: &Context) {
         SidebarTab::Files => files_tab(app, ui, &theme),
         SidebarTab::Outline => outline_tab(app, ui, &theme),
         SidebarTab::Search => search_tab(app, ui, &theme),
+        SidebarTab::Lint => lint_tab(app, ui, &theme),
     }
     messages(app, ui, &theme);
     if want_search_focus && !ctx.memory(|m| m.has_focus(egui::Id::new(SEARCH_INPUT_ID))) {
@@ -528,6 +530,70 @@ fn level_filter(app: &mut EditorApp, ui: &mut Ui) {
             }
         }
     });
+}
+
+// ===========================================================================
+// 格式检查（lint，V11-08）
+// ===========================================================================
+
+/// 检查结果行高（比文件树的 24 略高：一行放下「规则名 + 说明」两段文字）。
+const LINT_ROW_HEIGHT: f32 = 34.0;
+
+/// 检查标签。
+///
+/// 与大纲同源（见文件头表格）：`lint_document` 是 O(行数) 的线性扫描，
+/// 每帧现算即可，不缓存。
+fn lint_tab(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
+    let rules = app.settings().editor.lint;
+    if !rules_enabled(&rules) {
+        ui.weak("所有检查规则均已关闭；可在「设置 → 编辑器」里开启。");
+        return;
+    }
+    let issues = app.lint_current_document();
+    if issues.is_empty() {
+        ui.weak("未发现格式问题");
+        return;
+    }
+    ui.weak(format!("{} 个问题，点击行可跳到问题所在行：", issues.len()));
+    ScrollArea::vertical()
+        .id_salt("rustmark.sidebar.lint")
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            for issue in &issues {
+                if lint_row(ui, theme, issue).clicked() {
+                    // 与大纲跳转同一条通路：光标落到该行行首（0-based 行号
+                    // 由 `goto_outline_line` 统一换算）。
+                    app.goto_outline_line(issue.line);
+                }
+            }
+        });
+}
+
+/// 四条规则里是否还有开着的（决定空态文案走「无问题」还是「全关闭」）。
+fn rules_enabled(rules: &crate::application::dto::LintRulesView) -> bool {
+    rules.heading_jump || rules.list_marker_mix || rules.trailing_whitespace || rules.unclosed_fence
+}
+
+/// 一条检查结果：规则名 + 说明 + 右侧行号，整行可点。
+fn lint_row(
+    ui: &mut Ui,
+    theme: &Theme,
+    issue: &crate::application::dto::LintIssueView,
+) -> egui::Response {
+    ui.allocate_ui(egui::vec2(ui.available_width(), LINT_ROW_HEIGHT), |ui| {
+        ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+            ui.add_space(ROW_PAD);
+            ui.label(RichText::new(&issue.rule_label).color(theme.text_primary));
+            ui.label(RichText::new(&issue.message).color(theme.text_secondary));
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                // 行号展示按人类习惯 +1（DTO 里是 0-based，见 `LintIssueView`）。
+                ui.add_space(ROW_PAD);
+                ui.weak((issue.line + 1).to_string());
+            });
+        });
+        ui.response()
+    })
+    .inner
 }
 
 // ===========================================================================

@@ -858,6 +858,11 @@ fn three_pane_top_bars_align() {
     // ---- ② 三个窗格的内矩形同起同止 ----
     // 面板 fill 铺满整个 SidePanel/CentralPanel（含边距区），而窗格自己
     // `rect_filled` 画的底色正好是**内矩形**——用它比对。
+    //
+    // 预览宿主现有**两个**主色矩形：frame 填充（外，覆盖 2pt 边距条，
+    // 防清屏黑边回归——见 `preview_border_test`）与内容底色（内）。
+    // 内矩形（编辑区 + 预览内容区）仍必须同起同止；外矩形必须恰好
+    // 外扩 2pt 包住预览内矩形。
     let panes: Vec<egui::Rect> = fills
         .iter()
         .filter(|(r, c)| {
@@ -867,11 +872,26 @@ fn three_pane_top_bars_align() {
         .collect();
     assert_eq!(
         panes.len(),
-        2,
-        "应有编辑区 / 预览区两个主色底矩形：{panes:?}"
+        3,
+        "应有编辑区内矩形 + 预览内矩形 + 预览 frame 外矩形三个主色矩形：{panes:?}"
     );
-    let tops: Vec<f32> = panes.iter().map(|r| r.top()).collect();
-    let bottoms: Vec<f32> = panes.iter().map(|r| r.bottom()).collect();
+    let outer = panes
+        .iter()
+        .copied()
+        .find(|r| (r.top() - 100.0).abs() < 1.0)
+        .expect("预览宿主 frame 填充矩形（外）应存在");
+    let inner: Vec<egui::Rect> = panes
+        .iter()
+        .copied()
+        .filter(|r| r.top() > outer.top() + 1.0)
+        .collect();
+    assert_eq!(
+        inner.len(),
+        2,
+        "编辑区 / 预览区应各有一个内容底色内矩形：{inner:?}"
+    );
+    let tops: Vec<f32> = inner.iter().map(|r| r.top()).collect();
+    let bottoms: Vec<f32> = inner.iter().map(|r| r.bottom()).collect();
     let same = |xs: &[f32]| {
         xs.iter().cloned().fold(f32::MAX, f32::min) == xs.iter().cloned().fold(f32::MIN, f32::max)
     };
@@ -879,6 +899,18 @@ fn three_pane_top_bars_align() {
         same(&tops) && same(&bottoms),
         "编辑区与预览区的内容区没有从同一条水平线开始、到同一条线结束：\
          tops={tops:?} bottoms={bottoms:?}（通常是预览宿主面板边距与 SidePanel 不一致）"
+    );
+    // frame 外矩形必须恰好外扩 2pt 包住预览内矩形：少 1pt 是边距没盖满
+    // （清屏黑边回归），多 1pt 是边距与 SidePanel 不一致（顶栏错位回归）。
+    let preview_inner = inner
+        .iter()
+        .copied()
+        .find(|r| outer.contains_rect(*r))
+        .expect("预览 frame 外矩形应包住预览内容内矩形");
+    assert!(
+        (outer.top() + 2.0 - preview_inner.top()).abs() < 0.5
+            && (outer.bottom() - 2.0 - preview_inner.bottom()).abs() < 0.5,
+        "预览 frame 填充应恰好覆盖上下各 2pt 边距条：outer={outer:?} inner={preview_inner:?}"
     );
 
     // ---- ③ 三条顶栏下的分隔线在同一根水平线 ----
@@ -987,4 +1019,116 @@ fn enter_key_continues_multi_digit_list_numbers() {
         Some("10. 第十条\n11. "),
         "两位数序号也应自增续行（数字段必须整段剥离）"
     );
+}
+
+// ==== 回车键 × 中文输入法：预编辑逐帧变化 + 候选确认 + 回车换行 ====
+//
+// # 为什么必须模拟 Preedit（此前所有回车用例都漏了这一层）
+//
+// egui 0.33 的 `Preedit` 处理会把预编辑串**真实写进文本缓冲区**，并靠
+// `state.cursor` 保持「(组合锚点, 预编辑串尾)」选区，下一次 `Preedit` /
+// `Commit` 靠它删旧换新；`Commit` 还会校验锚点，不在组合起点则**整个
+// 提交被静默忽略**。应用若在组合期的帧间回设折叠光标，预编辑串就会
+// 逐帧累积（实测 "s"→"ssa"→"ssasadsadaf"）、中文永远进不来——表象
+// 正是用户报告的「回车不换行、行号一直涨」。真实 winit 每敲一个字母
+// 来一次 `Preedit`，且逐帧渲染，帧间隔必然存在。
+#[test]
+fn ime_preedit_commit_and_enter_keeps_text_intact() {
+    let (dir, mut app) = app_fixture();
+    let file = dir.path().join("note.md");
+    std::fs::write(&file, "").expect("写文件应成功");
+    app.open_path(&file.to_string_lossy()).expect("打开应成功");
+    let ctx = fresh_ctx();
+
+    let _ = run_frame(&ctx, &mut app, vec![]);
+    focus_editor(&ctx, &mut app);
+
+    // ① 组合：预编辑逐帧演进（真实节奏：每个字母一帧，帧间留空帧），
+    //    候选确认后中文必须**替换**预编辑串，拼音不得残留。
+    run_frame(
+        &ctx,
+        &mut app,
+        vec![egui::Event::Ime(egui::ImeEvent::Enabled)],
+    );
+    run_frame(&ctx, &mut app, vec![]);
+    for pre in ["s", "sa", "sad", "sadaf"] {
+        run_frame(
+            &ctx,
+            &mut app,
+            vec![egui::Event::Ime(egui::ImeEvent::Preedit(pre.to_owned()))],
+        );
+        run_frame(&ctx, &mut app, vec![]);
+    }
+    run_frame(
+        &ctx,
+        &mut app,
+        vec![egui::Event::Ime(egui::ImeEvent::Commit(
+            "撒打发第三方".to_owned(),
+        ))],
+    );
+    run_frame(&ctx, &mut app, vec![]);
+    assert_eq!(
+        app.current_content().as_deref(),
+        Some("撒打发第三方"),
+        "候选确认后应只留下中文，预编辑串必须被替换而非累积"
+    );
+
+    // ② 行尾回车：正常换行。
+    run_frame(&ctx, &mut app, vec![pressed_key(egui::Key::End)]);
+    run_frame(&ctx, &mut app, vec![]);
+    run_frame(&ctx, &mut app, vec![pressed_key(egui::Key::Enter)]);
+    run_frame(&ctx, &mut app, vec![]);
+    assert_eq!(
+        app.current_content().as_deref(),
+        Some("撒打发第三方\n"),
+        "组合结束后回车应正常换行"
+    );
+
+    // ③ 第二轮组合 + 提交 + 回车：连续中英混输不得互相污染。
+    for pre in ["a", "ai", "aidi"] {
+        run_frame(
+            &ctx,
+            &mut app,
+            vec![egui::Event::Ime(egui::ImeEvent::Preedit(pre.to_owned()))],
+        );
+        run_frame(&ctx, &mut app, vec![]);
+    }
+    run_frame(
+        &ctx,
+        &mut app,
+        vec![egui::Event::Ime(egui::ImeEvent::Commit(
+            "爱迪生".to_owned(),
+        ))],
+    );
+    run_frame(&ctx, &mut app, vec![]);
+    run_frame(&ctx, &mut app, vec![pressed_key(egui::Key::Enter)]);
+    run_frame(&ctx, &mut app, vec![]);
+    assert_eq!(
+        app.current_content().as_deref(),
+        Some("撒打发第三方\n爱迪生\n"),
+        "第二轮组合提交后回车应换行，两轮之间不得有残留"
+    );
+}
+
+// ==== 行号栏：光标字节偏移落进多字节字符中间不得 panic ====
+//
+// 程序化设值（跳转、撤销回读）只按**长度**夹紧光标字节偏移，完全可能
+// 落在汉字中间。行号栏取「当前行」时按字节切片，非字符边界会 panic——
+// `panic = "abort"` 下就是整窗口消失（实测崩溃日志
+// crash-20261011005255：3887 落在「右」的 3885..3888 中间）。
+// 状态栏 `cursor_line_col` 早有同款防护，行号栏补齐。
+#[test]
+fn gutter_survives_cursor_inside_multibyte_char() {
+    let (dir, mut app) = app_fixture();
+    let file = dir.path().join("cn.md");
+    std::fs::write(&file, "第一行中文\n第二行").expect("写文件应成功");
+    app.open_path(&file.to_string_lossy()).expect("打开应成功");
+    let ctx = fresh_ctx();
+    let _ = run_frame(&ctx, &mut app, vec![]);
+
+    // 「一」占字节 0..3；偏移 2 落在它中间。
+    app.editor.cursor = 2;
+    let _ = run_frame(&ctx, &mut app, vec![]);
+    // 下取整到字符边界后应高亮第 1 行（0-based）。
+    assert_eq!(app.cursor_line_col().0, 1, "光标钳到「一」所在行");
 }

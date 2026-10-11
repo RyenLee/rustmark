@@ -34,6 +34,13 @@ const MIN_CHECK_LEN: usize = 3;
 /// 启用近邻门槛时的最大编辑距离。
 const MAX_EDIT_DIST: usize = 1;
 
+/// 建议的**最大**编辑距离（V11-07）。
+///
+/// 取 2 而判错仍取 1：判错放宽会把整篇技术文档标红（误报是这类功能的生命线），
+/// 而建议放宽只是让候选多一些——用户看不到想选的词时顶多放弃替换，
+/// 不会因此被误导。两条门槛取不同值正是「判错的代价 ≫ 漏建议的代价」。
+const MAX_SUGGEST_DIST: usize = 2;
+
 /// 基于内置词表的拼写检查器。
 pub struct VendoredSpellChecker {
     /// 预先算好的「词的删除变体」索引：`word` → `删除任一字符后的形态`集合。
@@ -108,6 +115,86 @@ impl VendoredSpellChecker {
                 self.deletions.contains(&s)
             })
     }
+}
+
+/// 在词表里找与 `word` 距离 ≤ [`MAX_SUGGEST_DIST`] 的词（**纯函数**，便于单测）。
+///
+/// # 边界
+///
+/// - `word` 为空 / `limit` 为 0 → 空集；
+/// - `word` 不是纯 ASCII 字母（中文、数字、标点）→ 空集：
+///   检查器本来就只判 ASCII 词，给中文提英文建议毫无意义；
+/// - 词本身在词表里（或其词干在）→ 空集：它不是错词，不该有建议；
+/// - 找不到候选 → 空集。宁可不给建议，也不给离谱的。
+///
+/// # 排序：距离优先，字典序次之
+///
+/// 距离相同时按字典序排，保证结果**稳定**：否则 `HashSet` 的迭代顺序
+/// 会让同一个词每次给出不同顺序的建议，菜单看起来在抖动。
+pub fn suggest_candidates(word: &str, limit: usize) -> Vec<String> {
+    if word.is_empty()
+        || limit == 0
+        || !word.bytes().all(|b| b.is_ascii_alphabetic())
+        || is_known(word)
+    {
+        return Vec::new();
+    }
+    // 长度差超过门槛的词不可能在距离内（编辑距离 ≥ 长度差），先筛掉——
+    // 这一条把绝大多数词表词挡在距离计算之外。
+    let len = word.chars().count();
+    let mut scored: Vec<(usize, &str)> = dictionary::iter_words()
+        .filter(|w| {
+            let d = w.chars().count();
+            d.saturating_sub(len).min(len.saturating_sub(d)) <= MAX_SUGGEST_DIST
+        })
+        .map(|w| (typo_distance(word, w), w))
+        .filter(|(d, _)| *d <= MAX_SUGGEST_DIST && *d > 0)
+        .collect();
+    scored.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(b.1)));
+    scored
+        .into_iter()
+        .take(limit)
+        .map(|(_, w)| w.to_string())
+        .collect()
+}
+
+/// 「打字错误距离」：Levenshtein，但**相邻字符易位记 1 步**。
+///
+/// # 为什么必须把易位单独算作 1
+///
+/// 纯 Levenshtein 把 `teh → the` 记成 **2**（换两个字符），
+/// 而它其实是「手比脑快」打反了一次——人类最常见的错词形态之一
+/// （Damerau 早就指出：80% 的拼写错误是「替换 / 增删 / 易位」四类）。
+/// 按 2 记会让 `the` 排在一堆距离 1 的无关词（`tea` / `tel`）后面，
+/// 用户翻完五条也看不到自己想打的那个词。
+///
+/// 只处理**相邻**易位：非相邻交换（`abcd → badc`）在真实打字里几乎不出现，
+/// 为它付出复杂度不划算。
+pub fn typo_distance(a: &str, b: &str) -> usize {
+    if is_adjacent_transposition(a, b) {
+        return 1;
+    }
+    edit_distance(a, b)
+}
+
+/// 两串是否**恰好**由一次相邻字符易位得到。
+fn is_adjacent_transposition(a: &str, b: &str) -> bool {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    if a.len() != b.len() || a.len() < 2 {
+        return false;
+    }
+    let mut diffs = (0..a.len()).filter(|i| a[*i] != b[*i]);
+    let Some(i) = diffs.next() else {
+        return false; // 完全相同，不是「错词」
+    };
+    let Some(j) = diffs.next() else {
+        return false; // 只差一个字符 = 替换，交给 Levenshtein
+    };
+    if diffs.next().is_some() {
+        return false; // 差三处以上
+    }
+    j == i + 1 && a[i] == b[j] && a[j] == b[i]
 }
 
 /// 词是否可识别：**原形**在词表中，或**任一词干**在词表中。
@@ -202,6 +289,15 @@ impl SpellChecker for VendoredSpellChecker {
 
     fn is_available(&self) -> bool {
         dictionary::is_available()
+    }
+
+    fn suggest(&self, word: &str, limit: usize) -> Vec<String> {
+        if !self.is_available() {
+            return Vec::new();
+        }
+        // 建议按「用户看到的形态」算：判错用的是小写词，
+        // 而菜单里要显示原拼写，故在此归一化。
+        suggest_candidates(&word.to_ascii_lowercase(), limit)
     }
 }
 

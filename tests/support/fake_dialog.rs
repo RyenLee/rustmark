@@ -49,6 +49,10 @@ pub enum Reply {
     Cancelled,
     /// 对话框系统不可用（`AppError::Dialog`）。
     Unavailable(String),
+    /// 确认框里点了「是」（`Ok(true)`）。
+    Yes,
+    /// 确认框里点了「否」（`Ok(false)`）。
+    No,
 }
 
 impl Reply {
@@ -57,7 +61,11 @@ impl Reply {
         Self::Path(p.to_string())
     }
 
-    /// 组装成 [`DialogPort`] 的返回类型。
+    /// 组装成 [`DialogPort`] **路径类**方法的返回类型。
+    ///
+    /// `Yes` / `No` 只对确认框有意义（见 [`FakeDialog::set_confirm`]）；
+    /// 误用到路径类对话框时按「不可用」报错，而不是静默当成取消——
+    /// 否则「测试用例把回应配错了位置」会以「用户取消了」的面貌出现，查不出来。
     fn into_result(self) -> Result<FilePath, AppError> {
         match self {
             Self::Path(p) => FilePath::new(p).map_err(|e| AppError::Dialog {
@@ -65,6 +73,9 @@ impl Reply {
             }),
             Self::Cancelled => Err(AppError::Cancelled),
             Self::Unavailable(m) => Err(AppError::Dialog { message: m }),
+            Self::Yes | Self::No => Err(AppError::Dialog {
+                message: "是 / 否 只能用于确认框，不能用于路径类对话框".to_string(),
+            }),
         }
     }
 }
@@ -82,11 +93,14 @@ struct State {
     open_file: Option<Reply>,
     save_file: Option<Reply>,
     pick_folder: Option<Reply>,
+    confirm: Option<Reply>,
     last_filters: Vec<FileFilter>,
     last_suggested: String,
+    last_message: String,
     open_calls: usize,
     save_calls: usize,
     folder_calls: usize,
+    confirm_calls: usize,
 }
 
 impl FakeDialog {
@@ -129,6 +143,24 @@ impl FakeDialog {
     /// 设置「选择文件夹」的回应。
     pub fn set_pick_folder(&self, reply: Reply) {
         self.lock().pick_folder = Some(reply);
+    }
+
+    /// 设置「确认框」的回应（`Reply::Yes` / `Reply::No` / `Reply::Cancelled`）。
+    ///
+    /// 未设置时按**取消**处理——与其余三类一致（「用户在空对话框里点了取消」）。
+    /// 这正好是 V11-06 要钉住的默认语义：不确认就不删。
+    pub fn set_confirm(&self, reply: Reply) {
+        self.lock().confirm = Some(reply);
+    }
+
+    /// 最近一次确认框收到的提示文案（用于断言「确认框说清了要删什么」）。
+    pub fn last_message(&self) -> String {
+        self.lock().last_message.clone()
+    }
+
+    /// 确认框的调用次数。
+    pub fn confirm_calls(&self) -> usize {
+        self.lock().confirm_calls
     }
 
     /// 最近一次收到的过滤器。
@@ -189,8 +221,21 @@ impl DialogPort for FakeDialog {
             .into_result()
     }
 
-    fn confirm(&self, _message: &str) -> Result<bool, AppError> {
-        Err(AppError::Cancelled)
+    fn confirm(&self, message: &str) -> Result<bool, AppError> {
+        let mut s = self.lock();
+        s.confirm_calls += 1;
+        s.last_message = message.to_string();
+        match s.confirm.clone().unwrap_or(Reply::Cancelled) {
+            Reply::Yes => Ok(true),
+            Reply::No => Ok(false),
+            Reply::Cancelled => Err(AppError::Cancelled),
+            Reply::Unavailable(m) => Err(AppError::Dialog { message: m }),
+            // 路径类回应对确认框无意义：按「不可用」处理，让调用方显式报错，
+            // 而不是静默当成「否」把删除意图吞掉。
+            Reply::Path(p) => Err(AppError::Dialog {
+                message: format!("确认框收到路径类回应 {p}"),
+            }),
+        }
     }
 
     fn show_error(&self, _message: &str) -> Result<(), AppError> {

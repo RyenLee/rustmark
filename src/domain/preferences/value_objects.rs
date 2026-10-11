@@ -46,10 +46,23 @@ impl ThemeKind {
 
 /// 自定义主题调色板（P2 自定义主题）。
 ///
-/// 仅暴露**核心语义色**，其余（尺寸、语法高亮、字体）沿用内置主题同类值，
+/// 8 个**核心语义色**必填；语法高亮配色（V11-09）为**可选覆盖**。
+/// 其余（尺寸、差异色、字体）沿用内置主题同类值，
 /// 避免把 30+ 颜色全部开放带来的「调出来不好看」风险。
 /// 颜色以 `#RRGGBB` 十六进制字符串存储——领域层不依赖 egui，
 /// 真正 `#RRGGBB` ↔ `Color32` 的颜色转换在表现层完成。
+///
+/// # 语法色为什么是 `Option<String>`
+///
+/// `None` = **跟随内置主题**。这不是省事，而是为了两件事：
+///
+/// 1. **向后兼容**：旧配置文件里没有 `syn_*` 字段，`#[serde(default)]`
+///    让它们读作 `None`，于是旧自定义主题的语法色自动跟随其背景明暗，
+///    加载一次都不会失败；
+/// 2. **明暗自适应**：自定义主题的明暗由主背景亮度决定，而用户很可能只调
+///    背景色。若语法色是必填的固定深色值，把一个浅色背景调成深色后，
+///    语法高亮会继续用浅色主题的暗色值，在深底上糊成一片。
+///    跟随语义让「没明确指定的」随明暗走，用户只需覆盖他真正在意的那几个。
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
 pub struct CustomThemePalette {
     /// 主背景（编辑区）。
@@ -68,11 +81,42 @@ pub struct CustomThemePalette {
     pub border: String,
     /// 选区背景。
     pub selection_bg: String,
+    /// 语法高亮：标题（`None` = 跟随内置主题）。
+    #[serde(default)]
+    pub syn_heading: Option<String>,
+    /// 语法高亮：加粗。
+    #[serde(default)]
+    pub syn_bold: Option<String>,
+    /// 语法高亮：斜体。
+    #[serde(default)]
+    pub syn_italic: Option<String>,
+    /// 语法高亮：行内代码 / 代码块。
+    #[serde(default)]
+    pub syn_code: Option<String>,
+    /// 语法高亮：链接。
+    #[serde(default)]
+    pub syn_link: Option<String>,
+    /// 语法高亮：引用块。
+    #[serde(default)]
+    pub syn_quote: Option<String>,
+    /// 语法高亮：标记符（`#` / `-` 等）。
+    #[serde(default)]
+    pub syn_marker: Option<String>,
+    /// 语法高亮：元信息（围栏语言名等）。
+    #[serde(default)]
+    pub syn_meta: Option<String>,
+    /// 语法高亮：表格。
+    #[serde(default)]
+    pub syn_table: Option<String>,
+    /// 语法高亮：其它（默认正文色）。
+    #[serde(default)]
+    pub syn_other: Option<String>,
 }
 
 impl Default for CustomThemePalette {
     fn default() -> Self {
         // 以内置深色主题的核心色作为起点，保证首次切换到「自定义」时配色协调。
+        // 语法色一律 `None`（跟随主题），让用户从「什么都不用调」开始。
         Self {
             bg_primary: "#14161B".to_string(),
             bg_secondary: "#1A1D24".to_string(),
@@ -82,6 +126,78 @@ impl Default for CustomThemePalette {
             code_bg: "#1C212B".to_string(),
             border: "#2B323D".to_string(),
             selection_bg: "#6AA9FF".to_string(),
+            syn_heading: None,
+            syn_bold: None,
+            syn_italic: None,
+            syn_code: None,
+            syn_link: None,
+            syn_quote: None,
+            syn_marker: None,
+            syn_meta: None,
+            syn_table: None,
+            syn_other: None,
+        }
+    }
+}
+
+/// 格式检查（lint）的规则开关（V11-08）。
+///
+/// # 为什么默认**全开**
+///
+/// lint 的价值在于「说出用户没注意到的地方」，默认只开一半等于
+/// 把另一半规则藏起来——大多数人不会去翻设置页。
+/// 代价是首次打开「检查」标签时可能列出若干问题，但那正是功能在工作的样子。
+///
+/// # 为什么每条都要 `serde(default = …)`
+///
+/// `Preferences` 是持久化的：旧配置文件里**没有**这几个字段，
+/// 缺了必须按「启用」读出（与默认设置一致），
+/// 而不是让整个配置加载失败（同 `show_line_numbers`）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct LintSettings {
+    /// 标题层级跳跃。
+    #[serde(default = "default_lint_on")]
+    pub heading_jump: bool,
+    /// 列表符号混用。
+    #[serde(default = "default_lint_on")]
+    pub list_marker_mix: bool,
+    /// 行尾多余空格。
+    #[serde(default = "default_lint_on")]
+    pub trailing_whitespace: bool,
+    /// 未闭合代码围栏。
+    #[serde(default = "default_lint_on")]
+    pub unclosed_fence: bool,
+}
+
+/// lint 规则的缺省值：启用。
+fn default_lint_on() -> bool {
+    true
+}
+
+impl Default for LintSettings {
+    fn default() -> Self {
+        Self {
+            heading_jump: true,
+            list_marker_mix: true,
+            trailing_whitespace: true,
+            unclosed_fence: true,
+        }
+    }
+}
+
+impl LintSettings {
+    /// 全部启用。
+    pub fn all_enabled() -> Self {
+        Self::default()
+    }
+
+    /// 全部关闭。
+    pub fn all_disabled() -> Self {
+        Self {
+            heading_jump: false,
+            list_marker_mix: false,
+            trailing_whitespace: false,
+            unclosed_fence: false,
         }
     }
 }
@@ -300,6 +416,11 @@ pub struct EditorSettings {
     /// 「未设置」读出来，而不是让整个配置加载失败（同 `split_ratio`）。
     #[serde(default)]
     writing_goal: WritingGoal,
+    /// 格式检查（lint）的规则开关（V11-08）。
+    ///
+    /// 旧配置缺这个字段时按 [`LintSettings::default`]（全启用）读出。
+    #[serde(default)]
+    lint: LintSettings,
 }
 
 impl EditorSettings {
@@ -315,6 +436,7 @@ impl EditorSettings {
             undo_merge_window_ms: 400,
             split_ratio: 0.5,
             writing_goal: WritingGoal::default(),
+            lint: LintSettings::all_enabled(),
         }
     }
 
@@ -331,6 +453,7 @@ impl EditorSettings {
         undo_merge_window_ms: u64,
         split_ratio: f32,
         writing_goal: WritingGoal,
+        lint: LintSettings,
     ) -> Self {
         Self {
             tab_size,
@@ -341,6 +464,7 @@ impl EditorSettings {
             undo_merge_window_ms,
             split_ratio,
             writing_goal,
+            lint,
         }
     }
 
@@ -384,12 +508,22 @@ impl EditorSettings {
         self.writing_goal
     }
 
+    /// 格式检查（lint）的规则开关（V11-08）。
+    pub const fn lint(&self) -> LintSettings {
+        self.lint
+    }
+
     /// 设置写作目标，返回新的设置（值对象不可变）。
     pub const fn with_writing_goal(self, goal: WritingGoal) -> Self {
         Self {
             writing_goal: goal,
             ..self
         }
+    }
+
+    /// 替换 lint 规则开关，返回新的设置（值对象不可变）。
+    pub const fn with_lint(self, lint: LintSettings) -> Self {
+        Self { lint, ..self }
     }
 
     /// 校验取值是否合法（自动保存间隔不得为 0——会导致忙循环）。

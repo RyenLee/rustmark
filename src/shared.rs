@@ -11,6 +11,7 @@
 //! - [`encoding`]：文本编码标签（纯值，V11-03）
 //! - [`path`]：路径值对象（`FilePath`）
 //! - [`time`]：时间戳与可注入时钟
+//! - [`text`]：与层无关的分词工具（V11-07）
 
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
@@ -22,4 +23,5 @@ pub mod geometry;
 pub mod ids;
 pub mod path;
 pub mod result;
+pub mod text;
 pub mod time;

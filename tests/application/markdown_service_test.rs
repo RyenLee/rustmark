@@ -5,7 +5,9 @@
 
 use std::sync::{Arc, Mutex};
 
-use rustmark::application::dto::{OutlineView, RenderedView, SpanView};
+use rustmark::application::dto::{
+    LintIssueView, LintRulesView, OutlineView, RenderedView, SpanView,
+};
 use rustmark::application::markdown::commands::ClearCacheCommand;
 use rustmark::application::markdown::queries::*;
 use rustmark::application::markdown::service::{
@@ -861,4 +863,112 @@ fn spell_check_without_injected_checker_is_noop() {
         enabled: true,
     });
     assert!(hits.is_empty());
+}
+
+// ============================================================================
+// V11-08 · 格式检查（lint）
+// ============================================================================
+
+/// 全部规则启用时，坏文档要报出问题。
+#[test]
+fn lint_reports_issues_when_rules_are_enabled() {
+    let f = build(vec![], vec![]);
+    let doc_id = DocumentId::new();
+    // `#` 直接跳到 `###`（层级跳跃）+ 行尾 1 个空格（2 个是硬换行，被豁免）。
+    f.provider.insert(
+        doc_id,
+        "# 标题\n\n### 跳到三级 \n正文\n",
+        0,
+        Some(fp("/d/x.md")),
+    );
+    let issues = f.service.lint_document(LintQuery {
+        doc_id,
+        rules: LintRulesView::default(),
+    });
+    assert!(
+        issues.iter().any(|i| i.rule == "heading_jump"),
+        "应报出标题层级跳跃，实际 {issues:?}"
+    );
+    assert!(
+        issues.iter().any(|i| i.rule == "trailing_whitespace"),
+        "应报出行尾空格，实际 {issues:?}"
+    );
+}
+
+/// 关掉的规则不得出现在结果里——这是「规则可开关」的核心承诺。
+#[test]
+fn lint_skips_disabled_rules() {
+    let f = build(vec![], vec![]);
+    let doc_id = DocumentId::new();
+    f.provider
+        .insert(doc_id, "# 标题\n\n### 跳到三级  \n", 0, Some(fp("/d/x.md")));
+    let only_heading = LintRulesView {
+        heading_jump: true,
+        list_marker_mix: false,
+        trailing_whitespace: false,
+        unclosed_fence: false,
+    };
+    let issues = f.service.lint_document(LintQuery {
+        doc_id,
+        rules: only_heading,
+    });
+    assert!(issues.iter().all(|i| i.rule == "heading_jump"));
+    assert!(!issues.is_empty(), "标题跳跃仍应被报出");
+}
+
+/// 全部规则关闭 → 短路返回空集（连内容都不读）。
+#[test]
+fn lint_with_all_rules_off_is_empty() {
+    let f = build(vec![], vec![]);
+    let doc_id = DocumentId::new();
+    f.provider
+        .insert(doc_id, "# 标题\n\n### 三级  \n", 0, Some(fp("/d/x.md")));
+    let off = LintRulesView {
+        heading_jump: false,
+        list_marker_mix: false,
+        trailing_whitespace: false,
+        unclosed_fence: false,
+    };
+    assert!(
+        f.service
+            .lint_document(LintQuery { doc_id, rules: off })
+            .is_empty(),
+        "规则全关必须返回空集"
+    );
+}
+
+/// 文档不存在 → 空集（不 panic）。
+#[test]
+fn lint_of_unknown_document_is_empty() {
+    let f = build(vec![], vec![]);
+    let issues = f.service.lint_document(LintQuery {
+        doc_id: DocumentId::new(),
+        rules: LintRulesView::default(),
+    });
+    assert!(issues.is_empty());
+}
+
+/// 投影字段必须齐全且是**可直接呈现**的（0-based 行号 + 中文规则名 + 说明）。
+#[test]
+fn lint_issue_view_carries_renderable_fields() {
+    let f = build(vec![], vec![]);
+    let doc_id = DocumentId::new();
+    // 先有一个 `#`，再跳到 `###`，才是「层级跳跃」。
+    f.provider.insert(
+        doc_id,
+        "正文\n\n# 一级\n\n### 三级\n",
+        0,
+        Some(fp("/d/x.md")),
+    );
+    let issues: Vec<LintIssueView> = f.service.lint_document(LintQuery {
+        doc_id,
+        rules: LintRulesView::default(),
+    });
+    let issue = issues
+        .iter()
+        .find(|i| i.rule == "heading_jump")
+        .expect("应有一条标题跳跃问题");
+    assert_eq!(issue.rule_label, "标题层级跳跃", "规则名应是中文显示名");
+    assert_eq!(issue.line, 4, "问题在第五行（0-based = 4）");
+    assert!(!issue.message.is_empty(), "说明文案不得为空：{:?}", issue);
 }

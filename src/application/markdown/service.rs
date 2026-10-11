@@ -15,6 +15,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use crate::domain::markdown::lint::{LintRule, LintRuleSet, MarkdownLinter};
 use crate::domain::markdown::services::{
     BlockMapper, MarkdownParser, SpellChecker, SyntaxHighlighter,
 };
@@ -25,12 +26,14 @@ use crate::shared::error::AppError;
 use crate::shared::geometry::ByteOffset;
 use crate::shared::ids::DocumentId;
 use crate::shared::result::AppResult;
+use crate::shared::text::word_bounds_at;
 use crate::shared::time::{Clock, Timestamp};
 
 use crate::application::document::DocumentContentProvider;
 use crate::application::dto::{
-    BlockView, CellAlignView, DefinitionBodyView, DefinitionEntryView, ListItemView,
-    OutlineItemView, OutlineView, RangeView, RenderedView, SpanView, TableView,
+    BlockView, CellAlignView, DefinitionBodyView, DefinitionEntryView, LintIssueView,
+    LintRulesView, ListItemView, OutlineItemView, OutlineView, RangeView, RenderedView, SpanView,
+    TableView,
 };
 
 use super::commands::*;
@@ -38,6 +41,27 @@ use super::queries::*;
 
 /// 超过该字节数（500 KiB）的源文档标记为截断预览（FR-06 应用层判定）。
 pub const TRUNCATE_THRESHOLD_BYTES: usize = 500 * 1024;
+
+/// 偏好里的 lint 开关 → 领域规则集（V11-08）。
+///
+/// 映射放在应用层而不是让领域去读偏好：领域不该知道「设置」这个上下文，
+/// 它只该知道「要跑哪几条规则」。
+fn lint_rule_set(view: &LintRulesView) -> LintRuleSet {
+    let mut rules = Vec::new();
+    if view.heading_jump {
+        rules.push(LintRule::HeadingJump);
+    }
+    if view.list_marker_mix {
+        rules.push(LintRule::ListMarkerMixed);
+    }
+    if view.trailing_whitespace {
+        rules.push(LintRule::TrailingWhitespace);
+    }
+    if view.unclosed_fence {
+        rules.push(LintRule::UnclosedFence);
+    }
+    LintRuleSet::new(rules)
+}
 
 /// 默认渲染缓存容量（LRU 上限）。
 pub const DEFAULT_RENDER_CACHE_CAPACITY: usize = 16;
@@ -715,6 +739,75 @@ impl MarkdownAppService {
             .collect();
         lock_or_recover(&self.spell_cache).insert(q.doc_id, revision, hits.clone());
         hits
+    }
+
+    /// 格式检查（V11-08）：返回当前文档里的全部格式问题。
+    ///
+    /// # 为什么不做缓存
+    ///
+    /// lint 是**线性扫描**（O(行数)），1MB 文档在 debug 下也就几十毫秒量级；
+    /// 而「检查」标签不是每帧可见的——只有用户切过去才会调。
+    /// 为它引入一份带失效规则的缓存，收益不抵复杂度（缓存一旦失效不彻底，
+    /// 用户就会看到「改完了问题还在」）。
+    ///
+    /// # 边界
+    ///
+    /// - 规则全关 → 空集（领域层直接短路，连扫描都不做）；
+    /// - 文档不存在 → 空集；
+    /// - 大文档**不降级**：与高亮 / 预览不同，lint 不走渲染路径，
+    ///   且「检查不出来」比「慢一点」更让人困惑。
+    pub fn lint_document(&self, q: LintQuery) -> Vec<LintIssueView> {
+        let rules = lint_rule_set(&q.rules);
+        if rules.enabled().is_empty() {
+            return Vec::new();
+        }
+        let Ok((content, _revision)) = self.fetch(q.doc_id) else {
+            return Vec::new();
+        };
+        MarkdownLinter::lint(&content, &rules)
+            .into_iter()
+            .map(|issue| LintIssueView {
+                rule: issue.rule().id().to_string(),
+                rule_label: issue.rule().label().to_string(),
+                line: issue.line(),
+                column: issue.column(),
+                message: issue.message().to_string(),
+            })
+            .collect()
+    }
+
+    /// 拼写建议（V11-07）：给 `offset` 处的那个词返回候选替换。
+    ///
+    /// # 为什么只按 `offset` 定位，不接受「词」本身
+    ///
+    /// 表现层手里只有**字节偏移**（egui 的排版结果给不出词），
+    /// 若把「扩到整词」的责任推给调用方，就会有两份分词规则
+    /// （一份在视图、一份在检查器），改了一处必然漏另一处。
+    /// 这里复用与检查器同源的「ASCII 字母即词」约定，保持单一真相。
+    ///
+    /// # 边界
+    ///
+    /// - `offset` 落在非字母（空白 / 中文 / 标点）上 → 空集（没有词可建议）；
+    /// - 该词**未被判错**（在词表或找不到近邻）→ 空集；
+    /// - 检查器不可用 / 未装配 → 空集。
+    ///
+    /// 不开拼写检查时也照常返回建议：用户既然右键了，说明他看到了波浪线
+    /// 或觉得这个词可疑，此时拒绝回答没有意义。
+    pub fn spell_suggestions(&self, q: SpellSuggestQuery) -> Vec<String> {
+        let Some(checker) = self.spell.as_ref() else {
+            return Vec::new();
+        };
+        if !checker.is_available() || q.limit == 0 {
+            return Vec::new();
+        }
+        let Ok((content, _revision)) = self.fetch(q.doc_id) else {
+            return Vec::new();
+        };
+        let Some((start, end)) = word_bounds_at(&content, q.offset) else {
+            return Vec::new();
+        };
+        let word = content[start..end].to_ascii_lowercase();
+        checker.suggest(&word, q.limit)
     }
 
     // ---------- 内部 ----------

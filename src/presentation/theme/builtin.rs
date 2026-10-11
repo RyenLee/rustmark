@@ -377,11 +377,18 @@ impl Theme {
         theme
     }
 
-    /// 由自定义调色板构造主题（P2 自定义主题）。
+    /// 由自定义调色板构造主题（P2 自定义主题 + V11-09 语法色覆盖）。
     ///
-    /// 设计取舍：只开放 8 个**核心语义色**，其余（语法高亮 / 差异 / 语义色）
-    /// 沿用内置深色主题的同类值——把 30+ 颜色全部开放既增加 UI 负担，
-    /// 也容易出现「调出来不好看」的风险。
+    /// 设计取舍：8 个**核心语义色**必填，语法高亮色可选覆盖；
+    /// 其余（差异 / 语义色 / 尺寸）沿用内置主题的同类值——把 30+ 颜色
+    /// 全部开放既增加 UI 负担，也容易出现「调出来不好看」的风险。
+    ///
+    /// # 基线为什么按明暗选，而不是固定深色
+    ///
+    /// 未覆盖的项（含全部语法色）必须**随明暗走**。若固定以 `dark()` 为底，
+    /// 一个浅色背景的自定义主题会拿到深色主题的语法高亮色——浅底上出现
+    /// 一堆低对比的浅色关键字。故先由主背景亮度定明暗，再取同明暗的内置
+    /// 主题作底，未覆盖项天然协调。
     ///
     /// `kind` 不固定为 `Dark`：依据主背景亮度决定，驱动 egui 的明暗模式，
     /// 这样用户选浅色背景时界面整体走浅色，不会被锁在深色视觉里。
@@ -391,8 +398,12 @@ impl Theme {
         font_size: f32,
         line_height: f32,
     ) -> Self {
-        let mut theme = Self::dark();
-        theme.bg_primary = parse_hex_color(&palette.bg_primary, theme.bg_primary);
+        // 先解析主背景（决定明暗），再取同明暗的内置主题作基线。
+        let bg_primary = parse_hex_color(&palette.bg_primary, Self::dark().bg_primary);
+        let dark = is_dark_color(bg_primary);
+        let mut theme = if dark { Self::dark() } else { Self::light() };
+
+        theme.bg_primary = bg_primary;
         theme.bg_secondary = parse_hex_color(&palette.bg_secondary, theme.bg_secondary);
         // 三级背景（输入框 / 悬浮卡片）无独立入口，跟随次背景。
         theme.bg_tertiary = theme.bg_secondary;
@@ -410,6 +421,18 @@ impl Theme {
         theme.code_bg = parse_hex_color(&palette.code_bg, theme.code_bg);
         theme.selection_bg = parse_hex_color(&palette.selection_bg, theme.selection_bg);
 
+        // 语法高亮：只覆盖显式给出的项（`None` 保持基线值）。
+        apply_override(&mut theme.syn_heading, &palette.syn_heading);
+        apply_override(&mut theme.syn_bold, &palette.syn_bold);
+        apply_override(&mut theme.syn_italic, &palette.syn_italic);
+        apply_override(&mut theme.syn_code, &palette.syn_code);
+        apply_override(&mut theme.syn_link, &palette.syn_link);
+        apply_override(&mut theme.syn_quote, &palette.syn_quote);
+        apply_override(&mut theme.syn_marker, &palette.syn_marker);
+        apply_override(&mut theme.syn_meta, &palette.syn_meta);
+        apply_override(&mut theme.syn_table, &palette.syn_table);
+        apply_override(&mut theme.syn_other, &palette.syn_other);
+
         if !font_family.trim().is_empty() {
             theme.editor_font_family = font_family.to_string();
         }
@@ -417,7 +440,7 @@ impl Theme {
         theme.editor_line_height = line_height;
 
         // 由主背景亮度决定 egui 明暗模式（custom 不直接映射 Light/Dark）。
-        theme.kind = if is_dark_color(theme.bg_primary) {
+        theme.kind = if dark {
             BuiltinTheme::Dark
         } else {
             BuiltinTheme::Light
@@ -493,11 +516,20 @@ pub fn palette_signature(theme: &Theme) -> Option<[u8; 4]> {
         theme.text_primary,
         theme.text_secondary,
         theme.accent,
+        theme.code_bg,
+        theme.selection_bg,
+        // 全部语法高亮色都纳入（V11-09）：任一语法色变化都必须让预览缓存失效，
+        // 否则用户改了「关键字色」却发现预览区没变——那是最难解释的一类 bug。
         theme.syn_heading,
         theme.syn_bold,
         theme.syn_italic,
         theme.syn_code,
-        theme.code_bg,
+        theme.syn_link,
+        theme.syn_quote,
+        theme.syn_marker,
+        theme.syn_meta,
+        theme.syn_table,
+        theme.syn_other,
     ] {
         let [r, g, b, a] = color.to_array();
         for byte in [r, g, b, a] {
@@ -540,6 +572,17 @@ fn parse_hex_color(raw: &str, fallback: Color32) -> Color32 {
     match (r, g, b) {
         (Ok(r), Ok(g), Ok(b)) => Color32::from_rgb(r, g, b),
         _ => fallback,
+    }
+}
+
+/// 若调色板给出了覆盖值，则用它替换目标色；否则保持不动（跟随基线）。
+///
+/// `None` 是「跟随主题」而不是「黑色」——这是 V11-09 的核心语义：
+/// 用 `parse_hex_color(hex, *target)` 让非法值退回**当前基线**，
+/// 而不是退回某个硬编码默认色。
+fn apply_override(target: &mut Color32, value: &Option<String>) {
+    if let Some(hex) = value {
+        *target = parse_hex_color(hex, *target);
     }
 }
 

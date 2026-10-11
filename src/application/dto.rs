@@ -159,11 +159,42 @@ pub struct CustomThemePaletteView {
     pub border: String,
     /// 选区背景。
     pub selection_bg: String,
+    /// 语法高亮：标题（`None` = 跟随内置主题，V11-09）。
+    #[serde(default)]
+    pub syn_heading: Option<String>,
+    /// 语法高亮：加粗。
+    #[serde(default)]
+    pub syn_bold: Option<String>,
+    /// 语法高亮：斜体。
+    #[serde(default)]
+    pub syn_italic: Option<String>,
+    /// 语法高亮：行内代码 / 代码块。
+    #[serde(default)]
+    pub syn_code: Option<String>,
+    /// 语法高亮：链接。
+    #[serde(default)]
+    pub syn_link: Option<String>,
+    /// 语法高亮：引用块。
+    #[serde(default)]
+    pub syn_quote: Option<String>,
+    /// 语法高亮：标记符（`#` / `-` 等）。
+    #[serde(default)]
+    pub syn_marker: Option<String>,
+    /// 语法高亮：元信息（围栏语言名等）。
+    #[serde(default)]
+    pub syn_meta: Option<String>,
+    /// 语法高亮：表格。
+    #[serde(default)]
+    pub syn_table: Option<String>,
+    /// 语法高亮：其它（默认正文色）。
+    #[serde(default)]
+    pub syn_other: Option<String>,
 }
 
 impl Default for CustomThemePaletteView {
     fn default() -> Self {
         // 以内置深色主题的核心色作为起点，保证首次切换到「自定义」时配色协调。
+        // 语法色一律 `None`（跟随主题）。
         Self {
             bg_primary: "#14161B".to_string(),
             bg_secondary: "#1A1D24".to_string(),
@@ -173,6 +204,16 @@ impl Default for CustomThemePaletteView {
             code_bg: "#1C212B".to_string(),
             border: "#2B323D".to_string(),
             selection_bg: "#6AA9FF".to_string(),
+            syn_heading: None,
+            syn_bold: None,
+            syn_italic: None,
+            syn_code: None,
+            syn_link: None,
+            syn_quote: None,
+            syn_marker: None,
+            syn_meta: None,
+            syn_table: None,
+            syn_other: None,
         }
     }
 }
@@ -188,6 +229,16 @@ impl From<CustomThemePalette> for CustomThemePaletteView {
             code_bg: p.code_bg,
             border: p.border,
             selection_bg: p.selection_bg,
+            syn_heading: p.syn_heading,
+            syn_bold: p.syn_bold,
+            syn_italic: p.syn_italic,
+            syn_code: p.syn_code,
+            syn_link: p.syn_link,
+            syn_quote: p.syn_quote,
+            syn_marker: p.syn_marker,
+            syn_meta: p.syn_meta,
+            syn_table: p.syn_table,
+            syn_other: p.syn_other,
         }
     }
 }
@@ -203,6 +254,16 @@ impl From<CustomThemePaletteView> for CustomThemePalette {
             code_bg: p.code_bg,
             border: p.border,
             selection_bg: p.selection_bg,
+            syn_heading: p.syn_heading,
+            syn_bold: p.syn_bold,
+            syn_italic: p.syn_italic,
+            syn_code: p.syn_code,
+            syn_link: p.syn_link,
+            syn_quote: p.syn_quote,
+            syn_marker: p.syn_marker,
+            syn_meta: p.syn_meta,
+            syn_table: p.syn_table,
+            syn_other: p.syn_other,
         }
     }
 }
@@ -251,6 +312,54 @@ pub struct EditorSettingsView {
     /// 写作目标（字数）；`0` = 未设置（V11-05）。旧配置缺省按 `0` 处理。
     #[serde(default)]
     pub writing_goal: u32,
+    /// 格式检查（lint）的规则开关（V11-08）。旧配置缺省按**全部启用**处理。
+    #[serde(default)]
+    pub lint: LintRulesView,
+}
+
+/// 格式检查规则开关视图（V11-08）。
+///
+/// 与领域 [`crate::domain::preferences::value_objects::LintSettings`] 一一对应；
+/// 单独成结构是为了让表现层只消费 DTO（不得依赖 `domain`）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct LintRulesView {
+    /// 标题层级跳跃。
+    pub heading_jump: bool,
+    /// 列表符号混用。
+    pub list_marker_mix: bool,
+    /// 行尾多余空格。
+    pub trailing_whitespace: bool,
+    /// 未闭合代码围栏。
+    pub unclosed_fence: bool,
+}
+
+impl Default for LintRulesView {
+    fn default() -> Self {
+        Self {
+            heading_jump: true,
+            list_marker_mix: true,
+            trailing_whitespace: true,
+            unclosed_fence: true,
+        }
+    }
+}
+
+/// 一处格式问题的展示投影（V11-08）。
+///
+/// 只带**可直接呈现**的字段（规则名、行号、列号、文案）：
+/// 表现层拿不到领域类型，跳转所需的行号也必须是 0-based 的裸数字。
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct LintIssueView {
+    /// 规则标识（稳定，可用于图标 / 过滤）。
+    pub rule: String,
+    /// 规则中文名。
+    pub rule_label: String,
+    /// 行号（**0-based**，展示时 +1）。
+    pub line: usize,
+    /// 列号（0-based 字符）。
+    pub column: usize,
+    /// 说明文案。
+    pub message: String,
 }
 
 /// 写作目标进度（V11-05）。
@@ -338,6 +447,7 @@ impl SettingsView {
                 show_line_numbers: true,
                 split_ratio: 0.5,
                 writing_goal: 0,
+                lint: LintRulesView::default(),
             },
             shortcuts: Vec::new(),
         }

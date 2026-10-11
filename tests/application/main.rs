@@ -13,4 +13,5 @@ mod export_service_test;
 mod format_service_test;
 mod markdown_service_test;
 mod preferences_service_test;
+mod spell_suggestion_test;
 mod workspace_service_test;

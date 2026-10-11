@@ -67,6 +67,7 @@ fn customized() -> Preferences {
         800,
         0.5,
         WritingGoal::new(1200),
+        rustmark::domain::preferences::value_objects::LintSettings::all_enabled(),
     );
     Preferences::new(theme, editor, Default::default()).expect("构造合法偏好设置应成功")
 }
@@ -246,9 +247,158 @@ fn concurrent_style_repeated_saves_keep_file_valid() {
             400,
             0.5,
             WritingGoal::new(0),
+            rustmark::domain::preferences::value_objects::LintSettings::all_enabled(),
         ));
         repo.save(&prefs).expect("反复保存应始终成功");
     }
     assert!(repo.load().is_ok(), "最后一次写入的文件必须可解析");
     assert!(dir.backups().is_empty(), "正常保存不应产生备份");
+}
+
+// ============================================================================
+// V11-08 · 格式检查（lint）设置的持久化
+// ============================================================================
+
+/// 关掉的规则要能原样存盘再读回——否则用户每次重启都要重关一遍。
+#[test]
+fn lint_rule_choices_survive_a_toml_round_trip() {
+    use rustmark::domain::preferences::value_objects::{LintSettings, TabSize};
+
+    let dir = TempDir::new("lint-roundtrip");
+    let repo = repo_in(&dir);
+
+    let theme = Theme::new(ThemeKind::Dark, "JetBrains Mono".to_string(), 16.0, 2.0);
+    let editor = EditorSettings::new(
+        TabSize::Four,
+        true,
+        None,
+        false,
+        true,
+        400,
+        0.5,
+        WritingGoal::new(0),
+        LintSettings {
+            heading_jump: false,
+            list_marker_mix: true,
+            trailing_whitespace: false,
+            unclosed_fence: true,
+        },
+    );
+    let prefs = Preferences::new(theme, editor, Default::default()).expect("构造合法偏好");
+
+    repo.save(&prefs).expect("保存应成功");
+    let loaded = repo.load().expect("加载应成功");
+    assert!(
+        !loaded.editor().lint().heading_jump,
+        "关掉的规则必须原样读回"
+    );
+    assert!(loaded.editor().lint().list_marker_mix, "开着的规则必须保留");
+    assert!(!loaded.editor().lint().trailing_whitespace);
+    assert!(loaded.editor().lint().unclosed_fence);
+}
+
+/// 旧配置文件里没有 lint 字段 → 必须按「全部启用」读出，而不是让加载失败。
+#[test]
+fn an_old_config_without_lint_fields_loads_them_all_enabled() {
+    use rustmark::domain::preferences::value_objects::LintSettings;
+
+    let dir = TempDir::new("lint-backcompat");
+    let repo = repo_in(&dir);
+    repo.save(&Preferences::default_preferences())
+        .expect("先写一份默认配置");
+    let text = fs::read_to_string(repo.path()).expect("应能读回默认配置");
+    // 抹掉 lint 相关行，模拟「升级前写下的旧配置」。
+    let stripped: String = text
+        .lines()
+        .filter(|l| {
+            !l.contains("heading_jump")
+                && !l.contains("list_marker_mix")
+                && !l.contains("trailing_whitespace")
+                && !l.contains("unclosed_fence")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    fs::write(repo.path(), stripped).expect("写回旧格式配置");
+
+    let loaded = repo.load().expect("旧配置必须能加载");
+    assert_eq!(
+        loaded.editor().lint(),
+        LintSettings::all_enabled(),
+        "缺 lint 字段时必须按全部启用读出"
+    );
+}
+
+// ============================================================================
+// V11-09 · 自定义主题语法色覆盖的持久化
+// ============================================================================
+
+/// 构造一份「自定义主题 + 指定语法覆盖」的偏好。
+fn prefs_with_custom_syntax(syn_heading: Option<&str>) -> Preferences {
+    use rustmark::domain::preferences::value_objects::{CustomThemePalette, ThemeKind};
+
+    let palette = CustomThemePalette {
+        syn_heading: syn_heading.map(str::to_string),
+        ..Default::default()
+    };
+    let mut theme = Theme::new(ThemeKind::Custom, "monospace".to_string(), 14.0, 1.6);
+    theme.custom = Some(palette);
+    let editor = EditorSettings::new(
+        rustmark::domain::preferences::value_objects::TabSize::Four,
+        true,
+        None,
+        false,
+        true,
+        400,
+        0.5,
+        WritingGoal::new(0),
+        rustmark::domain::preferences::value_objects::LintSettings::all_enabled(),
+    );
+    Preferences::new(theme, editor, Default::default()).expect("构造合法偏好")
+}
+
+/// 语法色覆盖要能存盘再读回。
+#[test]
+fn custom_theme_syntax_override_survives_a_round_trip() {
+    let dir = TempDir::new("syn-roundtrip");
+    let repo = repo_in(&dir);
+    let prefs = prefs_with_custom_syntax(Some("#123456"));
+
+    repo.save(&prefs).expect("保存应成功");
+    let loaded = repo.load().expect("加载应成功");
+    let palette = loaded
+        .theme()
+        .custom
+        .clone()
+        .expect("自定义主题应带回调色板");
+    assert_eq!(palette.syn_heading.as_deref(), Some("#123456"));
+    assert_eq!(palette.syn_link, None, "未覆盖的语法色应保持 None");
+}
+
+/// 旧自定义主题文件里没有 `syn_*` 字段 → 必须读作 `None`（跟随主题），不得加载失败。
+#[test]
+fn an_old_custom_theme_without_syntax_fields_loads_as_following_theme() {
+    let dir = TempDir::new("syn-backcompat");
+    let repo = repo_in(&dir);
+    repo.save(&prefs_with_custom_syntax(None))
+        .expect("先写一份自定义主题偏好");
+    let text = fs::read_to_string(repo.path()).expect("应能读回配置");
+    // 抹掉所有 syn_* 行，模拟「升级前写下的旧自定义主题」。
+    let stripped: String = text
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("syn_"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    fs::write(repo.path(), stripped).expect("写回旧格式配置");
+
+    let loaded = repo.load().expect("旧配置必须能加载");
+    let palette = loaded
+        .theme()
+        .custom
+        .clone()
+        .expect("旧自定义主题应仍带调色板");
+    assert_eq!(
+        palette.syn_heading, None,
+        "缺省语法色应读作 None（跟随主题）"
+    );
+    assert_eq!(palette.syn_table, None);
 }

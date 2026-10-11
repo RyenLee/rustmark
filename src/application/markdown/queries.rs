@@ -18,6 +18,7 @@
 //!
 //! 以上均由领域层 [`BlockMapper`] 保证，应用层只是透传结果。
 
+use crate::application::dto::LintRulesView;
 use crate::shared::geometry::TextRange;
 use crate::shared::ids::DocumentId;
 
@@ -116,4 +117,24 @@ pub struct SpellCheckQuery {
     /// 是否启用检查。关闭时服务直接返回空集，**不查缓存也不重算**——
     /// 让「关掉开关」这一动作零成本。
     pub enabled: bool,
+}
+
+/// 格式检查查询（V11-08 侧栏「检查」标签）。
+#[derive(Clone, Copy, Debug)]
+pub struct LintQuery {
+    /// 目标文档 ID。
+    pub doc_id: DocumentId,
+    /// 启用的规则开关。
+    pub rules: LintRulesView,
+}
+
+/// 拼写建议查询（V11-07：右键错词时的「你可能想输入」）。
+#[derive(Clone, Copy, Debug)]
+pub struct SpellSuggestQuery {
+    /// 目标文档 ID。
+    pub doc_id: DocumentId,
+    /// 光标 / 右键落在哪个字节上（不必是词首，服务会自行扩到整词）。
+    pub offset: usize,
+    /// 最多返回几条建议。
+    pub limit: usize,
 }

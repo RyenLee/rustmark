@@ -206,8 +206,26 @@ impl Services {
         paths: ConfigPaths,
         dialogs: Arc<dyn DialogPort>,
     ) -> AppResult<Self> {
+        Self::assemble_with_clock_and_dialogs(paths, Arc::new(SystemClock), dialogs)
+    }
+
+    /// 以指定配置路径、**指定时钟**与指定对话框端口装配。
+    ///
+    /// 与 [`Self::assemble_with_dialogs`] 同理只为测试存在，但解决的是另一个
+    /// 问题：**时间相关的行为必须可测**（`.agent/conventions.md` 第 21 条）。
+    /// 典型如编辑区的 IME 组合期保护窗口（[`IME_GUARD_MS`]）——无头用例要在
+    /// 「窗口内」与「窗口已超时」两种状态下断言回车行为，而真实 `SystemClock`
+    /// 下整个用例跑完也未必跨过 800ms，窗口超时分支**永远测不到**。
+    ///
+    /// 传 [`crate::shared::time::SystemClock`] 之外的可控时钟即可推进时间。
+    ///
+    /// [`IME_GUARD_MS`]: crate::app::frame::IME_GUARD_MS
+    pub fn assemble_with_clock_and_dialogs(
+        paths: ConfigPaths,
+        clock: Arc<dyn Clock>,
+        dialogs: Arc<dyn DialogPort>,
+    ) -> AppResult<Self> {
         // —— 共享内核 ——
-        let clock: Arc<dyn Clock> = Arc::new(SystemClock);
         let bus: Arc<dyn EventBus> = Arc::new(InProcessEventBus::new());
         // 草稿目录在 `paths.preferences` 被 `TomlPreferencesRepository` 部分移动之前取出，
         // 否则 `paths` 进入部分移动状态后无法再整体使用。

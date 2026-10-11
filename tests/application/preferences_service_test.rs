@@ -86,6 +86,7 @@ fn set_editor_valid_persists() {
             show_line_numbers: false,
             split_ratio: 0.5,
             writing_goal: 500,
+            lint: Default::default(),
         },
     })
     .unwrap();
@@ -107,6 +108,7 @@ fn set_editor_goal_beyond_max_saturates_instead_of_failing() {
             split_ratio: 0.5,
             // 远超领域上限：必须饱和到 1_000_000，而不是让保存失败（V11-05）。
             writing_goal: u32::MAX,
+            lint: Default::default(),
         },
     })
     .unwrap();
@@ -129,6 +131,7 @@ fn set_editor_invalid_tab_size_fails() {
             show_line_numbers: false,
             split_ratio: 0.5,
             writing_goal: 0,
+            lint: Default::default(),
         },
     });
     assert!(res.is_err());
@@ -210,6 +213,9 @@ fn set_theme_custom_roundtrips_palette() {
         code_bg: "#222222".to_string(),
         border: "#333333".to_string(),
         selection_bg: "#44BBFF".to_string(),
+        // V11-09：语法色是可选的，这里只给一项覆盖，其余跟随主题。
+        syn_heading: Some("#FF8800".to_string()),
+        ..Default::default()
     };
     svc.set_theme(SetThemeCommand {
         theme: ThemeView {
@@ -226,6 +232,12 @@ fn set_theme_custom_roundtrips_palette() {
     let got = settings.theme.custom.expect("回读应带调色板");
     assert_eq!(got.bg_primary, "#0A0A0A");
     assert_eq!(got.accent, "#33AAFF");
+    assert_eq!(
+        got.syn_heading.as_deref(),
+        Some("#FF8800"),
+        "语法色覆盖应原样回读"
+    );
+    assert_eq!(got.syn_link, None, "未覆盖的语法色应保持 None（跟随主题）");
 }
 
 #[test]

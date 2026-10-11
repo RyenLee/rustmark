@@ -14,7 +14,8 @@ use crate::domain::preferences::aggregate::Preferences;
 use crate::domain::preferences::errors::PreferencesError;
 use crate::domain::preferences::repository::PreferencesRepository;
 use crate::domain::preferences::value_objects::{
-    Conflict, CustomThemePalette, EditorSettings, KeyCombo, TabSize, Theme, ThemeKind, WritingGoal,
+    Conflict, CustomThemePalette, EditorSettings, KeyCombo, LintSettings, TabSize, Theme,
+    ThemeKind, WritingGoal,
 };
 
 use crate::shared::error::AppError;
@@ -22,8 +23,8 @@ use crate::shared::event::{DomainEvent, EventBus};
 use crate::shared::result::AppResult;
 
 use crate::application::dto::{
-    ConflictView, CustomThemePaletteView, EditorSettingsView, GoalProgressView, SettingsView,
-    ShortcutView, ThemeView,
+    ConflictView, CustomThemePaletteView, EditorSettingsView, GoalProgressView, LintRulesView,
+    SettingsView, ShortcutView, ThemeView,
 };
 
 use super::commands::*;
@@ -247,6 +248,7 @@ fn to_editor(view: &EditorSettingsView) -> AppResult<EditorSettings> {
         view.split_ratio,
         // 目标在领域层饱和到上限：界面填多大都不会让设置保存失败（V11-05）。
         WritingGoal::new(view.writing_goal),
+        to_lint_settings(&view.lint),
     ))
 }
 
@@ -289,6 +291,27 @@ fn to_editor_view(editor: &EditorSettings) -> EditorSettingsView {
         show_line_numbers: editor.show_line_numbers(),
         split_ratio: editor.split_ratio(),
         writing_goal: editor.writing_goal().words(),
+        lint: to_lint_rules_view(editor.lint()),
+    }
+}
+
+/// 领域 [`LintSettings`] → [`LintRulesView`]（V11-08）。
+fn to_lint_rules_view(lint: LintSettings) -> LintRulesView {
+    LintRulesView {
+        heading_jump: lint.heading_jump,
+        list_marker_mix: lint.list_marker_mix,
+        trailing_whitespace: lint.trailing_whitespace,
+        unclosed_fence: lint.unclosed_fence,
+    }
+}
+
+/// [`LintRulesView`] → 领域 [`LintSettings`]（V11-08）。
+fn to_lint_settings(view: &LintRulesView) -> LintSettings {
+    LintSettings {
+        heading_jump: view.heading_jump,
+        list_marker_mix: view.list_marker_mix,
+        trailing_whitespace: view.trailing_whitespace,
+        unclosed_fence: view.unclosed_fence,
     }
 }
 

@@ -10,6 +10,7 @@ mod support;
 
 mod bootstrap_test;
 mod crash_log_test;
+mod delete_confirm_test;
 mod dialog_runner_test;
 mod frame_test;
 mod routing_exporter_test;

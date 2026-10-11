@@ -25,10 +25,10 @@ use crate::application::dto::{
     DocumentView, EditorSettingsView, RecentFileView, SettingsView, StatsView, ThemeView,
 };
 use crate::application::dto::{
-    ExportRequestView, ExportResultView, OutlineItemView, SearchResultView,
+    ExportRequestView, ExportResultView, LintIssueView, OutlineItemView, SearchResultView,
 };
 use crate::application::export::commands::{CreateExportJobCommand, RunExportCommand};
-use crate::application::markdown::queries::RebuildOutlineQuery;
+use crate::application::markdown::queries::{LintQuery, RebuildOutlineQuery};
 use crate::application::preferences::commands::{
     ResetSectionCommand, SetEditorCommand, SetShortcutCommand, SetThemeCommand, SettingsSection,
 };
@@ -227,6 +227,45 @@ pub struct EditorApp {
     /// 就会与**领域**撤销栈（本项目的撤销权威）打架。每次通过领域改了文本后，
     /// 下一帧开头清掉 egui 的撤销栈，让 Ctrl+Z 永远只走领域。
     clear_undoer_next: bool,
+    /// 中文输入法（IME）组合是否正在进行（V11-13 回车缺陷的隐形同伙）。
+    ///
+    /// egui 0.33 的 `Preedit` 会把预编辑串**真实写进文本缓冲区**，并靠
+    /// `TextEdit` 内部状态里的一个选区（组合锚点 ↔ 预编辑串尾）在下一次
+    /// `Preedit` / `Commit` 时删旧换新。[`Self::apply_pending_editor_state`]
+    /// 在帧间回设的折叠光标会打掉这个选区——实测预编辑串逐帧累积
+    /// （"s"→"ssa"→"ssasadsadaf"）、候选词确认后中文被整个忽略。
+    /// 组合期间必须**冻结**「回设光标 / 清撤销栈」两个动作，见该方法的守卫。
+    ///
+    /// # 它为什么必须带终止保证（V11-14 回车失效的真正根因）
+    ///
+    /// 这个标志**绝不能**做成「只有 `Commit` / `Disabled` 才清」的粘性状态机。
+    /// 真实 Windows 输入法在编辑区获得焦点时就会发一次 `Ime::Enabled`，
+    /// 而 winit 的 `Disabled` 只在**失焦**时才发（见 `egui-winit` 的
+    /// `ime_event_enable` / `ime_event_disable`：前者幂等、后者由 `Commit`
+    /// 配对，但切换输入法、候选窗直接关闭、进程被杀等路径都可能收不到）。
+    /// 一旦标志永久为 `true`，守卫会**冻结 `pending_cursor` 的消费**，
+    /// 而 `flush_edit` 每次按键又覆写它——于是光标永远停在第一次回车后的
+    /// 旧位置，之后每一次回车都被插到同一处。实测症状与用户报告逐字吻合：
+    /// 「连按回车只多出一个新行，必须再输入字符才会真正换行」。
+    ///
+    /// 故组合期改用 [`Self::ime_composing_until_ms`] 这样的**有界**判定：
+    /// 组合事件开启一个短窗口，窗口内不消费 `pending_cursor`；超时即自动
+    /// 恢复，并给 egui 补发 `Disabled` 复位它自己的 `ime_enabled`。
+    /// 这既保住了 IME 组合期的正确性，又让「标志卡死」在结构上不可能。
+    ime_composing: bool,
+    /// 组合期保护窗口的到期时刻（毫秒）。
+    ///
+    /// 见 [`Self::ime_composing`]：这是「粘性标志」的结构性替代品。
+    ime_composing_until_ms: u64,
+    /// egui 的 `TextEdit` 可能已把 `ime_enabled` 置真（「IME armed」）。
+    ///
+    /// 这个标志在 egui 内部是 `pub(crate)`，我们既读不到也写不了，只能**镜像**
+    /// 一份：见 [`Self::apply_pending_editor_state`] 里「egui 侧」那段。
+    /// 它与 [`Self::ime_composing`] 是**两件事**：本字段只关心
+    /// 「egui 会不会按 IME 模式处理键盘」，那个模式会剔除部分按键。
+    egui_ime_armed: bool,
+    /// 「armed」保护窗口的到期时刻（毫秒）；到点后补发 `Disabled` 复位 egui。
+    egui_ime_armed_until_ms: u64,
     /// 启动时发现、待用户处置的遗留草稿 `(文档 ID, 内容)`（DEF-02 恢复）。
     ///
     /// 非空时每帧弹出一个居中的恢复提示；用户选择「恢复全部」或「丢弃全部」
@@ -248,6 +287,69 @@ pub struct EditorApp {
     /// 两次截图捕获的是**同一帧画面**（egui 每帧只绘制一次），
     /// 排队等两次毫无意义，用户要的也不是「同一张图存两份」。
     pending_capture: Option<PendingCapture>,
+    /// 已发出确认框、等待用户答复的删除目标（V11-06）。
+    ///
+    /// 删除是唯一不可逆的工作区操作，而 `DialogPort::confirm` 是**同步阻塞**
+    /// 的原生模态框——在 `update()` 里直接调会把帧循环卡死。故走两步：
+    /// 侧栏点「删除」时把目标记在这里并起后台确认框，取回答复后再真正删。
+    ///
+    /// 记**路径**而不是「待执行的闭包」：路径是可打印、可断言的值，
+    /// 测试能直接读出「还悬着的是哪一个」，闭包只能靠副作用观察。
+    pending_delete: Option<String>,
+}
+
+impl EditorApp {
+    /// 请求删除一个工作区条目（**先弹二次确认，答复为「是」才真删**）。
+    ///
+    /// # 为什么不能在这里直接删
+    ///
+    /// 原生确认框是模态同步调用（见 [`crate::shared::dialog::DialogPort::confirm`]），
+    /// 在 `update()` 里调用会让窗口在用户思考的那几秒里完全失去响应。
+    /// 故与「打开 / 另存为」同一套路：登记意图 → 后台线程问 → 每帧取回。
+    ///
+    /// 已有确认在飞时**忽略**本次请求（`DialogRunner::spawn` 的语义）：
+    /// 连点两下「删除」不该弹出两个系统窗口，更不该在第一个答复之后
+    /// 把第二个目标也顺手删掉。
+    pub fn request_delete(&mut self, path: &str) {
+        if self.pending_delete.is_some() {
+            return;
+        }
+        let message = self.delete_confirm_message(path);
+        self.pending_delete = Some(path.to_string());
+        self.dialogs.spawn(DialogRequest::Confirm { message });
+    }
+
+    /// 当前是否有删除在等用户确认（状态栏 / 测试观察用）。
+    pub fn delete_pending(&self) -> Option<&str> {
+        self.pending_delete.as_deref()
+    }
+
+    /// 构造删除确认的提示文案。
+    ///
+    /// 目录要**明说会连内容一起删**：`remove_dir_all` 一旦执行不可恢复，
+    /// 而用户右键点到的是目录本身，很可能没意识到里面还有东西。
+    /// 只写「确定删除 X？」属于把风险藏起来。
+    fn delete_confirm_message(&self, path: &str) -> String {
+        let name = path.rsplit('/').next().unwrap_or(path);
+        let is_directory = self
+            .workspace_entries
+            .items
+            .iter()
+            .any(|(p, is_dir)| *is_dir && p == path);
+        if !is_directory {
+            return format!("确定删除「{name}」？删除后不可恢复。");
+        }
+        // 目录：明说会连内容一起删。`remove_dir_all` 不可恢复，
+        // 而用户右键点到的是目录自身，很可能没意识到里面还有东西。
+        let prefix = format!("{path}/");
+        let inside = self
+            .workspace_entries
+            .items
+            .iter()
+            .filter(|(p, _)| p.starts_with(&prefix))
+            .count();
+        format!("确定删除目录「{name}」？\n其中包含约 {inside} 项内容，删除后不可恢复。")
+    }
 }
 
 /// 一次等待回传的截图任务。
@@ -326,6 +428,35 @@ fn compute_long_image_skip(long: &LongImageState, pixels_per_point: f32) -> Vec<
         .collect()
 }
 
+/// IME 组合期保护窗口（毫秒）。
+///
+/// # 取值理由
+///
+/// 它必须同时满足两个约束：
+///
+/// 1. **够长**：真实中文输入从敲下第一个字母到按下候选确认，人可以慢到
+///    几百毫秒。每个字母都是一次 `Preedit`，会把窗口**续上**（不是从首次
+///    `Enabled` 起一次性计时），故单次只需覆盖「两次击键的间隔」。
+///    取 800ms：远大于普通击键间隔（~100–300ms）。
+/// 2. **够短**：一旦 `Commit`/`Disabled` 丢失（切输入法、直接关候选窗、焦点
+///    落到浮层），冻结必须在可感知的短时间内自行解除，否则用户的回车会被吞
+///    ——那正是本常量要根治的缺陷。见 [`EditorApp::apply_pending_editor_state`]。
+const IME_GUARD_MS: u64 = 800;
+
+/// 「egui 已 armed IME」的保护窗口（毫秒）。
+///
+/// 与 [`IME_GUARD_MS`] 分开取值，因为两者要防的故障相反：
+///
+/// * [`IME_GUARD_MS`] 管**我们自己的守卫**——宁长勿短，冻结久一点最多让
+///   光标晚一帧回设，绝不能中途解冻（中途解冻会打掉 egui 的预编辑选区）。
+/// * 本常量管**复位 egui 的 `ime_enabled`**——宁短勿长。窗口过长就等于
+///   「冻结回车」，而回车正是用户最高频的按键。
+///
+/// 取 50ms：真实组合里 `Enabled` 与首个 `Preedit` 之间的间隔不到一帧
+/// （~16ms），50ms 留了三帧余量；连按回车的人手间隔 ≥80ms，
+/// 故第一次回车就已出窗、立即恢复。
+const IME_ARM_MS: u64 = 50;
+
 impl EditorApp {
     /// 构造应用根状态。
     ///
@@ -372,9 +503,14 @@ impl EditorApp {
             editor_text: String::new(),
             pending_cursor: None,
             clear_undoer_next: false,
+            ime_composing: false,
+            ime_composing_until_ms: 0,
+            egui_ime_armed: false,
+            egui_ime_armed_until_ms: 0,
             pending_recoveries,
             preview_rect: None,
             pending_capture: None,
+            pending_delete: None,
         };
         // 分割比例以持久化配置为权威来源：用户拖过的比例重启后仍生效。
         app.ui.split_ratio = settings.editor.split_ratio.clamp(SPLIT_MIN, SPLIT_MAX);
@@ -426,6 +562,13 @@ impl EditorApp {
     /// （[`AppError::Cancelled`]）而非文案——按文案判断会在一次
     /// 措辞调整后静默失效。
     pub fn apply_dialog_outcome(&mut self, outcome: DialogOutcome) {
+        // 确认框**先于**上面的取消短路处理：它的「取消」有具体含义——
+        // 撤销待删目标。若跟着路径类结果一起短路返回，`pending_delete`
+        // 会一直悬着，用户下次点「删除」反而被「已有确认在飞」吞掉。
+        if let DialogOutcome::Confirm(result) = &outcome {
+            self.apply_delete_confirm(result);
+            return;
+        }
         if outcome.is_cancelled() {
             return;
         }
@@ -467,7 +610,44 @@ impl EditorApp {
             DialogOutcome::OpenFile(Err(e)) => self.report_dialog_failure("打开文件", &e),
             DialogOutcome::SaveFile(Err(e)) => self.report_dialog_failure("另存为", &e),
             DialogOutcome::PickFolder(Err(e)) => self.report_dialog_failure("选择文件夹", &e),
+            // 确认框已在上方先行处理（它有自己的取消语义）。此臂只为
+            // 让编译器确认枚举穷尽——真走到这里说明前面的分支被改坏了。
+            DialogOutcome::Confirm(_) => {}
         }
+    }
+
+    /// 兑现一次删除确认的答复（V11-06）。
+    ///
+    /// # 三种答复的语义
+    ///
+    /// - `Ok(true)`：执行删除；
+    /// - `Ok(false)`：用户点了「否」，撤销待删目标（**不提示**——他刚明确拒绝，
+    ///   再弹一条「已取消删除」是废话）；
+    /// - `Err(Cancelled)`：关掉了对话框，与「否」同处理（取消不是错误）；
+    /// - `Err(其他)`：对话框系统不可用，**必须提示**——否则用户以为删了，
+    ///   实际什么都没发生，或反之。此时同样撤销待删目标，避免下次点击被吞。
+    fn apply_delete_confirm(&mut self, result: &Result<bool, AppError>) {
+        let Some(path) = self.pending_delete.take() else {
+            return;
+        };
+        match result {
+            Ok(true) => match self.delete_entry(&path) {
+                Ok(()) => self
+                    .sidebar
+                    .succeed(format!("已删除 {}", Self::display_name(&path))),
+                Err(e) => self.sidebar.fail(e.to_string()),
+            },
+            Ok(false) => {}
+            Err(AppError::Cancelled) => {}
+            Err(e) => self
+                .sidebar
+                .fail(format!("未能确认删除 {}：{e}", Self::display_name(&path))),
+        }
+    }
+
+    /// 路径末段（提示文案里显示的名字）。
+    fn display_name(path: &str) -> &str {
+        path.rsplit('/').next().unwrap_or(path)
     }
 
     /// 报告「对话框本身不可用」这类失败。
@@ -1062,12 +1242,19 @@ impl EditorApp {
         self.reload_workspace_entries()
     }
 
-    /// 删除条目。
+    /// 删除条目（**不含二次确认**；带确认的入口是 [`Self::request_delete`]）。
     ///
-    /// **不做二次确认**：删除是不可逆的，而本项目此刻还没有能用的模态确认框
-    /// （`DialogPort::confirm` 是同步阻塞的，不能在 `update()` 里调）。
-    /// 与其塞一个「假确认」让人以为有保护，不如让删除走**空目录 / 单文件**
-    /// 这样的小步子——真正的确认放到S6-11e 的欢迎页接线时一并补。
+    /// # V11-06 之前为什么刻意不做确认
+    ///
+    /// 删除不可逆，而那时还没有能用的模态确认框（`DialogPort::confirm` 是同步
+    /// 阻塞的，不能在 `update()` 里调）。当时的替代保护是把删除限制成
+    /// 「只能删空目录 / 单文件」——**步子小，出错也有限**。
+    /// 现在确认框已异步化（见 [`Self::request_delete`]），限制随之放宽为
+    /// 递归删除：确认文案里会明说目录里有多少项内容（见
+    /// [`Self::delete_confirm_message`]），用户是在知情的前提下点的「是」。
+    ///
+    /// 本方法保留为公开：它是「答复为是」之后真正执行的那一步，
+    /// 也是测试直接驱动删除的入口。
     pub fn delete_entry(&mut self, path: &str) -> AppResult<()> {
         let target = FilePath::new(path).map_err(|e| AppError::domain(e.to_string()))?;
         self.services
@@ -1128,6 +1315,21 @@ impl EditorApp {
             .unwrap_or_default()
     }
 
+    /// 取当前文档的格式问题（V11-08 侧栏「检查」标签）。
+    ///
+    /// 规则开关取自**当前设置**（`settings().editor.lint`）：这样用户在设置页
+    /// 关掉某条规则后，切回侧栏立即生效，不需要重启或显式刷新。
+    /// 没有活动文档时返回空集（与 [`Self::current_outline`] 一致）。
+    pub fn lint_current_document(&self) -> Vec<LintIssueView> {
+        let Some(id) = self.active_doc else {
+            return Vec::new();
+        };
+        let rules = self.settings().editor.lint;
+        self.services
+            .markdown
+            .lint_document(LintQuery { doc_id: id, rules })
+    }
+
     /// 跳到大纲某一项（把行号换成字节偏移后复用查找替换的跳转通路）。
     ///
     /// 为什么不直接按行号滚：`TextEdit` 与滚动同步全都以**字节偏移**为坐标，
@@ -1151,6 +1353,38 @@ impl EditorApp {
         let cursor = editor_ops::byte_to_char(&self.editor_text, at);
         self.pending_cursor = Some((cursor, cursor));
         self.scroll_to_offset(at);
+    }
+
+    /// 用一条拼写建议替换 `[start, end)` 区间（V11-07 右键菜单）。
+    ///
+    /// 公开而非在视图里直接调 `documents.replace_range`：替换必须连带
+    /// `refresh_text()` 与「清 egui 撤销栈」两件事，漏一件就是
+    /// 「界面显示已改、领域没改」或「Ctrl+Z 撤不回来」。让视图各写一遍
+    /// 等于把这些不变式复制出去（S6-08 的教训）。
+    ///
+    /// 区间越界时**静默返回 `Err`**（由 `TextRange::new` 校验），不 panic：
+    /// 建议菜单里存的是上一帧的字节区间，用户可能在菜单开着时删了那段文本。
+    pub fn replace_spelling(
+        &mut self,
+        start: usize,
+        end: usize,
+        replacement: &str,
+    ) -> AppResult<()> {
+        let Some(id) = self.active_doc else {
+            return Err(AppError::domain("没有活动文档"));
+        };
+        let range = TextRange::new(ByteOffset::new(start), ByteOffset::new(end));
+        self.services.documents.replace_range(ReplaceRangeCommand {
+            id,
+            range,
+            text: replacement.to_string(),
+        })?;
+        self.refresh_text();
+        self.clear_undoer_next = true;
+        // 光标落在替换后的词尾：用户多半要接着改下一个错词，
+        // 停在新词末尾比跳到文首更省事。
+        self.goto_byte_offset(start + replacement.len());
+        Ok(())
     }
 
     /// 在工作区里搜索。
@@ -1227,6 +1461,30 @@ impl EditorApp {
             .documents
             .get_content(GetContentQuery { id, range: None })
             .ok()
+    }
+
+    /// 读取编辑区当前绑定串（`TextEdit` 直接绑定的那个 `String`）。
+    /// 与 [`Self::current_content`]（从领域读）配套：两者**必须逐字节相等**，
+    /// 这是「领域是内容单一真相」在编辑区的可观测不变量。
+    /// 漂移意味着用户敲了键界面却没反应——下一帧才被某条路径悄悄补上。
+    pub fn editor_bound_text(&self) -> &str {
+        &self.editor_text
+    }
+
+    /// IME 组合期标志。
+    ///
+    /// 暴露给测试断言「守卫是否生效」——它是回车失效缺陷的核心状态，
+    /// 又是 `pub(crate)` 字段，测试没有它就只能在行为层面绕圈子。
+    pub fn ime_composing(&self) -> bool {
+        self.ime_composing
+    }
+
+    /// 待回设到 egui 的光标位置。
+    ///
+    /// 暴露给测试断言「普通输入不该产生光标回设」：回设即多一次强制重算，
+    /// 是界面闪烁的上游原因（见 [`Self::flush_edit`]）。
+    pub fn pending_cursor_for_diag(&self) -> Option<(usize, usize)> {
+        self.pending_cursor
     }
 
     /// 从领域回读当前文档内容到 `editor_text`，并夹紧光标/选区、失效高亮缓存。
@@ -1824,7 +2082,7 @@ impl EditorApp {
     /// 原型用 JS 字符串的 `slice`，天然是 UTF-16 码元口径，
     /// 对 BMP 内的汉字等价于字符列。
     pub fn cursor_line_col(&self) -> (usize, usize) {
-        let starts = crate::presentation::views::scroll_sync::line_start_offsets(&self.editor_text);
+        let starts = self.status_line_starts();
         // 光标可能落在非字符边界：`clamp_to` 只按**长度**夹紧，
         // 而程序化设值（跳转、测试）能给出任何一个字节偏移。
         // 直接切片会 panic（`panic = "abort"` 下等于终止进程）。
@@ -1838,13 +2096,31 @@ impl EditorApp {
         (line + 1, col)
     }
 
+    /// 状态栏行列换算用的行起点表：[`line_start_offsets`] 摘掉**文末哨兵**。
+    ///
+    /// `line_start_offsets` 在文本不以 `\n` 结尾时会补一个「长度哨兵」
+    /// （供 y 反查等场景把「文末」解析成下一行）。状态栏不能要它：
+    /// 光标停在单行文档的行尾时会被算成「行 2 列 1」——凭空多出的一行。
+    /// 文本以 `\n` 结尾时末行起点本就等于长度（真实的空行），保留。
+    fn status_line_starts(&self) -> Vec<usize> {
+        let mut starts =
+            crate::presentation::views::scroll_sync::line_start_offsets(&self.editor_text);
+        if !self.editor_text.is_empty()
+            && !self.editor_text.ends_with('\n')
+            && starts.last() == Some(&self.editor_text.len())
+        {
+            starts.pop();
+        }
+        starts
+    }
+
     /// 选区的行列范围（有选区时状态栏显示 `行 a, 列 b - 行 c, 列 d`）。
     pub fn selection_line_col(&self) -> Option<((usize, usize), (usize, usize))> {
         let (start, end) = self.editor.selection()?;
         if start == end {
             return None;
         }
-        let starts = crate::presentation::views::scroll_sync::line_start_offsets(&self.editor_text);
+        let starts = self.status_line_starts();
         let at = |offset: usize| {
             let offset = floor_char_boundary(&self.editor_text, offset);
             let line = crate::presentation::views::scroll_sync::line_of_offset(&starts, offset);
@@ -1933,7 +2209,24 @@ impl EditorApp {
     /// 闪烁（见 `editor_view::show` 第 5 步的配套说明）。调用方（编辑区）已把
     /// `editor_text` 同步成与领域一致的最终串，这里只负责：写领域、标记预览需要
     /// 重解析（防抖起点）、记下光标、清除 egui 撤销栈。
-    pub(crate) fn flush_edit(&mut self, edit: editor_ops::TextEdit, domain_len: usize) {
+    ///
+    /// # `transformed`：只在领域真的改写了编辑时才回设光标（V11-14）
+    ///
+    /// 普通输入（打字、回车换行）里领域应用的就是 egui 给的那次编辑，
+    /// egui 自己的光标已经落在正确位置。此时再写一遍 `pending_cursor` 是
+    /// **纯粹的多余状态变更**：它会让下一帧的 `apply_pending_editor_state`
+    /// 强行覆写 egui 的 `TextEditState`，既制造一次额外的光标重算（闪烁），
+    /// 又正好撞上 IME 组合期的守卫——一旦守卫卡住，光标就此失联，
+    /// 之后每次回车都插到同一处（用户症状：连按回车只多出一个新行）。
+    ///
+    /// 列表续行 / 括号配对 / 空项退出列表会改写插入内容或区间，
+    /// 此时 egui 的光标确实错了，必须回设。故把该判据显式传进来。
+    pub(crate) fn flush_edit(
+        &mut self,
+        edit: editor_ops::TextEdit,
+        domain_len: usize,
+        transformed: bool,
+    ) {
         let Some(id) = self.active_doc else { return };
         // 用字节区间切片必须合法——`diff_replace` 已保证 `byte_start ≤ byte_end`
         // 且落在旧文本边界内；但若调用方给的基准有误则可能越界，
@@ -1952,10 +2245,13 @@ impl EditorApp {
         // 都会让防抖退化；全部调用点都是命令 / 事件驱动的（不是每帧）。
         let now_ms = self.services.markdown.now().millis();
         self.preview.mark_edited(now_ms);
-        self.pending_cursor = Some((
-            edit.cursor_char,
-            edit.anchor_char.unwrap_or(edit.cursor_char),
-        ));
+        // 只在领域真的改写了这次编辑时才回设光标（见上文 `transformed`）。
+        if transformed {
+            self.pending_cursor = Some((
+                edit.cursor_char,
+                edit.anchor_char.unwrap_or(edit.cursor_char),
+            ));
+        }
         self.clear_undoer_next = true;
     }
 
@@ -2245,6 +2541,7 @@ impl EditorApp {
             auto_save_interval: view.editor.auto_save_interval,
             spell_check: view.editor.spell_check,
             show_line_numbers: view.editor.show_line_numbers,
+            lint: view.editor.lint,
         }
     }
 
@@ -2361,6 +2658,8 @@ impl EditorApp {
             split_ratio: self.settings().editor.split_ratio,
             // 设置页尚未提供写作目标输入框，保存时沿用当前值，避免被 0 覆盖。
             writing_goal: self.settings().editor.writing_goal,
+            // 取消时把 lint 开关也回滚到打开设置那一刻（V11-08）。
+            lint: snapshot.lint,
         };
         // 主题与编辑器各自独立失败：主题写失败不该让编辑器也回滚不了。
         let mut errors: Vec<String> = Vec::new();
@@ -2545,16 +2844,160 @@ impl EditorApp {
     ///
     /// 必须在 `TextEdit::show` **之前**调用（写入的状态会在本帧 show 时被读走）。
     /// 放在编辑区视图顶部，由视图持 `ctx` 调用。
+    ///
+    /// # IME 组合期守卫（为什么这里要扫一遍输入事件）
+    ///
+    /// egui 0.33 的 `Preedit` 处理会把预编辑串**真实写进文本缓冲区**
+    /// （`text.insert_text_at`——「组合期文本不进缓冲区」的旧假设不成立），
+    /// 并靠 `state.cursor` 保持着「(组合锚点, 预编辑串尾)」这一选区：
+    /// 下一次 `Preedit` 靠它删掉旧串，`Commit` 还会校验
+    /// `cursor_range.secondary`（锚点）是否仍在组合起点，不在则**整个
+    /// 提交被静默忽略**。而本方法回设的 `pending_cursor` 是折叠光标
+    /// （secondary = 串尾），恰好打掉这个选区——实测症状：
+    /// 预编辑串逐帧累积（"s"→"ssa"→"ssasadsadaf"），候选词确认后中文
+    /// 根本进不来，之后每次回车只是把残渣往下推。
+    ///
+    /// 故组合期间（以及恰好携带 IME 事件的帧）**冻结**两个动作：
+    /// 不回设光标、不清撤销栈；组合结束（`Commit` / `Disabled`）后的
+    /// 下一帧恢复正常回设——彼时 `pending_cursor` 已被提交帧的
+    /// `flush_edit` 覆写为「中文之后」的正确位置。
+    ///
+    /// # 为什么冻结必须**有界**（V11-14：连按回车只出一个新行）
+    ///
+    /// 旧实现用粘性标志 `ime_composing` 表示组合期，只有 `Commit`/`Disabled`
+    /// 能清它。真实输入法在编辑区获得焦点时就发 `Ime::Enabled`，而 winit 的
+    /// `Disabled` 只在失焦时发——切换输入法、直接关候选窗、焦点落到浮层等
+    /// 路径都可能收不到。标志一旦卡在 `true`：
+    ///
+    /// ```text
+    /// 回车 → flush_edit 写 pending_cursor → 守卫冻结，光标不更新
+    ///      → 领域多了一个 \n，光标却仍在旧位置
+    /// 再回车 → egui 把 \n 插到旧位置 → 再 flush_edit → 又是旧位置……
+    /// ```
+    ///
+    /// 于是**连按回车只有第一个生效**，界面只多出一个新行；直到用户敲了别的
+    /// 字符，`prev != editor_text` 的判定路径把它「带出来」，观感就是
+    /// 「必须再输入字符才会真正换行」。实测逐字复现（见
+    /// `enter_diag_test::diag_enter_after_ime_enabled_never_disabled`：
+    /// 第 2、3 次回车后 `domain` 纹丝不动停在 `"hello\n"`）。
+    ///
+    /// 改为**有界窗口**后，组合期最长只冻结 [`IME_GUARD_MS`] 毫秒：
+    /// 正常中文输入（逐字母 `Preedit`、几十到几百毫秒内 `Commit`）完全
+    /// 落在窗口内、行为不变；而「标志卡死」在结构上不再可能——超时自动恢复。
+    ///
+    /// # 超时时还必须**顺带复位 egui 自己的 IME 标志**（这才是回车被吞的真凶）
+    ///
+    /// 光有「自己的守卫解冻」是不够的：`Ime::Enabled` 会让 egui 的
+    /// `TextEdit` 把 `state.ime_enabled` 置真，此后它按「候选窗开着」的
+    /// 假设处理键盘——`remove_ime_incompatible_events` 会剔除它认为
+    /// 「IME 期间会打架」的按键（`repeat: true` 的全部按键 +
+    /// Backspace/方向键）。该标志**只能**由 `Preedit` / `Commit` /
+    /// `Disabled` 或焦点变化复位，而 `Disabled` 在真实环境里常常收不到。
+    ///
+    /// 于是窗口到期时，除了解冻自己的守卫，还要给 egui **补一个**
+    /// `Ime::Disabled`——语义上完全正确（应用确实判定「组合已结束」），
+    /// 且这是 egui 唯一公开的复位入口（`ime_enabled` 是 `pub(crate)`，
+    /// `request_focus` 对已聚焦控件幂等、不产生 `gained_focus`，都试过了）。
+    /// 补发后实测连按回车立刻恢复正常（见
+    /// `enter_diag_test::diag_synthetic_disabled_resets`）。
     pub fn apply_pending_editor_state(&mut self, ctx: &egui::Context) {
+        let now_ms = self.services.markdown.now().millis();
+        // 本帧 IME 事件的三分类：
+        //   · `Preedit`/`Commit` → 组合**确实在进行**：缓冲区里有实打实的预编辑串，
+        //     egui 正靠那个选区删旧换新，我们的守卫必须冻结。
+        //   · `Commit`/`Disabled` → 组合**收尾**，立即解冻。
+        //   · `Enabled` → 只表示「egui 已把 `ime_enabled` 置真」，本身不代表有
+        //     组合在进行，但它**会**改变 egui 处理键盘的方式，故要单独跟踪
+        //     （见 `egui_ime_armed`）。
+        let (ime_composing_now, ime_ended, ime_enabled_now) = ctx.input(|i| {
+            let mut composing = false;
+            let mut ended = false;
+            let mut enabled = false;
+            for event in &i.events {
+                if let egui::Event::Ime(ime) = event {
+                    match ime {
+                        egui::ImeEvent::Preedit(_) | egui::ImeEvent::Commit(_) => composing = true,
+                        egui::ImeEvent::Disabled => ended = true,
+                        egui::ImeEvent::Enabled => enabled = true,
+                    }
+                }
+            }
+            (composing, ended, enabled)
+        });
+        // ---- 守卫侧：组合期是否有界 ----
+        //   · 收到 Commit/Disabled → 立即解除冻结（组合确实结束了）；
+        //   · 收到 Preedit/Commit → 续上/开启一个 IME_GUARD_MS 的保护窗；
+        //   · 只收到 Enabled 或什么都没收到 → 不进入（或退出）组合期。
+        // 于是「守卫标志永久为 true」这条路径在结构上不再存在。
+        if ime_ended {
+            self.ime_composing = false;
+            self.ime_composing_until_ms = 0;
+        } else if ime_composing_now {
+            self.ime_composing = true;
+            self.ime_composing_until_ms = now_ms.saturating_add(IME_GUARD_MS);
+        } else if self.ime_composing && now_ms >= self.ime_composing_until_ms {
+            self.ime_composing = false;
+            self.ime_composing_until_ms = 0;
+        }
+        // ---- egui 侧：复位它的 `ime_enabled` ----
+        // 这个标志由 `Ime::Enabled` 置真，**同样只由** `Preedit`/`Commit`/
+        // `Disabled`/焦点变化复位。`Disabled` 收不到时它就一直为真，
+        // 于是 egui 按「候选窗开着」剔除按键（`remove_ime_incompatible_events`），
+        // 回车被吞——这才是「连按回车只多出一个新行」的直接原因。
+        //
+        // 复位时机刻意取得**很激进**（[`IME_ARM_MS`]，比组合期窗口短一个量级）：
+        // 真实组合中，`Enabled` 之后**紧接着**就是第一个 `Preedit`
+        // （winit 在 `Preedit` 分支里也会调 `ime_event_enable`），二者间隔
+        // 不到一帧（~16ms）。所以只要「`Enabled` 之后短时间没有任何
+        // `Preedit`」，就说明并没有组合在进行——这是判据，不是猜测。
+        // 用长窗口反而会重蹈「标志卡住」的覆辙：800ms 内用户的每一次回车
+        // 都会被吞，而用户连按回车的间隔恰好在这个量级。
+        //
+        // 误伤成本也可控：万一真在组合中而我们补了 `Disabled`，egui 只是把
+        // `ime_enabled` 提前清掉；下一个 `Preedit` 会重新置位并继续组合，
+        // 最多丢一次预编辑串的锚点——而这正是旧实现**常态性**发生的损害。
+        let mut tell_egui_ime_over = false;
+        if ime_ended {
+            self.egui_ime_armed = false;
+        } else if ime_composing_now {
+            self.egui_ime_armed = true;
+            self.egui_ime_armed_until_ms = now_ms.saturating_add(IME_ARM_MS);
+        } else if ime_enabled_now {
+            // 刚 `Enabled`：给一个短窗口等紧随其后的 `Preedit`。
+            self.egui_ime_armed = true;
+            self.egui_ime_armed_until_ms = now_ms.saturating_add(IME_ARM_MS);
+        } else if self.egui_ime_armed && now_ms >= self.egui_ime_armed_until_ms {
+            self.egui_ime_armed = false;
+            tell_egui_ime_over = true;
+        }
+        // 给 egui 补一个 `Disabled`。放在事件流**尾部**：本帧若同时有
+        // `Preedit`，必须让它先被处理（`Preedit` 会重新置 `ime_enabled = true`），
+        // 否则这个 `Disabled` 会被随后的 `Preedit` 覆盖回去。
+        if tell_egui_ime_over {
+            ctx.input_mut(|i| i.events.push(egui::Event::Ime(egui::ImeEvent::Disabled)));
+        }
+        // 组合帧自身也要冻结：`Preedit`/`Commit` 处理器在这一帧稍后执行，
+        // 依赖的正是那个未被我们碰过的选区。
+        //
+        // 注意：**刚补发的 `Disabled` 不参与冻结判定**——它是我们自己
+        // 判定「组合已结束」后才补的，若把它算进去会让本帧凭空多冻结一次，
+        // 回车又要晚一帧才生效。
+        let ime_guard = ime_composing_now || self.ime_composing;
+
         if self.clear_undoer_next
+            && !ime_guard
             && let Some(mut state) = egui::TextEdit::load_state(ctx, Self::editor_id())
         {
             self.clear_undoer_next = false;
             state.clear_undoer();
             state.store(ctx, Self::editor_id());
         }
-        if let Some((cursor, anchor)) = self.pending_cursor.take()
+        if !ime_guard
+            // 注意 `&&` 的顺序：必须先拿到 `state` 再 `take()`。
+            // 写成 `take()` 在前时，`load_state` 返回 `None`（TextEdit 尚未
+            // 建立状态的那一帧）会把 `pending_cursor` 白白吞掉，光标从此失联。
             && let Some(mut state) = egui::TextEdit::load_state(ctx, Self::editor_id())
+            && let Some((cursor, anchor)) = self.pending_cursor.take()
         {
             let primary = egui::text::CCursor {
                 index: cursor,

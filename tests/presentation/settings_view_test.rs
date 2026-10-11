@@ -495,3 +495,104 @@ fn settings_overlay_has_a_view() {
         "已实现的浮层必须从待办清单里删掉，否则清单会骗人"
     );
 }
+
+/// 自定义主题的调色板编辑器（含 V11-09 语法色折叠区）必须能在真实帧里渲染，
+/// 且语法色覆盖能经设置写入路径落到设置里。
+///
+/// 判据选「写入后再读回」而不是「有没有画出某个控件」：egui 0.33 无文本回读，
+/// 而「设置真的被记下」才是这个编辑器的职责。
+#[test]
+fn custom_theme_palette_editor_renders_and_records_syntax_override() {
+    let (_dir, mut app) = app();
+    // 切到自定义：服务应补齐一份默认调色板。
+    app.apply_theme_field(|t| t.kind = "custom".to_string());
+    assert!(
+        app.settings().theme.custom.is_some(),
+        "切到自定义应补齐默认调色板"
+    );
+
+    // 走与取色器同一条写入路径：覆盖一个语法色。
+    app.apply_theme_field(|t| {
+        if let Some(p) = t.custom.as_mut() {
+            p.syn_heading = Some("#00FF00".to_string());
+        }
+    });
+    assert_eq!(
+        app.settings()
+            .theme
+            .custom
+            .as_ref()
+            .and_then(|p| p.syn_heading.as_deref()),
+        Some("#00FF00"),
+        "语法色覆盖应写进设置"
+    );
+
+    // 真实帧渲染「外观」页（含折叠区），不得 panic。
+    app.settings_ui.section = SettingsTab::Appearance;
+    app.settings_ui.open(app.settings_snapshot());
+    let ctx = egui::Context::default();
+    frames(&mut app, &ctx, 2);
+    assert_eq!(app.settings().theme.kind, "custom");
+}
+
+// ============================================================================
+// 设置窗口高度不得逐帧增长（回归：点开设置后浮窗「爆炸」到超出屏幕）
+// ============================================================================
+//
+// # 这个缺陷的形态
+//
+// `settings_view::body` 曾在 `ui.horizontal_top(...)` 里直接调 `ui.separator()`。
+// egui 的竖直分隔线取 `available_size_before_wrap().y` 作高度，而设置对话框是
+// egui 的 `Window`——**按内容自动定高**。两者构成正反馈：窗口越高 → 可用高度越大
+// → 分隔线越高 → 内容越高 → 下一帧窗口更高。实测每帧 +~150pt，四帧内从 411
+// 涨到 1066，把「保存 / 取消」推到屏幕之外（用户看到的就是「设置浮窗显示异常」）。
+//
+// # 为什么断言「高度不增长」而不是断言具体数值
+//
+// 具体数值随主题字号 / 分区内容变化，写死就会在正常改动下变红。这里只钉住
+// 那条**反馈环**：连跑若干帧后高度必须与第一帧稳定帧一致。
+#[test]
+fn settings_window_height_does_not_grow_every_frame() {
+    let (_dir, mut app) = app();
+    app.settings_ui.section = SettingsTab::Appearance;
+    app.dialog.open(Overlay::Settings);
+
+    let id = egui::Id::new("rustmark.overlay.settings");
+    let ctx = egui::Context::default();
+    let input = egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(
+            egui::pos2(0.0, 0.0),
+            egui::vec2(1280.0, 900.0),
+        )),
+        ..Default::default()
+    };
+    let _ = ctx.run(input.clone(), |_| {}); // 装载字库
+
+    let mut heights = Vec::new();
+    for _ in 0..8 {
+        let _ = ctx.run(input.clone(), |ctx| {
+            rustmark::presentation::theme::mapper::apply(ctx, &app.ui.theme);
+            main_view::show(&mut app, ctx);
+        });
+        heights.push(
+            ctx.memory(|m| m.area_rect(id))
+                .map(|r| r.height())
+                .unwrap_or(0.0),
+        );
+    }
+
+    // 稳定帧：跳过首帧的测量 pass。
+    let settled = heights[1];
+    for (frame, h) in heights.iter().enumerate().skip(2) {
+        assert!(
+            (h - settled).abs() < 1.0,
+            "设置窗口高度逐帧增长（第 {frame} 帧 {h:.0}，第 1 帧 {settled:.0}，\
+             全部 {heights:?}）——多半是水平布局里用了 `ui.separator()`，\
+             它与「窗口按内容自动定高」形成正反馈"
+        );
+    }
+    assert!(
+        settled <= 900.0,
+        "设置窗口高度 {settled:.0} 超出屏幕高度 900，底部按钮会被切掉"
+    );
+}

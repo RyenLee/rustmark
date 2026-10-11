@@ -133,6 +133,15 @@ fn render_split(
         .exact_width(divider_w)
         .resizable(false)
         .show_separator_line(false)
+        // 边距必须**归零**：egui 的默认面板 frame（`Frame::side_top_panel`）
+        // 自带 `Margin::symmetric(8, 2)`，而本面板只有 4pt 宽——egui 会把
+        // frame 的响应矩形撑到约 16pt 宽（`set_cursor` 取 `rect.max.x` 排布
+        // 下一面板），把预览 CentralPanel 推后约 12pt。这 12pt 落在分割条
+        // 与预览之间，**没有任何面板绘制**，真实渲染下露出交换链清屏色
+        // （黑）——用户看到的正是「预览区左侧一圈黑边」。同时本面板的
+        // `ui.max_rect()` 会被边距挤成负宽，`paint_divider` 退化成零宽
+        // 矩形、什么都画不出来（无头取证实测 `Rect [x..x]`）。
+        .frame(egui::Frame::new().inner_margin(0))
         .show(ctx, |ui| {
             paint_divider(ui, metrics);
             let rect = ui.max_rect();
@@ -166,8 +175,17 @@ fn render_split(
     // （实测：编辑面板 y=[102,774] vs 预览面板 y=[108,768]）。
     // 左右仍取 0：分割条已经把编辑区与预览区隔开，预览区自己
     // `rect_filled` 画底色，不依赖面板默认填充。
+    //
+    // fill 不能省：`Frame::new()` 无填充，本面板的 2pt 竖向边距条落在
+    // 预览自己的 `rect_filled`（只画内容区）之外——无填充时这两条 2pt
+    // 露出交换链清屏色（黑），用户看到「预览区顶部一条黑线」。填上
+    // 主背景色后与预览底色浑然一体。
     egui::CentralPanel::default()
-        .frame(egui::Frame::new().inner_margin(egui::Margin::symmetric(0, 2)))
+        .frame(
+            egui::Frame::new()
+                .inner_margin(egui::Margin::symmetric(0, 2))
+                .fill(app.theme().bg_primary),
+        )
         .show(ctx, |ui| {
             crate::presentation::views::preview_view::show(app, ui);
             // 记录本帧预览区矩形，供图片导出裁剪用（P2）。

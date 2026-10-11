@@ -39,6 +39,54 @@ pub struct EditorUiState {
     pub line_numbers: bool,
     /// 拼写检查开关（P2）。
     pub spell_check: bool,
+    /// 拼写建议菜单（V11-07：右键错词时的「你可能想输入」）。
+    ///
+    /// `None` = 菜单关闭。放在 UI 状态而非让视图用局部变量：菜单要跨帧存在
+    /// （用户看到它、移动鼠标、再点），而 egui 的 `Area` 是即时模式的，
+    /// 不存状态就没有「下一帧还开着」这回事。
+    pub spell_menu: Option<SpellSuggestMenu>,
+}
+
+/// 一次拼写建议菜单的内容。
+#[derive(Clone, Debug, PartialEq)]
+pub struct SpellSuggestMenu {
+    /// 错词起点（字节，含）。
+    pub byte_start: usize,
+    /// 错词终点（字节，不含）。
+    pub byte_end: usize,
+    /// 错词的**原始**拼写（菜单标题里显示，可能含大写）。
+    pub word: String,
+    /// 候选建议（按贴近程度降序，已截断到上限）。
+    pub suggestions: Vec<String>,
+    /// 菜单左上角（**屏幕坐标**，来自 egui 的指针位置）。
+    pub screen_x: f32,
+    /// 菜单左上角纵坐标。
+    pub screen_y: f32,
+}
+
+impl SpellSuggestMenu {
+    /// 构造菜单。
+    pub fn new(
+        byte_start: usize,
+        byte_end: usize,
+        word: impl Into<String>,
+        suggestions: Vec<String>,
+        at: egui::Pos2,
+    ) -> Self {
+        Self {
+            byte_start,
+            byte_end,
+            word: word.into(),
+            suggestions,
+            screen_x: at.x,
+            screen_y: at.y,
+        }
+    }
+
+    /// 菜单左上角（屏幕坐标）。
+    pub fn screen_pos(&self) -> egui::Pos2 {
+        egui::pos2(self.screen_x, self.screen_y)
+    }
 }
 
 impl EditorUiState {

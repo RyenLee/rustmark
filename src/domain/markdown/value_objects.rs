@@ -724,10 +724,13 @@ impl OutlineItem {
 ///
 /// # 为什么只存位置与原词，不存建议
 ///
-/// 编辑器内的波浪线只需知道「哪里错了」；拼写建议（did you mean...）属于
-/// 交互增强，留给后续的右键菜单。**不存建议**是为了让本值对象保持
+/// 编辑器内的波浪线只需知道「哪里错了」。**不存建议**是为了让本值对象保持
 /// `Copy + Eq`，从而能进 `Vec` 直接比较——渲染层每帧都要比对上一帧的标记集，
 /// 若携带 `String` 建议会拖累该比对。
+///
+/// 建议（「你可能想输入」）由 [`crate::domain::markdown::services::SpellChecker::suggest`]
+/// 按需现算（V11-07）：它只在用户右键某个错词时才被调用，
+/// 不必跟着每帧的标记集一起走。
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct Misspelling {
     /// 拼错的词在原文中的**字节区间**（与 [`RenderedBlock::source_range`] 同坐标系）。

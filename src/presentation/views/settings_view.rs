@@ -109,15 +109,41 @@ pub fn show(app: &mut EditorApp, ctx: &Context) {
 }
 
 /// 主体：左侧导航 + 右侧内容 + 实时预览 + 页脚。
+///
+/// # 为什么竖直分隔线要「自己画」而不是 `ui.separator()`
+///
+/// `ui.separator()` 在**水平**布局里取 `available_size_before_wrap().y`
+/// 作为高度（见 egui `widgets/separator.rs` 的 `is_horizontal_line` 分支），
+/// 而设置对话框是 egui 的 `Window`——它**按内容自动定高**。两者就此构成
+/// 正反馈：窗口越高 → 可用高度越大 → 分隔线越高 → 内容越高 → 下一帧窗口更高。
+///
+/// 实测（1280×900 屏）：高度 411 → 623 → 775 → 927 → **1066**，
+/// 每帧 +~150pt，四帧内就顶出屏幕，底部「保存 / 取消」被推到屏幕之外，
+/// 用户看到的就是「设置浮窗显示异常」（窗口忽地占满全屏、按钮点不到）。
+///
+/// 修法：按**已经布局出来的行矩形**画一条 1px 竖线。高度是确定值，
+/// 不再回读 `available_height`，反馈环被切断。
+/// 注意 egui 自带的 `Separator::default().vertical()` 同样取 available height，
+/// 换它没用；`ui.separator()` 之后的两个分隔线在**竖直**布局里是水平线
+/// （高度恒为 `spacing`），不参与该反馈，故保留。
 fn body(app: &mut EditorApp, ui: &mut Ui) {
     let theme = app.theme().clone();
-    ui.horizontal_top(|ui| {
+    let mut bar_x = 0.0_f32;
+    let row = ui.horizontal_top(|ui| {
         nav(app, ui, &theme);
         ui.add_space(theme.metrics.space_md);
-        ui.separator();
+        // 记下竖线所在的 x（此刻的光标位置），再留出线宽与右间距。
+        bar_x = ui.available_rect_before_wrap().left();
+        ui.add_space(1.0);
         ui.add_space(theme.metrics.space_lg);
         content(app, ui, &theme);
     });
+    // 行画完后才知道真实高度，故在这一步补画竖线（高度 = 行矩形）。
+    ui.painter().vline(
+        bar_x,
+        row.response.rect.y_range(),
+        egui::Stroke::new(1.0_f32, theme.border),
+    );
     ui.separator();
     live_preview(ui, &theme, app.settings().theme.kind.as_str());
     ui.separator();
@@ -263,11 +289,15 @@ fn appearance(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
     });
 }
 
-/// 自定义主题调色板编辑器：8 个核心语义色各一行「标签 + 取色器」。
+/// 自定义主题调色板编辑器：8 个核心语义色 + 10 个语法高亮色（V11-09）。
 ///
 /// 调色板从当前设置读取（缺失则用默认深色调色板），任一色改动后整体写回，
 /// 保证一次交互只触发一次 `apply_theme_field`（即一次落盘 + 一次预览刷新）。
-fn custom_palette_editor(app: &mut EditorApp, ui: &mut Ui, _theme: &Theme) {
+///
+/// 语法色收进折叠区：18 行颜色一次铺开会把「字号 / 行高 / 字体族」挤出视野，
+/// 而语法色多数人只调一两个。折叠标题里写清「未改动的跟随主题」，
+/// 免去用户对「这一项到底是不是我在控制」的疑惑。
+fn custom_palette_editor(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
     let mut palette = app.settings().theme.custom.clone().unwrap_or_default();
     let mut changed = false;
     changed |= color_row(ui, "主背景", &mut palette.bg_primary);
@@ -278,6 +308,20 @@ fn custom_palette_editor(app: &mut EditorApp, ui: &mut Ui, _theme: &Theme) {
     changed |= color_row(ui, "代码块背景", &mut palette.code_bg);
     changed |= color_row(ui, "边框", &mut palette.border);
     changed |= color_row(ui, "选区背景", &mut palette.selection_bg);
+    egui::CollapsingHeader::new("语法高亮配色（未改动的跟随主题）")
+        .id_salt("rustmark.settings.palette.syn")
+        .show(ui, |ui| {
+            changed |= syn_color_row(ui, "标题", &mut palette.syn_heading, theme.syn_heading);
+            changed |= syn_color_row(ui, "加粗", &mut palette.syn_bold, theme.syn_bold);
+            changed |= syn_color_row(ui, "斜体", &mut palette.syn_italic, theme.syn_italic);
+            changed |= syn_color_row(ui, "代码", &mut palette.syn_code, theme.syn_code);
+            changed |= syn_color_row(ui, "链接", &mut palette.syn_link, theme.syn_link);
+            changed |= syn_color_row(ui, "引用", &mut palette.syn_quote, theme.syn_quote);
+            changed |= syn_color_row(ui, "标记符", &mut palette.syn_marker, theme.syn_marker);
+            changed |= syn_color_row(ui, "元信息", &mut palette.syn_meta, theme.syn_meta);
+            changed |= syn_color_row(ui, "表格", &mut palette.syn_table, theme.syn_table);
+            changed |= syn_color_row(ui, "其它", &mut palette.syn_other, theme.syn_other);
+        });
     if changed {
         app.apply_theme_field(|t| t.custom = Some(palette.clone()));
     }
@@ -297,6 +341,40 @@ fn color_row(ui: &mut Ui, label: &str, hex: &mut String) -> bool {
     } else {
         false
     }
+}
+
+/// 一行语法高亮色：标签 + 取色器 + （已覆盖时）「跟随」复位按钮。
+///
+/// `over` 为 `None`（跟随主题）时取色器初值用 `effective`（当前生效色），
+/// 这样用户看到的永远是「真实生效的颜色」，而不是一个突兀的黑色方块。
+fn syn_color_row(
+    ui: &mut Ui,
+    label: &str,
+    over: &mut Option<String>,
+    effective: egui::Color32,
+) -> bool {
+    let mut rgb =
+        over.as_deref()
+            .map(hex_to_rgb)
+            .unwrap_or([effective.r(), effective.g(), effective.b()]);
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        ui.label(label);
+        if ui.color_edit_button_srgb(&mut rgb).changed() {
+            *over = Some(rgb_to_hex(rgb));
+            changed = true;
+        }
+        if over.is_some()
+            && ui
+                .small_button("跟随")
+                .on_hover_text("清除此项覆盖，改为跟随内置主题")
+                .clicked()
+        {
+            *over = None;
+            changed = true;
+        }
+    });
+    changed
 }
 
 /// `#RRGGBB`（兼容无 `#`）→ `[u8; 3]`；非法时退回黑色（仅影响取色器初值）。
@@ -377,6 +455,50 @@ fn spellcheck(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
     ui.colored_label(
         theme.text_secondary,
         "语法检查状态同时显示在底部状态栏，可点击切换。",
+    );
+    // 右键菜单是不可见的交互，不写出来的话大多数人永远不会发现
+    // 「波浪线下面还能点出替换建议」。
+    ui.colored_label(
+        theme.text_secondary,
+        "在带波浪线的词上点右键，可看到「你可能想输入」的建议并一键替换。",
+    );
+    ui.add_space(theme.metrics.space_sm);
+    lint_rules(app, ui, theme);
+}
+
+/// 格式检查（lint）规则开关（V11-08）。
+///
+/// # 为什么与拼写检查同处「语法检查」标签
+///
+/// 两者对用户是**同一件事**：「帮我看正文有没有毛病」。分到两个标签会让
+/// 用户来回找；而侧栏的「检查」标签正是这两类结果共同的去处。
+fn lint_rules(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
+    ui.label(RichText::new("格式检查（Markdown）").color(theme.text_primary));
+    let lint = app.settings().editor.lint;
+    let toggles: [(&str, bool); 4] = [
+        ("标题层级跳跃（如 H1 直接到 H3）", lint.heading_jump),
+        ("列表符号混用（- / * / +）", lint.list_marker_mix),
+        ("行尾多余空格", lint.trailing_whitespace),
+        ("未闭合的代码围栏 ```", lint.unclosed_fence),
+    ];
+    let mut updated = lint;
+    for (i, (label, value)) in toggles.iter().enumerate() {
+        let mut on = *value;
+        if ui.checkbox(&mut on, *label).changed() {
+            match i {
+                0 => updated.heading_jump = on,
+                1 => updated.list_marker_mix = on,
+                2 => updated.trailing_whitespace = on,
+                _ => updated.unclosed_fence = on,
+            }
+        }
+    }
+    if updated != lint {
+        app.apply_editor_field(|e| e.lint = updated);
+    }
+    ui.colored_label(
+        theme.text_secondary,
+        "检查结果显示在侧栏的「检查」标签里，点击问题可跳转到对应行。",
     );
 }
 

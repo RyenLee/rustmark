@@ -60,7 +60,10 @@ fn cancelling_is_reported_as_cancelled() {
     runner.spawn(DialogRequest::OpenFile);
     let outcome = wait(&mut runner).expect("应拿到结果");
     assert!(outcome.is_cancelled());
-    assert!(matches!(outcome.result(), Err(AppError::Cancelled)));
+    assert!(matches!(
+        outcome.path_result(),
+        Some(Err(AppError::Cancelled))
+    ));
 }
 
 /// 一次只允许一个对话框在飞。

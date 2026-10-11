@@ -8,11 +8,14 @@
 mod support;
 
 mod editor_view_test;
+mod enter_ime_test;
 mod export_view_test;
 mod find_replace_view_test;
 mod highlight_layout_test;
+mod preview_border_test;
 // S8-05 高亮性能基线（必须 release 下跑，见文件内说明）。
 mod highlight_perf_test;
+mod lint_tab_test;
 mod multi_document_test;
 mod preview_view_test;
 mod s6_11f_test;
@@ -21,6 +24,7 @@ mod scroll_sync_test;
 mod settings_view_test;
 mod shortcut_registry_test;
 mod sidebar_view_test;
+mod spell_menu_test;
 mod spell_squiggle_test;
 mod status_bar_view_test;
 mod theme_mapper_test;

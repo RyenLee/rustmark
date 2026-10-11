@@ -44,6 +44,11 @@ pub enum DialogRequest {
     },
     /// 选择工作区目录。
     PickFolder,
+    /// 确认框（是 / 否），用于不可逆操作前的二次确认（V11-06）。
+    Confirm {
+        /// 提示文案（应说明**要删什么**与「不可恢复」）。
+        message: String,
+    },
 }
 
 /// 一次对话框的回填结果。
@@ -55,13 +60,21 @@ pub enum DialogOutcome {
     SaveFile(Result<FilePath, AppError>),
     /// 选择目录的结果。
     PickFolder(Result<FilePath, AppError>),
+    /// 确认框的结果：`Ok(true)` = 用户点了「是」。
+    Confirm(Result<bool, AppError>),
 }
 
 impl DialogOutcome {
-    /// 取结果本体（用于匹配 `Err(AppError::Cancelled)`）。
-    pub fn result(&self) -> &Result<FilePath, AppError> {
+    /// 取**路径类**结果本体（确认框没有路径，返回 `None`）。
+    ///
+    /// 为什么不继续用「对所有变体都成立」的签名：确认框的结果是
+    /// `Result<bool, _>`，硬塞进 `Result<FilePath, _>` 就得编一个假路径，
+    /// 而假路径一旦被当成真路径拿去打开，后果是打开错文件。
+    /// 宁可让调用方显式处理 `None`。
+    pub fn path_result(&self) -> Option<&Result<FilePath, AppError>> {
         match self {
-            Self::OpenFile(r) | Self::SaveFile(r) | Self::PickFolder(r) => r,
+            Self::OpenFile(r) | Self::SaveFile(r) | Self::PickFolder(r) => Some(r),
+            Self::Confirm(_) => None,
         }
     }
 
@@ -71,7 +84,12 @@ impl DialogOutcome {
     /// 按文案判断会在一次措辞调整后静默失效——
     /// 症状是「取消保存也会弹错误框」。
     pub fn is_cancelled(&self) -> bool {
-        matches!(self.result(), Err(AppError::Cancelled))
+        match self {
+            Self::OpenFile(r) | Self::SaveFile(r) | Self::PickFolder(r) => {
+                matches!(r, Err(AppError::Cancelled))
+            }
+            Self::Confirm(r) => matches!(r, Err(AppError::Cancelled)),
+        }
     }
 }
 
@@ -129,6 +147,9 @@ impl DialogRunner {
                         DialogOutcome::SaveFile(port.save_file(&suggested, &default_filters()))
                     }
                     DialogRequest::PickFolder => DialogOutcome::PickFolder(port.pick_folder()),
+                    DialogRequest::Confirm { message } => {
+                        DialogOutcome::Confirm(port.confirm(&message))
+                    }
                 };
                 // 接收端已被丢弃（应用退出）时 `send` 只是失败，不 panic。
                 let _ = tx.send(outcome);

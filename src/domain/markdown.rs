@@ -7,5 +7,6 @@
 
 pub mod aggregate;
 pub mod errors;
+pub mod lint;
 pub mod services;
 pub mod value_objects;

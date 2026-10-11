@@ -232,31 +232,54 @@ fn duplicate_name_is_rejected_without_overwriting() {
     );
 }
 
-/// 右键菜单「删除」：文件删除；非空目录**不**递归删。
+/// 删除：文件删除；目录连同内容一起删（V11-06 放宽）。
 ///
-/// 右键删一个目录就抹掉里面全部内容，几乎必然招致后悔，
-/// 所以非空目录必须拒绝（真实实现用 `remove_dir` 而非 `remove_dir_all`）。
+/// V11-06 之前非空目录**必须拒绝**——那时没有确认框，靠「步子小」把损失限制住。
+/// 现在二次确认已接上（确认文案会报出目录内的条目数），限制随之放宽：
+/// 用户是在知情后点的「是」，再要求他先手动清空目录只是把保护重复一遍。
+///
+/// 本例直接调 `delete_entry`（跳过确认）是刻意的：确认那一段由
+/// `tests/app/delete_confirm_test.rs` 单独钉住，这里只验证「真删」这一步。
 #[test]
-fn delete_removes_a_file_but_refuses_a_non_empty_directory() {
+fn delete_removes_a_file_and_a_directory_with_its_contents() {
     let ws = workspace();
     let root = ws.path().to_path_buf();
     let (_cfg, mut app) = app_with_workspace(&root);
 
-    let err = app
-        .delete_entry(&joined(&root, "docs"))
-        .expect_err("非空目录的删除应被拒绝");
-    assert!(
-        err.to_string().contains("非空"),
-        "错误文案应说清是「目录非空」，实际：{err}"
-    );
-    assert!(
-        root.join("docs/guide.md").exists(),
-        "拒绝删除时，里面的文件必须毫发无损"
-    );
-
     app.delete_entry(&joined(&root, "docs/guide.md"))
         .expect("删除文件应成功");
     assert!(!root.join("docs/guide.md").exists(), "文件应真的被删除");
+
+    app.delete_entry(&joined(&root, "docs"))
+        .expect("确认之后，目录应能连同内容一起删");
+    assert!(!root.join("docs").exists(), "目录应真的被删除");
+}
+
+/// 右键菜单「删除」**必须**先弹确认，不能直接删（V11-06）。
+///
+/// 这条防的是「有人图省事把 `request_delete` 换回 `delete_entry`」——
+/// 那种改法在本用例里会立刻红：文件会在无任何确认的情况下消失。
+#[test]
+fn the_context_menu_delete_waits_for_confirmation() {
+    let ws = workspace();
+    let root = ws.path().to_path_buf();
+    let cfg = tempfile::tempdir().expect("配置目录");
+    let fake = FakeDialog::new();
+    let services = Services::assemble_with_dialogs(ConfigPaths::in_dir(cfg.path()), Arc::new(fake))
+        .expect("装配应成功");
+    let mut app = EditorApp::new(services, false);
+    let root_str = root.to_string_lossy().replace('\\', "/");
+    app.scan_workspace(&root_str).expect("扫描应成功");
+
+    let target = joined(&root, "docs/guide.md");
+    app.request_delete(&target);
+    assert!(
+        app.delete_pending() == Some(target.as_str()),
+        "删除应先悬着等确认，实际 {:?}",
+        app.delete_pending()
+    );
+    // 未取回任何答复时，磁盘必须原封不动。
+    assert!(root.join("docs/guide.md").exists(), "没确认就不该动磁盘");
 }
 
 /// 删除后树要重扫：磁盘上可能还有聚合不知道的文件。
@@ -708,13 +731,13 @@ fn a_rejected_name_keeps_the_draft_for_another_try() {
     assert!(outcome.is_err(), "与既有文件重名应失败");
 }
 
-/// 真实帧：三个标签都要能渲染（不是只过纯函数）。
+/// 真实帧：四个标签都要能渲染（不是只过纯函数）。
 ///
 /// 判据用「焦点能否落到搜索输入框」——egui 0.33 **没有文本回读接口**
 /// （`ctx.debug_text` 是写入方向），控件状态是唯一稳定的外部可观察量。
 /// 这同时也是正确的 a11y：切到搜索标签时光标有明确落点。
 #[test]
-fn all_three_sidebar_tabs_render_in_a_real_frame() {
+fn all_sidebar_tabs_render_in_a_real_frame() {
     let ws = workspace();
     let root = ws.path().to_path_buf();
     let (_cfg, mut app) = app_with_workspace(&root);

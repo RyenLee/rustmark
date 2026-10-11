@@ -490,6 +490,7 @@ fn set_writing_goal(app: &mut EditorApp, goal: u32) {
                 show_line_numbers: view.show_line_numbers,
                 split_ratio: view.split_ratio,
                 writing_goal: goal,
+                lint: view.lint,
             },
         })
         .expect("设置写作目标应成功");
@@ -757,5 +758,24 @@ fn opening_a_missing_recent_file_reports_the_failure() {
     assert!(
         msg.as_ref().is_some_and(|m| m.is_error),
         "点了没反应会让人以为程序卡了，失败必须可见"
+    );
+}
+
+/// 文末**没有**换行符时，光标停在最后一行行内，不得虚报「下一行」。
+///
+/// `line_start_offsets` 会给不以 `\n` 结尾的文本补一个「长度哨兵」，
+/// 状态栏若照单全收，光标停在 `abc\ndef` 的 `f` 之后会显示成
+/// 「行 3, 列 1」——凭空多出的第 3 行。文末有换行时末行是真实空行，
+/// 行为不变（见 `cursor_at_end_of_trailing_newline_is_on_the_last_line`）。
+#[test]
+fn cursor_at_end_without_trailing_newline_stays_on_last_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_cfg, mut app) = app_with_file(dir.path(), "eol2.md", "abc\ndef");
+    app.editor.cursor = 7; // 文末（`f` 之后）
+
+    assert_eq!(
+        app.cursor_line_col(),
+        (2, 4),
+        "无尾随换行时文末属于第 2 行第 4 列"
     );
 }
