@@ -219,18 +219,20 @@ pub fn list_marker(line: &str) -> Option<(usize, String)> {
         return Some((i, line[..i + 2].to_string()));
     }
     // 有序列表：数字 + '.' 或 ')' + 空格
-    let after_num = rest
-        .strip_prefix(|c: char| c.is_ascii_digit())
-        .and_then(|r| {
-            if let Some(r) = r.strip_prefix(". ") {
-                Some((r, "."))
-            } else if let Some(r) = r.strip_prefix(") ") {
-                Some((r, ")"))
-            } else {
-                None
-            }
-        });
-    if let Some((_, sep)) = after_num {
+    //
+    // 数字段必须**整段**剥出来：只剥一位的话，`10. item` 会变成
+    // `0. item`，后续 `. ` 前缀匹配不上，回车就续不出 `11. `——
+    // 症状是「列表写到第十条以后，回车不再补序号」。
+    let digits_end = rest
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(rest.len());
+    let after_num = rest[digits_end..]
+        .strip_prefix(". ")
+        .map(|r| (r, "."))
+        .or_else(|| rest[digits_end..].strip_prefix(") ").map(|r| (r, ")")));
+    if digits_end > 0
+        && let Some((_, sep)) = after_num
+    {
         // 分隔符位置：`after_num` 是由 `rest` 剥离得到的，故必然能找到；
         // 用 `?` 处理而非 `unwrap()`——找不到即放弃本次续行（V11-12）。
         let idx = rest.find(sep)?;
@@ -421,6 +423,18 @@ mod tests {
     fn list_marker_ordered_increments() {
         let (_, marker) = list_marker("1. first").unwrap();
         assert_eq!(marker, "2. ");
+    }
+
+    #[test]
+    fn list_marker_multi_digit_increments() {
+        // 两位数序号：整段数字都要剥出来。只剥一位的话 `10. ` 会被看成
+        // `0. `，`. ` 前缀匹配不上 → 回车续不出 `11. `（V11-13 实测）。
+        let (mlen, marker) = list_marker("10. 第十条").unwrap();
+        assert_eq!(marker, "11. ");
+        assert_eq!(mlen, 4); // 缩进 0 + "10" + "." + " "
+        let (mlen2, marker2) = list_marker("123) deep").unwrap();
+        assert_eq!(marker2, "124) ");
+        assert_eq!(mlen2, 5);
     }
 
     #[test]

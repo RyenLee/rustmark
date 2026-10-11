@@ -898,3 +898,93 @@ fn three_pane_top_bars_align() {
         "三条顶栏分隔线不在同一根水平线上：{sep_ys:?}"
     );
 }
+
+// ==== 回车键：换行与列表序号自增（回归：flush_edit 钳制基准错位）====
+//
+// # 缺陷现场（实测）
+//
+// 「回车退出列表」的变换会把文本**变短**（拉起点删掉整个 `4. ` 标记、
+// 只插入一个 `\n`），编辑区先把 `editor_text` 拼成变换后的新串再调
+// `flush_edit`；而 `flush_edit` 把「相对**旧**文本的字节区间」按**新**文本
+// 的长度钳制——`byte_end`（旧插入点）超出新长度被砍短，领域层只删掉
+// 标记的前半个字符：空列表项 `4. ` 上回车后残留成 `. `，此后每次回车
+// 都只是把残渣往下推，再也续不出正常序号。表象即「按回车不换行、
+// 序列号错乱」。
+fn pressed_key(key: egui::Key) -> egui::Event {
+    egui::Event::Key {
+        key,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::default(),
+        physical_key: None,
+    }
+}
+
+/// 把焦点给编辑区 `TextEdit` 并跑一帧。
+///
+/// 编辑区的文字被高亮 layouter 切成多段 Text 指令，按整段文字定位会
+/// 命中预览区那份同文，故直接对已知 `Id` 请求焦点。
+fn focus_editor(ctx: &egui::Context, app: &mut EditorApp) {
+    ctx.memory_mut(|m| m.request_focus(EditorApp::editor_id()));
+    run_frame(ctx, app, vec![]);
+}
+
+#[test]
+fn enter_key_creates_lines_and_keeps_list_numbers_intact() {
+    let (dir, mut app) = app_fixture();
+    let file = dir.path().join("note.md");
+    std::fs::write(&file, "1. first item").expect("写文件应成功");
+    app.open_path(&file.to_string_lossy()).expect("打开应成功");
+    let ctx = fresh_ctx();
+
+    let _ = run_frame(&ctx, &mut app, vec![]);
+    focus_editor(&ctx, &mut app);
+
+    // ① 行尾回车 → 正确换行，序号自增。
+    run_frame(&ctx, &mut app, vec![pressed_key(egui::Key::End)]);
+    run_frame(&ctx, &mut app, vec![]);
+    run_frame(&ctx, &mut app, vec![pressed_key(egui::Key::Enter)]);
+    assert_eq!(
+        app.current_content().as_deref(),
+        Some("1. first item\n2. "),
+        "行尾回车应换行并续出下一序号"
+    );
+
+    // ② 空列表项上回车 → 退出列表：**整段**标记删除、只留空行。
+    //    残留 `. ` / `2. ` 被下移都是钳制基准错位的表现。
+    run_frame(&ctx, &mut app, vec![pressed_key(egui::Key::Enter)]);
+    assert_eq!(
+        app.current_content().as_deref(),
+        Some("1. first item\n\n"),
+        "空列表项上回车应删除整个标记退出列表"
+    );
+
+    // ③ 再回车 → 普通空行（不再受残留标记干扰）。
+    run_frame(&ctx, &mut app, vec![pressed_key(egui::Key::Enter)]);
+    assert_eq!(
+        app.current_content().as_deref(),
+        Some("1. first item\n\n\n"),
+        "退出列表后的回车应是普通换行"
+    );
+}
+
+#[test]
+fn enter_key_continues_multi_digit_list_numbers() {
+    let (dir, mut app) = app_fixture();
+    let file = dir.path().join("note.md");
+    std::fs::write(&file, "10. 第十条").expect("写文件应成功");
+    app.open_path(&file.to_string_lossy()).expect("打开应成功");
+    let ctx = fresh_ctx();
+
+    let _ = run_frame(&ctx, &mut app, vec![]);
+    focus_editor(&ctx, &mut app);
+
+    run_frame(&ctx, &mut app, vec![pressed_key(egui::Key::End)]);
+    run_frame(&ctx, &mut app, vec![]);
+    run_frame(&ctx, &mut app, vec![pressed_key(egui::Key::Enter)]);
+    assert_eq!(
+        app.current_content().as_deref(),
+        Some("10. 第十条\n11. "),
+        "两位数序号也应自增续行（数字段必须整段剥离）"
+    );
+}

@@ -292,7 +292,12 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
                     let bs = edit.byte_start.min(prev.len());
                     let be = edit.byte_end.min(prev.len());
                     app.editor_text = format!("{}{}{}", &prev[..bs], edit.inserted, &prev[be..]);
-                    app.flush_edit(edit);
+                    // 第二个参数必须是 `prev.len()`（领域旧文本长度），**不是**
+                    // `app.editor_text.len()`——上一行刚把 `editor_text` 拼成
+                    // 变换后的新串，「退出列表」分支会把文本改短，新长度装不下
+                    // 相对旧文本的 `byte_end`；flush_edit 若按新长度钳制就会把
+                    // 区间砍短，领域层只删掉半个标记（实测：`4. ` 残留成 `. `）。
+                    app.flush_edit(edit, prev.len());
                     // 文本一变，egui 就会「把光标滚进视口」（带动画、连续数帧）。
                     // 那是程序为了光标可见而滚的，用户并没有滚，故必须声明成
                     // 程序性位移——否则滚动同步会把它当成用户手势，一帧一次地把

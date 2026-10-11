@@ -1913,19 +1913,34 @@ impl EditorApp {
 
     /// 把一次文本编辑（来自 egui 的 diff 或纯变换）写入领域。
     ///
+    /// `domain_len` 是**领域当前内容**的字节长度（即编辑发生前的旧文本），
+    /// 由调用方传入——不是 `self.editor_text` 的长度。
+    ///
+    /// # 为什么不能拿 `editor_text` 当钳制基准
+    ///
+    /// 编辑区（`editor_view::show` 第 5 步）在调用本方法**之前**就把
+    /// `editor_text` 拼成了变换后的最终串（省掉一帧回读），此时它的长度
+    /// 已经是**新文本**的。而 `edit.byte_start/end` 是相对**旧文本**的字节
+    /// 区间。「回车退出列表」这类变换会**把文本变短**（拉起点删掉整个
+    /// `4. ` 标记，只插入一个 `\n`）：`byte_end`（旧插入点）会大于新文本
+    /// 长度，若按 `editor_text.len()` 钳制，区间终点被砍短，领域层只删掉
+    /// 标记的前半个字符——实测症状：在空列表项上回车，`4. ` 变成 `. `
+    /// 垃圾残留在行尾，之后的回车再也续不出正常序号。
+    ///
     /// 注意：**本方法不再整篇回读领域内容到 `editor_text`**——那是旧实现里
     /// 每敲一个键就触发一次「从领域重读全文并整体覆盖绑定字符串」的操作，
     /// 会迫使 egui 的 `TextEdit` 每帧重新推导光标 / 选区 / 撤销栈，表现为编辑区
     /// 闪烁（见 `editor_view::show` 第 5 步的配套说明）。调用方（编辑区）已把
     /// `editor_text` 同步成与领域一致的最终串，这里只负责：写领域、标记预览需要
     /// 重解析（防抖起点）、记下光标、清除 egui 撤销栈。
-    pub(crate) fn flush_edit(&mut self, edit: editor_ops::TextEdit) {
+    pub(crate) fn flush_edit(&mut self, edit: editor_ops::TextEdit, domain_len: usize) {
         let Some(id) = self.active_doc else { return };
         // 用字节区间切片必须合法——`diff_replace` 已保证 `byte_start ≤ byte_end`
-        // 且落在旧文本边界内；但若 `editor_text` 已被并发改动则可能越界，
-        // 这里用 `saturating` 防御（越界替换会 panic="abort" 终止进程）。
-        let start = edit.byte_start.min(self.editor_text.len());
-        let end = edit.byte_end.min(self.editor_text.len());
+        // 且落在旧文本边界内；但若调用方给的基准有误则可能越界，
+        // 这里按 `domain_len` 用 `saturating` 防御（越界替换会 panic="abort"
+        // 终止进程）。
+        let start = edit.byte_start.min(domain_len);
+        let end = edit.byte_end.min(domain_len);
         let range = TextRange::new(ByteOffset::new(start), ByteOffset::new(end));
         let _ = self.services.documents.replace_range(ReplaceRangeCommand {
             id,
