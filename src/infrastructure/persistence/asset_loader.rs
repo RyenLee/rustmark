@@ -26,135 +26,23 @@
 //! `panic = "abort"` 下任何 `unwrap()` 都直接终止进程，而图片解码是
 //! **外部输入驱动的**：损坏的 PNG、伪装成 PNG 的文本、被截断的网络响应
 //! 都会走到解码路径。编辑器绝不能因为一张坏图而退出。
+//!
+//! # 模块结构
+//!
+//! facade 保留 `AssetLoader` 与三种来源的加载流程；
+//! 限制 / 错误 / MIME 推断在 `policy`，零依赖编码原语在 `coding`。
+
+mod coding;
+mod policy;
 
 use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::shared::error::AppError;
+use coding::{decode_base64, percent_decode, split_http_body};
+use policy::{ALLOWED_MIME, alt_of, mime_from_extension};
 
-/// 资源加载的限制参数。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AssetLimits {
-    /// 允许内联的最大字节数（默认 512 KB，与原型的 `IMAGE_WARN_BYTES` 同值）。
-    pub max_inline_bytes: usize,
-    /// 远程下载超时（默认 5秒）。
-    ///
-    /// 首版用同步下载，故必须有超时：否则一个无响应的服务器会把
-    /// 整个预览线程挂住，用户看到的是「编辑器卡死了」。
-    pub download_timeout: Duration,
-}
-
-impl Default for AssetLimits {
-    fn default() -> Self {
-        Self {
-            max_inline_bytes: 512 * 1024,
-            download_timeout: Duration::from_secs(5),
-        }
-    }
-}
-
-/// 允许内联的图片 MIME 白名单。
-///
-/// **不含 `svg+xml`**：SVG 是 XML，可以内嵌`<script>`，
-/// 内联进预览等于直接执行脚本。
-const ALLOWED_MIME: &[&str] = &[
-    "image/png",
-    "image/jpeg",
-    "image/jpg",
-    "image/gif",
-    "image/webp",
-    "image/bmp",
-];
-
-/// 资源加载错误。
-#[derive(Debug, thiserror::Error)]
-pub enum AssetError {
-    /// 超过体积上限。
-    ///
-    /// 携带上限值与实际值，便于 UI 直接显示「当前 2.1 MB，上限 512 KB」。
-    #[error("图片体积 {actual} 字节超过上限 {limit} 字节；请改用相对路径引用，或压缩后再插入")]
-    TooLarge { actual: usize, limit: usize },
-
-    /// 不在白名单内的 data URI 类型（如 `data:text/html`）。
-    #[error("不支持的内联资源类型：{mime}；出于安全考虑仅允许位图（png/jpeg/gif/webp/bmp）")]
-    DisallowedMime { mime: String },
-
-    /// data URI 格式非法或 base64 解码失败。
-    #[error("内联资源格式非法：{reason}")]
-    MalformedDataUri { reason: String },
-
-    /// 远程下载失败。
-    #[error("下载图片失败（{url}）：{reason}")]
-    DownloadFailed { url: String, reason: String },
-
-    /// 本地文件读取失败。
-    #[error("读取图片失败（{path}）：{reason}")]
-    ReadFailed { path: String, reason: String },
-
-    /// 本地路径无法解析（基准文档缺失等）。
-    #[error("无法解析图片路径「{raw}」：{reason}")]
-    UnresolvedPath { raw: String, reason: String },
-}
-
-impl From<AssetError> for AppError {
-    fn from(e: AssetError) -> Self {
-        Self::Io {
-            message: e.to_string(),
-        }
-    }
-}
-
-/// 已加载的图片资源。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LoadedAsset {
-    /// 原始字节。
-    pub bytes: Vec<u8>,
-    /// MIME 类型（已归一为小写）。
-    pub mime: String,
-    /// 展示用的替代文本（文件名去扩展名）。
-    pub alt: String,
-}
-
-impl LoadedAsset {
-    /// 是否为位图（恒为 true——非位图在加载阶段已被拒绝）。
-    pub const fn is_bitmap(&self) -> bool {
-        true
-    }
-
-    /// 字节长度。
-    pub fn len(&self) -> usize {
-        self.bytes.len()
-    }
-
-    /// 是否为空（恒为 false——空图片在加载阶段已被拒绝）。
-    pub const fn is_empty(&self) -> bool {
-        false
-    }
-}
-
-/// 由扩展名推断 MIME 类型。
-fn mime_from_extension(path: &Path) -> Option<&'static str> {
-    let ext = path.extension()?.to_string_lossy().to_ascii_lowercase();
-    Some(match ext.as_str() {
-        "png" => "image/png",
-        "jpg" | "jpeg" => "image/jpeg",
-        "gif" => "image/gif",
-        "webp" => "image/webp",
-        "bmp" => "image/bmp",
-        "svg" => "image/svg+xml",
-        _ => return None,
-    })
-}
-
-/// 取文件名去扩展名作为 alt 文本（对齐原型 `altOf`）。
-fn alt_of(path: &str) -> String {
-    Path::new(path)
-        .file_stem()
-        .map(|s| s.to_string_lossy().to_string())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "image".to_string())
-}
+pub use policy::{AssetError, AssetLimits, LoadedAsset};
 
 /// 图片与资源加载器。
 #[derive(Debug, Clone, Copy)]
@@ -456,91 +344,4 @@ impl AssetLoader {
             alt: alt_of(path),
         })
     }
-}
-
-/// 从 HTTP 响应中切出响应体（跳过状态行与头部）。
-fn split_http_body(response: &[u8]) -> Option<&[u8]> {
-    const SEP: &[u8] = b"\r\n\r\n";
-    let index = response.windows(SEP.len()).position(|w| w == SEP)?;
-    Some(&response[index + SEP.len()..])
-}
-
-/// 最小 base64 解码器。
-///
-/// 不引依赖的理由：base64 逻辑只有约 40 行，而 `base64` crate 会
-/// 带来额外体积；更重要的是解码失败必须能被**测试覆盖**，
-/// 自己实现才能对畸形输入的每条分支加断言。
-fn decode_base64(input: &str) -> Option<Vec<u8>> {
-    fn value_of(c: u8) -> Option<u32> {
-        Some(match c {
-            b'A'..=b'Z' => (c - b'A') as u32,
-            b'a'..=b'z' => (c - b'a') as u32 + 26,
-            b'0'..=b'9' => (c - b'0') as u32 + 52,
-            b'+' => 62,
-            b'/' => 63,
-            _ => return None,
-        })
-    }
-
-    let filtered: Vec<u8> = input
-        .bytes()
-        // base64 里换行与空白是合法的（原型正则也允许 `\s`）。
-        .filter(|b| !b.is_ascii_whitespace())
-        .collect();
-    if !filtered.len().is_multiple_of(4) {
-        return None;
-    }
-
-    let mut out = Vec::with_capacity(filtered.len() / 4 * 3);
-    for chunk in filtered.chunks(4) {
-        let mut buffer = 0u32;
-        let mut padding = 0usize;
-        for (i, byte) in chunk.iter().enumerate() {
-            if *byte == b'=' {
-                padding += 1;
-                // base64 每4 字节一组最多补2 个 `=`；`====` 之类的输入非法。
-                if padding > 2 {
-                    return None;
-                }
-                continue;
-            }
-            // 填充符只能出现在末尾。
-            if padding > 0 {
-                return None;
-            }
-            buffer |= value_of(*byte)? << (18 - 6 * i);
-        }
-        out.push((buffer >> 16) as u8);
-        if padding < 2 {
-            out.push((buffer >> 8) as u8);
-        }
-        if padding < 1 {
-            out.push(buffer as u8);
-        }
-    }
-    Some(out)
-}
-
-/// 最小百分号解码器。
-fn percent_decode(input: &str) -> Option<Vec<u8>> {
-    let bytes = input.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'%' => {
-                if i + 2 >= bytes.len() {
-                    return None;
-                }
-                let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).ok()?;
-                out.push(u8::from_str_radix(hex, 16).ok()?);
-                i += 3;
-            }
-            b => {
-                out.push(b);
-                i += 1;
-            }
-        }
-    }
-    Some(out)
 }
