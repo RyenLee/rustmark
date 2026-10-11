@@ -736,8 +736,9 @@ fn draw_paragraph(ui: &mut Ui, theme: &Theme, block: &BlockView, wrap: bool) {
 
 /// 引用块：左侧色条 + 斜体次级色。
 ///
-/// 注意：引用块的 `content` 通常是空的（正文在它的子段落块里，见解析器注释），
-/// 此时这里只画一根色条作为视觉容器。
+/// 引用帧会吞掉内层段落（见解析器 `OpenBlock::absorbs`），正文（含多段落
+/// 与行内样式）都回流在 `content` 里，画在色条右侧的框内；`content` 为空
+/// 的场合（理论上只剩空引用 `>`）只画色条。
 fn draw_quote(ui: &mut Ui, theme: &Theme, block: &BlockView, wrap: bool) {
     egui::Frame::new()
         .fill(theme.bg_tertiary)

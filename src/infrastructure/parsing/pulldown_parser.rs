@@ -215,7 +215,9 @@ impl SourceOffsets {
 /// `- 项`（松散列表）与 `[^1]: 正文` 的正文在事件流里都包着一层 `Paragraph`，
 /// 若让那层 Paragraph 照常产出块，预览里就会出现「列表项 + 同文段落」两份，
 /// 脚注的定义正文更是会变成一个**游离在文档末尾的普通段落**。
-/// 故这三类帧（列表项 / 脚注定义 / 定义列表的定义）标记 `absorbs`：
+/// `> 引用` 的正文同理——Paragraph 若照常成块，预览里就是一根**空色条**
+/// 加一个游离在色条**外面**的正文段落（实测 `[Quote, Paragraph]`）。
+/// 故这四类帧（列表项 / 脚注定义 / 定义列表的定义 / 引用）标记 `absorbs`：
 /// 内层段落块的文本已由 [`push_content`] 回流到本帧，块本身则被丢弃。
 struct OpenBlock {
     /// 该块产出的领域类型；`None` 表示该标签**不产出块**（行内标签 / 列表项 / 单元格）。
@@ -230,7 +232,7 @@ struct OpenBlock {
     is_item: bool,
     /// 该 `Start` 是否为 `Tag::TableCell`（单元格，需把内容归入表格当前行）。
     is_cell: bool,
-    /// 内层段落块是否应被本帧吞掉（列表项 / 脚注定义 / 定义列表的定义）。
+    /// 内层段落块是否应被本帧吞掉（列表项 / 脚注定义 / 定义列表的定义 / 引用）。
     absorbs: bool,
     /// 该 `Start` 是否为 `Tag::DefinitionListTitle`（术语，闭合时开一个新条目）。
     is_dl_title: bool,
@@ -805,7 +807,7 @@ fn root_list_index(stack: &[OpenBlock]) -> Option<usize> {
         .position(|f| matches!(f.kind, Some(BlockKind::List { .. })))
 }
 
-/// 最近的、会吞掉内层段落的帧下标（列表项 / 脚注定义 / 定义列表的定义）。
+/// 最近的、会吞掉内层段落的帧下标（列表项 / 脚注定义 / 定义列表的定义 / 引用）。
 fn absorbing_index(stack: &[OpenBlock]) -> Option<usize> {
     stack.iter().rposition(OpenBlock::absorbs_text)
 }
@@ -956,8 +958,9 @@ impl MarkdownParser for PulldownMarkdownParser {
                     frame.is_item = is_item;
                     frame.is_cell = is_cell;
                     frame.is_inline = is_inline;
-                    // 会吞掉内层段落块的三类帧（见 `OpenBlock::absorbs`）。
-                    frame.absorbs = is_item || is_dl_def || is_footnote;
+                    // 会吞掉内层段落块的四类帧（见 `OpenBlock::absorbs`）。
+                    let is_quote = matches!(tag, Tag::BlockQuote(_));
+                    frame.absorbs = is_item || is_dl_def || is_footnote || is_quote;
                     frame.is_dl_title = is_dl_title;
                     frame.is_dl_def = is_dl_def;
                     frame.aligns = aligns;
@@ -1140,6 +1143,37 @@ impl MarkdownParser for PulldownMarkdownParser {
                         && let Some(owner) = absorbing_index(&stack)
                     {
                         stack[owner].pending_break = true;
+                        continue;
+                    }
+
+                    // ---- 嵌套引用：内层并入外层，不单独成块 ----
+                    //
+                    // `> > 深层` 里内层引用的文字已回流给外层（引用现在也是
+                    // 回流帧）；若内层再照常产出 Quote 块，外层就是一根
+                    // **空色条**、内层的字反而在空色条的下方（与修复前的
+                    // 顶层引用同一缺陷）。把内层的内容与行内样式片段整体
+                    // 搬给外层后丢弃——内容顺序也是对的：内层的 End 由内
+                    // 向外到达，此刻外层 `content` 里只有它**之前**的段落。
+                    if matches!(open.kind, Some(BlockKind::Quote))
+                        && let Some(owner) = absorbing_index(&stack)
+                    {
+                        // 分隔规则与 [`push_content`] 的 `pending_break` 一致：
+                        // 先补换行再写入，片段基点取换行之后的长度，区间不错位。
+                        if stack[owner].pending_break {
+                            stack[owner].pending_break = false;
+                            if !stack[owner].content.is_empty() {
+                                stack[owner].content.push('\n');
+                            }
+                        }
+                        let base = stack[owner].content.len();
+                        stack[owner].content.push_str(&open.content);
+                        for span in std::mem::take(&mut open.spans) {
+                            stack[owner].spans.push(InlineSpan::new(
+                                base + span.start(),
+                                base + span.end(),
+                                span.style(),
+                            ));
+                        }
                         continue;
                     }
 

@@ -1107,3 +1107,99 @@ fn preview_headings_do_not_clash_ids() {
          根因通常是某个块的子树没有唯一 id_salt（见 preview_view::show 的 scope_builder）。"
     );
 }
+
+/// 引用块的正文必须画在**引用色条框里面**，而不是游离在框外面。
+///
+/// # 根因
+///
+/// 解析器此前只让「列表项 / 脚注定义 / 定义列表的定义」吞掉内层段落，
+/// `> 引用` 的正文段落照常成块——DTO 变成 `[Quote(空), Paragraph(正文)]`，
+/// 预览里就是一根空色条 + 游离在色条下方的正文段落。
+///
+/// # 修复
+///
+/// 引用帧也标记 `absorbs`：正文段落回流给引用块自身（含行内样式片段
+/// 与多段落换行分隔），`draw_quote` 把内容画在色条右侧的框内。
+/// 本用例从真实绘制指令取证：引用文字的矩形必须落在 `bg_tertiary`
+/// 引用框内，后续正文段落则在框外（下方）。
+#[test]
+fn quote_body_paints_inside_the_quote_frame() {
+    const DOC: &str = "> 引用第一行\n>\n> 引用第二段\n\n正文段落。\n";
+    let (_dir, mut app) = app_with(DOC);
+    let ctx = egui::Context::default();
+    let input = egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(1280.0, 800.0),
+        )),
+        ..Default::default()
+    };
+    let _ = ctx.run(input.clone(), |_| {}); // 装载字库
+    let mut texts: Vec<(egui::Rect, String)> = Vec::new();
+    let mut fills: Vec<(egui::Rect, egui::Color32)> = Vec::new();
+    for _ in 0..3 {
+        let out = ctx.run(input.clone(), |ctx| {
+            rustmark::presentation::theme::mapper::apply(ctx, &app.ui.theme);
+            egui::CentralPanel::default().show(ctx, |ui| {
+                rustmark::presentation::views::preview_view::show(&mut app, ui);
+            });
+        });
+        texts.clear();
+        fills.clear();
+        fn walk(
+            s: &egui::epaint::Shape,
+            t: &mut Vec<(egui::Rect, String)>,
+            f: &mut Vec<(egui::Rect, egui::Color32)>,
+        ) {
+            match s {
+                egui::epaint::Shape::Text(x) => {
+                    t.push((x.visual_bounding_rect(), x.galley.text().to_string()))
+                }
+                egui::epaint::Shape::Rect(x) => f.push((x.rect, x.fill)),
+                egui::epaint::Shape::Vec(v) => v.iter().for_each(|y| walk(y, t, f)),
+                _ => {}
+            }
+        }
+        for c in &out.shapes {
+            walk(&c.shape, &mut texts, &mut fills);
+        }
+    }
+
+    // ---- DTO 层：引用块自己携带正文，不再有游离段落 ----
+    assert_eq!(
+        app.preview.blocks.len(),
+        2,
+        "应只有 [Quote, Paragraph] 两个块"
+    );
+    assert_eq!(app.preview.blocks[0].kind, "quote");
+    assert_eq!(app.preview.blocks[0].content, "引用第一行\n引用第二段");
+    assert_eq!(app.preview.blocks[1].kind, "paragraph");
+
+    // ---- 绘制层：引用文字在引用框内，正文段落与引用框分离 ----
+    let bg = app.ui.theme.bg_tertiary;
+    let quote_frame = fills
+        .iter()
+        .find(|(r, c)| *c == bg && r.width() > 50.0)
+        .map(|(r, _)| *r)
+        .unwrap_or_else(|| panic!("应画出一个引用框（bg_tertiary 填充）"));
+
+    let quote_text = texts
+        .iter()
+        .find(|(_, t)| t.contains("引用第一行") && t.contains("引用第二段"))
+        .map(|(r, _)| *r)
+        .unwrap_or_else(|| panic!("引用正文应作为一段多行文字绘制，实际：{texts:?}"));
+    assert!(
+        quote_frame.contains(quote_text.min) && quote_frame.contains(quote_text.max),
+        "引用正文必须在引用框内：文字 {quote_text:?} vs 框 {quote_frame:?}"
+    );
+
+    let body = texts
+        .iter()
+        .find(|(_, t)| t.contains("正文段落"))
+        .map(|(r, _)| *r)
+        .unwrap_or_else(|| panic!("后续正文段落应正常绘制"));
+    assert!(
+        body.top() >= quote_frame.bottom(),
+        "后续正文应在引用框下方（框外），实际正文 {body:?} vs 框 {quote_frame:?}"
+    );
+}

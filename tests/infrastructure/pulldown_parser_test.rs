@@ -169,6 +169,56 @@ fn blockquote_is_parsed() {
 }
 
 #[test]
+fn blockquote_body_stays_inside_the_quote_block() {
+    // 缺陷现场：正文段落照常成块，DTO 变成 `[Quote(空), Paragraph(正文)]`，
+    // 预览里就是一根空色条 + 游离在色条**外面**的正文。
+    let blocks = parse("> 引用正文\n");
+    assert_eq!(
+        blocks.len(),
+        1,
+        "引用正文不该再产出游离段落，实际：{:?}",
+        blocks.iter().map(|b| b.kind()).collect::<Vec<_>>()
+    );
+    assert_eq!(blocks[0].kind(), &BlockKind::Quote);
+    assert_eq!(blocks[0].content(), "引用正文");
+}
+
+#[test]
+fn blockquote_keeps_inline_styles_and_paragraph_breaks() {
+    let blocks = parse("> 见 **重点**\n>\n> 第二段\n");
+    assert_eq!(blocks.len(), 1);
+    assert_eq!(blocks[0].content(), "见 重点\n第二段");
+    let bold = span_text(&blocks[0], InlineStyle::Strong);
+    assert_eq!(bold, vec!["重点"], "回流给引用的行内样式区间不应丢失");
+}
+
+#[test]
+fn nested_blockquote_merges_into_the_outer_quote() {
+    // 内层若照常成块，外层就是空色条、内层文字在色条外面；并入外层后
+    // 只留一个 Quote 块，文字完整（嵌套层级在扁平架构下不单独画条）。
+    let blocks = parse("> > 深层引用\n");
+    assert_eq!(
+        blocks.len(),
+        1,
+        "嵌套引用不应产出空壳 Quote + 深层 Quote，实际：{:?}",
+        blocks.iter().map(|b| b.kind()).collect::<Vec<_>>()
+    );
+    assert_eq!(blocks[0].kind(), &BlockKind::Quote);
+    assert_eq!(blocks[0].content(), "深层引用");
+}
+
+#[test]
+fn blockquote_adjacent_paragraphs_stay_separate() {
+    // 引用与后续正文是两个块；引用吸掉的只是**自己内部**的段落。
+    let blocks = parse("> 引用\n\n正文\n");
+    assert_eq!(blocks.len(), 2);
+    assert_eq!(blocks[0].kind(), &BlockKind::Quote);
+    assert_eq!(blocks[0].content(), "引用");
+    assert_eq!(blocks[1].kind(), &BlockKind::Paragraph);
+    assert_eq!(blocks[1].content(), "正文");
+}
+
+#[test]
 fn thematic_break_is_parsed() {
     // pulldown-cmark 不为分隔线产出标签，这里只验证**不崩溃**且段落仍正确切分。
     let blocks = parse("a\n\n---\n\nb\n");
