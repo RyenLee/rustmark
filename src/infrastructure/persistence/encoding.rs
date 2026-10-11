@@ -23,7 +23,7 @@
 //!
 //! 另外本模块只处理 **GBK/CP936 兼容家族**：GBK 双字节 +
 //! **GB18030 四字节扩展**（经 WHATWG `index-gb18030-ranges` 线性映射，
-//! 见 [`gb18030_pointer_to_cp`]）。Big5、Shift_JIS 等与 GBK 无兼容关系、
+//! 见 `gb18030::gb18030_pointer_to_cp`）。Big5、Shift_JIS 等与 GBK 无兼容关系、
 //! 且无 BOM 可辨，自动探测存在原理性歧义，仍不支持。
 //!
 //! # 映射表的由来
@@ -35,6 +35,32 @@
 //! `gb18030_ranges.bin` 由 `tools/gen_gb18030_ranges.py` 从 WHATWG 规范表生成
 //! （207 个仿射段，每段 12 字节：起始指针 / 起始码位 / 码位跨度，各 u32 小端），
 //! 已与 WHATWG 合规实现抽样 5 万例交叉验证一致。
+//!
+//! # 模块结构
+//!
+//! facade 保留编码标签、探测入口与 UTF-8 分档判据；各编解码实现按技术能力拆分：
+//! - `utf16`：UTF-16 两字节序解码；
+//! - `gbk`：GBK 双字节解码与内嵌映射表；
+//! - `gb18030`：四字节线性段双向查表；
+//! - `writer`：按原编码回写与 GBK 反查表。
+
+mod gb18030;
+mod gbk;
+mod utf16;
+mod writer;
+
+use gbk::decode_gbk;
+use utf16::decode_utf16;
+
+pub use writer::encode;
+
+// 仅 facade 内联单测需要直接访问底层查表函数。
+#[cfg(test)]
+use gb18030::*;
+#[cfg(test)]
+use gbk::*;
+#[cfg(test)]
+use writer::gbk_reverse;
 
 /// 识别出的文本编码。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -192,372 +218,6 @@ fn utf8_multibyte_counts(bytes: &[u8]) -> (usize, usize) {
 /// 仅解码、不关心编码种类时的便捷入口。
 pub fn decode_to_string(bytes: &[u8]) -> String {
     decode(bytes).0
-}
-
-/// 解码 UTF-16（不含 BOM）。奇数尾字节按替换字符处理，不 panic。
-fn decode_utf16(bytes: &[u8], little_endian: bool) -> String {
-    // `as_chunks` 同时给出"完整的码元"与"落单的尾字节"，
-    // 不必再手工算余数。
-    let (pairs, remainder) = bytes.as_chunks::<2>();
-    let mut units: Vec<u16> = pairs
-        .iter()
-        .map(|pair| {
-            if little_endian {
-                u16::from_le_bytes(*pair)
-            } else {
-                u16::from_be_bytes(*pair)
-            }
-        })
-        .collect();
-    // 截断的半个码元：补一个替换字符，让用户看出文件尾部不完整。
-    if !remainder.is_empty() {
-        units.push(char::REPLACEMENT_CHARACTER as u16);
-    }
-    String::from_utf16_lossy(&units)
-}
-
-/// 解码 GBK（CP936），含 GB18030 四字节扩展。
-///
-/// 逐单元推进，遇到未定义或非法序列时压入一个替换字符继续——
-/// 绝不停下或 panic：**部分可读远好于全篇打不开**。
-fn decode_gbk(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        let lead = bytes[i];
-
-        // ASCII 区与 GBK 完全兼容。
-        if lead < 0x80 {
-            out.push(char::from(lead));
-            i += 1;
-            continue;
-        }
-        // CP936 把单字节 0x80 定义为欧元符号。
-        if lead == 0x80 {
-            out.push('€');
-            i += 1;
-            continue;
-        }
-
-        // 只有 `0x81..=0xFE` 才是合法的双字节首字节（`0xFF` 永远非法）。
-        // 这个判断必须放在"取尾字节"**之前**：否则 0xFF 会吞掉紧随其后的
-        // 一个正常 ASCII 字符，静默吃掉用户内容中的一个字符。
-        if (0x81..=0xFE).contains(&lead)
-            && let Some(&trail) = bytes.get(i + 1)
-        {
-            // 第二字节落在 0x30..=0x39：这不是合法的 GBK 双字节尾字节
-            // （GBK 尾字节从 0x40 起），而是 **GB18030 四字节序列**的标志。
-            // GBK 与 GB18030 正是靠这一位互斥兼容的——不必先猜编码家族。
-            if (0x30..=0x39).contains(&trail) {
-                if decode_gb18030_four_byte(&bytes[i..], &mut out) {
-                    // 命中（含"已赋值指针为空"的显式替换）：整个四字节序列已消费。
-                    i += 4;
-                } else {
-                    // 形状不完整 / 非法：只作废首字节，不吞后面的内容。
-                    out.push(char::REPLACEMENT_CHARACTER);
-                    i += 1;
-                }
-                continue;
-            }
-            if let Some(ch) = gbk_lookup(lead, trail) {
-                out.push(ch);
-                i += 2;
-            } else if is_gbk_trail(trail) {
-                // 合法尾字节、但该组合在 GBK 中未定义：整对作废。
-                out.push(char::REPLACEMENT_CHARACTER);
-                i += 2;
-            } else {
-                // 尾字节本身非法：只作废首字节，**不吞掉**下一个字节——
-                // 它很可能是一个正常的 ASCII 字符。
-                out.push(char::REPLACEMENT_CHARACTER);
-                i += 1;
-            }
-            continue;
-        }
-
-        // 非法首字节（如 0xFF），或末尾落单的首字节。
-        out.push(char::REPLACEMENT_CHARACTER);
-        i += 1;
-    }
-    out
-}
-
-/// 解码一个 GB18030 四字节序列（`bytes` 从首字节开始）。
-///
-/// 命中且已映射时把字符压入 `out` 并返回 `true`（调用方推进 4 字节）；
-/// 形状不完整（缺第 3/4 字节）或落在排除区时**不写 `out`**、返回 `false`
-/// （调用方只作废首字节——四字节序列里混着的 ASCII 数字不得被吞掉）。
-fn decode_gb18030_four_byte(bytes: &[u8], out: &mut String) -> bool {
-    let Some(&b2) = bytes.get(1) else {
-        return false;
-    };
-    let (Some(&b3), Some(&b4)) = (bytes.get(2), bytes.get(3)) else {
-        // 序列在文件末尾被截断：交给调用方按单字节作废。
-        return false;
-    };
-    // 四字节形状：[0x81-0xFE, 0x30-0x39, 0x81-0xFE, 0x30-0x39]。
-    if !(0x30..=0x39).contains(&b2) || !(0x81..=0xFE).contains(&b3) || !(0x30..=0x39).contains(&b4)
-    {
-        return false;
-    }
-    // 四字节线性指针：`首*12600 + 二*1260 + 三*10 + 四`（各字节先转段内序号）。
-    let pointer = u32::from(bytes[0] - 0x81) * 12_600
-        + u32::from(lead_index(b2)) * 1_260
-        + u32::from(lead_index(b3)) * 10
-        + u32::from(b4 - 0x30);
-    match gb18030_pointer_to_cp(pointer) {
-        Some(ch) => {
-            out.push(ch);
-            true
-        }
-        // 线性段内的未赋值指针（如代理区）：显式替换，而不是回退猜双字节。
-        None => {
-            out.push(char::REPLACEMENT_CHARACTER);
-            true
-        }
-    }
-}
-
-/// `0x30..=0x39` 与 `0x81..=0xFE` 的内部线性序号（构造四字节指针用）。
-const fn lead_index(b: u8) -> u8 {
-    if b >= 0x30 && b <= 0x39 {
-        b - 0x30
-    } else {
-        b - 0x81
-    }
-}
-
-/// 尾字节是否落在 GBK 合法范围内（`0x40..=0x7E` 与 `0x80..=0xFE`）。
-const fn is_gbk_trail(b: u8) -> bool {
-    matches!(b, 0x40..=0x7E | 0x80..=0xFE)
-}
-
-/// 内嵌的 GBK → Unicode 映射表。
-///
-/// 布局：`126` 行（首字节 `0x81..=0xFE`）× `190` 列
-/// （尾字节 `0x40..=0x7E` 共 63 列，接 `0x80..=0xFE` 共 127 列），
-/// 每格 2 字节小端 `u16`，`0` 表示未定义。
-static GBK_TABLE: &[u8] = include_bytes!("gbk_table.bin");
-
-/// 首字节的取值个数（`0x81..=0xFE`）。
-const GBK_ROWS: usize = 126;
-/// 每个首字节下的尾字节个数（63 + 127）。
-const GBK_COLS: usize = 190;
-/// 尾字节第一段的列数（`0x40..=0x7E`）。
-const GBK_TRAIL_LOW_COLS: usize = 63;
-
-/// 查表取 Unicode 码位；未定义或越过表尾返回 `None`。
-fn gbk_lookup(lead: u8, trail: u8) -> Option<char> {
-    if !(0x81..=0xFE).contains(&lead) {
-        return None;
-    }
-    let col = match trail {
-        0x40..=0x7E => (trail - 0x40) as usize,
-        0x80..=0xFE => (trail - 0x80) as usize + GBK_TRAIL_LOW_COLS,
-        _ => return None,
-    };
-    let row = (lead - 0x81) as usize;
-    let at = (row * GBK_COLS + col) * 2;
-    debug_assert!(row < GBK_ROWS, "行号越界说明首字节范围判断有误");
-    let code = u16::from_le_bytes([GBK_TABLE[at], GBK_TABLE[at + 1]]);
-    if code == 0 {
-        None
-    } else {
-        char::from_u32(u32::from(code))
-    }
-}
-
-// ====================================================================
-// GB18030 四字节：线性映射（WHATWG `index-gb18030-ranges`，207 个仿射段）
-// ====================================================================
-
-/// GB18030 四字节线性段表。布局见模块文档；由 `tools/gen_gb18030_ranges.py` 生成。
-static GB18030_RANGES: &[u8] = include_bytes!("gb18030_ranges.bin");
-
-/// 读取第 `index` 个线性段 `(起始指针, 起始码位, 码位跨度)`。
-const fn gb18030_run(index: usize) -> (u32, u32, u32) {
-    let at = index * 12;
-    (
-        u32::from_le_bytes([
-            GB18030_RANGES[at],
-            GB18030_RANGES[at + 1],
-            GB18030_RANGES[at + 2],
-            GB18030_RANGES[at + 3],
-        ]),
-        u32::from_le_bytes([
-            GB18030_RANGES[at + 4],
-            GB18030_RANGES[at + 5],
-            GB18030_RANGES[at + 6],
-            GB18030_RANGES[at + 7],
-        ]),
-        u32::from_le_bytes([
-            GB18030_RANGES[at + 8],
-            GB18030_RANGES[at + 9],
-            GB18030_RANGES[at + 10],
-            GB18030_RANGES[at + 11],
-        ]),
-    )
-}
-
-/// 线性段条数（由表长推导，避免双处维护常量）。
-const fn gb18030_run_count() -> usize {
-    GB18030_RANGES.len() / 12
-}
-
-/// 四字节指针（线性序号）→ Unicode 码位。
-///
-/// 算法与 WHATWG Encoding Standard `index-gb18030-ranges code point for pointer`
-/// 一致：取「起始指针 ≤ pointer」的最后一个线性段，`cp = 起始码位 + 差值`；
-/// 差值越过该段的码位跨度（如两段之间的排除区）则视为未赋值。
-/// 返回 `None` 的情况：未赋值指针、或映射到代理区（`char::from_u32` 拒绝）。
-fn gb18030_pointer_to_cp(pointer: u32) -> Option<char> {
-    let count = gb18030_run_count();
-    // 二分找最后一个 `起始指针 <= pointer` 的段。
-    let mut low = 0usize;
-    let mut high = count;
-    let mut found = None;
-    while low < high {
-        let mid = low + (high - low) / 2;
-        if gb18030_run(mid).0 <= pointer {
-            found = Some(mid);
-            low = mid + 1;
-        } else {
-            high = mid;
-        }
-    }
-    let (start_ptr, start_cp, span) = gb18030_run(found?);
-    let delta = pointer.checked_sub(start_ptr)?;
-    if delta >= span {
-        return None; // 落在排除区（如指针 39420..188999 的大空洞）。
-    }
-    char::from_u32(start_cp + delta)
-}
-
-/// Unicode 码位 → 四字节指针（[`gb18030_pointer_to_cp`] 的逆映射）。
-///
-/// 用**同一张表**反查：找最后一个 `起始码位 ≤ cp` 的段，其可行域为
-/// 「码位跨度与指针跨度的较小者」（两段交界处被排除的码位——如 U+00A4——
-/// 已由双字节 GBK 覆盖，四字节不再编码）。代理区不在任何段的可写域内。
-fn gb18030_cp_to_pointer(cp: u32) -> Option<u32> {
-    let count = gb18030_run_count();
-    let mut low = 0usize;
-    let mut high = count;
-    let mut found = None;
-    while low < high {
-        let mid = low + (high - low) / 2;
-        if gb18030_run(mid).1 <= cp {
-            found = Some(mid);
-            low = mid + 1;
-        } else {
-            high = mid;
-        }
-    }
-    let index = found?;
-    let (start_ptr, start_cp, cp_span) = gb18030_run(index);
-    let delta = cp.checked_sub(start_cp)?;
-    // 可行域 = min(码位跨度, 指针跨度)。指针跨度取下一段的起始指针差
-    // （末段的指针跨度等于码位跨度）。
-    let ptr_span = if index + 1 < count {
-        gb18030_run(index + 1).0 - start_ptr
-    } else {
-        cp_span
-    };
-    if delta >= cp_span.min(ptr_span) {
-        return None;
-    }
-    Some(start_ptr + delta)
-}
-
-/// 四字节指针 → 4 字节序列。
-const fn gb18030_pointer_to_bytes(pointer: u32) -> [u8; 4] {
-    let b1 = 0x81 + (pointer / 12_600) as u8;
-    let rest = pointer % 12_600;
-    let b2 = 0x30 + (rest / 1_260) as u8;
-    let rest = rest % 1_260;
-    let b3 = 0x81 + (rest / 10) as u8;
-    let b4 = 0x30 + (rest % 10) as u8;
-    [b1, b2, b3, b4]
-}
-
-// ====================================================================
-// 编码回写（保存时按原编码写回）
-// ====================================================================
-
-/// GBK 双字节反查表（Unicode → `(首, 尾)`），首次使用时构建。
-///
-/// 由内嵌的 [`GBK_TABLE`] 正表翻转而来（约 2.2 万条），构建一次、常驻；
-/// 相比"每字符线性扫正表"，长文档保存从 O(N×2.2万) 降到 O(N)。
-fn gbk_reverse() -> &'static std::collections::HashMap<u32, (u8, u8)> {
-    use std::collections::HashMap;
-    use std::sync::OnceLock;
-    static REVERSE: OnceLock<HashMap<u32, (u8, u8)>> = OnceLock::new();
-    REVERSE.get_or_init(|| {
-        let mut map = HashMap::with_capacity(GBK_ROWS * GBK_COLS);
-        for row in 0..GBK_ROWS {
-            for col in 0..GBK_COLS {
-                let at = (row * GBK_COLS + col) * 2;
-                let code = u16::from_le_bytes([GBK_TABLE[at], GBK_TABLE[at + 1]]);
-                if code != 0
-                    && let Some(ch) = char::from_u32(u32::from(code))
-                {
-                    let lead = 0x81 + row as u8;
-                    let trail = if col < GBK_TRAIL_LOW_COLS {
-                        0x40 + col as u8
-                    } else {
-                        0x80 + (col - GBK_TRAIL_LOW_COLS) as u8
-                    };
-                    map.insert(ch as u32, (lead, trail));
-                }
-            }
-        }
-        map
-    })
-}
-
-/// 把文本按 `encoding` 编码为字节（含 BOM 语义）。
-///
-/// GBK 目标下，双字节表覆盖不了的字符自动落 **GB18030 四字节**
-/// （GB18030 是 GBK 的超集，四字节空间线性覆盖全部 Unicode 码位），
-/// 因此对任何合法 `&str` 都能无损编码。UTF-16 目标按对应字节序写入并补 BOM。
-pub fn encode(text: &str, encoding: Encoding) -> Vec<u8> {
-    let mut out = Vec::with_capacity(text.len() + 4);
-    match encoding {
-        Encoding::Utf8 => out.extend_from_slice(text.as_bytes()),
-        Encoding::Utf8Bom => {
-            out.extend_from_slice(&UTF8_BOM);
-            out.extend_from_slice(text.as_bytes());
-        }
-        Encoding::Utf16Le | Encoding::Utf16Be => {
-            let little = encoding == Encoding::Utf16Le;
-            out.extend_from_slice(if little { &[0xFF, 0xFE] } else { &[0xFE, 0xFF] });
-            for unit in text.encode_utf16() {
-                if little {
-                    out.extend_from_slice(&unit.to_le_bytes());
-                } else {
-                    out.extend_from_slice(&unit.to_be_bytes());
-                }
-            }
-        }
-        Encoding::Gbk => {
-            for ch in text.chars() {
-                let cp = ch as u32;
-                if cp < 0x80 {
-                    out.push(cp as u8);
-                } else if ch == '€' {
-                    out.push(0x80);
-                } else if let Some((lead, trail)) = gbk_reverse().get(&cp) {
-                    out.push(*lead);
-                    out.push(*trail);
-                } else if let Some(pointer) = gb18030_cp_to_pointer(cp) {
-                    out.extend_from_slice(&gb18030_pointer_to_bytes(pointer));
-                } else {
-                    // 理论不可达（四字节空间覆盖全部码位）；防御性替换而非 panic。
-                    out.extend_from_slice("\u{FFFD}".as_bytes());
-                }
-            }
-        }
-    }
-    out
 }
 
 #[cfg(test)]
