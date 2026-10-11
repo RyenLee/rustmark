@@ -158,15 +158,25 @@ fn render_split(
     }
 
     // 剩下的全部宽度归预览区。
-    egui::CentralPanel::default().show(ctx, |ui| {
-        crate::presentation::views::preview_view::show(app, ui);
-        // 记录本帧预览区矩形，供图片导出裁剪用（P2）。
-        //
-        // 记在这里而不是 `preview_view` 内部：CentralPanel 的 `max_rect`
-        // 才是「预览区在窗口里的最终位置」，而 `preview_view` 看到的
-        // `ui.max_rect()` 会因内部滚动区而未必等于它。
-        app.set_preview_rect(ui.max_rect());
-    });
+    //
+    // 边距必须与 `SidePanel` **一致**：编辑区 / 分割条 / 侧栏是 `SidePanel`
+    // （默认竖向内边距 2pt），`CentralPanel::default()` 却自带一圈更大的
+    // 内边距（实测 6pt）——预览区整体会比编辑区低 4pt、矮 8pt，两栏的
+    // 顶栏（工具栏 ↔ 标题栏）从此错位，内容区也不再从同一条水平线开始
+    // （实测：编辑面板 y=[102,774] vs 预览面板 y=[108,768]）。
+    // 左右仍取 0：分割条已经把编辑区与预览区隔开，预览区自己
+    // `rect_filled` 画底色，不依赖面板默认填充。
+    egui::CentralPanel::default()
+        .frame(egui::Frame::new().inner_margin(egui::Margin::symmetric(0, 2)))
+        .show(ctx, |ui| {
+            crate::presentation::views::preview_view::show(app, ui);
+            // 记录本帧预览区矩形，供图片导出裁剪用（P2）。
+            //
+            // 记在这里而不是 `preview_view` 内部：CentralPanel 的 `max_rect`
+            // 才是「预览区在窗口里的最终位置」，而 `preview_view` 看到的
+            // `ui.max_rect()` 会因内部滚动区而未必等于它。
+            app.set_preview_rect(ui.max_rect());
+        });
 
     // 滚动同步放在**两侧都画完之后**：`ScrollArea` 的用户滚轮增量是在
     // 它自己的 `show` 内部叠加的，只有画完才能拿到本帧的真实偏移。

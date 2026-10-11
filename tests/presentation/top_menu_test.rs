@@ -780,3 +780,121 @@ fn editor_toolbar_buttons_share_one_row() {
         "工具栏控件顶边不齐（两种控件混排的下楼梯）：tops={tops:?}，labels={labels:?}"
     );
 }
+
+// ==== 三条顶栏对齐（回归：侧栏标签行 / 编辑区工具栏 / 预览标题栏）====
+//
+// 三个窗格都是「顶栏 + 内容」的上下布局，顶栏必须像**一对**：
+// 同高、内容垂直居中、栏下同一根分隔线、内容区从同一条水平线开始。
+//
+// # 缺陷现场（实测）
+//
+// 1. 预览区宿主是 `CentralPanel::default()`，自带 6pt 内边距，而编辑区 /
+//    侧栏是 `SidePanel`（竖向 2pt）——预览整体低 4pt、矮 8pt，三个顶栏
+//    的文字中心分别落在 y=113.5 / 119 / 125（11.5pt 的下楼梯）。
+// 2. 侧栏标签行只取控件默认高（23），另两条栏是 34。
+//
+// # 修复后的不变量
+//
+// 三个窗格的**内矩形**同起同止；三条顶栏的文字中心相差 <1pt；
+// 三条分隔线段在同一根水平线上。
+#[test]
+fn three_pane_top_bars_align() {
+    let (dir, mut app) = app_fixture();
+    let file = dir.path().join("note.md");
+    std::fs::write(&file, "# 标题\n\n正文一行。\n").expect("写文件应成功");
+    app.open_path(&file.to_string_lossy()).expect("打开应成功");
+    let ctx = fresh_ctx();
+
+    let out = ctx.run(raw_input(vec![]), |ctx| {
+        rustmark::presentation::theme::mapper::apply(ctx, &app.ui.theme);
+        rustmark::presentation::views::main_view::show(&mut app, ctx);
+    });
+    let mut texts: Vec<(egui::Rect, String)> = Vec::new();
+    let mut fills: Vec<(egui::Rect, egui::Color32)> = Vec::new();
+    let mut segs: Vec<egui::Rect> = Vec::new();
+    fn walk(
+        s: &egui::epaint::Shape,
+        t: &mut Vec<(egui::Rect, String)>,
+        f: &mut Vec<(egui::Rect, egui::Color32)>,
+        l: &mut Vec<egui::Rect>,
+    ) {
+        match s {
+            egui::epaint::Shape::Text(x) => t.push((
+                egui::Rect::from_min_size(x.pos, x.galley.size()),
+                x.galley.text().to_owned(),
+            )),
+            egui::epaint::Shape::Rect(x) => f.push((x.rect, x.fill)),
+            egui::epaint::Shape::LineSegment { points: p, .. } => {
+                l.push(egui::Rect::from_two_pos(p[0], p[1]));
+            }
+            egui::epaint::Shape::Vec(v) => v.iter().for_each(|y| walk(y, t, f, l)),
+            _ => {}
+        }
+    }
+    for c in &out.shapes {
+        walk(&c.shape, &mut texts, &mut fills, &mut segs);
+    }
+
+    // ---- ① 三条顶栏的文字中心同一水平线 ----
+    // （文字矩形中心比控件矩形更稳：按钮 / 标签 / 纯文字三种控件的外框
+    // 各不相同，但同一行里**文字**必须居中在同一高度。）
+    let center_of = |needle: &str| -> f32 {
+        texts
+            .iter()
+            .find(|(r, t)| t == needle && r.top() > 95.0 && r.top() < 160.0)
+            .map(|(r, _)| r.center().y)
+            .unwrap_or_else(|| panic!("顶栏应有「{needle}」且在顶栏行内"))
+    };
+    let sidebar_c = center_of("文件");
+    let toolbar_c = center_of("B 加粗");
+    let preview_c = center_of("预览");
+    for (name, c) in [("工具栏按钮", toolbar_c), ("预览标题", preview_c)] {
+        assert!(
+            (c - sidebar_c).abs() < 1.0,
+            "{name}的文字中心 y={c}，与侧栏标签（{sidebar_c}）差超过 1pt——三条顶栏没对齐"
+        );
+    }
+
+    // ---- ② 三个窗格的内矩形同起同止 ----
+    // 面板 fill 铺满整个 SidePanel/CentralPanel（含边距区），而窗格自己
+    // `rect_filled` 画的底色正好是**内矩形**——用它比对。
+    let panes: Vec<egui::Rect> = fills
+        .iter()
+        .filter(|(r, c)| {
+            *c == app.ui.theme.bg_primary && r.min.y > 95.0 && r.min.y < 130.0 && r.width() > 100.0
+        })
+        .map(|(r, _)| *r)
+        .collect();
+    assert_eq!(
+        panes.len(),
+        2,
+        "应有编辑区 / 预览区两个主色底矩形：{panes:?}"
+    );
+    let tops: Vec<f32> = panes.iter().map(|r| r.top()).collect();
+    let bottoms: Vec<f32> = panes.iter().map(|r| r.bottom()).collect();
+    let same = |xs: &[f32]| {
+        xs.iter().cloned().fold(f32::MAX, f32::min) == xs.iter().cloned().fold(f32::MIN, f32::max)
+    };
+    assert!(
+        same(&tops) && same(&bottoms),
+        "编辑区与预览区的内容区没有从同一条水平线开始、到同一条线结束：\
+         tops={tops:?} bottoms={bottoms:?}（通常是预览宿主面板边距与 SidePanel 不一致）"
+    );
+
+    // ---- ③ 三条顶栏下的分隔线在同一根水平线 ----
+    let bar_seps: Vec<egui::Rect> = segs
+        .iter()
+        .filter(|r| r.min.y > 135.0 && r.min.y < 155.0 && r.width() > 100.0)
+        .cloned()
+        .collect();
+    assert_eq!(
+        bar_seps.len(),
+        3,
+        "三个窗格顶栏下应各有一根分隔线：{bar_seps:?}"
+    );
+    let sep_ys: Vec<f32> = bar_seps.iter().map(|r| r.min.y).collect();
+    assert!(
+        same(&sep_ys),
+        "三条顶栏分隔线不在同一根水平线上：{sep_ys:?}"
+    );
+}

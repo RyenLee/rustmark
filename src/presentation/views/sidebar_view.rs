@@ -81,28 +81,46 @@ fn draw(app: &mut EditorApp, ui: &mut Ui, ctx: &Context) {
 
 /// 顶部标签栏。
 fn tab_bar(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
-    ui.horizontal_wrapped(|ui| {
-        // 左缘取刻度 `space_sm`：与文件树行的 `ROW_PAD`（同为 6）对齐，
-        // 标签文字与树行文字在同一条竖线上，侧栏才不显得「上歪下正」。
-        ui.add_space(theme.metrics.space_sm);
-        for tab in SidebarTab::ALL {
-            let selected = app.ui.sidebar_tab == *tab;
-            if ui.selectable_label(selected, tab.label()).clicked() {
-                app.ui.toggle_sidebar_tab(*tab);
-            }
-        }
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            // 「打开文件夹」入口已上移到顶部「文件」菜单（见 [`UiAction::OpenFolder`]），
-            // 侧栏不再重复提供——同一功能两个入口会让「哪个才是正路」变得含糊。
-            //
-            // 只保留「刷新」：树是快照，文件也会在本应用之外被改（别的编辑器、
-            // git 拉取、构建产物被清理）。不给刷新入口，用户会看到「树里有这个
-            // 文件但点开说文件不存在」，像是应用坏了。
-            if app.workspace_entries.is_loaded() && ui.small_button("刷新").clicked() {
-                app.refresh_workspace();
-            }
-        });
-    });
+    let m = theme.metrics;
+    // 三条顶栏里的第一条：与编辑区工具栏、预览区标题栏**同一条规矩**——
+    // 同高（`editor_toolbar_height`）、内容垂直居中、栏下同一根分隔线。
+    // 此前标签行只取控件默认高（实测 23，文字中心 y=113.5），而两条
+    // 34 高的栏文字中心在 y=119，三个顶栏互相对不齐。
+    ui.allocate_ui(
+        egui::vec2(ui.available_width(), m.editor_toolbar_height),
+        |ui| {
+            ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                // 左缘取刻度 `space_sm`：与文件树行的 `ROW_PAD`（同为 6）对齐，
+                // 标签文字与树行文字在同一条竖线上，侧栏才不显得「上歪下正」。
+                ui.add_space(m.space_sm);
+                for tab in SidebarTab::ALL {
+                    let selected = app.ui.sidebar_tab == *tab;
+                    if ui.selectable_label(selected, tab.label()).clicked() {
+                        app.ui.toggle_sidebar_tab(*tab);
+                    }
+                }
+                // 「打开文件夹」入口已上移到顶部「文件」菜单（见
+                // [`UiAction::OpenFolder`]），侧栏不再重复提供——同一功能
+                // 两个入口会让「哪个才是正路」变得含糊。
+                //
+                // 只保留「刷新」，贴右缘：树是快照，文件也会在本应用之外被改
+                // （别的编辑器、git 拉取、构建产物被清理）。不给刷新入口，
+                // 用户会看到「树里有这个文件但点开说文件不存在」，像是应用坏了。
+                if app.workspace_entries.is_loaded()
+                    && ui
+                        .with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            ui.add_space(m.space_sm);
+                            ui.small_button("刷新").clicked()
+                        })
+                        .inner
+                {
+                    app.refresh_workspace();
+                }
+            });
+        },
+    );
+    // 与编辑区工具栏、预览区标题栏同款栏下分隔线（同一根水平线）。
+    ui.separator();
     if !app.workspace_entries.is_loaded() && app.ui.sidebar_tab == SidebarTab::Files {
         ui.colored_label(
             theme.text_secondary,
