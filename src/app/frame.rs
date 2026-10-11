@@ -2900,39 +2900,64 @@ impl EditorApp {
     /// `request_focus` 对已聚焦控件幂等、不产生 `gained_focus`，都试过了）。
     /// 补发后实测连按回车立刻恢复正常（见
     /// `enter_diag_test::diag_synthetic_disabled_resets`）。
+    ///
+    /// # Commit 不得续期冻结窗（2026-10-11「行号递增但内容不换行」复报的根因）
+    ///
+    /// 旧实现把 `Commit` 与 `Preedit` 同列为「组合进行中」，收到 `Commit` 会把
+    /// [`IME_GUARD_MS`] 保护窗**再续 800ms**。但 `Commit` 的语义是「组合结束」，
+    /// egui 在它的处理分支里已经把 `ime_enabled` 置回 false 并删掉了预编辑
+    /// 选区。续期的后果：
+    ///
+    /// ```text
+    /// 中文提交 → 守卫被 Commit 续到 +800ms
+    /// 用户立刻在列表项上回车（transformed=true）→ flush_edit 写下
+    ///     pending_cursor（"2. " 之后），但守卫冻结、光标回不去
+    /// 下一帧 egui 光标仍停在 "\n" 之后、"2. " 之前
+    /// 再回车 → "\n" 插到 "2. " 前面 → transform_insert 又续一个标记
+    ///        → "1. 中文\n2. \n2. "…… 标记/空行逐次堆积
+    /// ```
+    ///
+    /// 症状正是「行号正常递增，光标附近却不见新行」。修复：`Commit` 与
+    /// `Disabled` 同样**立即**解冻（仅保留事件帧当帧的冻结，供 egui 的
+    /// Commit 处理器依赖未碰的选区），组合结束后光标回设最迟下一帧执行。
     pub fn apply_pending_editor_state(&mut self, ctx: &egui::Context) {
         let now_ms = self.services.markdown.now().millis();
-        // 本帧 IME 事件的三分类：
-        //   · `Preedit`/`Commit` → 组合**确实在进行**：缓冲区里有实打实的预编辑串，
+        // 本帧 IME 事件的四分类：
+        //   · `Preedit` → 组合**确实在进行**：缓冲区里有实打实的预编辑串，
         //     egui 正靠那个选区删旧换新，我们的守卫必须冻结。
-        //   · `Commit`/`Disabled` → 组合**收尾**，立即解冻。
+        //   · `Commit`/`Disabled` → 组合**收尾**，立即解冻。`Commit` 不得续期
+        //     冻结窗——它不是「组合进行中」，续期会让提交后 800ms 内所有
+        //     transformed 编辑的光标回设被冻结，见函数文档的堆积推演。
         //   · `Enabled` → 只表示「egui 已把 `ime_enabled` 置真」，本身不代表有
         //     组合在进行，但它**会**改变 egui 处理键盘的方式，故要单独跟踪
         //     （见 `egui_ime_armed`）。
-        let (ime_composing_now, ime_ended, ime_enabled_now) = ctx.input(|i| {
-            let mut composing = false;
+        let (ime_preedit_now, ime_commit_now, ime_ended, ime_enabled_now) = ctx.input(|i| {
+            let mut preedit = false;
+            let mut commit = false;
             let mut ended = false;
             let mut enabled = false;
             for event in &i.events {
                 if let egui::Event::Ime(ime) = event {
                     match ime {
-                        egui::ImeEvent::Preedit(_) | egui::ImeEvent::Commit(_) => composing = true,
+                        egui::ImeEvent::Preedit(_) => preedit = true,
+                        egui::ImeEvent::Commit(_) => commit = true,
                         egui::ImeEvent::Disabled => ended = true,
                         egui::ImeEvent::Enabled => enabled = true,
                     }
                 }
             }
-            (composing, ended, enabled)
+            (preedit, commit, ended, enabled)
         });
         // ---- 守卫侧：组合期是否有界 ----
         //   · 收到 Commit/Disabled → 立即解除冻结（组合确实结束了）；
-        //   · 收到 Preedit/Commit → 续上/开启一个 IME_GUARD_MS 的保护窗；
+        //   · 收到 Preedit → 续上/开启一个 IME_GUARD_MS 的保护窗；
         //   · 只收到 Enabled 或什么都没收到 → 不进入（或退出）组合期。
-        // 于是「守卫标志永久为 true」这条路径在结构上不再存在。
-        if ime_ended {
+        // 于是「守卫标志永久为 true」这条路径在结构上不再存在；且 Commit 不再
+        // 续期——组合结束后 `pending_cursor` 的回设最迟下一帧就能执行。
+        if ime_ended || ime_commit_now {
             self.ime_composing = false;
             self.ime_composing_until_ms = 0;
-        } else if ime_composing_now {
+        } else if ime_preedit_now {
             self.ime_composing = true;
             self.ime_composing_until_ms = now_ms.saturating_add(IME_GUARD_MS);
         } else if self.ime_composing && now_ms >= self.ime_composing_until_ms {
@@ -2956,13 +2981,14 @@ impl EditorApp {
         // 误伤成本也可控：万一真在组合中而我们补了 `Disabled`，egui 只是把
         // `ime_enabled` 提前清掉；下一个 `Preedit` 会重新置位并继续组合，
         // 最多丢一次预编辑串的锚点——而这正是旧实现**常态性**发生的损害。
+        //
+        // `Commit` 同样解除 armed：egui 在 Commit 分支里自己就把 `ime_enabled`
+        // 置回了 false（text_edit/builder.rs 的 `ImeEvent::Commit` 臂），
+        // 之后无需、也不应再补发 Disabled。
         let mut tell_egui_ime_over = false;
-        if ime_ended {
+        if ime_ended || ime_commit_now {
             self.egui_ime_armed = false;
-        } else if ime_composing_now {
-            self.egui_ime_armed = true;
-            self.egui_ime_armed_until_ms = now_ms.saturating_add(IME_ARM_MS);
-        } else if ime_enabled_now {
+        } else if ime_preedit_now || ime_enabled_now {
             // 刚 `Enabled`：给一个短窗口等紧随其后的 `Preedit`。
             self.egui_ime_armed = true;
             self.egui_ime_armed_until_ms = now_ms.saturating_add(IME_ARM_MS);
@@ -2976,13 +3002,37 @@ impl EditorApp {
         if tell_egui_ime_over {
             ctx.input_mut(|i| i.events.push(egui::Event::Ime(egui::ImeEvent::Disabled)));
         }
+        // Enabled 之后尚未见到任何组合事件（Preedit/Commit）的窗口期内，
+        // egui 的 `ime_enabled` 为真，`remove_ime_incompatible_events` 会剔除
+        // 全部 `repeat: true` 的按键——它的假设是「候选窗开着」。但我们知道
+        // **没有组合在进行**（armed 判据的存在意义），此时 repeat 的回车只会
+        // 来自「上一帧 release 丢失后 `keys_down` 残留」（Windows 上候选窗或
+        // 其他窗口抢焦点时会这样），或用户真的按住回车——两种情况用户都
+        // 期待换行。把 repeat 抹平，让 egui 当作一次普通按下处理。
+        // 只抹 Enter、且仅在「无组合」窗口内：组合期（候选窗真开着）的
+        // repeat 剔除是 egui 的正当防护，不能碰。
+        if !ime_preedit_now && !ime_commit_now && !ime_ended && self.egui_ime_armed {
+            ctx.input_mut(|i| {
+                for event in &mut i.events {
+                    if let egui::Event::Key {
+                        key: egui::Key::Enter,
+                        pressed: true,
+                        repeat,
+                        ..
+                    } = event
+                    {
+                        *repeat = false;
+                    }
+                }
+            });
+        }
         // 组合帧自身也要冻结：`Preedit`/`Commit` 处理器在这一帧稍后执行，
         // 依赖的正是那个未被我们碰过的选区。
         //
         // 注意：**刚补发的 `Disabled` 不参与冻结判定**——它是我们自己
         // 判定「组合已结束」后才补的，若把它算进去会让本帧凭空多冻结一次，
         // 回车又要晚一帧才生效。
-        let ime_guard = ime_composing_now || self.ime_composing;
+        let ime_guard = ime_preedit_now || ime_commit_now || self.ime_composing;
 
         if self.clear_undoer_next
             && !ime_guard

@@ -25,6 +25,21 @@
 //! 全部用**可控时钟**装配（`Services::assemble_with_clock_and_dialogs`），
 //! 断言「保护窗口内」与「窗口已超时」两种状态下的回车行为——真实
 //! `SystemClock` 下整个用例跑不完 800ms，超时分支永远测不到。
+//!
+//! # 2026-10-11 复报的补充根因（本文件后半部分）
+//!
+//! 用户复报「行号递增但可见内容不换行」。排查锁定两处残余缺陷：
+//!
+//! 1. **`Commit` 续期冻结窗**：Commit 的语义是「组合结束」，egui 在 Commit
+//!    分支里已自行复位 `ime_enabled`，但旧实现把它当「组合进行中」续了
+//!    800ms 保护窗——提交后立刻做列表续行回车，`pending_cursor` 被冻结，
+//!    egui 光标停在 `"\n"` 之后、`"2. "` 之前，下一次回车把 `\n` 插到标记
+//!    前面、`transform_insert` 又续一个标记，逐次堆积：行号递增、光标附近
+//!    却不见正常新行。见 `list_enter_right_after_commit_does_not_pile_markers`。
+//! 2. **armed 窗口内 `repeat` 回车被 egui 剔除**：Windows 上候选窗/其他窗口
+//!    抢焦点会吞掉 keyup，egui 的 `keys_down` 残留使下一次按下被判
+//!    `repeat: true`，恰逢 `ime_enabled` 期被剔除。应用既已判定「无组合
+//!    在进行」，就应放行。见 `enter_press_without_release_still_inserts_under_ime_enabled`。
 
 use crate::support::fake_dialog::FakeDialog;
 use eframe::App as _;
@@ -444,9 +459,9 @@ fn baseline_repeated_enter_without_any_ime_event() {
 // 可见性取证（2026-10-11 用户复报：行号递增但可见内容不换行）
 // ============================================================================
 
-/// 实验 1：完全无 IME——「输入一串字符后立即回车」是否正常。
+/// 无 IME：输入一串字符后回车，连续两次各产生一个新行。
 #[test]
-fn diag_x1_type_then_enter_no_ime() {
+fn enter_after_typing_without_ime() {
     let mut f = fixture_with("");
     f.focus_at_end();
     f.frame_with(vec![egui::Event::Text("2112".to_owned())]);
@@ -457,9 +472,9 @@ fn diag_x1_type_then_enter_no_ime() {
     assert_eq!(f.content(), "2112\n\n", "实验1：第二次回车应正常");
 }
 
-/// 实验 2：仅 Enabled——「输入一串字符后立即回车」是否正常。
+/// 仅 Enabled（无组合）：输入后回车，连续两次各产生一个新行。
 #[test]
-fn diag_x2_type_then_enter_after_ime_enabled() {
+fn enter_after_typing_with_ime_enabled_only() {
     let mut f = fixture_with("");
     f.focus_at_end();
     f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Enabled)]);
@@ -472,9 +487,9 @@ fn diag_x2_type_then_enter_after_ime_enabled() {
     assert_eq!(f.content(), "2112\n\n", "实验2：第二次回车应正常");
 }
 
-/// 实验 3：先短文本+回车成功一次，再输入后回车（逼近 diag 失败序列）。
+/// 先短文本+回车成功一次，再输入后回车：不得复现「第二次输入后被吞」。
 #[test]
-fn diag_x3_second_type_then_enter_fails() {
+fn second_typing_then_enter_works() {
     let mut f = fixture_with("");
     f.focus_at_end();
     f.frame_with(vec![egui::Event::Text("1".to_owned())]);
@@ -491,7 +506,7 @@ fn diag_x3_second_type_then_enter_fails() {
 /// Commit 后 winit 必发一条空 `Preedit` 清候选窗），随后连按回车。
 /// 每一步都断言：领域内容、绑定串、**实际绘制的编辑器 galley** 三者一致。
 #[test]
-fn diag_realistic_ime_stream_enter_stays_visible() {
+fn realistic_ms_pinyin_stream_enter_stays_visible() {
     let mut f = fixture_with("");
     f.focus_at_end();
 
@@ -538,4 +553,149 @@ fn diag_realistic_ime_stream_enter_stays_visible() {
             "可见渲染：第 {i} 次回车后编辑器 galley 必须携带全文"
         );
     }
+}
+
+// ============================================================================
+// 2026-10-11 复报根因的回归（Commit 续期冻结窗 / armed 窗口 repeat 剔除）
+// ============================================================================
+
+/// **Commit 不得续期冻结窗**：中文提交后**立刻**在列表项上回车，
+/// 连续三次必须得到「续行 → 退出列表 → 空行」，不得出现标记堆积。
+///
+/// 修复前：Commit 把 800ms 保护窗再续一遍，第一次列表续行写入的
+/// `pending_cursor` 被冻结、光标回不去（停在 `"\n"` 之后、`"2. "` 之前），
+/// 第二次回车把 `\n` 插到 `"2. "` 前面且 `transform_insert` 又续一个标记，
+/// 内容变成 `"1. first译文\n\n2. 2. "`——行号递增但光标附近不见正常新行，
+/// 正是用户复报的症状。
+///
+/// 注意全程**不推进时钟**：只有冻结窗语义错误时本用例才会失败，
+/// 时间一推进（>800ms）超时解冻就会把缺陷掩盖掉。
+#[test]
+fn list_enter_right_after_commit_does_not_pile_markers() {
+    let mut f = fixture_with("1. first");
+    f.focus_at_end();
+
+    // 一次完整的中文组合：Enabled → Preedit 逐字母 → Commit。
+    f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Enabled)]);
+    f.frame_with(vec![]);
+    for pre in ["y", "yw"] {
+        f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Preedit(
+            pre.to_owned(),
+        ))]);
+        f.frame_with(vec![]);
+    }
+    f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Commit(
+        "译文".to_owned(),
+    ))]);
+    f.frame_with(vec![]);
+    assert_eq!(f.content(), "1. first译文", "组合应正常提交");
+
+    // 提交后**同一时刻**（时钟零推进）连按回车。
+    f.enter();
+    assert_eq!(f.content(), "1. first译文\n2. ", "第 1 次回车应续出序号");
+    f.enter();
+    assert_eq!(
+        f.content(),
+        "1. first译文\n\n",
+        "第 2 次回车应退出列表（删掉空标记），不得堆积出 \"2. 2. \""
+    );
+    f.enter();
+    assert_eq!(f.content(), "1. first译文\n\n\n", "第 3 次回车只多一个空行");
+}
+
+/// **release 丢失时回车不得被吞**：Windows 上候选窗/其他窗口抢焦点会吃掉
+/// keyup，egui 的 `keys_down` 残留使下一次按下被判 `repeat: true`；恰逢
+/// `ime_enabled` 期（Enabled 后 50ms armed 窗口内），egui 会把它整个剔除。
+/// 应用既已判定「无组合在进行」，就必须放行——抹平 repeat 让 egui
+/// 当作一次普通按下处理。
+///
+/// 修复前：第二次按下被 `remove_ime_incompatible_events` 剔除，内容停在
+/// `"hello\n"`——正是「行号不动了」的另一种形态（模型层吞键）。
+#[test]
+fn enter_press_without_release_still_inserts_under_ime_enabled() {
+    let mut f = fixture_with("hello");
+    f.focus_at_end();
+
+    f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Enabled)]);
+    f.frame_with(vec![]);
+
+    // 第 1 次按下：正常插入。release **丢失**（不发 released）。
+    f.frame_with(vec![pressed_key(egui::Key::Enter)]);
+    f.frame_with(vec![]);
+    // 第 2 次按下：egui 判 repeat=true。全程时钟零推进 → armed 窗口未过期。
+    f.frame_with(vec![pressed_key(egui::Key::Enter)]);
+    f.frame_with(vec![released_key(egui::Key::Enter)]);
+    f.frame_with(vec![]);
+    assert_eq!(
+        f.content(),
+        "hello\n\n",
+        "release 丢失后的第二次按下也必须换行"
+    );
+
+    // 键盘恢复正常（release 到位）后照常工作。
+    f.frame_with(vec![pressed_key(egui::Key::Enter)]);
+    f.frame_with(vec![released_key(egui::Key::Enter)]);
+    f.frame_with(vec![]);
+    assert_eq!(f.content(), "hello\n\n\n");
+}
+
+/// **不同光标位置**的回车 + 行号栏与内容行数**严格一致**（验收标准 3/4）。
+///
+/// 覆盖：行中拆行、行首上插空行、同一光标连续回车、文首插入；每一步都
+/// 断言「行号栏行数 == 绑定串行数 == 实际绘制的 galley 行数」。
+#[test]
+fn enter_at_various_cursor_positions_keeps_gutter_in_sync() {
+    /// 行号栏（与绑定串同源）与可见 galley 的行数必须同时等于期望值。
+    fn assert_gutter_sync(f: &Fixture, expected_lines: usize) {
+        let bound = f.app.editor_bound_text().to_string();
+        assert_eq!(
+            bound.split('\n').count(),
+            expected_lines,
+            "行号栏行数（=编辑器绑定串行数）必须与内容行数严格一致"
+        );
+        assert_eq!(
+            f.visible_editor_lines(),
+            Some(expected_lines),
+            "实际绘制的编辑器 galley 行数必须与行号栏一致"
+        );
+    }
+
+    let mut f = fixture_with("alpha\nbeta\ngamma");
+    f.focus_at_end(); // 光标在文末
+    assert_gutter_sync(&f, 3);
+
+    // ① 行中：End 后左移 2 → "gam|ma"，回车应拆成两行。
+    for _ in 0..2 {
+        f.frame_with(vec![pressed_key(egui::Key::ArrowLeft)]);
+        f.frame_with(vec![released_key(egui::Key::ArrowLeft)]);
+    }
+    f.frame_with(vec![]);
+    f.enter();
+    assert_eq!(f.content(), "alpha\nbeta\ngam\nma", "① 行中回车应拆行");
+    assert_gutter_sync(&f, 4);
+
+    // ② 行首：拆行后光标落在 "ma" 行首，回车应在其上插一个空行。
+    f.enter();
+    assert_eq!(f.content(), "alpha\nbeta\ngam\n\nma", "② 行首回车应上插空行");
+    assert_gutter_sync(&f, 5);
+
+    // ③ 同一光标连续回车：每次恰好 +1 行。
+    f.enter();
+    assert_eq!(f.content(), "alpha\nbeta\ngam\n\n\nma");
+    assert_gutter_sync(&f, 6);
+
+    // ④ 文首：上移 5 行（"ma" → 空行 → 空行 → "gam" → "beta" → "alpha"），
+    // 回车顶开首行。
+    for _ in 0..5 {
+        f.frame_with(vec![pressed_key(egui::Key::ArrowUp)]);
+        f.frame_with(vec![released_key(egui::Key::ArrowUp)]);
+    }
+    f.frame_with(vec![]);
+    f.enter();
+    assert_eq!(
+        f.content(),
+        "\nalpha\nbeta\ngam\n\n\nma",
+        "④ 文首回车应在最前插入空行"
+    );
+    assert_gutter_sync(&f, 7);
 }
