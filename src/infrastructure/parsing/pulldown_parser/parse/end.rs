@@ -1,7 +1,7 @@
 //! `Event::End` 分支的处理逻辑（含 Image End 特判 + 通用 TagEnd 巨块）。
 
 use super::*;
-use pulldown_cmark::{Event, Tag, TagEnd};
+use pulldown_cmark::TagEnd;
 
 /// 处理 `Event::End(tag_end)`：出栈、定型、产出块。
 ///

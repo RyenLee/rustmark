@@ -11,7 +11,7 @@ mod end;
 mod inline;
 mod start;
 
-use pulldown_cmark::{Event, Tag, TagEnd};
+use pulldown_cmark::Event;
 
 use crate::domain::markdown::errors::ParseError;
 use crate::domain::markdown::services::MarkdownParser;

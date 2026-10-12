@@ -1,7 +1,7 @@
 //! 行内事件（Code / SoftBreak / 行内公式 / 脚注引用 / TaskListMarker / Rule）的处理逻辑。
 
 use super::*;
-use pulldown_cmark::{Event, Tag, TagEnd};
+use pulldown_cmark::Event;
 
 /// 处理非 Start / 非 End 的事件：行内样式、公式、换行、脚注引用、任务标记、分割线。
 ///

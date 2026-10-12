@@ -1,7 +1,7 @@
 //! `Event::Start` 分支（含 Image Start 特判）的处理逻辑。
 
 use super::*;
-use pulldown_cmark::{Event, Tag, TagEnd};
+use pulldown_cmark::Tag;
 
 /// 处理 `Event::Start(tag)`：开栈、设置列表上下文、推入帧。
 ///
