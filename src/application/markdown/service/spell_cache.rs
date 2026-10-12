@@ -1,6 +1,6 @@
 //! 拼写检查缓存（文档 ID → 上一次的错词区间，近似 LRU）。
 
-use std::collections::HashMap;
+use ahash::{HashMap, HashMapExt};
 
 use crate::shared::ids::DocumentId;
 

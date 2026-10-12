@@ -1,6 +1,6 @@
 //! 渲染防抖策略与渲染缓存（文档 ID → (版本号, 块序列)，近似 LRU）。
 
-use std::collections::HashMap;
+use ahash::{HashMap, HashMapExt};
 
 use crate::domain::markdown::value_objects::RenderedBlock;
 use crate::shared::ids::DocumentId;

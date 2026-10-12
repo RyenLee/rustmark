@@ -84,6 +84,11 @@ anyhow = "1"
 # --- 日志（基础设施层越界告警用；未列入需求 §5.1，已在 docs/dependencies.md 登记）---
 log = "0.4"
 
+# --- 缓存哈希器 ---
+# 预览/高亮/拼写缓存的键都是 u64 新类型（DocumentId），ahash 的 AHasher
+# 对 8 字节输入比 DefaultHasher 快 ~3×（非加密，完全适合缓存键）。
+ahash = "0.8"
+
 # --- wgpu 后端（DEF-03：必须显式声明，否则应用启动即 panic）---
 #
 # 背景：需求 §5.1 要求 wgpu 后端，故对 eframe 关闭了 default（避免同时编译 glow

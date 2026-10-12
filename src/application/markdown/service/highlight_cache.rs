@@ -1,6 +1,6 @@
 //! 高亮缓存与高亮防抖计时表（版本 / 语言 / 区间为键，近似 LRU）。
 
-use std::collections::HashMap;
+use ahash::{HashMap, HashMapExt};
 
 use crate::application::dto::SpanView;
 use crate::shared::ids::DocumentId;
