@@ -151,24 +151,30 @@ impl RegistryProvider {
 
 impl DocumentContentProvider for RegistryProvider {
     fn content_and_revision(&self, id: DocumentId) -> Option<(String, u64)> {
-        self.registry
-            .read()
-            .ok()
-            .and_then(|guard| guard.content_and_revision(id))
+        let guard = self.registry.read().unwrap_or_else(|poisoned| {
+            log::warn!(
+                "RegistryProvider::content_and_revision: registry RwLock poisoned; recovering guard"
+            );
+            poisoned.into_inner()
+        });
+        guard.content_and_revision(id)
     }
 
     fn path_of(&self, id: DocumentId) -> Option<FilePath> {
-        self.registry
-            .read()
-            .ok()
-            .and_then(|guard| guard.path_of(id))
+        let guard = self.registry.read().unwrap_or_else(|poisoned| {
+            log::warn!("RegistryProvider::path_of: registry RwLock poisoned; recovering guard");
+            poisoned.into_inner()
+        });
+        guard.path_of(id)
     }
 
     fn open_documents(&self) -> Vec<(DocumentId, Option<FilePath>, String)> {
-        self.registry
-            .read()
-            .ok()
-            .map(|guard| guard.open_documents())
-            .unwrap_or_default()
+        let guard = self.registry.read().unwrap_or_else(|poisoned| {
+            log::warn!(
+                "RegistryProvider::open_documents: registry RwLock poisoned; recovering guard"
+            );
+            poisoned.into_inner()
+        });
+        guard.open_documents()
     }
 }
