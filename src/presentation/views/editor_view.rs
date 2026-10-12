@@ -20,24 +20,25 @@
 //!
 //! IME 的「组合期不产生撤销快照」由 egui 天然满足：组合中的预编辑文本不进入
 //! `&mut String`，`text_changed` 只在提交时触发，故每个汉字只产生**一次**领域命令。
+//!
+//! # 模块结构
+//!
+//! facade 保留编辑区入口 `show`（324 行函数体整体不拆：函数体内部提取 helper
+//! 属高风险动作，明确禁止）；拼写检查右键菜单在 `spell`，行号栏在 `gutter`。
 
-use egui::{Context, FontId, ScrollArea, TextEdit, Ui};
+mod gutter;
+mod spell;
+
+pub use spell::spell_menu_for;
+
+use egui::{FontId, ScrollArea, TextEdit, Ui};
 
 use crate::app::frame::EditorApp;
-use crate::application::markdown::queries::{HighlightQuery, SpellCheckQuery, SpellSuggestQuery};
-use crate::presentation::state::editor_ui_state::SpellSuggestMenu;
+use crate::application::markdown::queries::{HighlightQuery, SpellCheckQuery};
 use crate::presentation::state::scroll_sync_state::Side;
-use crate::presentation::theme::builtin::Theme;
 use crate::presentation::theme::mapper;
 use crate::presentation::views::editor_ops;
 use crate::shared::geometry::{ByteOffset, TextRange};
-use crate::shared::text::word_bounds_at;
-
-/// 拼写建议菜单一次最多列几条（V11-07）。
-///
-/// 超过 5 条时用户基本只会看前两三条，再长反而把「替换」这个动作
-/// 变成一次阅读任务；且菜单越高越容易盖住正文。
-const SPELL_SUGGEST_LIMIT: usize = 5;
 
 /// 绘制编辑区。
 pub fn show(app: &mut EditorApp, ui: &mut Ui) {
@@ -92,7 +93,7 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
     let content_pad = theme.metrics.space_sm;
 
     // 当前光标所在行（用于高亮当前行号）。
-    let cursor_line = current_line_index(&app.editor_text, app.editor.cursor);
+    let cursor_line = gutter::current_line_index(&app.editor_text, app.editor.cursor);
 
     // 自动换行开关（设置 / 状态栏可切换）。egui 0.33 的 `TextEdit` **没有**
     // `.wrap(bool)` 方法，换行与否完全由 `desired_width` + 自定义 layouter 决定。
@@ -261,7 +262,7 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
                 //    使每个行号精确落在其对应文本行上（问题 3）。
                 //    开关关闭（默认）时跳过——见 `show_gutter` 处的注释。
                 if let Some(gutter_rect) = gutter_rect {
-                    paint_gutter(
+                    gutter::paint_gutter(
                         ui,
                         &theme,
                         gutter_rect,
@@ -328,7 +329,7 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
                 }
                 if editor.response.secondary_clicked() {
                     let opened = editor.response.interact_pointer_pos().and_then(|pointer| {
-                        spell_menu_for(app, &editor.galley, editor.galley_pos, pointer)
+                        spell::spell_menu_for(app, &editor.galley, editor.galley_pos, pointer)
                     });
                     app.editor.spell_menu = opened;
                 }
@@ -336,7 +337,7 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
         });
 
     if app.editor.spell_menu.is_some() {
-        draw_spell_menu(app, &ctx, &theme);
+        spell::draw_spell_menu(app, &ctx, &theme);
     }
 
     app.editor.scroll_y = out.state.offset.y;
@@ -347,217 +348,4 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
     // 那段「零高余量里的两行字」会吃掉编辑区的可视高度，使编辑区与预览区的
     // 滚动视口不再等高（两栏对齐的回归根源）。统计数据仍可经
     // `mapper::last_highlight_stats()` 取用（单测在用），只是不再占用版面。
-}
-
-/// 右键落在**错词**上时组装建议菜单；否则返回 `None`（关闭菜单）。
-///
-/// 公开是为了让无头用例直接驱动它：坐标 → 字节的换算是这条链路上最容易
-/// 静默错位的一环（编译不报、运行不崩，只是菜单弹在别的词上），
-/// 没有自动化断言就只能靠肉眼看。
-///
-/// # 为什么必须自己把屏幕坐标换算成字节偏移
-///
-/// egui 的 `TextEdit` 只告诉「指针在哪个像素」，不给「哪个字符」。
-/// 换算靠 `Galley::cursor_from_pos`：它把坐标换成本帧排版里的**字符**下标，
-/// 再经 `editor_ops::char_to_byte` 变成字节偏移——与编辑区其余部分
-/// （光标同步、查找高亮）同一个坐标系。
-///
-/// 用本帧的 `galley` 而不是「按行号推算」，是因为自动换行时一个逻辑行
-/// 折成多行，行号推算必然错位——那正是行号栏踩过的坑。
-pub fn spell_menu_for(
-    app: &mut EditorApp,
-    galley: &egui::Galley,
-    galley_pos: egui::Pos2,
-    pointer: egui::Pos2,
-) -> Option<SpellSuggestMenu> {
-    let relative = pointer - galley_pos;
-    let char_index = galley.cursor_from_pos(relative).index;
-    let byte = editor_ops::char_to_byte(&app.editor_text, char_index);
-    let (start, end) = word_bounds_at(&app.editor_text, byte)?;
-    // 只给**已标红**的词提建议：没有被判错的词弹出替换菜单，
-    // 会让用户以为程序认为他写错了。
-    //
-    // 判错结果在这里现取而不是复用帧首算好的那份：右键一帧才发生一次，
-    // 为此多调一次服务的代价可以忽略，换来的是本函数**自给自足**——
-    // 无头测试可以直接驱动它，不必先手工拼出标记集。
-    let flagged = app
-        .active_doc
-        .map(|doc_id| {
-            app.services
-                .markdown
-                .spell_check(SpellCheckQuery {
-                    doc_id,
-                    enabled: app.editor.spell_check,
-                })
-                .into_iter()
-                .any(|(s, e)| s == start && e == end)
-        })
-        .unwrap_or(false);
-    if !flagged {
-        return None;
-    }
-    let word = app.editor_text.get(start..end)?.to_string();
-    let doc_id = app.active_doc?;
-    let suggestions = app.services.markdown.spell_suggestions(SpellSuggestQuery {
-        doc_id,
-        offset: start,
-        limit: SPELL_SUGGEST_LIMIT,
-    });
-    // 没有候选就不弹：一个只有标题的空菜单只会让人以为坏了。
-    if suggestions.is_empty() {
-        return None;
-    }
-    Some(SpellSuggestMenu::new(
-        start,
-        end,
-        word,
-        suggestions,
-        pointer,
-    ))
-}
-
-/// 描画拼写建议菜单（V11-07）。
-///
-/// # 为什么用 `Area` 而不是 `Window` / `Popup`
-///
-/// 菜单位置锚在**右键的那个像素**上，`Window` 是浮动窗口（带标题栏、
-/// 可拖动、会被 `Esc` 当浮层关掉），语义不对；`Area` 恰恰是「钉在屏幕某点
-/// 的即时模式浮层」，且不需要进 `Overlay` 栈——它不是对话框，
-/// 不该抢「关闭浮层」那条快捷键。
-fn draw_spell_menu(app: &mut EditorApp, ctx: &Context, theme: &Theme) {
-    let Some(menu) = app.editor.spell_menu.clone() else {
-        return;
-    };
-    // 陈旧检测：菜单里存的是**上一帧**的字节区间。用户可能在菜单开着的
-    // 时候改了文本，此时按旧区间替换会改到别处去——宁可关掉重来。
-    let stale = app.editor_text.get(menu.byte_start..menu.byte_end) != Some(menu.word.as_str());
-    let escaped = ctx.input(|i| i.key_pressed(egui::Key::Escape));
-    if stale || escaped {
-        app.editor.spell_menu = None;
-        return;
-    }
-
-    let mut picked: Option<String> = None;
-    egui::Area::new(egui::Id::new("rustmark.spell.menu"))
-        .fixed_pos(menu.screen_pos())
-        .order(egui::Order::Foreground)
-        .movable(false)
-        .interactable(true)
-        .show(ctx, |ui| {
-            egui::Frame::new()
-                .fill(theme.bg_tertiary)
-                .stroke(egui::Stroke::new(1.0_f32, theme.border))
-                .corner_radius(theme.metrics.radius_card)
-                .inner_margin(egui::Margin::same(4))
-                .show(ui, |ui| {
-                    ui.set_min_width(170.0);
-                    ui.weak(format!("你可能想输入：{}", menu.word));
-                    ui.separator();
-                    for suggestion in &menu.suggestions {
-                        if ui.button(suggestion.as_str()).clicked() {
-                            picked = Some(suggestion.clone());
-                        }
-                    }
-                });
-        });
-
-    if let Some(replacement) = picked {
-        let (start, end) = (menu.byte_start, menu.byte_end);
-        let _ = app.replace_spelling(start, end, &replacement);
-        app.editor.spell_menu = None;
-    }
-}
-
-/// 描画左侧行号栏（当前行号用强调色）。
-///
-/// # 为什么不用「每行一个 `ui.label`」
-///
-/// 旧实现把每个行号铺成一个独立 `ui.label`，与正文 `TextEdit` 各自排版。
-/// 三条差异叠加成**稳定错位**：
-///
-/// 1. **行距不同**：独立 label 之间隔着 `item_spacing.y`，与 `TextEdit`
-///    内部的行高不是同一个值；
-/// 2. **字体不同**：label 用比例字体、正文用等宽字体，同一字号的行高不等；
-/// 3. **换行**：自动换行（默认开）时一个逻辑行在 `TextEdit` 里折成多行，
-///    而 label 仍只占一行——从第一条长行起按累积量越错越远。
-///
-/// 现改为：行号**不是**独立控件，而是按编辑器**本帧真实排版结果**画上去的——
-/// [`mapper::line_tops`] 给出编辑器逐行 `Galley` 的顶边（含折行，折行那一行
-/// 更高），配合 `galley_pos`（文本左上角）换算成屏幕坐标。
-///
-/// # 行高为什么现在是**等距**的（对齐的根本保障）
-///
-/// 编辑区所有内容（标题 / 正文 / 代码 / 列表 / 行内代码）现在共用同一字号与
-/// 同一**显式行高**（`editor_font_size × editor_line_height`，见
-/// [`crate::presentation::theme::mapper::StyleMapper::format`]）。显式行高一旦给出，
-/// epaint 便不再按字体度量算行高——于是「中文回退字体行高更高」不再影响行距，
-/// `tops[i+1] - tops[i]` 恒为同一个常数（除非该行折行）。
-/// 行号按行带垂直居中描画，与正文的基线完全重合，重叠问题从结构上消失。
-///
-/// # 为什么按「行带垂直居中」而不是「行顶对齐」
-///
-/// 每个行号锚定在**本行的行带**（`tops[i] .. tops[i+1]`，即上一行顶到
-/// 下一行顶）的垂直中心上。正文行的字形落在行带的**基线**上，而基线位置
-/// 取决于该行实际用到的字体：中文经系统字体回退后，其 ascent 比纯等宽
-/// 数字高出一截——若行号与行带**顶**对齐，数字会整体浮在文字上方，
-/// 在行距紧凑时看起来就像与上一行文字重叠（中文的有序列表行行行相邻，
-/// 最明显）。按行带居中后，行号的光学位置与文字无关地落在本行正中，
-/// 对任何字体度量都稳定。
-fn paint_gutter(
-    ui: &Ui,
-    theme: &crate::presentation::theme::builtin::Theme,
-    gutter_rect: egui::Rect,
-    galley_pos: egui::Pos2,
-    text: &str,
-    cursor_line: usize,
-    font_size: f32,
-) {
-    // 首帧（本帧尚未完成整篇排版）取不到行顶表：留空，下一帧补齐。
-    // **绝不**凭空猜一个行高——那会让行号稳定地错位（而不是偶尔错位）。
-    let Some(tops) = mapper::line_tops(theme, text) else {
-        return;
-    };
-    let line_count = text.split('\n').count().max(1);
-    let font = FontId::monospace(font_size);
-    let clip = ui.clip_rect();
-    let painter = ui.painter();
-    for i in 0..line_count {
-        // `tops` 末元素是整篇高度的哨兵，故 `i` 必然落在有效范围内。
-        let Some(&top) = tops.get(i) else {
-            break;
-        };
-        let Some(&bottom) = tops.get(i + 1) else {
-            break;
-        };
-        // 行带的垂直中心：与字体度量无关的「本行正中」。
-        let y = galley_pos.y + (top + bottom) * 0.5;
-        // 只画落在可视区内的行号：大文档里绝大部分行在视口之外，
-        // 无谓地 `format!` 每一行会拖慢滚动。
-        if y + font_size < clip.top() || y - font_size > clip.bottom() {
-            continue;
-        }
-        let color = if i == cursor_line {
-            theme.accent
-        } else {
-            theme.text_secondary
-        };
-        painter.text(
-            egui::pos2(gutter_rect.right() - theme.metrics.space_sm, y),
-            egui::Align2::RIGHT_CENTER,
-            format!("{i}"),
-            font.clone(),
-            color,
-        );
-    }
-}
-
-/// 给定字节偏移，返回其所在行号（0-based）。
-fn current_line_index(text: &str, byte: usize) -> usize {
-    let clamped = byte.min(text.len());
-    // 光标字节偏移可能落在多字节字符**中间**（程序化设值只按长度夹紧，
-    // 见状态栏 `cursor_line_col` 的同款处理）：直接切片会 panic，
-    // `panic = "abort"` 下即整窗口消失（实测崩溃日志
-    // crash-20261011005255：3887 落在「右」的 3885..3888 中间）。
-    let clamped = crate::shared::geometry::floor_char_boundary(text, clamped);
-    text[..clamped].chars().filter(|&c| c == '\n').count()
 }
