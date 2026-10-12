@@ -221,6 +221,22 @@ pub struct EditorApp {
     /// 记**路径**而不是「待执行的闭包」：路径是可打印、可断言的值，
     /// 测试能直接读出「还悬着的是哪一个」，闭包只能靠副作用观察。
     pending_delete: Option<String>,
+    /// 后台工作区扫描的待处理结果（PickFolder 首次扫描路径异步化）。
+    ///
+    /// channel 发回 `(root, Result<Vec<FileEntryView>, String>)` ——
+    /// 扫描条目由后台线程完整执行 `scan_tree`（领域层写入 + 事件发布），
+    /// 主线程收到后再构造 `WorkspaceEntries` + 展开顶层目录 + 更新状态栏。
+    /// 其他扫描路径（reload / refresh / create_entry 后）**保持同步**——
+    /// 那些路径的目录规模已知且通常较小，后台线程化反而增加首帧延迟。
+    #[allow(clippy::type_complexity)]
+    pub(crate) scan_pending: Option<
+        std::sync::mpsc::Receiver<(
+            String,
+            Result<Vec<crate::application::dto::FileEntryView>, String>,
+        )>,
+    >,
+    /// 侧栏扫描 loading 态（显示"正在扫描..."提示）。
+    pub(crate) scan_loading: bool,
 }
 
 pub(crate) use capture::PendingCapture;
@@ -308,6 +324,8 @@ impl EditorApp {
             preview_rect: None,
             pending_capture: None,
             pending_delete: None,
+            scan_pending: None,
+            scan_loading: false,
         };
         // 分割比例以持久化配置为权威来源：用户拖过的比例重启后仍生效。
         app.ui.split_ratio = settings.editor.split_ratio.clamp(SPLIT_MIN, SPLIT_MAX);
@@ -358,6 +376,15 @@ impl eframe::App for EditorApp {
         if let Some(outcome) = self.dialogs.poll() {
             self.apply_dialog_outcome(outcome);
         }
+
+        // 2.1) 工作区后台扫描结果轮询（PickFolder 首次扫描路径异步化）。
+        //
+        //     扫描是磁盘 IO，大目录会阻塞 UI 帧循环——用户选完文件夹后窗口
+        //     会「冻住」几百毫秒到几秒（视目录规模而定）。改成后台线程后，
+        //     用户选完文件夹立刻回到 UI 继续操作，侧栏短暂显示 loading 态。
+        //     领域层 scan_tree（RwLock 写入 + EventBus publish）线程安全，
+        //     放后台无副作用。其他扫描路径（reload / refresh）保持同步。
+        self.poll_scan_result();
 
         // 2.5) 文件拖放：把 .md 文件拖入窗口即打开（P2 拖拽打开）。
         //      放在快捷键之前，与对话框结果同级——拖入文件即开，不被残留按键干扰。

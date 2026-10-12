@@ -60,6 +60,76 @@ impl WorkspaceSearch {
 }
 
 impl EditorApp {
+    /// 把后台扫描的结果应用到 UI 状态（异步 PickFolder 路径使用）。
+    ///
+    /// 后台线程已完成领域层 `scan_tree`（RwLock 写入 + EventBus publish），
+    /// 这里只构造 `WorkspaceEntries` 快照 + 展开顶层目录——纯 UI 状态变更。
+    pub(crate) fn apply_scan_result(
+        &mut self,
+        root: &str,
+        entries: Vec<crate::application::dto::FileEntryView>,
+    ) {
+        // 后台线程已通过 FilePath::new 验证过 root 合法性，
+        // 主线程直接用字符串构造 WorkspaceEntries——scan_tree 成功返回的前提
+        // 是 FilePath::new 成功（否则会走 Err 分支，本方法不会被调用）。
+        self.workspace_entries = WorkspaceEntries::new(
+            root.to_string(),
+            entries
+                .iter()
+                .map(|e| (e.path.as_str().to_string(), e.is_directory))
+                .collect(),
+        );
+        // 首次装入时把根目录下的目录全部展开。
+        if self.sidebar.needs_initial_expand {
+            self.sidebar.needs_initial_expand = false;
+            self.expand_top_level();
+        }
+    }
+
+    /// 轮询后台扫描 channel（每帧调一次）。
+    ///
+    /// - `Empty` → 后台线程还在扫，等下一帧；
+    /// - `Disconnected` → 后台线程异常终止，清 pending + loading 并报错；
+    /// - `Ok((root, Ok(entries)))` → 正常完成，应用结果 + 状态栏提示；
+    /// - `Ok((root, Err(e)))` → 领域层扫描失败，清 pending + loading + 报错。
+    pub(super) fn poll_scan_result(&mut self) {
+        if !self.scan_loading {
+            return;
+        }
+        let rx = match self.scan_pending.as_ref() {
+            Some(r) => r,
+            None => {
+                self.scan_loading = false;
+                return;
+            }
+        };
+        match rx.try_recv() {
+            Ok((root, Ok(entries))) => {
+                let count = entries.len();
+                self.apply_scan_result(&root, entries);
+                self.scan_loading = false;
+                self.scan_pending = None;
+                let msg = format!("已打开工作区：{root}（{count} 项）");
+                self.set_status_notice(msg);
+            }
+            Ok((root, Err(e))) => {
+                self.scan_loading = false;
+                self.scan_pending = None;
+                let msg = format!("无法打开工作区 {root}：{e}");
+                self.set_status_error(&msg);
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                // 后台线程还在扫描，等下一帧
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                // 后台线程崩溃了
+                self.scan_loading = false;
+                self.scan_pending = None;
+                self.set_status_error("工作区扫描异常终止");
+            }
+        }
+    }
+
     /// 当前文档所在目录（导出默认输出目录）。
     ///
     /// 未保存过的新文档没有路径，此时返回 `None`——**不**回退到进程工作目录：
