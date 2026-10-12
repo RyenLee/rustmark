@@ -282,9 +282,14 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
                 }
 
                 // 5) 文本变更 → diff → 领域命令。
-                //    egui 0.33 的 `TextEditOutput` 已无 `text_changed` 字段，
-                //    改用「前后文本是否不同」判断——`prev` 在 show 前就已克隆。
-                if prev != app.editor_text
+                //
+                //    早退策略：egui 每帧都要调 `.show(ui)`（UI 必须渲染），
+                //    但 diff 计算 + flush_edit 只在本帧**真的改了**时才值得做。
+                //    `response.changed()` 是 egui 原生「本帧 TextEdit 内容是否变了」的信号——
+                //    用户停止打字后立刻跳过整个 diff 路径，大文档上每帧可省掉 O(n) 的 diff 计算。
+                //    prev.clone() 仍保留（diff_replace 需要 old 参数），无法省。
+                if editor.response.changed()
+                    && prev != app.editor_text
                     && let Some(mut edit) = editor_ops::diff_replace(&prev, &app.editor_text)
                 {
                     // 变换是否真的改动了这次编辑（列表续行 / 括号配对 / 退出列表）。
