@@ -536,7 +536,9 @@ fn realistic_ms_pinyin_stream_enter_stays_visible() {
         "撒打发第三方".to_owned(),
     ))]);
     f.frame_with(vec![]);
-    f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Preedit(String::new()))]);
+    f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Preedit(
+        String::new(),
+    ))]);
     f.frame_with(vec![]);
     assert_eq!(f.content(), "1\n2112\n撒打发第三方");
 
@@ -676,7 +678,11 @@ fn enter_at_various_cursor_positions_keeps_gutter_in_sync() {
 
     // ② 行首：拆行后光标落在 "ma" 行首，回车应在其上插一个空行。
     f.enter();
-    assert_eq!(f.content(), "alpha\nbeta\ngam\n\nma", "② 行首回车应上插空行");
+    assert_eq!(
+        f.content(),
+        "alpha\nbeta\ngam\n\nma",
+        "② 行首回车应上插空行"
+    );
     assert_gutter_sync(&f, 5);
 
     // ③ 同一光标连续回车：每次恰好 +1 行。

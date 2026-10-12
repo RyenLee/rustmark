@@ -1,0 +1,162 @@
+//! 多标签管理：打开列表、切换、关闭、循环切换、按编号跳转、分割比例落盘。
+use super::*;
+
+impl EditorApp {
+    /// 当前打开的文档列表（按领域内部顺序）。
+    ///
+    /// 领域按 `DocumentId` 各存各的内容；UI 的「标签」只是这些文档的视图。
+    pub fn open_document_list(&self) -> Vec<DocumentView> {
+        self.services
+            .documents
+            .list_open(ListOpenDocumentsQuery)
+            .unwrap_or_default()
+    }
+
+    /// 切换到指定文档（多标签）。
+    ///
+    /// 领域按 `DocumentId` 各自保存内容，`active_doc` 只是 UI 视角的「当前页」；
+    /// 切换即换视图，不涉及任何内容搬运——双写不一致在此被结构性排除。
+    pub(crate) fn switch_document(&mut self, id: DocumentId) {
+        if self.active_doc == Some(id) {
+            return;
+        }
+        self.active_doc = Some(id);
+        // 查找状态跨文档策略在此生效（S6-08）：保留查询与选项，
+        // 但清空属于旧文档的命中。不调的话「下一个」会按旧文档的
+        // 字节偏移跳到新文档的无关位置，甚至越界。
+        self.find.on_document_switched(id);
+        // 每文档独立的光标 / 选区尚未在 UI State 中建模（S6-12 范畴），
+        // 切换时回到文档开头，避免停在另一个文档的偏移上。
+        self.editor.cursor = 0;
+        self.editor.anchor = None;
+        // 两侧滚动偏移都归零，若不重置同步状态，这一帧会被判成「某一侧
+        // 发生了巨大位移」并把对侧也拖走——表现为「切标签后预览自己滚了一下」。
+        self.ui.sync.reset();
+        self.refresh_text();
+        // 面板若开着，重扫一次让计数与新文档一致。
+        if self.dialog.is_open(Overlay::Find) {
+            self.sync_find();
+        }
+    }
+
+    /// 关闭指定标签页（多标签 × 按钮用）。
+    ///
+    /// 仅当存在多个打开文档时才真正关闭；最后一份文档关闭后会由
+    /// `ensure_document` 在下一帧补建一份空白文档（保证「永远至少有一页可编辑」）。
+    pub(crate) fn close_document(&mut self, id: DocumentId) {
+        if self.open_document_list().len() <= 1 {
+            return;
+        }
+        let _ = self
+            .services
+            .documents
+            .close(CloseCommand { id, force: false });
+        // 仅当文档确实被关闭（不再是「需要保存」而保持打开）才清草稿，
+        // 否则脏文档仍在编辑中，草稿仍是它的崩溃保险，不该清掉。
+        if self
+            .services
+            .documents
+            .get_document(GetDocumentQuery { id })
+            .is_err()
+        {
+            let _ = self
+                .services
+                .documents
+                .clear_draft(&self.services.drafts_dir, id);
+        }
+        // 关闭后重新取列表，挑一个相邻文档作为新的活动页（若关掉的是当前页）。
+        let remaining = self.open_document_list();
+        if remaining.is_empty() {
+            self.active_doc = None;
+        } else if self.active_doc == Some(id) {
+            let idx = remaining.iter().position(|d| d.id == id).unwrap_or(0);
+            let next = remaining
+                .get(idx.saturating_sub(1))
+                .or_else(|| remaining.first());
+            if let Some(doc) = next {
+                self.active_doc = Some(doc.id);
+            }
+        }
+        self.editor.cursor = 0;
+        self.editor.anchor = None;
+        self.ui.sync.reset();
+        self.refresh_text();
+    }
+
+    /// 关闭当前标签页（快捷键 `CloseTab`）。
+    pub(crate) fn close_active_tab(&mut self) {
+        if let Some(id) = self.active_doc {
+            self.close_document(id);
+        }
+    }
+
+    /// 关掉**全部**标签，回到欢迎页。
+    ///
+    /// [`Self::close_document`] 刻意**不**关最后一个标签
+    /// （「永远至少有一页可编辑」是硬约束），但欢迎页需要
+    /// 「一个标签都不剩」这个状态。二者不冲突：这里走
+    /// `force = true` 逐个关掉，不经过那个约束。
+    ///
+    /// 未命名文档被丢弃是**无损**的（内容为空），
+    /// 已保存过的文档则已在磁盘上；未保存的修改会丢失，
+    /// 故只在欢迎页的「关闭全部」这类明确动作上调用。
+    pub fn close_all_documents(&mut self) {
+        for view in self.open_document_list() {
+            let _ = self.services.documents.close(CloseCommand {
+                id: view.id,
+                force: true,
+            });
+            // 文档已关闭：清掉其草稿，避免下次启动误报「待恢复」。
+            let _ = self
+                .services
+                .documents
+                .clear_draft(&self.services.drafts_dir, view.id);
+        }
+        self.active_doc = None;
+        self.editor_text.clear();
+        self.editor.reset_for_new_document();
+        self.ui.sync.reset();
+        self.refresh_text();
+    }
+
+    /// 在打开的文档间循环切换（`NextTab` / `PrevTab`）。
+    pub(crate) fn cycle_document(&mut self, delta: isize) {
+        let open = self.open_document_list();
+        if open.len() <= 1 {
+            return;
+        }
+        let current = self
+            .active_doc
+            .and_then(|id| open.iter().position(|d| d.id == id));
+        let len = open.len() as isize;
+        let cur = current.unwrap_or(0) as isize;
+        let next = (cur + delta).rem_euclid(len);
+        self.switch_document(open[next as usize].id);
+    }
+
+    /// 跳转到第 `n` 个标签页（`Alt+1` ~ `Alt+9`，1-based）。
+    pub(crate) fn goto_document(&mut self, n: usize) {
+        let open = self.open_document_list();
+        if n == 0 || n > open.len() {
+            return;
+        }
+        self.switch_document(open[n - 1].id);
+    }
+
+    /// 把当前分割比例落盘到设置（拖拽结束时调用，避免每帧写文件）。
+    ///
+    /// 走 `preferences.set_editor`：它会校验并 `repository.save`。
+    /// 读回当前编辑器设置、只改 `split_ratio`、其余原样回写，
+    /// 保证不丢用户已设的缩进 / 自动换行 / 自动保存等。
+    pub(crate) fn persist_split_ratio(&mut self) {
+        let Ok(settings) = self.services.preferences.get_settings(GetSettingsQuery) else {
+            return;
+        };
+        let mut editor = settings.editor;
+        editor.split_ratio = self.ui.split_ratio;
+        let _ = self
+            .services
+            .preferences
+            .set_editor(SetEditorCommand { editor });
+    }
+}
