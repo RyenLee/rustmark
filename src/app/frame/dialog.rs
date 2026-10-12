@@ -1,10 +1,6 @@
 //! 原生对话框：请求、结果回退、删除确认兑现。
 use super::*;
 
-use crate::application::workspace::commands::ScanTreeCommand;
-use crate::application::workspace::service::TREE_MAX_DEPTH;
-use crate::shared::path::FilePath;
-
 /// 一次待执行的阻塞对话框请求。
 ///
 /// **S6-11f 起本类型只作为请求的标签**，`PendingDialog::SaveFile`
@@ -93,35 +89,19 @@ impl EditorApp {
                     self.export_ui.refresh_resolved_path();
                     return;
                 }
-                // 后台扫描：避免大目录阻塞 UI 帧循环。
-                //
-                // 领域层 `scan_tree`（RwLock 写入 + EventBus publish）线程安全
-                // （WorkspaceAppService 有 Send + Sync 编译期断言），放后台无副作用。
-                // 主线程每帧通过 `poll_scan_result` 取回，收到后再构造 WorkspaceEntries
-                // + 展开顶层目录 + 更新状态栏。其他扫描路径（reload / refresh）
-                // 保持同步——那些路径的目录规模已知且通常较小。
+                // 同步扫描：scan_tree 是纯领域层 + 内存数据结构构造，
+                // 对于常规项目目录（< 1000 项）耗时远低于 UI 刷新阈值。
+                // 保持同步让 workspace_root() / workspace_entries 立即可用
+                // ——对话框返回后直接能渲染文件树，也避免了测试代码
+                // （没有 update() 循环）等待后台 channel 完成的时序问题。
                 let root = path.as_str().to_string();
-                let workspace_svc = self.services.workspace.clone();
-                let (tx, rx) = std::sync::mpsc::channel();
-                let root_clone = root.clone();
-                std::thread::spawn(move || {
-                    let root_path = match FilePath::new(&root_clone) {
-                        Ok(p) => p,
-                        Err(e) => {
-                            let _ = tx.send((root_clone, Err(e.to_string())));
-                            return;
-                        }
-                    };
-                    let result = workspace_svc
-                        .scan_tree(ScanTreeCommand {
-                            root: root_path,
-                            max_depth: TREE_MAX_DEPTH,
-                        })
-                        .map_err(|e| e.to_string());
-                    let _ = tx.send((root_clone, result));
-                });
-                self.scan_loading = true;
-                self.scan_pending = Some(rx);
+                match self.scan_workspace(&root) {
+                    Ok(count) => self.status_bar.notice(
+                        format!("已打开工作区：{root}（{count} 项）"),
+                        self.services.markdown.now().millis(),
+                    ),
+                    Err(e) => self.set_status_error(&format!("无法打开工作区 {root}：{e}")),
+                }
             }
             // 非取消的错误：说明是「对话框系统不可用」这类问题，
             // 必须提示——静默会让用户以为点了没反应。
