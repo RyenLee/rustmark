@@ -229,6 +229,7 @@ pub struct EditorApp {
     /// 其他扫描路径（reload / refresh / create_entry 后）**保持同步**——
     /// 那些路径的目录规模已知且通常较小，后台线程化反而增加首帧延迟。
     #[allow(clippy::type_complexity)]
+    // Receiver<(String, Result<...>, String)> 嵌套 3 层；抽别名收益极低
     pub(crate) scan_pending: Option<
         std::sync::mpsc::Receiver<(
             String,

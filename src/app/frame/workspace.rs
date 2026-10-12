@@ -109,13 +109,13 @@ impl EditorApp {
                 self.apply_scan_result(&root, entries);
                 self.scan_loading = false;
                 self.scan_pending = None;
-                let msg = format!("已打开工作区：{root}（{count} 项）");
+                let msg = format!("已打开工作区：{}（{count} 项）", Self::display_name(&root));
                 self.set_status_notice(msg);
             }
             Ok((root, Err(e))) => {
                 self.scan_loading = false;
                 self.scan_pending = None;
-                let msg = format!("无法打开工作区 {root}：{e}");
+                let msg = format!("无法打开工作区 {}：{e}", Self::display_name(&root));
                 self.set_status_error(&msg);
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => {

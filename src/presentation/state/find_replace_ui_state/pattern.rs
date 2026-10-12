@@ -197,7 +197,7 @@ fn match_seq(seq: &[Node], slice: &str, at: usize, cs: bool) -> Option<usize> {
 }
 
 /// 重复节点匹配（回溯式；模式串都很短，朴素回溯足够）。
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // 模式匹配核心函数；参数独立（min/max/greedy/node 等），打包成 struct 反而增加所有权转换开销
 fn match_repeat(
     node: &[Node],
     min: usize,

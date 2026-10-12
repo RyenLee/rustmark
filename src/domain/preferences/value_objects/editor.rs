@@ -163,7 +163,7 @@ impl EditorSettings {
     /// 构造设置。
     // 参数与 [`EditorSettingsView`] 的字段一一对应，收敛成结构体会让
     // 调用点失去编译期「漏传即错」的保障（同 `find_replace_ui_state` 的先例）。
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)] // 参数与 EditorSettingsView 字段一一对应；收敛成 struct 会失去编译期「漏传即错」
     pub const fn new(
         tab_size: TabSize,
         word_wrap: bool,

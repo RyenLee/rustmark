@@ -72,8 +72,10 @@ impl EditorApp {
             DialogOutcome::SaveFile(Ok(path)) => match self.save_document_to(path.as_str()) {
                 Ok(()) => {
                     let now = self.services.markdown.now().millis();
-                    self.status_bar
-                        .notice(format!("已保存到 {}", path.as_str()), now);
+                    self.status_bar.notice(
+                        format!("已保存到 {}", Self::display_name(path.as_str())),
+                        now,
+                    );
                 }
                 Err(e) => self.set_status_error(&format!("另存为失败：{e}")),
             },
@@ -97,10 +99,13 @@ impl EditorApp {
                 let root = path.as_str().to_string();
                 match self.scan_workspace(&root) {
                     Ok(count) => self.status_bar.notice(
-                        format!("已打开工作区：{root}（{count} 项）"),
+                        format!("已打开工作区：{}（{count} 项）", Self::display_name(&root)),
                         self.services.markdown.now().millis(),
                     ),
-                    Err(e) => self.set_status_error(&format!("无法打开工作区 {root}：{e}")),
+                    Err(e) => self.set_status_error(&format!(
+                        "无法打开工作区 {}：{e}",
+                        Self::display_name(&root)
+                    )),
                 }
             }
             // 非取消的错误：说明是「对话框系统不可用」这类问题，

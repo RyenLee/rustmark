@@ -302,7 +302,7 @@ fn gutter_row(
 }
 
 /// 带字符级差异的一行。
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // egui 渲染函数；主题/坐标/两侧行号由 UI 上下文逐帧传入，打包成 struct 徒增 borrow 约束
 fn segs_row(
     ui: &mut Ui,
     theme: &Theme,

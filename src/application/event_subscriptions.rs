@@ -35,7 +35,7 @@ pub struct AutoSaveTracker {
 
 impl AutoSaveTracker {
     /// 新建空计时器。
-    #[allow(clippy::new_without_default)]
+    #[allow(clippy::new_without_default)] // 必须显式新建以初始化内部 Mutex<HashMap>；Default 无法委托
     pub fn new() -> Self {
         Self {
             last_edit: Mutex::new(HashMap::new()),
