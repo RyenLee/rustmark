@@ -352,81 +352,7 @@ impl EditorApp {
     }
 }
 
-/// 一次等待回传的截图任务。
-///
-/// 只存**裁剪所需的矩形**与落盘目标，不存像素：像素由 egui 在下一帧
-/// 通过 `Event::Screenshot` 交回，那是唯一拿到它的时机。
-struct PendingCapture {
-    /// 导出任务 ID（用于把回传结果关联回领域任务）。
-    job_id: JobId,
-    /// 预览区矩形（**逻辑点**，兑现时乘 `pixels_per_point` 才是像素）。
-    ///
-    /// 存逻辑点而非像素：`pixels_per_point` 要到回传时刻才能从
-    /// `ctx` 读到，而矩形是在登记那一帧的布局里确定的。
-    clip: egui::Rect,
-    /// 输出路径。
-    path: String,
-    /// 命令是否已经发出去。
-    ///
-    /// 必须显式区分，否则每帧都会重发一次 `Screenshot`——那不是「多截几帧」，
-    /// 而是让后端每帧都做一次全帧回读（GPU 同步等待），
-    /// 代价高且用户只要第一张。
-    requested: bool,
-    /// 长图状态：`None` = 视口截图（一帧完成）；`Some` = 整篇长图（多段滚动拼接）。
-    long: Option<LongImageState>,
-}
-
-/// 整篇长图的分段捕获状态。
-///
-/// 每段占用两帧：「设滚动偏移并等待绘制」→「发截图命令」→ 下一帧收像素。
-/// 全部段落收齐后在 [`EditorApp::deliver_capture`] 里拼接落盘。
-struct LongImageState {
-    /// 每段的滚动偏移（逻辑点，内容坐标）。首段恒为 0，末段为 `content_h - 视口高`。
-    offsets: Vec<f32>,
-    /// 下一要捕获的段下标。
-    next: usize,
-    /// 已收到的各段像素（未拼接）。
-    parts: Vec<image::RgbaImage>,
-    /// 预览视口高度（逻辑点）。计算末段与上一段的重叠行数用。
-    viewport_h: f32,
-    /// 本段的滚动偏移是否已设、并等到了一次绘制。
-    ///
-    /// 截图命令捕获的是「发命令那一帧」的画面，所以必须先让预览
-    /// 以目标偏移绘制一帧，**下一帧**才能发命令——两拍缺一不可。
-    armed: bool,
-}
-
-/// 整篇长图的**段数上限**。
-///
-/// 每段至少跨两帧（预备拍 + 截图拍），256 段意味着滚动捕获约需十几秒——
-/// 这已经是用户愿意等的上限。超限说明文档大到该走 HTML / PDF 导出，
-/// 而不是让应用卡在「逐屏滚动截图」里几十秒甚至几分钟。
-const MAX_LONG_IMAGE_SEGMENTS: usize = 256;
-
-/// 计算长图拼接时每段需要丢弃的**顶部像素行数**。
-///
-/// 段偏移是「首段 0、其余每段推进一个视口高、末段滚到底」，因此只有
-/// 末段与上一段重叠：上一段的底边（`offsets[i-1] + viewport_h`）超出
-/// 本段顶边（`offsets[i]`）的部分就是要丢弃的重叠行。
-///
-/// 逻辑点 → 像素要乘 `pixels_per_point`（截图回传的是物理像素）；
-/// 结果夹到 `part.height() - 1` 以内，防御舍入与几何量微小漂移
-/// 导致 skip ≥ 段高（那会让 [`stitch`](crate::infrastructure::export::viewport_capture::stitch)
-/// 直接拒绝整个任务，用户白等全部段落捕获完）。
-fn compute_long_image_skip(long: &LongImageState, pixels_per_point: f32) -> Vec<u32> {
-    long.parts
-        .iter()
-        .enumerate()
-        .map(|(i, part)| {
-            if i == 0 {
-                return 0;
-            }
-            let prev_end = long.offsets[i - 1] + long.viewport_h;
-            let overlap = ((prev_end - long.offsets[i]).max(0.0) * pixels_per_point).round();
-            overlap.min(part.height().saturating_sub(1) as f32) as u32
-        })
-        .collect()
-}
+pub(crate) use capture::PendingCapture;
 
 /// IME 组合期保护窗口（毫秒）。
 ///
@@ -441,7 +367,7 @@ fn compute_long_image_skip(long: &LongImageState, pixels_per_point: f32) -> Vec<
 /// 2. **够短**：一旦 `Commit`/`Disabled` 丢失（切输入法、直接关候选窗、焦点
 ///    落到浮层），冻结必须在可感知的短时间内自行解除，否则用户的回车会被吞
 ///    ——那正是本常量要根治的缺陷。见 [`EditorApp::apply_pending_editor_state`]。
-const IME_GUARD_MS: u64 = 800;
+pub(super) const IME_GUARD_MS: u64 = 800;
 
 /// 「egui 已 armed IME」的保护窗口（毫秒）。
 ///
@@ -455,7 +381,7 @@ const IME_GUARD_MS: u64 = 800;
 /// 取 50ms：真实组合里 `Enabled` 与首个 `Preedit` 之间的间隔不到一帧
 /// （~16ms），50ms 留了三帧余量；连按回车的人手间隔 ≥80ms，
 /// 故第一次回车就已出窗、立即恢复。
-const IME_ARM_MS: u64 = 50;
+pub(super) const IME_ARM_MS: u64 = 50;
 
 impl EditorApp {
     /// 构造应用根状态。
