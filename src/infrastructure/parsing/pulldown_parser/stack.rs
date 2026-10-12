@@ -25,7 +25,7 @@ use crate::shared::geometry::{ByteOffset, TextRange};
 /// 加一个游离在色条**外面**的正文段落（实测 `[Quote, Paragraph]`）。
 /// 故这四类帧（列表项 / 脚注定义 / 定义列表的定义 / 引用）标记 `absorbs`：
 /// 内层段落块的文本已由 `push_content` 回流到本帧，块本身则被丢弃。
-pub(super) struct OpenBlock {
+pub(crate) struct OpenBlock {
     /// 该块产出的领域类型；`None` 表示该标签**不产出块**（行内标签 / 列表项 / 单元格）。
     pub(super) kind: Option<BlockKind>,
     /// 该块在源码中的开始偏移。
