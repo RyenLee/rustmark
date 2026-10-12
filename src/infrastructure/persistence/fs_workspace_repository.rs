@@ -104,7 +104,21 @@ impl FsWorkspaceRepository {
 
     /// `FilePath` → `PathBuf`（内部统一用 `/` 分隔，Windows 上 `fs` 也能吃）。
     fn to_path(path: &FilePath) -> PathBuf {
-        PathBuf::from(path.as_str())
+        Self::canonicalize_or_clean(PathBuf::from(path.as_str()))
+    }
+
+    /// 纵深防御：canonicalize 解析符号链接得到真实路径；
+    /// 文件尚不存在（新建场景）时退回 `components()` 清理。
+    fn canonicalize_or_clean(p: PathBuf) -> PathBuf {
+        match p.canonicalize() {
+            Ok(canon) => {
+                // Windows canonicalize 会返回 UNC 扩展前缀 `\\?\`，
+                // 必须去掉并统一为 `/`，否则与 FilePath 不兼容。
+                let s = canon.to_string_lossy().replace('\\', "/");
+                PathBuf::from(s.trim_start_matches("//?/"))
+            }
+            Err(_) => p.components().collect(),
+        }
     }
 
     /// 递归收集目录条目。
@@ -185,7 +199,7 @@ impl FsWorkspaceRepository {
 
 impl WorkspaceRepository for FsWorkspaceRepository {
     fn scan(&self, root: &FilePath, max_depth: usize) -> Result<Vec<WorkspaceEntry>, AppError> {
-        let root_path = PathBuf::from(root.as_str());
+        let root_path = Self::canonicalize_or_clean(PathBuf::from(root.as_str()));
         if !root_path.is_dir() {
             return Err(AppError::io(format!(
                 "工作区根目录不存在或不是目录：{}",
@@ -212,7 +226,7 @@ impl WorkspaceRepository for FsWorkspaceRepository {
     }
 
     fn read_content(&self, path: &FilePath) -> Result<String, AppError> {
-        let bytes = fs::read(PathBuf::from(path.as_str()))
+        let bytes = fs::read(Self::to_path(path))
             .map_err(|e| AppError::io(format!("无法读取文件 {}：{e}", path.as_str())))?;
         // 复用文档仓储的解码规则（BOM 剥离 + CRLF 归一），
         // 保证搜索时看到的行与编辑器里看到的一致。

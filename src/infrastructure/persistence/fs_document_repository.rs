@@ -118,7 +118,21 @@ impl FsDocumentRepository {
     /// `FilePath` 内部统一用 `/`，Windows 的 `std::fs` 同样接受 `/`，
     /// 故直接替换即可，无需处理盘符（`FilePath` 已保留 `C:` 前缀）。
     fn to_path(path: &FilePath) -> PathBuf {
-        PathBuf::from(path.as_str())
+        Self::canonicalize_or_clean(PathBuf::from(path.as_str()))
+    }
+
+    /// 纵深防御：canonicalize 解析符号链接得到真实路径；
+    /// 文件尚不存在（新建场景）时退回 `components()` 清理。
+    fn canonicalize_or_clean(p: PathBuf) -> PathBuf {
+        match p.canonicalize() {
+            Ok(canon) => {
+                // Windows canonicalize 会返回 UNC 扩展前缀 `\\?\`，
+                // 必须去掉并统一为 `/`，否则与 FilePath 不兼容。
+                let s = canon.to_string_lossy().replace('\\', "/");
+                PathBuf::from(s.trim_start_matches("//?/"))
+            }
+            Err(_) => p.components().collect(),
+        }
     }
 
     /// 由磁盘元数据取最后修改时间。

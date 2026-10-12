@@ -150,10 +150,16 @@ mod tests {
     #[test]
     fn line_numbers_are_independent_per_side() {
         let rows = diff_lines("a\nb\nc\nd", "a\nX\nc\nd");
-        let removed = rows.iter().find(|r| r.op == DiffOp::Remove).unwrap();
+        let removed = rows
+            .iter()
+            .find(|r| r.op == DiffOp::Remove)
+            .expect("diff 结果应包含 Remove 行");
         assert_eq!(removed.old_no, Some(2));
         assert_eq!(removed.new_no, None, "删除行不应有右侧行号");
-        let added = rows.iter().find(|r| r.op == DiffOp::Add).unwrap();
+        let added = rows
+            .iter()
+            .find(|r| r.op == DiffOp::Add)
+            .expect("diff 结果应包含 Add 行");
         assert_eq!(added.new_no, Some(2));
     }
 
@@ -215,7 +221,7 @@ mod tests {
                 assert_eq!(new_text, "new");
                 assert!(old_segs.iter().any(|s| s.kind == CharSegKind::Remove));
             }
-            other => panic!("应为替换行，实际 {other:?}"),
+            other => panic!("相邻 Remove+Add 应合并为 Replace，实际 {other:?}"),
         }
     }
 

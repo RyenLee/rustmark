@@ -210,7 +210,8 @@ impl EditorApp {
                 || m.has_focus(egui::Id::new(REPLACE_INPUT_ID))
         });
         let mut out = Vec::new();
-        for event in &ctx.input(|i| i.events.clone()) {
+        let events = ctx.input(|i| i.events.clone());
+        for event in &events {
             if let Dispatch::Triggered(action) = self.ui.dispatcher.handle(event) {
                 if find_input_focused && action != UiAction::CloseOverlay {
                     continue;
