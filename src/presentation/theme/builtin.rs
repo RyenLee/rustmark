@@ -27,157 +27,25 @@
 //! [`Theme::custom`] 保留了从外部数据构造主题的能力。首版不实现
 //! TOML/JSON 加载（避免过度设计），但**结构上留好了**：
 //! 加载器只需把文件解析成 [`Theme`] 即可，无需改动任何渲染代码。
+//!
+//! # 模块结构
+//!
+//! - `kind`：[`BuiltinTheme`] 标识与字符串互转；
+//! - `metrics`：[`Metrics`] 尺寸 / 间距 token；
+//! - `resolve`：设置解析 [`resolve`] 与配色变更签名 [`palette_signature`]；
+//! - 本文件保留 [`Theme`] 结构、内置配色构造与颜色辅助函数。
+
+mod kind;
+mod metrics;
+mod resolve;
+
+pub use self::kind::BuiltinTheme;
+pub use self::metrics::Metrics;
+pub use self::resolve::{palette_signature, resolve};
 
 use egui::Color32;
 
-use crate::application::dto::{CustomThemePaletteView, ThemeView};
-
-/// 主题标识。
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub enum BuiltinTheme {
-    /// 跟随系统。
-    #[default]
-    System,
-    /// 深色。
-    Dark,
-    /// 浅色。
-    Light,
-}
-
-impl BuiltinTheme {
-    /// 由设置里的字符串解析（`light` / `dark` / `system`）。
-    ///
-    /// 未知值退回 [`BuiltinTheme::System`] 而非报错：旧配置里出现
-    /// 将来才引入的取值时，程序应当照常启动。
-    pub fn parse(raw: &str) -> Self {
-        match raw.trim().to_ascii_lowercase().as_str() {
-            "dark" => Self::Dark,
-            "light" => Self::Light,
-            _ => Self::System,
-        }
-    }
-
-    /// 规范字符串。
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::System => "system",
-            Self::Dark => "dark",
-            Self::Light => "light",
-        }
-    }
-
-    /// 中文显示名（设置页三选一）。
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::System => "跟随系统",
-            Self::Dark => "深色",
-            Self::Light => "浅色",
-        }
-    }
-}
-
-/// 尺寸token（对齐原型 `tokens.css` 的布局栅格）。
-///
-/// 这些值是**硬契约**：验收标准要求「1280×800 与 1440×900 两档窗口下
-/// 布局不破版」，而破版与否直接取决于侧边栏是不是 240px。
-/// 圆角同样取自原型（2026-10 精修后为 6 / 8 / 14），改动即等于偏离原型。
-#[derive(Clone, Copy, PartialEq, Debug)]
-pub struct Metrics {
-    /// 顶部工具栏高度（`--topbar-h`）。
-    ///
-    /// 这是**应用级菜单栏**那一行（文件 / 编辑 / 视图 / 设置），
-    /// 不含编辑区工具栏——后者见 [`Metrics::editor_toolbar_height`]。
-    pub topbar_height: f32,
-    /// **编辑区工具栏**行高。
-    ///
-    /// # 为什么与应用级菜单栏分成两行
-    ///
-    /// 两者是**不同的层**：应用级菜单作用于整个应用（打开 / 保存 /
-    /// 视图开关 / 设置），编辑区工具栏作用于当前编辑区的内容格式
-    /// （加粗 / 列表 / 缩进……）。挤在一行里时，「文件」下拉与「加粗」
-    /// 按钮看起来同级，职责边界随之消失。
-    ///
-    /// 该高度**不在原型 `tokens.css` 的栅格里**——原型把两者放在同一行
-    /// （`--topbar-h: 40`），是本项目按「应用级 / 编辑区」分层后新增的一段。
-    /// 取 34 而非 32：按钮本身高约 26，上下各留 4 的呼吸位，
-    /// 视觉密度与 `--tabstrip-h: 32` 接近而略宽松。
-    pub editor_toolbar_height: f32,
-    /// 状态栏高度（`--statusbar-h`）。
-    pub statusbar_height: f32,
-    /// 标签条高度（`--tabbar-h`）。
-    pub tabbar_height: f32,
-    /// 多文件标签条高度（`--tabstrip-h`）。
-    pub tabstrip_height: f32,
-    /// 侧边栏宽度（`--sidebar-w`）。
-    pub sidebar_width: f32,
-    /// 分割条宽度（`--divider-w`）。
-    pub divider_width: f32,
-    /// 按钮圆角（`--radius-btn`）。
-    pub radius_button: f32,
-    /// 卡片圆角（`--radius-card`）。
-    pub radius_card: f32,
-    /// 对话框圆角（`--radius-dialog`）。
-    pub radius_dialog: f32,
-    /// 界面字号（`--ui-font-size`）。
-    pub ui_font_size: f32,
-    /// 预览区字号（`--preview-font-size`）。
-    pub preview_font_size: f32,
-    /// 预览区行高（`--preview-line-height`）。
-    pub preview_line_height: f32,
-    // —— 间距刻度（spacing scale，全应用唯一来源）——
-    //
-    // 原型 `tokens.css` 只定义了「尺寸」没有定义「间距刻度」，各视图于是
-    // 各写各的 4 / 6 / 8 / 10 / 12 / 16 / 20 / 24：同类间距在不同区域忽大忽小，
-    // 「分区留白」「元素内边距」「组件间距」没有可对照的规范。
-    // 这里把它收敛成一条以 4pt 为基准、2pt 为咬合位的刻度
-    // （与原型 `--sp-1: 4px` 同源）。任何 `add_space` / 内边距 / 组件间隙
-    // 都应取这里的刻度值，而不是在现场发明新数字。
-    /// 咬合间距：分隔线与内容、控件与贴身边缘的最小距离。
-    pub space_xxs: f32,
-    /// 紧凑间距：预览块与块之间、行内小控件之间。
-    pub space_xs: f32,
-    /// 小间距：图标与文字、卡片内边距的纵向分量。
-    pub space_sm: f32,
-    /// 中间距：组件默认间距（与全局 `Spacing::item_spacing.x` 同源）。
-    pub space_md: f32,
-    /// 大间距：字段行之间、下拉分组之间、对话框分区之间。
-    pub space_lg: f32,
-    /// 特大间距：功能区块之间、列表缩进。
-    pub space_xl: f32,
-    /// 顶级留白：对话框 / 欢迎页的顶级分区之间。
-    pub space_xxl: f32,
-    /// 面板 / 卡片 / 表格的四周内边距。
-    pub pane_padding: f32,
-}
-
-impl Default for Metrics {
-    fn default() -> Self {
-        Self {
-            topbar_height: 40.0,
-            editor_toolbar_height: 34.0,
-            statusbar_height: 24.0,
-            tabbar_height: 28.0,
-            tabstrip_height: 32.0,
-            sidebar_width: 240.0,
-            divider_width: 4.0,
-            radius_button: 6.0,
-            radius_card: 8.0,
-            radius_dialog: 14.0,
-            ui_font_size: 13.0,
-            preview_font_size: 15.0,
-            preview_line_height: 1.7,
-            // 间距刻度：4pt 基网格 + 2pt 咬合位（见结构体字段文档）。
-            space_xxs: 2.0,
-            space_xs: 4.0,
-            space_sm: 6.0,
-            space_md: 8.0,
-            space_lg: 12.0,
-            space_xl: 16.0,
-            space_xxl: 24.0,
-            pane_padding: 8.0,
-        }
-    }
-}
+use crate::application::dto::CustomThemePaletteView;
 
 /// 完整主题：配色 + 尺寸 + 字体。
 #[derive(Clone, PartialEq, Debug)]
@@ -463,84 +331,6 @@ pub const MONO_FAMILY: &str = "monospace";
 
 /// 编辑区正文字体族（与原型 `--font-ui` 对应）。
 pub const UI_FAMILY: &str = "ProggyClean";
-
-/// 解析主题设置 → 具体主题。
-///
-/// `system_preference` 由调用方从系统读取（`true` = 系统是深色）。
-/// 抽成参数而非在内部读系统，是为了让本函数**可测**——
-/// CI 上没有「跟随系统」的真实环境。
-pub fn resolve(view: &ThemeView, system_preference_dark: bool) -> Theme {
-    // 自定义主题：以调色板为准。调色板缺失（旧配置 / 异常）时退回默认调色板，
-    // 保证首次切到 custom（尚无任何配色改动）不崩、也不丢配色。
-    if view.kind.trim().eq_ignore_ascii_case("custom") {
-        let default_palette = CustomThemePaletteView::default();
-        let palette = view.custom.as_ref().unwrap_or(&default_palette);
-        return Theme::from_custom_palette(
-            palette,
-            &view.font_family,
-            view.font_size,
-            view.line_height,
-        );
-    }
-    let kind = BuiltinTheme::parse(&view.kind);
-    let base = match kind {
-        BuiltinTheme::Light => BuiltinTheme::Light,
-        BuiltinTheme::Dark => BuiltinTheme::Dark,
-        BuiltinTheme::System => {
-            if system_preference_dark {
-                BuiltinTheme::Dark
-            } else {
-                BuiltinTheme::Light
-            }
-        }
-    };
-    let mut theme =
-        Theme::with_font_settings(base, &view.font_family, view.font_size, view.line_height);
-    // 解析后 `kind` 必须反映**实际生效**的那套，否则 `is_dark()` 会误报。
-    theme.kind = base;
-    theme
-}
-
-/// 主题变更签名：内容不变时返回 `None`，让预览缓存免于重建。
-///
-/// 验收标准要求「主题变更触发预览缓存失效（断言 Galley 重建）」，
-/// 但**无关字段**（如字体）变化不该让预览重排——那是纯浪费。
-/// 用签名把「配色变了」与「只是字号变了」区分开。
-pub fn palette_signature(theme: &Theme) -> Option<[u8; 4]> {
-    let mut hasher: u32 = 2166136261;
-    for color in [
-        theme.bg_primary,
-        theme.bg_secondary,
-        theme.bg_tertiary,
-        theme.border,
-        theme.text_primary,
-        theme.text_secondary,
-        theme.accent,
-        theme.code_bg,
-        theme.selection_bg,
-        // 全部语法高亮色都纳入（V11-09）：任一语法色变化都必须让预览缓存失效，
-        // 否则用户改了「关键字色」却发现预览区没变——那是最难解释的一类 bug。
-        theme.syn_heading,
-        theme.syn_bold,
-        theme.syn_italic,
-        theme.syn_code,
-        theme.syn_link,
-        theme.syn_quote,
-        theme.syn_marker,
-        theme.syn_meta,
-        theme.syn_table,
-        theme.syn_other,
-    ] {
-        let [r, g, b, a] = color.to_array();
-        for byte in [r, g, b, a] {
-            hasher ^= u32::from(byte);
-            hasher = hasher.wrapping_mul(16777619);
-        }
-    }
-    // `u32 → 4 字节` 折叠：签名只需「变了 / 没变」，不需密码学强度。
-    let folded = hasher.to_le_bytes();
-    Some([folded[0], folded[1], folded[2], folded[3]])
-}
 
 /// 不透明色。
 fn rgb(r: u8, g: u8, b: u8) -> Color32 {
