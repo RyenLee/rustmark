@@ -87,7 +87,11 @@ impl Parser {
     /// 连续写 `_` 与 `^` 时（`x_1^2`）第二次要**补到同一个 `Script` 上**，
     /// 而不是把「已带下标的 x」整体再套一层上标——后者会让 `1` 与 `2`
     /// 一高一低错开（嵌套的基线不同）。
-    pub(super) fn apply_script(&mut self, out: &mut Vec<Node>, mark: char) -> Result<(), MathError> {
+    pub(super) fn apply_script(
+        &mut self,
+        out: &mut Vec<Node>,
+        mark: char,
+    ) -> Result<(), MathError> {
         let is_sup = mark == '^';
         self.bump();
         let arg = self.read_group()?;

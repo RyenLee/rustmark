@@ -294,4 +294,31 @@ impl EditorApp {
         });
         self.ui.set_theme(builtin::resolve(&view, self.system_dark));
     }
+
+    /// 当前生效的主题。
+    pub fn theme(&self) -> &Theme {
+        &self.ui.theme
+    }
+
+    /// 快捷键分发器（菜单 / 命令面板渲染共用同一份注册表）。
+    pub fn dispatcher(&self) -> &ShortcutDispatcher {
+        &self.ui.dispatcher
+    }
+
+    /// 读取持久化设置；失败时回退到 [`SettingsView::fallback`]。
+    pub fn settings(&self) -> SettingsView {
+        self.services
+            .preferences
+            .get_settings(GetSettingsQuery)
+            .unwrap_or_else(|_| SettingsView::fallback())
+    }
+
+    /// 系统当前是否偏好深色（设置页「跟随系统」提示、状态栏主题文案用）。
+    ///
+    /// 刻意暴露**系统偏好**而不是「当前生效主题」：后者在
+    /// `BuiltinTheme::System` 下已经被解析过一次，拿它判断
+    /// 「系统是深是浅」等于拿答案去验证答案。
+    pub fn system_prefers_dark(&self) -> bool {
+        self.system_dark
+    }
 }

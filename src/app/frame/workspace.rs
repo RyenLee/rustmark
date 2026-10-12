@@ -1,6 +1,64 @@
 //! 工作区：文件树扫描 / 条目操作 / 打开文件 / 全局搜索分组。
 use super::*;
 
+/// 工作区文件树的**已装载条目**。
+///
+/// # 为什么不每帧调 `scan_tree`
+///
+/// 扫描是**磁盘 IO**（`read_dir` 递归 + 最多 5000 条）。每帧做一次，
+/// 哪怕窗口最小化也在后台狂读磁盘，文件树还会因为「顺序随文件系统返回序变化」
+/// 而不停抖动。故只在打开文件夹 / 文件操作之后显式扫一次，视图每帧只读这份快照。
+///
+/// 它是**投影**不是缓存的业务真值：磁盘一变就重扫，
+/// 快照里没有任何领域对象（只有路径字符串与一个布尔）。
+#[derive(Clone, Debug, Default)]
+pub struct WorkspaceEntries {
+    /// 根目录路径（空串 = 未打开工作区）。
+    pub root: Option<String>,
+    /// 扁平条目 `(路径, 是否目录)`，已按「目录在前、同层按名称」排序。
+    pub items: Vec<(String, bool)>,
+}
+
+impl WorkspaceEntries {
+    /// 以根目录与条目构造。
+    pub fn new(root: String, items: Vec<(String, bool)>) -> Self {
+        Self {
+            root: Some(root),
+            items,
+        }
+    }
+
+    /// 是否已装载（未打开工作区时为假）。
+    pub fn is_loaded(&self) -> bool {
+        self.root.is_some()
+    }
+}
+
+/// 一次工作区搜索的结果（分组 + 是否被上限截断）。
+///
+/// 刻意**不**把「是否截断」藏进 `EditorApp` 的某个字段由搜索顺手改掉：
+/// 那样「读结果」就有了隐藏副作用，而截断提示恰恰是**必须被看见**的信息
+/// （用户看到 300 条会以为搜全了）。它和结果一起返回，界面不可能漏掉。
+#[derive(Clone, Debug, Default)]
+pub struct WorkspaceSearch {
+    /// 按文件分组的命中。
+    pub groups: Vec<SearchGroup>,
+    /// 是否因超过总命中上限（300）而被截断。
+    pub truncated: bool,
+}
+
+impl WorkspaceSearch {
+    /// 命中总数（各组之和）。
+    pub fn total(&self) -> usize {
+        self.groups.iter().map(|g| g.hits.len()).sum()
+    }
+
+    /// 是否没有任何命中。
+    pub fn is_empty(&self) -> bool {
+        self.total() == 0
+    }
+}
+
 impl EditorApp {
     /// 当前文档所在目录（导出默认输出目录）。
     ///

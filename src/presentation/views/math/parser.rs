@@ -12,10 +12,10 @@ use super::symbols::{ENVIRONMENTS, FUNCTIONS, LIMIT_OPS, SYMBOLS};
 use super::*;
 
 mod basics;
-mod row;
 mod command;
 mod delim;
 mod environment;
+mod row;
 
 // ============================================================================
 // Parser struct + 入口 free fn

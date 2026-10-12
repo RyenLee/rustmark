@@ -339,4 +339,76 @@ impl EditorApp {
             self.pending_cursor = Some((new_cursor, new_cursor));
         }
     }
+
+    /// 缩进单位（空格），来自设置 `tab_size`。
+    pub(super) fn tab_unit(&self) -> String {
+        " ".repeat(self.settings().editor.tab_size.max(1) as usize)
+    }
+
+    /// 编辑区 `TextEdit` 的固定 `Id`（用于读写 egui 内部光标 / 撤销栈状态）。
+    pub fn editor_id() -> egui::Id {
+        egui::Id::new("rustmark.editor.text")
+    }
+
+    /// 从领域回读当前文档内容到 `editor_text`，并夹紧光标/选区、失效高亮缓存。
+    ///
+    /// 这是「领域是内容单一真相」的物理保证：每次领域命令后都调用它，
+    /// `editor_text` 永远等于 `get_content` 的返回值，二者无法漂移。
+    pub fn refresh_text(&mut self) {
+        if let Some(id) = self.active_doc
+            && let Ok(text) = self
+                .services
+                .documents
+                .get_content(GetContentQuery { id, range: None })
+        {
+            self.editor_text = text;
+            self.editor.clamp_to(self.editor_text.len());
+        }
+        // 文本被重新拉取 = 内容可能已变 → 重置预览防抖的计时起点。
+        //
+        // 刻意放在**这里**而不是各个编辑入口：编辑入口有十几处
+        // （编辑区输入、插入、替换、整篇变换、查找替换、领域命令…），
+        // 漏任何一处都会让防抖退化成「每 150ms 重解析一次」的节流。
+        // 全部调用点都是命令 / 事件驱动的（不是每帧），故不会把计时无限推后。
+        let now_ms = self.services.markdown.now().millis();
+        self.preview.mark_edited(now_ms);
+    }
+
+    /// 读取当前文档的完整内容（**从领域**，非 `editor_text` 副本）。
+    ///
+    /// 存在的理由：集成测试需要断言「三入口执行后文档内容字节一致」，
+    /// 而 `active_doc` 与 `editor_text` 都是 `pub(crate)`，测试拿不到。
+    /// 与其让测试去猜内部可见性，不如把「读当前内容」作为正式能力暴露——
+    /// 它本来也是导出、查找替换、状态栏字数统计都要用的东西。
+    pub fn current_content(&self) -> Option<String> {
+        let id = self.active_doc?;
+        self.services
+            .documents
+            .get_content(GetContentQuery { id, range: None })
+            .ok()
+    }
+
+    /// 读取编辑区当前绑定串（`TextEdit` 直接绑定的那个 `String`）。
+    /// 与 [`Self::current_content`]（从领域读）配套：两者**必须逐字节相等**，
+    /// 这是「领域是内容单一真相」在编辑区的可观测不变量。
+    /// 漂移意味着用户敲了键界面却没反应——下一帧才被某条路径悄悄补上。
+    pub fn editor_bound_text(&self) -> &str {
+        &self.editor_text
+    }
+
+    /// IME 组合期标志。
+    ///
+    /// 暴露给测试断言「守卫是否生效」——它是回车失效缺陷的核心状态，
+    /// 又是 `pub(crate)` 字段，测试没有它就只能在行为层面绕圈子。
+    pub fn ime_composing(&self) -> bool {
+        self.ime_composing
+    }
+
+    /// 待回设到 egui 的光标位置。
+    ///
+    /// 暴露给测试断言「普通输入不该产生光标回设」：回设即多一次强制重算，
+    /// 是界面闪烁的上游原因（见 [`Self::flush_edit`]）。
+    pub fn pending_cursor_for_diag(&self) -> Option<(usize, usize)> {
+        self.pending_cursor
+    }
 }

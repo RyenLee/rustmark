@@ -1,6 +1,26 @@
 //! 原生对话框：请求、结果回退、删除确认兑现。
 use super::*;
 
+/// 一次待执行的阻塞对话框请求。
+///
+/// **S6-11f 起本类型只作为请求的标签**，`PendingDialog::SaveFile`
+/// 缺少「建议文件名」这个必需参数，故实际请求改用
+/// [`crate::app::dialog_runner::DialogRequest`]。
+/// 保留本枚举是因为 `PendingDialog` 已被侧栏 / 欢迎页 / 设置引用，
+/// 而那三处传的都是 `OpenFile` / `PickFolder`（无需额外参数）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PendingDialog {
+    /// 打开文件对话框。
+    OpenFile,
+    /// 另存为对话框。
+    ///
+    /// **已弃用**：走这条会丢掉建议文件名，对话框只能给一个空名。
+    /// 正确做法是 [`crate::app::dialog_runner::DialogRequest::SaveFile`]。
+    SaveFile,
+    /// 选择工作区目录。
+    PickFolder,
+}
+
 impl EditorApp {
     /// 请求一次阻塞对话框（**在后台线程执行**，见 [`DialogRunner`]）。
     ///
@@ -126,5 +146,57 @@ impl EditorApp {
     /// 报告「对话框本身不可用」这类失败。
     pub(super) fn report_dialog_failure(&mut self, what: &str, error: &AppError) {
         self.set_status_error(&format!("{what}对话框不可用：{error}"));
+    }
+
+    /// 请求删除一个工作区条目（**先弹二次确认，答复为「是」才真删**）。
+    ///
+    /// # 为什么不能在这里直接删
+    ///
+    /// 原生确认框是模态同步调用（见 [`crate::shared::dialog::DialogPort::confirm`]），
+    /// 在 `update()` 里调用会让窗口在用户思考的那几秒里完全失去响应。
+    /// 故与「打开 / 另存为」同一套路：登记意图 → 后台线程问 → 每帧取回。
+    ///
+    /// 已有确认在飞时**忽略**本次请求（`DialogRunner::spawn` 的语义）：
+    /// 连点两下「删除」不该弹出两个系统窗口，更不该在第一个答复之后
+    /// 把第二个目标也顺手删掉。
+    pub fn request_delete(&mut self, path: &str) {
+        if self.pending_delete.is_some() {
+            return;
+        }
+        let message = self.delete_confirm_message(path);
+        self.pending_delete = Some(path.to_string());
+        self.dialogs.spawn(DialogRequest::Confirm { message });
+    }
+
+    /// 当前是否有删除在等用户确认（状态栏 / 测试观察用）。
+    pub fn delete_pending(&self) -> Option<&str> {
+        self.pending_delete.as_deref()
+    }
+
+    /// 构造删除确认的提示文案。
+    ///
+    /// 目录要**明说会连内容一起删**：`remove_dir_all` 一旦执行不可恢复，
+    /// 而用户右键点到的是目录本身，很可能没意识到里面还有东西。
+    /// 只写「确定删除 X？」属于把风险藏起来。
+    fn delete_confirm_message(&self, path: &str) -> String {
+        let name = path.rsplit('/').next().unwrap_or(path);
+        let is_directory = self
+            .workspace_entries
+            .items
+            .iter()
+            .any(|(p, is_dir)| *is_dir && p == path);
+        if !is_directory {
+            return format!("确定删除「{name}」？删除后不可恢复。");
+        }
+        // 目录：明说会连内容一起删。`remove_dir_all` 不可恢复，
+        // 而用户右键点到的是目录自身，很可能没意识到里面还有东西。
+        let prefix = format!("{path}/");
+        let inside = self
+            .workspace_entries
+            .items
+            .iter()
+            .filter(|(p, _)| p.starts_with(&prefix))
+            .count();
+        format!("确定删除目录「{name}」？\n其中包含约 {inside} 项内容，删除后不可恢复。")
     }
 }

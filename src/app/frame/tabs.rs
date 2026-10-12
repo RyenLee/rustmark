@@ -159,4 +159,39 @@ impl EditorApp {
             .preferences
             .set_editor(SetEditorCommand { editor });
     }
+
+    /// 取得活动文档；没有则新建一个空白未命名文档。
+    ///
+    /// # 谁在调用
+    ///
+    /// * `editor_view::show` **每帧**兜底调用 —— 一旦离开欢迎页，
+    ///   编辑区必须永远有一页可编辑（否则用户看到的是一块点不动的灰板）；
+    /// * `save_document` 在保存前调用，让「没打开任何文档时按 Ctrl+S」
+    ///   也能建一份出来而不是静默失败。
+    ///
+    /// 启动时**不**调用：那一次是欢迎页，见 [`Self::should_show_welcome`]。
+    pub fn ensure_document(&mut self) -> Option<DocumentId> {
+        if self.active_doc.is_some() {
+            return self.active_doc;
+        }
+        if let Ok(id) = self.services.documents.new_document(NewDocumentCommand) {
+            self.active_doc = Some(id);
+            // 登记查找状态的「当前文档」：不登记的话，首次跨文档时
+            // `on_document_switched` 会把这一次当成「首次」而非「切换」，
+            // 于是本该清空的旧命中被保留下来。
+            self.find.on_document_switched(id);
+            self.refresh_text();
+        }
+        self.active_doc
+    }
+
+    /// 当前是否应显示**欢迎页**（一个标签都没开）。
+    ///
+    /// 判据是「有没有活动文档」而不是「文档数是不是 1」：
+    /// 启动时那份空白未命名文档**不算**「用户开了个文档」，
+    /// 它只是为了让编辑区第一帧可编辑。所以启动时若也显示欢迎页，
+    /// 底下那份空白文档就成了「看不见但存在」的多余标签。
+    pub fn should_show_welcome(&self) -> bool {
+        self.active_doc.is_none()
+    }
 }
