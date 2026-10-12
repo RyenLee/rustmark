@@ -141,7 +141,7 @@ pub fn candidates_from_workspace(
     recent: &[RecentFileView],
     limit: usize,
 ) -> Vec<QuickOpenItem> {
-    let mut out: Vec<QuickOpenItem> = Vec::new();
+    let mut out: Vec<QuickOpenItem> = Vec::with_capacity(limit.max(16));
     let mut seen: Vec<String> = Vec::new();
     for (path, is_dir) in items {
         if *is_dir {

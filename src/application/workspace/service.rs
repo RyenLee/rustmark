@@ -269,7 +269,7 @@ impl WorkspaceAppService {
     /// 跨文件搜索：覆盖磁盘文件与未保存草稿，命中受上限保护。
     pub fn search(&self, cmd: SearchQuery) -> AppResult<SearchResultView> {
         let candidates = self.gather_candidates()?;
-        let mut hits: Vec<SearchHitView> = Vec::new();
+        let mut hits: Vec<SearchHitView> = Vec::with_capacity(MAX_TOTAL_HITS);
         let mut truncated = false;
 
         for (file_id, path, content) in candidates {

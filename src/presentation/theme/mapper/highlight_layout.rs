@@ -187,7 +187,7 @@ pub fn highlight_layout_with_find(
     };
 
     let mut next_span = 0usize; // `prepared` 中尚未入场的最小下标
-    let mut active: Vec<usize> = Vec::new(); // 可能覆盖当前行及其后行的 span 下标
+    let mut active: Vec<usize> = Vec::with_capacity(prepared.len().min(64));
     let mut byte_cursor = 0usize;
 
     for (idx, line) in lines.iter().enumerate() {

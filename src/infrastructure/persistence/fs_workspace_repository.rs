@@ -206,7 +206,7 @@ impl WorkspaceRepository for FsWorkspaceRepository {
                 root.as_str()
             )));
         }
-        let mut out = Vec::new();
+        let mut out = Vec::with_capacity(self.rules.max_entries);
         if !self.collect(&root_path, max_depth, &mut out) {
             log::warn!(
                 "工作区 {} 条目数达到上限 {}，扫描已截断",
