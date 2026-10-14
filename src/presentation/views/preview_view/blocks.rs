@@ -12,7 +12,13 @@ use super::*;
 /// 标题**可点击**，点击后编辑区跳到对应行（FR-02 验收用例）。
 /// 这是预览区唯一「点击跳转」的入口——正文段落不给点击，
 /// 否则用户在预览里想选中文本时会被跳转打断。
-pub(super) fn draw_heading(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, block: &BlockView) {
+pub(super) fn draw_heading(
+    app: &mut EditorApp,
+    ui: &mut Ui,
+    theme: &Theme,
+    block: &BlockView,
+    internal_targets: &[(String, u64)],
+) {
     let m = theme.metrics;
     let level = block.level.unwrap_or(1).clamp(1, 6);
     let size = m.preview_font_size * StyleMapper::heading_scale(level);
@@ -28,6 +34,7 @@ pub(super) fn draw_heading(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, bloc
     // 行内样式（`**粗体**` / `` `代码` `` / `<kbd>` …）：有片段时走富文本路径，
     // 没有则走原来的单标签路径。两条路径都带点击感应用于「点击标题跳转」。
     // 标题随正文一起跟随「自动换行」开关。
+    // 正文里的链接 / 脚注引用也在此获得点击能力（`internal_targets` 提供跳转目标）。
     let wrap = app.editor.word_wrap;
     let max_w = if wrap {
         ui.available_width()
@@ -36,6 +43,7 @@ pub(super) fn draw_heading(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, bloc
     };
     let resp = render_inline_text(
         ui,
+        app,
         theme,
         &block.content,
         &block.spans,
@@ -46,6 +54,7 @@ pub(super) fn draw_heading(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, bloc
         },
         egui::Sense::click(),
         max_w,
+        internal_targets,
     );
     if resp.clicked() {
         app.ui.sync.request_click(block.id);
@@ -65,7 +74,14 @@ pub(super) fn draw_heading(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, bloc
 
 /// 段落：按可用宽度折行；行内样式（粗体 / 行内代码 / 键帽 / 高亮 / 上下标）
 /// 由 [`render_inline_text`] 按片段排版。
-pub(super) fn draw_paragraph(ui: &mut Ui, theme: &Theme, block: &BlockView, wrap: bool) {
+pub(super) fn draw_paragraph(
+    app: &mut EditorApp,
+    ui: &mut Ui,
+    theme: &Theme,
+    block: &BlockView,
+    wrap: bool,
+    internal_targets: &[(String, u64)],
+) {
     let size = theme.metrics.preview_font_size;
     let max_w = if wrap {
         ui.available_width()
@@ -74,6 +90,7 @@ pub(super) fn draw_paragraph(ui: &mut Ui, theme: &Theme, block: &BlockView, wrap
     };
     render_inline_text(
         ui,
+        app,
         theme,
         &block.content,
         &block.spans,
@@ -84,6 +101,7 @@ pub(super) fn draw_paragraph(ui: &mut Ui, theme: &Theme, block: &BlockView, wrap
         },
         egui::Sense::hover(),
         max_w,
+        internal_targets,
     );
 }
 
@@ -92,7 +110,14 @@ pub(super) fn draw_paragraph(ui: &mut Ui, theme: &Theme, block: &BlockView, wrap
 /// 引用帧会吞掉内层段落（见解析器 `OpenBlock::absorbs`），正文（含多段落
 /// 与行内样式）都回流在 `content` 里，画在色条右侧的框内；`content` 为空
 /// 的场合（理论上只剩空引用 `>`）只画色条。
-pub(super) fn draw_quote(ui: &mut Ui, theme: &Theme, block: &BlockView, wrap: bool) {
+pub(super) fn draw_quote(
+    app: &mut EditorApp,
+    ui: &mut Ui,
+    theme: &Theme,
+    block: &BlockView,
+    wrap: bool,
+    internal_targets: &[(String, u64)],
+) {
     egui::Frame::new()
         .fill(theme.bg_tertiary)
         .inner_margin(egui::Margin::symmetric(
@@ -118,6 +143,7 @@ pub(super) fn draw_quote(ui: &mut Ui, theme: &Theme, block: &BlockView, wrap: bo
                     };
                     render_inline_text(
                         ui,
+                        app,
                         theme,
                         &block.content,
                         &block.spans,
@@ -129,6 +155,7 @@ pub(super) fn draw_quote(ui: &mut Ui, theme: &Theme, block: &BlockView, wrap: bo
                         },
                         egui::Sense::hover(),
                         max_w,
+                        internal_targets,
                     );
                 }
             });

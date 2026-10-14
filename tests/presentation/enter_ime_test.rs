@@ -641,6 +641,206 @@ fn enter_press_without_release_still_inserts_under_ime_enabled() {
     assert_eq!(f.content(), "hello\n\n\n");
 }
 
+// ============================================================================
+// 2026-10-12 暴力扫描发现的回归（armed 到期帧 repeat 剔除 / 组合期预编辑串被吃）
+// ============================================================================
+
+/// **armed 窗口到期的那一帧，`repeat` 回车不得被吞**。
+///
+/// egui 的 `remove_ime_incompatible_events` 在 `TextEdit::show` **控件内部**、
+/// 按当帧仍为真的 `state.ime_enabled` 剔除全部 `repeat: true` 按键；armed
+/// 到期帧补发的 `Disabled` 排在事件流尾部、要等 IME 事件排序（发生在剔除
+/// **之后**）才生效，救不回那一帧。旧实现还在该帧先清零 `egui_ime_armed`
+/// 再做抹平检查，抹平被跳过——release 丢失后的第二次回车被整个吞掉，
+/// 内容停在 `"hello\n"`，正是「连按回车只多出一个新行」。
+///
+/// 修复：抹平判据改为「armed 为真 **或** 本帧即将补发 Disabled」。
+#[test]
+fn repeat_enter_on_armed_expiry_frame_still_inserts() {
+    let mut f = fixture_with("hello");
+    f.focus_at_end();
+
+    f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Enabled)]);
+    f.frame_with(vec![]);
+
+    // 第 1 次：正常按下，release **丢失**（Windows 上候选窗/其他窗口抢焦点
+    // 吞掉 keyup 的真实场景）——egui 的 `keys_down` 因此残留。
+    f.frame_with(vec![pressed_key(egui::Key::Enter)]);
+    f.frame_with(vec![]);
+    assert_eq!(f.content(), "hello\n");
+
+    // 第 2 次：`keys_down` 残留使 egui 判 `repeat: true`，且时钟推进 100ms
+    // 已超过 armed 窗口（50ms）——本帧正是 armed 到期帧。
+    f.clock.advance(100);
+    f.frame_with(vec![pressed_key(egui::Key::Enter)]);
+    f.frame_with(vec![released_key(egui::Key::Enter)]);
+    f.frame_with(vec![]);
+    assert_eq!(
+        f.content(),
+        "hello\n\n",
+        "armed 到期帧的 repeat 回车也必须换行"
+    );
+    assert_eq!(f.app.editor_bound_text(), "hello\n\n");
+
+    // 第 3 次：键盘恢复正常（release 到位）后照常工作。
+    f.clock.advance(100);
+    f.frame_with(vec![pressed_key(egui::Key::Enter)]);
+    f.frame_with(vec![released_key(egui::Key::Enter)]);
+    f.frame_with(vec![]);
+    assert_eq!(f.content(), "hello\n\n\n");
+}
+
+/// **组合窗内的裸按键：预编辑串转为普通文本，按键照常生效**。
+///
+/// egui 0.33 的 `Preedit` 会把预编辑串真实写进文本缓冲区，本应用的 diff
+/// 路径随即把它同步进领域——用户看得见、领域也已认账。旧实现在 armed 窗
+/// （50ms，比组合窗 800ms 短一个量级）到期后补发 `Disabled` 清零 egui 的
+/// `ime_enabled`，**预编辑选区却还挂在缓冲区里**：回车的 `delete_selected`
+/// 把 "ni" 整个吃掉，领域内容凭空丢失（实测 `"hello\n"`）。
+///
+/// 修复：armed 到期时组合窗仍新鲜就只续期、不补 `Disabled`；组合窗内到达
+/// 裸按键则补一个空 `Commit("")` 折叠选区（egui 的 Commit 分支对空串的
+/// 处理正是「折叠光标到 primary」），预编辑串由此转为普通文本。
+#[test]
+fn preedit_then_enter_keeps_preedit_as_text() {
+    let mut f = fixture_with("hello");
+    f.focus_at_end();
+
+    f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Enabled)]);
+    f.frame_with(vec![]);
+    for pre in ["n", "ni"] {
+        f.clock.advance(100);
+        f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Preedit(
+            pre.to_owned(),
+        ))]);
+        f.frame_with(vec![]);
+    }
+    assert_eq!(f.content(), "helloni", "预编辑串应经 diff 路径落进领域");
+
+    // 间隔 300ms：armed 窗（50ms）早已到期，但组合窗（800ms）仍新鲜——
+    // 此时不得补发 Disabled 拆预编辑选区。
+    f.clock.advance(300);
+    f.frame_with(vec![]);
+
+    // 用户不确认候选直接回车：预编辑串保留为普通文本，回车落在其后。
+    f.enter();
+    assert_eq!(f.content(), "helloni\n", "放弃组合的回车不应吃掉预编辑串");
+    assert_eq!(f.app.editor_bound_text(), "helloni\n");
+    f.enter();
+    assert_eq!(f.content(), "helloni\n\n", "第二次回车紧接其后再出一行");
+}
+
+/// 组合窗内的**裸文本**同样保留预编辑串（打字不会让已可见的拼音消失）。
+#[test]
+fn preedit_then_typing_keeps_preedit_as_text() {
+    let mut f = fixture_with("hello");
+    f.focus_at_end();
+
+    f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Enabled)]);
+    f.frame_with(vec![]);
+    for pre in ["n", "ni"] {
+        f.clock.advance(100);
+        f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Preedit(
+            pre.to_owned(),
+        ))]);
+        f.frame_with(vec![]);
+    }
+
+    // 组合窗内直接打一个可见字符：选区先被折叠，"ni" 保留为普通文本。
+    f.clock.advance(200);
+    f.frame_with(vec![egui::Event::Text("x".to_owned())]);
+    f.frame_with(vec![]);
+    assert_eq!(f.content(), "hellonix", "裸文本不得吃掉预编辑串");
+
+    f.enter();
+    assert_eq!(f.content(), "hellonix\n");
+}
+
+/// **守卫到期那一帧的裸按键，预编辑串也不得被吃**（2026-10-12 细网格扫描发现）。
+///
+/// 这是「组合期预编辑串保护」的**边界情形**：`Preedit` 之后一直没有
+/// `Preedit`/`Commit`/`Disabled`，直到 800ms 守卫窗**恰好到期的那一帧**
+/// 才按下一个裸键（回车）。旧实现里该帧的执行顺序是：
+///
+/// ```text
+/// ① 守卫分支：ime_composing && now >= until → 清零 ime_composing = false
+/// ② armed 分支：已 false → 补发 Disabled、清零 egui 的 ime_enabled
+/// ③ 裸按键兜底：判据 `self.ime_composing` 已为 false → 整段跳过  ← 漏洞
+/// ④ TextEdit 处理 Enter：delete_selected 吃掉选区里的预编辑串
+/// ```
+///
+/// 关键在于兜底判据用错了对象：`ime_composing` 只是**我们这侧的观察窗口**，
+/// 到期只说明「等够了」，不代表真实组合已结束——egui 的预编辑选区仍在
+/// 缓冲区里。修复：判据改用**本帧清算之前**的状态（`composing_before`），
+/// 于是「Preedit 之后无论隔多久才按裸键」都能被兜住。
+#[test]
+fn preedit_then_enter_on_guard_expiry_frame_keeps_text() {
+    let mut f = fixture_with("基线");
+    f.focus_at_end();
+
+    f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Enabled)]);
+    f.frame_with(vec![]);
+    f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Preedit(
+        "sheng".to_owned(),
+    ))]);
+    f.frame_with(vec![]);
+    assert_eq!(f.content(), "基线sheng", "预编辑串应落进领域");
+
+    // 恰好跨过 800ms 守卫窗（旧实现在该帧吃掉预编辑串）。
+    f.clock.advance(900);
+    f.enter();
+
+    assert_eq!(
+        f.content(),
+        "基线sheng\n",
+        "守卫到期帧的回车不得吃掉预编辑串"
+    );
+    assert_eq!(f.app.editor_bound_text(), "基线sheng\n");
+    f.enter();
+    assert_eq!(f.content(), "基线sheng\n\n", "后续回车照常");
+}
+
+/// 守卫到期的**整段邻域**都要安全：细网格扫描两个时间边界
+/// （armed 50ms / 守卫 800ms）前后各档，预编辑串一颗都不能丢。
+///
+/// 时间边界是此类缺陷的高发区——单点用例只能证明「某个毫秒值成立」，
+/// 扫描才能证明「这个边界整体不漏」。用户复报十几次的根源正是
+/// 每次只修了一个点、边界另一侧还漏。
+#[test]
+fn preedit_survives_enter_across_all_timing_boundaries() {
+    for gap in [
+        0u64, 10, 20, 30, 40, 50, 60, 70, 80, 100, 200, 400, 600, 700, 780, 790, 795, 799, 800,
+        801, 805, 810, 850, 900, 1000, 1600, 5000,
+    ] {
+        let mut f = fixture_with("基线");
+        f.focus_at_end();
+        f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Enabled)]);
+        f.frame_with(vec![]);
+        f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Preedit(
+            "sheng".to_owned(),
+        ))]);
+        f.frame_with(vec![]);
+
+        let before = f.content();
+        f.enter_after(gap);
+        let after = f.content();
+
+        assert!(
+            before.contains("sheng") && after.contains("sheng"),
+            "gap={gap}ms：预编辑串被吃掉（前={before:?} 后={after:?}）"
+        );
+        assert!(
+            after.ends_with('\n'),
+            "gap={gap}ms：回车未生效（内容={after:?}）"
+        );
+        assert_eq!(
+            f.app.editor_bound_text(),
+            after,
+            "gap={gap}ms：领域与绑定串必须逐字节相等"
+        );
+    }
+}
+
 /// **不同光标位置**的回车 + 行号栏与内容行数**严格一致**（验收标准 3/4）。
 ///
 /// 覆盖：行中拆行、行首上插空行、同一光标连续回车、文首插入；每一步都

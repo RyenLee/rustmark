@@ -118,7 +118,10 @@ impl Parser {
 
     /// 符号表 / 大运算符 / 函数名三种查表，都查不到就是子集外。
     pub(super) fn parse_symbol_or_op(&mut self, name: &str) -> Result<Node, MathError> {
-        if LIMIT_OPS.contains(&name) || matches!(name, "int" | "iint" | "iiint" | "oint") {
+        // 大运算符（含 `\int` 系列，见 `LIMIT_OPS` 的说明）：
+        // `limits` 记录「这个运算符在 display 模式下要叠放上下限」，
+        // 行内模式下仍放右侧（`mark_stacked` 只对 display 生效）。
+        if LIMIT_OPS.contains(&name) {
             let glyph = SYMBOLS
                 .iter()
                 .find(|(n, _)| *n == name)
@@ -126,7 +129,7 @@ impl Parser {
                 .ok_or_else(|| MathError::Unsupported(format!("\\{name}")))?;
             return Ok(Node::BigOp {
                 glyph,
-                limits: self.display && LIMIT_OPS.contains(&name),
+                limits: self.display,
             });
         }
         if FUNCTIONS.contains(&name) {

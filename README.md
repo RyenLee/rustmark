@@ -17,18 +17,19 @@ GBK/GB18030 无损读写、分屏实时预览。
 | 撤销 / 重做（连续输入合并） | P0 | ✅ 已实现 |
 | 查找 / 替换（正则 / 大小写 / 整词 / 全文搜索有界） | P0 | ✅ 已实现 |
 | 分屏实时预览 + 双向滚动同步（按块映射，防抖 150ms） | P0 | ✅ 已实现 |
-| Markdown 渲染：标题 / 列表 / 引用 / 表格（GFM）/ 任务列表（点击回写）/ 链接 | P0 | ✅ 已实现 |
+| Markdown 渲染：标题 / 列表 / 引用 / 表格（GFM）/ 任务列表（点击回写）/ 链接（**预览内可点击**：外部地址交系统默认程序，`#锚点` 页内跳转） | P0 | ✅ 已实现 |
 | 图片显示（本地 / 远程 URL / data URI） | P0 | ✅ 已实现 |
 | 新建 / 打开 / 保存（原子写：临时文件 + rename）/ 另存为 | P0 | ✅ 已实现 |
 | 导出 HTML（目录 / 内联图片 / KaTeX 与 Mermaid 资源按需注入） | P0 | ✅ 已实现 |
 | 快捷键系统（全键可自定义，冲突检测） | P0 | ✅ 已实现 |
 | 多标签编辑 | P1 | ✅ 已实现 |
-| 数学公式（LaTeX）/ Mermaid 图表 | P1 | ✅ 已实现（**编辑器内预览直接渲染**：自研 LaTeX 子集排版引擎 + graph/flowchart 分层布局；子集外写法回退源码卡；导出 HTML 后由浏览器端 KaTeX/Mermaid 渲染） |
+| 数学公式（LaTeX）/ Mermaid 图表 | P1 | ✅ 已实现（**编辑器内预览直接渲染**：自研 LaTeX 子集排版引擎 + graph/flowchart 分层布局；内置数学兜底字体覆盖常用符号（无方框）；子集外写法回退源码卡；导出 HTML 后由浏览器端 KaTeX/Mermaid 渲染） |
 | 导出 PDF | P1 | ✅ 已实现（Windows 走无头 Edge/Chrome `--print-to-pdf` 静默落盘真实 PDF；无头内核不可用时回退系统打印对话框；v1.1 V11-04 / ADR-004 修订） |
 | 最近文件 | P1 | ✅ 已实现 |
 | 格式工具栏 | P1 | ✅ 已实现 |
 | 深色 / 浅色主题（含「跟随系统」） | P1 | ✅ 已实现 |
 | 大纲跳转 | P1 | ✅ 已实现 |
+| 等宽字体选择（内置 JetBrains Mono / Fira Code / IBM Plex Mono + 项目 `fonts/` 目录 + 常见系统等宽字体；设置页下拉，切换即时生效） | P1 | ✅ 已实现（2026-10-13 发现机制，2026-10-14 内置三款，v1.1 V11-21） |
 | 拖拽打开（文件 / 文件夹混拖，目录安全忽略） | P2 | ✅ 已实现 |
 | 自定义主题（TOML：8 项核心语义色 + 10 项语法高亮色可选覆盖） | P2 | ✅ 已实现 |
 | 文件树侧边栏（新建 / 重命名 / 删除，删除带二次确认） | P2 | ✅ 已实现 |
@@ -39,7 +40,7 @@ GBK/GB18030 无损读写、分屏实时预览。
 | 命令面板 / 符号插入 / 文档统计 / 文件对比 | 增补 | ✅ 已实现 |
 | Markdown 格式检查（lint） | P2 | ✅ 已实现（4 规则 + 开关 + 侧栏「检查」标签跳转） |
 
-> 状态核对基准：`REQUIREMENTS.md` §3、`docs/p1p2-implementation-log.md`、
+> 状态核对基准：`REQUIREMENTS.md` §3、`docs/archive/stage-reports/p1p2-implementation-log.md`、
 > `.agent/tasks/`（各任务单元验收输出）。
 
 ## 2. 安装与卸载
@@ -142,7 +143,7 @@ cargo build --release --bin rustmark   # 产物 target/release/rustmark*
 
 # 全量验证链（贡献者必过）
 cargo fmt --check
-cargo clippy --all-targets -- -D warnings
+cargo clippy --all-targets --all-features -- -D warnings
 cargo test  --all-targets
 cargo run   --bin check-arch
 ```

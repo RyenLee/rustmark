@@ -29,6 +29,7 @@ pub(super) fn draw_toc(
     theme: &Theme,
     block: &BlockView,
     headings: &[HeadingEntry],
+    _internal_targets: &[(String, u64)],
 ) {
     let m = theme.metrics;
     let title = if block.content.trim().is_empty() {
@@ -86,55 +87,107 @@ pub(super) fn draw_toc(
     ui.add_space(m.space_xs);
 }
 
-/// 脚注定义：`[1] 正文` 形式，小字 + 次级色，行内样式照常生效。
+/// 预览末尾的「脚注」区：把全文的脚注定义**收集到一起**渲染。
 ///
-/// # 标签为什么要单独画
+/// # 为什么不按源码位置内联渲染（V11-18）
 ///
-/// 解析器把 `[^1]: 脚注内容` 收成 `Footnote { label: "1" }`，**正文里不含
-/// `[^1]`**（那是标签，被 pulldown 单独给出）。若只画 `content`，用户看到的
-/// 是一条没有编号的孤立句子，与正文里的 `[^1]` 引用对不上号；
-/// 若把标签拼进 `content`，它又会参与搜索命中与字数统计。
-/// 故由渲染层在这里把两者并排画出来。
-pub(super) fn draw_footnote(ui: &mut Ui, theme: &Theme, block: &BlockView, wrap: bool) {
+/// 主流渲染器（Typora / GitHub / mermaid.js 文档站）都把脚注定义收在文档
+/// 末尾，正文里只留上标编号。早期实现按源码位置内联画 `[1] 内容`，用户滚到
+/// 文档底部找不到脚注——反馈「没有实现注脚」：截图里预览底部一片空白，
+/// 而编辑区明明写着定义。内联还会把定义塞进正文流中间，阅读被硬生截断。
+///
+/// # 标签为什么可点击
+///
+/// 与标题 / 目录条目同一条通路：`sync.request_click(block_id)` 把**编辑区**
+/// 滚到该脚注定义的源码行。正文里的上标编号暂不做点击（行内片段的
+/// 逐Span 命中需要 galley 字形级命中测试，成本与收益不成比例）。
+pub(super) fn draw_footnote_section(
+    app: &mut EditorApp,
+    ui: &mut Ui,
+    theme: &Theme,
+    footnotes: &[&BlockView],
+    wrap: bool,
+    internal_targets: &[(String, u64)],
+) {
     let m = theme.metrics;
     let size = m.preview_font_size - 2.0;
-    ui.horizontal_top(|ui| {
-        if let Some(label) = block.label.as_deref().filter(|l| !l.is_empty()) {
-            ui.label(
-                RichText::new(format!("[{label}]"))
-                    .size(size)
-                    .color(theme.syn_marker),
+    // 与正文的分隔：上方留白 + 一条细线。比 `rule` 轻——脚注是附属区，不是新章节。
+    ui.add_space(m.space_md);
+    let (line, _) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
+    ui.painter()
+        .hline(line.x_range(), line.top(), hairline(theme.border));
+    ui.add_space(m.space_sm);
+    ui.label(
+        RichText::new("脚注")
+            .strong()
+            .size(size + 1.0)
+            .color(theme.text_secondary),
+    );
+    ui.add_space(m.space_xs);
+    for (i, block) in footnotes.iter().enumerate() {
+        // 标签缺失（理论不上会发生）时退化为序号：没有编号的条目对不上正文里的引用。
+        let label = block
+            .label
+            .as_deref()
+            .filter(|l| !l.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| (i + 1).to_string());
+        ui.horizontal_top(|ui| {
+            let resp = ui.add(
+                egui::Label::new(
+                    RichText::new(format!("[{label}]"))
+                        .size(size)
+                        .color(theme.syn_link),
+                )
+                .sense(egui::Sense::click()),
             );
-        }
-        ui.with_layout(Layout::top_down(Align::LEFT), |ui| {
-            ui.set_min_width(ui.available_width().max(0.0));
-            let max_w = if wrap {
-                ui.available_width()
-            } else {
-                f32::INFINITY
-            };
-            render_inline_text(
-                ui,
-                theme,
-                &block.content,
-                &block.spans,
-                Typography {
-                    size,
-                    line_height: size * m.preview_line_height,
-                    base_style: "quote",
-                },
-                egui::Sense::hover(),
-                max_w,
-            );
+            if resp.clicked() {
+                app.ui.sync.request_click(block.id);
+            }
+            if resp.hovered() {
+                ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::PointingHand);
+            }
+            ui.with_layout(Layout::top_down(Align::LEFT), |ui| {
+                ui.set_min_width(ui.available_width().max(0.0));
+                let max_w = if wrap {
+                    ui.available_width()
+                } else {
+                    f32::INFINITY
+                };
+                render_inline_text(
+                    ui,
+                    app,
+                    theme,
+                    &block.content,
+                    &block.spans,
+                    Typography {
+                        size,
+                        line_height: size * m.preview_line_height,
+                        base_style: "quote",
+                    },
+                    egui::Sense::hover(),
+                    max_w,
+                    internal_targets,
+                );
+            });
         });
-    });
+        ui.add_space(m.space_xs);
+    }
 }
 
 /// 定义列表（`术语` + `: 定义`）：术语加粗、定义缩进在术语下方。
 ///
 /// 不套项目符号：定义列表的语义是「词条—释义」，画成 `• 术语: 定义`
 /// 就与普通无序列表混同了，而且术语与释义的从属关系在横向上会被拉平。
-pub(super) fn draw_definition_list(ui: &mut Ui, theme: &Theme, block: &BlockView, wrap: bool) {
+pub(super) fn draw_definition_list(
+    app: &mut EditorApp,
+    ui: &mut Ui,
+    theme: &Theme,
+    block: &BlockView,
+    wrap: bool,
+    internal_targets: &[(String, u64)],
+) {
     let m = theme.metrics;
     let size = m.preview_font_size;
     let line_height = size * m.preview_line_height;
@@ -147,6 +200,7 @@ pub(super) fn draw_definition_list(ui: &mut Ui, theme: &Theme, block: &BlockView
         };
         render_inline_text(
             ui,
+            app,
             theme,
             &entry.term,
             &entry.term_spans,
@@ -157,6 +211,7 @@ pub(super) fn draw_definition_list(ui: &mut Ui, theme: &Theme, block: &BlockView
             },
             egui::Sense::hover(),
             term_max_w,
+            internal_targets,
         );
         for body in &entry.definitions {
             ui.horizontal_top(|ui| {
@@ -183,6 +238,7 @@ pub(super) fn draw_definition_list(ui: &mut Ui, theme: &Theme, block: &BlockView
                     };
                     render_inline_text(
                         ui,
+                        app,
                         theme,
                         &body.text,
                         &body.spans,
@@ -193,6 +249,7 @@ pub(super) fn draw_definition_list(ui: &mut Ui, theme: &Theme, block: &BlockView
                         },
                         egui::Sense::hover(),
                         body_max_w,
+                        internal_targets,
                     );
                 });
             });
@@ -204,7 +261,14 @@ pub(super) fn draw_definition_list(ui: &mut Ui, theme: &Theme, block: &BlockView
 /// 未支持的扩展块（原始 HTML）：等宽原样显示并标注类型。
 ///
 /// 保留原文而不是隐藏——用户至少能看到自己写了什么，也知道这块没被渲染。
-pub(super) fn draw_raw(ui: &mut Ui, theme: &Theme, block: &BlockView, kind: &str) {
+pub(super) fn draw_raw(
+    _app: &mut EditorApp,
+    ui: &mut Ui,
+    theme: &Theme,
+    block: &BlockView,
+    kind: &str,
+    _internal_targets: &[(String, u64)],
+) {
     ui.label(
         RichText::new(&block.content)
             .font(FontId::monospace(theme.metrics.preview_font_size - 1.0))

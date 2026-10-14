@@ -12,5 +12,5 @@ mod paint;
 pub use emit::emit;
 pub use paint::{
     MermaidStyle, collect_clicks, finalize, first_md_link, fitted_height, paint, prim_count,
-    push_check, push_rect_outline, rect_boundary, rect_corners,
+    push_check, rect_boundary, rect_corners,
 };

@@ -46,6 +46,19 @@ fn rules_enabled(rules: &crate::application::dto::LintRulesView) -> bool {
 }
 
 /// 一条检查结果：规则名 + 说明 + 右侧行号，整行可点。
+///
+/// # 说明文字必须截断，不能放任溢出（问题 024）
+///
+/// `Layout::left_to_right` 里的裸 `label` **不换行**，说明一长就会把本行的
+/// `min_rect` 撑出面板（内容区右界 232pt，实测溢到 407.9pt）。而 egui 的
+/// `SidePanel` 给后续布局保留的是**内容 response.rect 的最大 x**（egui
+/// `panel.rs` 的 `allocate_left_panel`），于是侧栏实际占掉 [0, 415.9]——
+/// [240, 415.9] 之间没有任何面板绘制，真实渲染下露出交换链清屏色（黑），
+/// 编辑区也被整体推右。用户看到的正是「切到检查后，侧栏右侧与编辑区之间
+/// 一条竖向黑框」。
+///
+/// 修法与大纲行同款（见 `outline.rs`）：说明占「剩余宽 − 行号预留」并
+/// `truncate()`，超出部分显示省略号，绝不把布局撑出面板。
 fn lint_row(
     ui: &mut Ui,
     theme: &Theme,
@@ -55,7 +68,20 @@ fn lint_row(
         ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
             ui.add_space(ROW_PAD);
             ui.label(RichText::new(&issue.rule_label).color(theme.text_primary));
-            ui.label(RichText::new(&issue.message).color(theme.text_secondary));
+            // 说明占「剩余宽 − 行号预留」并**截断**：行号预留与大纲同款
+            // `OUTLINE_LINE_NO_W`，超长行号向左侵吞省略号，可接受（侧栏
+            // 宽度固定，省略号是唯一不失真的降级）。
+            let avail = (ui.available_width() - OUTLINE_LINE_NO_W).max(0.0);
+            ui.allocate_ui_with_layout(
+                egui::vec2(avail, 0.0),
+                Layout::left_to_right(Align::Center),
+                |ui| {
+                    ui.add(
+                        egui::Label::new(RichText::new(&issue.message).color(theme.text_secondary))
+                            .truncate(),
+                    );
+                },
+            );
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 // 行号展示按人类习惯 +1（DTO 里是 0-based，见 `LintIssueView`）。
                 ui.add_space(ROW_PAD);

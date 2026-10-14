@@ -78,6 +78,7 @@ fn span(start: usize, end: usize, style: &str) -> SpanView {
     SpanView {
         range: RangeView::new(start, end),
         style: style.to_string(),
+        url: None,
     }
 }
 

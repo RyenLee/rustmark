@@ -53,11 +53,14 @@ impl EditorApp {
     /// 再用与滚动同步同一套夹紧，避免「跳转后又被同步逻辑拖回去」。
     pub fn scroll_to_offset(&mut self, byte_offset: usize) {
         let theme = self.theme().clone();
-        let Some(tops) = mapper::line_tops(&theme, &self.editor_text) else {
-            // 行布局缓存未命中（首帧 / 刚换文档）：不猜行高——
-            // 猜了会让跳转停在一个看似合理实则错误的位置。
-            return;
-        };
+        // 优先用精确行顶表（含折行），缓存未就绪时退化成「统一行高」估算
+        // （见 S6-05 #12）：跳转仍让目标行落进视口上部，只是位置略有偏差，
+        // 绝不卡死、也不静默无反应。
+        let tops = mapper::line_tops(&theme, &self.editor_text).unwrap_or_else(|| {
+            let lh = theme.editor_font_size * theme.editor_line_height;
+            let lines = self.editor_text.split('\n').count() + 1;
+            (0..lines).map(|i| i as f32 * lh).collect()
+        });
         let starts = crate::presentation::views::scroll_sync::line_start_offsets(&self.editor_text);
         let line = crate::presentation::views::scroll_sync::line_of_offset(&starts, byte_offset);
         let Some(&top) = tops.get(line) else {

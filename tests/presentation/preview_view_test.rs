@@ -1203,3 +1203,261 @@ fn quote_body_paints_inside_the_quote_frame() {
         "后续正文应在引用框下方（框外），实际正文 {body:?} vs 框 {quote_frame:?}"
     );
 }
+
+// ============================================================================
+// 脚注区（V11-18）
+// ============================================================================
+
+/// 把一帧的全部绘制指令里的文本拼起来（用于「画面上有没有这段字」）。
+fn footnote_test_painted(shapes: &[egui::epaint::ClippedShape]) -> String {
+    fn walk(shape: &egui::epaint::Shape, out: &mut String) {
+        match shape {
+            egui::epaint::Shape::Text(text) => {
+                out.push_str(text.galley.text());
+                out.push('\n');
+            }
+            egui::epaint::Shape::Vec(inner) => {
+                for s in inner {
+                    walk(s, out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = String::new();
+    for clipped in shapes {
+        walk(&clipped.shape, &mut out);
+    }
+    out
+}
+
+/// V11-18 回归：脚注定义必须**收集到预览末尾的脚注区**渲染一次，
+/// 而不是内联在源码位置（用户反馈「没有实现注脚」：预览底部一片空白，
+/// 而编辑区明明写着定义）。
+///
+/// 计数法：定义正文在画面上应出现**两次**——编辑区源码一次 + 预览脚注区一次。
+/// 若内联渲染复活，预览会各画一遍 → 三次。正文用不含「脚注」二字的独特串，
+/// 以便单独断言脚注区标题确实被画出。
+#[test]
+fn footnote_definitions_render_in_a_section_exactly_once() {
+    let doc = "正文引用[^1]在此处。\n\n[^1]: 独特正文标记ZZZ\n";
+    let (_dir, mut app) = app_with(doc);
+    let ctx = egui::Context::default();
+    // 先跑几帧让预览完成解析与绘制（与既有用例同一节奏）。
+    render(&mut app, &ctx, 2);
+
+    // 末帧带真实屏幕尺寸采集全部绘制文本。
+    let input = egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(
+            egui::pos2(0.0, 0.0),
+            egui::vec2(1280.0, 800.0),
+        )),
+        ..Default::default()
+    };
+    let output = ctx.run(input, |ctx| {
+        rustmark::presentation::theme::mapper::apply(ctx, &app.ui.theme);
+        rustmark::presentation::views::main_view::show(&mut app, ctx);
+    });
+    let painted = footnote_test_painted(&output.shapes);
+
+    let hits = painted.matches("独特正文标记ZZZ").count();
+    assert_eq!(
+        hits, 2,
+        "脚注正文应只出现在编辑区源码与预览脚注区各一次，实际 {hits} 次"
+    );
+    assert!(
+        painted.contains("脚注"),
+        "预览应画出「脚注」区标题（实际绘制文本：{painted}）"
+    );
+    // 原始语法只应出现在**编辑区源码**里（本文档自身两处：引用一处 + 定义一处）。
+    // 预览区若把 `[^1]` 当正文画出来（引用处未换标号 / 定义未进脚注区），
+    // 次数就会变多。
+    let raw = painted.matches("[^1]").count();
+    assert_eq!(
+        raw, 2,
+        "预览不得把脚注语法当正文绘制（编辑区源码应恰好 2 处，实际 {raw} 次）"
+    );
+}
+
+// ============================================================================
+// 行内公式：二维排版（问题 3：预览里的 $...$ 曾显示为裸 LaTeX 源码）
+// ============================================================================
+
+/// 收集一帧里全部文字 shape 的 `(galley 原点, galley)`。
+fn collect_text_shapes(
+    shapes: &[egui::epaint::ClippedShape],
+) -> Vec<(egui::Pos2, std::sync::Arc<egui::Galley>)> {
+    fn walk(
+        shape: &egui::epaint::Shape,
+        out: &mut Vec<(egui::Pos2, std::sync::Arc<egui::Galley>)>,
+    ) {
+        match shape {
+            egui::epaint::Shape::Text(t) => out.push((t.pos, t.galley.clone())),
+            egui::epaint::Shape::Vec(inner) => {
+                for s in inner {
+                    walk(s, out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    for clipped in shapes {
+        walk(&clipped.shape, &mut out);
+    }
+    out
+}
+
+/// 一个 galley 首行基线落在屏幕上的 y（epaint：`Glyph::pos.y` 是行内基线偏移，
+/// 行顶还有 `PlacedRow::pos.y`，两者与 galley 原点相加即屏幕基线）。
+fn galley_first_baseline_y(pos: egui::Pos2, galley: &egui::Galley) -> Option<f32> {
+    let row = galley.rows.first()?;
+    let glyph = row.glyphs.first()?;
+    Some(pos.y + row.pos.y + glyph.pos.y)
+}
+
+/// 跑一帧并采集全部文字 shape（带真实屏幕尺寸，否则 egui 不绘制）。
+fn painted_text_shapes(
+    app: &mut EditorApp,
+    ctx: &egui::Context,
+) -> Vec<(egui::Pos2, std::sync::Arc<egui::Galley>)> {
+    let input = egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(
+            egui::pos2(0.0, 0.0),
+            egui::vec2(1280.0, 800.0),
+        )),
+        ..Default::default()
+    };
+    let output = ctx.run(input, |ctx| {
+        rustmark::presentation::theme::mapper::apply(ctx, &app.ui.theme);
+        rustmark::presentation::views::main_view::show(app, ctx);
+    });
+    collect_text_shapes(&output.shapes)
+}
+
+/// 问题 3 回归：行内公式必须**二维排版**，而不是把 LaTeX 源码当文本显示。
+///
+/// 旧实现只剥掉 `$` 后按斜体文本显示，预览里出现的是 `\Gamma(n)` 这串字符，
+/// 与官方 KaTeX 渲染（Γ 字形 + 上下标 + 括号伸缩）一眼可辨。
+/// 计数法：`\Gamma` 只应出现在**编辑区源码**里一次；排版后的 `Γ`
+/// 必须出现在画面上（官方渲染的同样是这个字形）。
+#[test]
+fn inline_math_is_typeset_instead_of_shown_as_source() {
+    let doc = "前文 $\\Gamma(n)$ 后文。\n";
+    let (_dir, mut app) = app_with(doc);
+    let ctx = egui::Context::default();
+    render(&mut app, &ctx, 2);
+    let shapes = painted_text_shapes(&mut app, &ctx);
+
+    let raw = shapes
+        .iter()
+        .filter(|(_, g)| g.text().contains("\\Gamma"))
+        .count();
+    assert_eq!(
+        raw, 1,
+        "`\\Gamma` 只应出现在编辑区源码里（预览若显示裸源码就会多出来）"
+    );
+    let typeset = shapes.iter().any(|(_, g)| g.text().contains('Γ'));
+    assert!(typeset, "预览应画出排版后的 Γ 字形（数学引擎的字形映射）");
+}
+
+/// 行内公式按**文本基线**拼进文字流。
+///
+/// 基线与文字错开是「公式像贴图而不是排版」的全部原因；官方 KaTeX 的
+/// 行内公式与文字共基线。这里直接比较两条 galley 的屏幕基线
+/// （epaint 的 `Glyph::pos.y` 即行内基线偏移）。
+#[test]
+fn inline_math_sits_on_the_text_baseline() {
+    let doc = "前文 $\\alpha$ 后文。\n";
+    let (_dir, mut app) = app_with(doc);
+    let ctx = egui::Context::default();
+    render(&mut app, &ctx, 2);
+    let shapes = painted_text_shapes(&mut app, &ctx);
+
+    let math = shapes
+        .iter()
+        .find(|(_, g)| g.text() == "α")
+        .map(|(p, g)| (*p, g.clone()))
+        .expect("预览应画出排版后的 α");
+    let text = shapes
+        .iter()
+        .find(|(_, g)| g.text().contains("前文"))
+        .map(|(p, g)| (*p, g.clone()))
+        .expect("预览应画出公式前的正文");
+    let math_base = galley_first_baseline_y(math.0, &math.1).expect("α 应有字形");
+    let text_base = galley_first_baseline_y(text.0, &text.1).expect("正文应有字形");
+    assert!(
+        (math_base - text_base).abs() < 2.0,
+        "行内公式应与文字共基线：公式 {math_base} vs 正文 {text_base}"
+    );
+    assert!(
+        math.0.x > text.0.x,
+        "公式应排在正文之后：{} vs {}",
+        math.0.x,
+        text.0.x
+    );
+}
+
+/// 长段落里的行内公式随正文**折行**，且落点仍与所在行的文字共基线。
+///
+/// 公式是原子块：当前行放不下就整体挪到下一行（不能从中间折断——
+/// 折断的公式含义会变），缩放只在「比整行还宽」时发生。
+#[test]
+fn inline_math_flows_with_wrapped_paragraph() {
+    let doc = format!(
+        "起头{}公式 $\\alpha$ 结尾{}。\n",
+        "文字".repeat(30),
+        "内容".repeat(30)
+    );
+    let (_dir, mut app) = app_with(&doc);
+    let ctx = egui::Context::default();
+    render(&mut app, &ctx, 2);
+    let shapes = painted_text_shapes(&mut app, &ctx);
+
+    let (math_pos, math_galley) = shapes
+        .iter()
+        .find(|(_, g)| g.text() == "α")
+        .map(|(p, g)| (*p, g.clone()))
+        .expect("长段落里也应画出排版后的 α");
+    let math_base = galley_first_baseline_y(math_pos, &math_galley).expect("α 应有字形");
+    // 公式必须与某一行正文共基线——证明它嵌在文字流里，
+    // 而不是飘在段落上方 / 下方或自己占一行。
+    let shares_line = shapes.iter().any(|(p, g)| {
+        g.text()
+            .chars()
+            .any(|c| c.is_ascii_alphabetic() || ('一'..='鿿').contains(&c))
+            && galley_first_baseline_y(*p, g).is_some_and(|b| (b - math_base).abs() < 2.0)
+    });
+    assert!(
+        shares_line,
+        "折行后公式仍应与所在行的文字共基线（基线 {math_base}）"
+    );
+    // 不越出屏幕：缩放 / 换行逻辑失效时公式会被画到面板外。
+    assert!(
+        math_pos.x < 1280.0,
+        "公式不应被画到屏幕外：x = {}",
+        math_pos.x
+    );
+}
+
+/// 排版失败的行内公式退化为斜体文本，不消失、不崩。
+///
+/// 退化路径与旧行为一致（剥掉 `$` 后按公式样式显示源码），
+/// 保证「引擎不认识的命令」不会让整段正文失踪。
+#[test]
+fn unsupported_inline_math_falls_back_to_text() {
+    let doc = "前文 $\\notarealcommand$ 后文。\n";
+    let (_dir, mut app) = app_with(doc);
+    let ctx = egui::Context::default();
+    render(&mut app, &ctx, 2);
+    let shapes = painted_text_shapes(&mut app, &ctx);
+
+    let hits = shapes
+        .iter()
+        .filter(|(_, g)| g.text().contains("\\notarealcommand"))
+        .count();
+    assert_eq!(
+        hits, 2,
+        "不支持的公式应退化为源码文本：编辑区一次 + 预览一次，实际 {hits}"
+    );
+}

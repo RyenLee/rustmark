@@ -26,7 +26,13 @@ use super::*;
 /// 测量用的字体与渲染相同（`Metrics::preview_font_size`），且 egui 的
 /// `strong` 只加深颜色、不换粗体字形（见 `RichText::strong` 的实现），
 /// 因此表头用同一字体测出的自然宽度是**精确**的。
-pub(super) fn draw_table(ui: &mut Ui, theme: &Theme, table: &TableView) {
+pub(super) fn draw_table(
+    app: &mut EditorApp,
+    ui: &mut Ui,
+    theme: &Theme,
+    table: &TableView,
+    internal_targets: &[(String, u64)],
+) {
     let m = theme.metrics;
     egui::Frame::new()
         .stroke(hairline(theme.border))
@@ -62,6 +68,7 @@ pub(super) fn draw_table(ui: &mut Ui, theme: &Theme, table: &TableView) {
             };
             if !table.header.is_empty() {
                 table_row(
+                    app,
                     ui,
                     theme,
                     &table.header,
@@ -69,12 +76,14 @@ pub(super) fn draw_table(ui: &mut Ui, theme: &Theme, table: &TableView) {
                     cols_layout,
                     true,
                     true,
+                    internal_targets,
                 );
             }
             for (r, row) in table.rows.iter().enumerate() {
                 // 最后一行**不画底线**：它与外框的下边重合，画两遍会在圆角处
                 // 露出一道比别处亮的线。
                 table_row(
+                    app,
                     ui,
                     theme,
                     row,
@@ -82,6 +91,7 @@ pub(super) fn draw_table(ui: &mut Ui, theme: &Theme, table: &TableView) {
                     cols_layout,
                     false,
                     r < last,
+                    internal_targets,
                 );
             }
         });
@@ -188,7 +198,9 @@ struct ColumnLayout<'a> {
 ///
 /// 相邻行的间距已由 `draw_table` 置 0（否则竖线会在行交界处断开），
 /// 纵向留白改由这里的 `pad_y` 提供。
+#[allow(clippy::too_many_arguments)] // 与 `render_inline_text` 同族：表格行渲染需要完整上下文，且单元格链接跳转要 `internal_targets`
 fn table_row(
+    app: &mut EditorApp,
     ui: &mut Ui,
     theme: &Theme,
     cells: &[String],
@@ -196,6 +208,7 @@ fn table_row(
     cols_layout: ColumnLayout<'_>,
     header: bool,
     bottom_line: bool,
+    internal_targets: &[(String, u64)],
 ) {
     let ColumnLayout { widths, aligns } = cols_layout;
     let m = theme.metrics;
@@ -235,6 +248,7 @@ fn table_row(
                             // 之前被当作纯文本直接打印，与正文里的粗体表现不一致。
                             render_inline_text(
                                 ui,
+                                app,
                                 theme,
                                 cell,
                                 spans,
@@ -242,12 +256,13 @@ fn table_row(
                                     size,
                                     line_height,
                                     // 表头用 `strong` 基准色（egui 的「强调」=
-                                    // 加深颜色而非换粗体字形，与旧实现观感一致）。
+                                    // 加深颜色而非换粗体字形，旧实现观感一致）。
                                     base_style: if header { "strong" } else { "" },
                                 },
                                 egui::Sense::hover(),
                                 // 单元格宽度固定，文本在格子内折行（不随全局开关）。
                                 ui.available_width(),
+                                internal_targets,
                             );
                             ui.add_space(pad_y);
                         });

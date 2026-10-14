@@ -1,5 +1,7 @@
 //! 图片块：纹理缓存取用与失败占位（缓存本体在父模块）。
 
+use crate::shared::system;
+
 use super::*;
 
 /// 图片：三种来源统一经 `AssetLoader`；失败显示占位而非崩溃。
@@ -45,6 +47,24 @@ pub(super) fn draw_image(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, block:
                         .size(theme.metrics.ui_font_size)
                         .color(theme.warning),
                     );
+                    // 远程地址（http/https）下载失败（网络受限 / 超时 / 原图
+                    // 已删除）时，仍提供「在浏览器中打开原图」的出口，而不是
+                    // 只留一句报错——用户文档里的远程图片常见于此。
+                    if (url.starts_with("http://") || url.starts_with("https://"))
+                        && ui
+                            .add(
+                                egui::Button::new(
+                                    RichText::new("在浏览器中打开 ↗")
+                                        .size(theme.metrics.ui_font_size - 1.0),
+                                )
+                                .small()
+                                .fill(theme.bg_primary)
+                                .stroke(egui::Stroke::new(1.0_f32, theme.border)),
+                            )
+                            .clicked()
+                    {
+                        let _ = system::open_external(&url);
+                    }
                 },
             );
         }

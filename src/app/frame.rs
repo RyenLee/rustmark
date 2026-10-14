@@ -41,6 +41,7 @@ use crate::application::workspace::service::TREE_MAX_DEPTH;
 use crate::domain::export::errors::ExportError;
 use crate::domain::preferences::value_objects::ActionId;
 use crate::shared::error::AppError;
+use crate::shared::fonts::EditorFontChoice;
 use crate::shared::path::FilePath;
 use crate::shared::result::AppResult;
 
@@ -124,6 +125,18 @@ pub struct EditorApp {
     pub command_palette_ui: CommandPaletteUiState,
     /// 系统当前是否偏好深色（「跟随系统」用）。
     system_dark: bool,
+    /// 设置页「字体」下拉的可选项（启动时发现一次：项目 `fonts/` 目录
+    /// + 常见系统等宽字体 + 默认哨兵）。
+    ///
+    /// 由基础设施层产出（`EditorFontChoice` 是 `shared` 契约，表现层可持）；
+    /// 发现只做存在性检查，成本在一启动时一次性付出。
+    pub editor_fonts: Vec<EditorFontChoice>,
+    /// 当前已装进 egui 的编辑区字体键；`None` = 尚未装配。
+    ///
+    /// 与持久化配置里的 `font_family` 比对即可判断「要不要重装字体」——
+    /// 重装会触发 egui 整体重建字体图集（一次可见卡顿），故只在
+    /// **真的变了**时做。首帧后由 [`Self::ensure_editor_fonts`] 补齐。
+    installed_font_family: Option<String>,
     /// 原生对话框的后台执行器（S6-11f）。
     ///
     /// 此前只有一个 `pending_dialog: Option<PendingDialog>`——
@@ -269,6 +282,11 @@ pub(super) const IME_GUARD_MS: u64 = 800;
 /// 取 50ms：真实组合里 `Enabled` 与首个 `Preedit` 之间的间隔不到一帧
 /// （~16ms），50ms 留了三帧余量；连按回车的人手间隔 ≥80ms，
 /// 故第一次回车就已出窗、立即恢复。
+///
+/// 出窗那一帧由 [`EditorApp::apply_pending_editor_state`] 补发 `Disabled`
+/// 复位 egui，并**同时抹平本帧 Enter 的 `repeat`**——两者缺一不可：
+/// `remove_ime_incompatible_events` 在 `TextEdit::show` 内部、按当帧仍为真
+/// 的 `ime_enabled` 剔除 repeat 按键，晚一步的 `Disabled` 救不回它。
 pub(super) const IME_ARM_MS: u64 = 50;
 
 impl EditorApp {
@@ -313,6 +331,10 @@ impl EditorApp {
             dialogs: DialogRunner::new(services.dialogs.clone()),
             services,
             system_dark,
+            // 字体清单只做存在性发现（不读文件内容），启动成本可忽略；
+            // 真正的字节读取与装配发生在 `ensure_editor_fonts`。
+            editor_fonts: crate::infrastructure::fonts::editor_font_choices(),
+            installed_font_family: None,
             active_doc: None,
             editor_text: String::new(),
             pending_cursor: None,
@@ -368,6 +390,11 @@ impl eframe::App for EditorApp {
         //    否则系统外观变化的那一帧会闪一下旧配色。
         self.refresh_system_theme(ctx);
         mapper::apply(ctx, &self.ui.theme);
+
+        // 1.5) 编辑区字体：设置页改过（或首帧）时重装。
+        //      放在任何控件布局之前——`set_fonts` 要赶在本帧排版之前生效。
+        //      内部按「键没变就跳过」短路，未改字体时每帧只多一次字符串比对。
+        self.ensure_editor_fonts(ctx);
 
         // 2) 收后台对话框的结果。
         //
@@ -441,19 +468,20 @@ pub fn run(services: Services) -> eframe::Result {
             // 不拆这一刀的话，冷启动的大头会被误记到 `EditorApp::new` 头上。
             crate::app::startup_timing::mark("窗口就绪");
 
-            // 字体必须在第一帧绘制**之前**装好。
-            // 若拖到首帧之后再设，首帧会用默认字体画一遍（中文全为方框）、
-            // 第二帧再重排——用户会看到一次明显的字体跳变。
-            install_fonts(&cc.egui_ctx);
-
-            let app = EditorApp::new(services, system_dark);
+            // 应用先构造（它持有持久化配置，字体选择要以配置为权威来源），
+            // 再装字体——但**仍然在第一帧绘制之前**：eframe 绘制首帧前会先
+            // 走完创建闭包，故用户上次选的字体会从第一帧就生效，不会出现
+            // 「先用默认字体画一帧（中文全为方框）、第二帧再跳变」。
+            let mut app = EditorApp::new(services, system_dark);
             crate::app::startup_timing::mark("应用构造完成");
+            app.ensure_editor_fonts(&cc.egui_ctx);
             Ok(Box::new(app))
         }),
     )
 }
 
-/// 装配界面字体：在 egui 默认字体族上追加系统 CJK 字体。
+/// 装配界面字体：在 egui 默认字体族上追加系统 CJK 字体，并把用户选中的
+/// 等宽字体置顶进内置 `Monospace` 族。
 ///
 /// # 为什么必须做
 ///
@@ -470,16 +498,40 @@ pub fn run(services: Services) -> eframe::Result {
 /// `log` 宏会被静默丢弃——"以为有日志其实没有"比没有日志更糟。
 /// 与 `startup_timing` 的启动期诊断保持同一做法；**仅在失败时出声**，
 /// 正常启动不应有任何输出污染 stderr。
-fn install_fonts(ctx: &egui::Context) {
-    let setup = crate::infrastructure::fonts::font_definitions();
-    if setup.cjk_source.is_none() {
-        eprintln!(
-            "rustmark：未找到可用的中文字体，界面中文将显示为方框。\
-             请安装中文字体（Windows 通常自带微软雅黑；\
-             Linux 可安装 fonts-noto-cjk；macOS 应自带苹方）"
-        );
+impl EditorApp {
+    /// 确保 egui 里装的是当前选中的编辑区字体；**没变就不动**。
+    ///
+    /// 每帧调用（`update` 开头与启动各一次）：内部只做一次字符串比对，
+    /// 命中即返回。重装有真实代价——`set_fonts` 会触发 egui 整体重建
+    /// 字体图集（一次可见卡顿），故绝不在「没变」时触发。
+    fn ensure_editor_fonts(&mut self, ctx: &egui::Context) {
+        let selected = self.settings().theme.font_family.clone();
+        if self.installed_font_family.as_deref() == Some(selected.as_str()) {
+            return;
+        }
+        self.install_editor_fonts(ctx, &selected);
     }
-    ctx.set_fonts(setup.definitions);
+
+    /// 真正重装字体（选中项变化 / 首帧时）。
+    fn install_editor_fonts(&mut self, ctx: &egui::Context, selected: &str) {
+        let setup = crate::infrastructure::fonts::font_definitions(Some(selected));
+        if setup.cjk_source.is_none() {
+            // 系统没中文字体不等于中文变方框了——内置 Noto Sans SC 子集
+            // （GB2312）会兜底。仍要出声：用户该知道观感来自内置子集，
+            // 且 GB2312 之外的生僻字在此环境下仍会是方框。
+            eprintln!(
+                "rustmark：未找到系统中文字体，已改用内置 Noto Sans SC 子集（GB2312）渲染中文。\
+                 常用汉字不受影响；生僻字在此环境下仍可能显示为方框。\
+                 装一副中文字体即可获得完整覆盖（Windows 通常自带微软雅黑；\
+                 Linux 可安装 fonts-noto-cjk；macOS 应自带苹方）"
+            );
+        }
+        ctx.set_fonts(setup.definitions);
+        // 清单同步刷新：用户可能往项目 fonts/ 目录放了新字体后重启，
+        // 那次重启会走这里，下拉里立刻能选到。
+        self.editor_fonts = setup.editor_fonts;
+        self.installed_font_family = Some(selected.to_string());
+    }
 }
 
 #[cfg(test)]

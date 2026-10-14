@@ -1,6 +1,6 @@
 //! Mermaid 各图种共用的数据模型：解析产物 `Graph`、布局产物 `Prim` / `MermaidLayout`。
 
-use egui::{Pos2, Rect, Vec2};
+use egui::{Color32, Pos2, Rect, Vec2};
 
 /// 节点外形。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -83,6 +83,11 @@ pub(super) enum Prim {
         fill: bool,
         /// 子程序形的两道内竖线。
         ticks: bool,
+        /// 覆盖填充色（优先于 `style.node_fill`）。`None` 时回落主题节点色——
+        /// 甘特图按状态着色（done/active/crit/默认）时逐条指定。
+        fill_color: Option<Color32>,
+        /// 覆盖描边色（优先于 `style.node_stroke`）。
+        stroke_color: Option<Color32>,
     },
     Line {
         a: Pos2,
@@ -106,6 +111,8 @@ pub(super) enum Prim {
         size: f32,
         /// 是否铺一块底色（边标签压线时用）。
         plate: bool,
+        /// 覆盖文字色（优先于 `style.text`）。甘特图把任务名画在条内时用白色。
+        color: Option<Color32>,
     },
 }
 

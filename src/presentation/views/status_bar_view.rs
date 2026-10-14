@@ -160,30 +160,35 @@ pub fn build_model(app: &EditorApp) -> StatusBarModel {
 }
 
 /// 主题显示名与提示（对齐原型 `StatusBar.vue` 的三态文案）。
+///
+/// # 提示为什么必须写「下一态是谁」
+///
+/// 轮换是**三态**序列 `深色 → 浅色 → 跟随系统 → 深色`
+/// （原型 `THEME_CYCLE`，见 `EditorApp::cycle_theme`）。早期提示只写
+/// 「点击切换主题（深色 / 浅色 / 跟随系统）」——用户当前在浅色，
+/// 点一下却因为「跟随系统」解析出深色而看到界面变深，
+/// 「点浅色变深色」由此被判为 bug（V11-17 反馈）。
+/// 把下一态（含「跟随系统」当前解析出的深浅）写进提示，
+/// 每次点击的结果就都是可预期的。
 fn theme_label(app: &EditorApp) -> (String, String) {
     use crate::presentation::theme::builtin::BuiltinTheme;
+    let system_cn = if app.system_prefers_dark() {
+        "深"
+    } else {
+        "浅"
+    };
     match app.ui.theme.kind {
-        BuiltinTheme::Dark => (
-            "深色主题".to_string(),
-            "点击切换主题（深色 / 浅色 / 跟随系统）".to_string(),
-        ),
+        BuiltinTheme::Dark => ("深色主题".to_string(), "点击切换为浅色主题".to_string()),
         BuiltinTheme::Light => (
             "浅色主题".to_string(),
-            "点击切换主题（深色 / 浅色 / 跟随系统）".to_string(),
+            format!("点击切换为跟随系统（当前解析为{system_cn}色）"),
         ),
         // 「跟随系统」必须带上**当前解析出来的**深/浅，
         // 否则用户设了「跟随系统」却看不出系统现在是深是浅，
         // 会以为这个选项没生效。
         BuiltinTheme::System => (
-            format!(
-                "跟随系统（{}）",
-                if app.system_prefers_dark() {
-                    "深"
-                } else {
-                    "浅"
-                }
-            ),
-            "当前跟随操作系统外观，点击切换为深色".to_string(),
+            format!("跟随系统（{system_cn}）"),
+            format!("当前跟随操作系统外观（{system_cn}色），点击切换为深色主题"),
         ),
     }
 }

@@ -1,7 +1,10 @@
 # 原型缺陷回归清单验证（B-01 ~ B-17）
+>
+>
+> **已归档（2026-10-14）**：历史一次性文档（阶段报告 / 修复方案 / 实施日志 / 审计快照），结论仍有效但不再维护；归档索引与理由见 `docs/archive/README.md`。
 
 > 阶段 07 · S7-03 产出
-> 来源：`docs/prototype-contract.md` 的 **B 清单**（原型已踩的坑 → Rust 侧设计层根治）
+> 来源：`docs/archive/stage-reports/prototype-contract.md` 的 **B 清单**（原型已踩的坑 → Rust 侧设计层根治）
 > 自动化断言：`tests/integration/regression_test.rs`；其余引用既有任务单元验收用例
 > 约束：任一验证失败必须回到对应阶段任务修复，不得在本阶段写补丁绕过
 

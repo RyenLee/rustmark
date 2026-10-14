@@ -1,8 +1,11 @@
 # 行为对齐矩阵（原型 ↔ Rust）
+>
+>
+> **已归档（2026-10-14）**：历史一次性文档（阶段报告 / 修复方案 / 实施日志 / 审计快照），结论仍有效但不再维护；归档索引与理由见 `docs/archive/README.md`。
 
 > 阶段 07 · S7-02 产出
 > 契约来源：`../markdown-editor-prototype/`（marked + highlight.js + DOMPurify）
-> 对照规范：`docs/prototype-contract.md`（A 清单）、`REQUIREMENTS.md`
+> 对照规范：`docs/archive/stage-reports/prototype-contract.md`（A 清单）、`REQUIREMENTS.md`
 > 自动化断言：`tests/integration/alignment_test.rs`
 
 ## 目的与判据

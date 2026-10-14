@@ -10,11 +10,15 @@
 //!   `A -- 文案 --> B` 与 `A -->|文案| B`；
 //! - 链式写法 `A --> B --> C`、`%%` 注释、空行、`;` 分隔。
 //!
-//! **不支持**：`subgraph`、以及 `sequenceDiagram` / `classDiagram` /
-//! `stateDiagram` / `pie` / `gantt` / `journey` / `erDiagram` 等其它图种。
+//! **不支持**：`subgraph`、以及 `stateDiagram` / `pie` / `journey` /
+//! `erDiagram` / `mindmap` 等其它 Mermaid 图种。
 //! 遇到它们返回 [`MermaidError::Unsupported`]，由调用方回退到「源码卡」
 //! （见 `preview_view::draw_diagram`）——**不猜**。半张图画出来比不画更难排查：
 //! 用户会先怀疑自己的语法。
+//!
+//! 另支持 **flowchart.js** 语法（`示例文档.md` 的「FLowchart流程图」一节，
+//! `id=>type: 文本` 定义 + `->` 连线，含其首行著名的 `flowchat` 笔误标题），
+//! 见 [`flow_js`]；它与 Mermaid 流程图共用同一套 `Graph` 模型与布局管线。
 //!
 //! 纯装饰指令（`style` / `classDef` / `class` / `linkStyle` / `click` / `direction`）
 //! **忽略而非报错**：它们只影响配色与交互，装看不见不影响图的结构正确性，
@@ -36,11 +40,13 @@
 //!
 //! - `model`：各图种共用的数据模型（`Graph` / `Prim` / [`MermaidLayout`]）；
 //! - `graph_parse` / `graph_layout`：流程图解析与 Sugiyama 分层布局；
+//! - `flow_js`：flowchart.js 语法的解析（复用同一布局管线）；
 //! - `primitives`：图元生成、坐标归一化收尾与 egui 绘制；
 //! - `sequence` / `class` / `gantt`：时序图 / 类图 / 甘特图；
 //! - `tests`：外置单元测试。
 
 mod class;
+mod flow_js;
 mod gantt;
 mod graph_layout;
 mod graph_parse;
@@ -112,6 +118,12 @@ const ROUTE_STUB: f32 = 12.0;
 /// 依据首行关键字分发到对应的图种解析器；不在支持列表里的关键字
 /// （`pie` / `stateDiagram` / `erDiagram` / …）回退为 `Unsupported`。
 pub fn layout(src: &str, size: f32, measure: Measure<'_>) -> Result<MermaidLayout, MermaidError> {
+    // flowchart.js 语法（`id=>type` 定义 + `->` 连线）优先识别：示例文档
+    // 的这一节还带着 `flowchat` 笔误标题，不能让它落到 Mermaid 的
+    // `detect_kind` 里被当成图种关键字报「不支持」。
+    if flow_js::is_flowchart_js(src) {
+        return flow_js::layout(src, size, measure);
+    }
     let kind = detect_kind(src)?;
     match kind.as_str() {
         "graph" | "flowchart" => layout_graph(src, size, measure),

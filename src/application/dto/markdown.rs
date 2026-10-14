@@ -152,4 +152,10 @@ pub struct SpanView {
     pub range: RangeView,
     /// 样式类别（如 `keyword` / `string` / `heading`）。
     pub style: String,
+    /// 链接目标（`style == "link"` 时有值；其余为 `None`）。
+    ///
+    /// 预览点击链接时据此打开——这是「超链接不可点击」的修复关键：
+    /// 旧实现 `SpanView` 只有 `range + style`，链接目标在解析侧被丢弃，
+    /// 渲染层根本拿不到地址（见 `view_mapper` 透传逻辑）。
+    pub url: Option<String>,
 }

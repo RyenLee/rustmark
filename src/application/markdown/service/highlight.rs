@@ -62,6 +62,7 @@ impl MarkdownAppService {
             .map(|span| SpanView {
                 range: RangeView::new(span.range().start().value(), span.range().end().value()),
                 style: span_style_str(span.style()),
+                url: None,
             })
             .collect();
         lock_or_recover(&self.highlight_cache).insert(
@@ -94,6 +95,7 @@ impl MarkdownAppService {
             .map(|span| SpanView {
                 range: RangeView::new(span.range().start().value(), span.range().end().value()),
                 style: span_style_str(span.style()),
+                url: None,
             })
             .collect())
     }

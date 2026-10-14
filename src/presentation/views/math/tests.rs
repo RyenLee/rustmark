@@ -158,6 +158,59 @@ fn sum_limits_stack_in_display_but_not_inline() {
         inline_width > 0.0 && display_width > 0.0,
         "两种模式都应能排版"
     );
+    assert!(
+        display_width < inline_width,
+        "叠放时上下限不占横向宽度，应比右侧摆放更窄：{display_width} vs {inline_width}"
+    );
+}
+
+/// `\int` 系列在 display 模式下叠放上下限（对齐 KaTeX 官方渲染）。
+///
+/// 曾经 `\int` 被排除在 `LIMIT_OPS` 之外，display 模式的
+/// `\int_0^\infty` 把限画在积分号右侧——与官方（限在上下方）不符，
+/// 用户拿预览对比官方渲染时一眼就能看出差别（问题 3）。
+/// TeX 的 `\int` 在 display 模式本就等价于 `\intop`，叠放才是正解。
+#[test]
+fn integral_limits_stack_in_display_only() {
+    let display = lay("\\int_0^\\infty t\\,dt", true);
+    let inline = lay("\\int_0^\\infty t\\,dt", false);
+
+    // 取上下限文字（`0` 与 `∞`）的基线偏移。
+    let offset_of = |l: &MathLayout, want: &str| {
+        l.items
+            .iter()
+            .filter_map(|i| match i {
+                Item::Text { text, y, .. } if text == want => Some(*y),
+                _ => None,
+            })
+            .next()
+            .unwrap_or_else(|| panic!("{want} 应被排版"))
+    };
+    // display：下限 `0` 远在基线下方（叠在积分号下），上限 `∞` 远在上方。
+    assert!(
+        offset_of(&display, "0") > 16.0,
+        "display 下限应叠在积分号下方：{}",
+        offset_of(&display, "0")
+    );
+    assert!(
+        offset_of(&display, "∞") < -16.0,
+        "display 上限应叠在积分号上方：{}",
+        offset_of(&display, "∞")
+    );
+    // inline：限贴在右侧，偏移不超过半字号。
+    assert!(
+        offset_of(&inline, "0").abs() < 8.0 && offset_of(&inline, "∞").abs() < 8.0,
+        "行内模式的限应贴近基线（右侧摆放）：{:?} / {:?}",
+        offset_of(&inline, "0"),
+        offset_of(&inline, "∞")
+    );
+    // 叠放不占横向宽度：display 版面应更窄。
+    assert!(
+        display.width < inline.width,
+        "叠放应比右侧摆放窄：{} vs {}",
+        display.width,
+        inline.width
+    );
 }
 
 #[test]

@@ -1,11 +1,7 @@
-//! 零依赖编码原语：HTTP 响应切体、最小 base64 解码、百分号解码。
-
-/// 从 HTTP 响应中切出响应体（跳过状态行与头部）。
-pub(super) fn split_http_body(response: &[u8]) -> Option<&[u8]> {
-    const SEP: &[u8] = b"\r\n\r\n";
-    let index = response.windows(SEP.len()).position(|w| w == SEP)?;
-    Some(&response[index + SEP.len()..])
-}
+//! 零依赖编码原语：最小 base64 解码、百分号解码。
+//!
+//! （HTTP 切体原语 `split_http_body` 已随手写 `TcpStream` 下载一起退役：
+//! 远程下载改走 `ureq`，响应体由其直接给出，见 `asset_loader::load_remote`。）
 
 /// 最小 base64 解码器。
 ///

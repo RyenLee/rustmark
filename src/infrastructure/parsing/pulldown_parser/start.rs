@@ -47,6 +47,15 @@ pub(super) fn handle_start(state: &mut ParseState, tag: Tag, range: std::ops::Ra
     // 行内样式标签（粗体 / 链接 / 上下标…）把样式挂在帧上，
     // 其内文本按该样式记录（见 `current_inline_style`）。
     let style = inline_style_of(&tag);
+    // 链接帧额外记录目标地址：pulldown 的 `Tag::Link { dest_url, .. }`
+    // 携带 `](url)` 里的地址，但 `inline_style_of` 只标样式不取地址；
+    // 这里单独存下，供 `push_content` 给链接片段附 `dest`（最终流到
+    // 预览的 `SpanView::url`，让超链接可点击）。
+    let link_dest = if let Tag::Link { dest_url, .. } = &tag {
+        Some(dest_url.to_string())
+    } else {
+        None
+    };
     let aligns = match &tag {
         Tag::Table(a) => a.iter().map(cell_alignment_of).collect(),
         _ => Vec::new(),
@@ -63,6 +72,7 @@ pub(super) fn handle_start(state: &mut ParseState, tag: Tag, range: std::ops::Ra
     frame.is_dl_def = is_dl_def;
     frame.aligns = aligns;
     frame.style = style;
+    frame.link_dest = link_dest;
     if matches!(&tag, Tag::List(_)) {
         // 深度取「已有的列表帧个数」——本帧尚未入栈，故顶层为 0。
         frame.list_depth = list_depth_of(&state.stack);

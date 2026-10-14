@@ -30,9 +30,15 @@ path = "src/bin/check-arch.rs"
 # --- UI（ADR-001：egui 原生，wgpu 后端）---
 # 注意：eframe 0.33.3 的 default 渲染后端是 glow(OpenGL)，需求 §5.1 要求 wgpu，
 # 故关闭 default 并显式启用 wgpu + 必要的平台特性，避免同时编译两个渲染后端。
+#
+# **不启用 `accesskit`**（cf. S8-02 依赖复查）：accesskit 只负责向辅助技术
+# （屏幕阅读器）暴露语义树，本应用代码零引用，键盘导航 / IME / 焦点链路
+# 全部走 egui 自身实现，与 accesskit 无关。禁用后可连带移除
+# accesskit / accesskit_winit / accesskit_windows / accesskit_consumer 四个 crate，
+# 以及仅被它们引用的重复版本 hashbrown 0.15 / foldhash 0.1。代价是放弃
+# 屏幕阅读器可达性——对单人本地 Markdown 编辑器是已知且可接受的取舍。
 egui = { version = "0.33.3", default-features = false, features = ["default_fonts"] }
 eframe = { version = "0.33.3", default-features = false, features = [
-    "accesskit",
     "default_fonts",
     "wgpu",
     "x11",
@@ -81,13 +87,27 @@ toml = "0.9.6"
 thiserror = "2"
 anyhow = "1"
 
+# --- 远程图片下载（缺陷 025：https 图片此前因「未内置 TLS」全部失败）---
+# 只开 `rustls`：纯 Rust TLS 实现，三平台行为一致、无系统依赖（native-tls 在
+# Linux 要 OpenSSL，交叉编译困难）。首版手写 `TcpStream` + 裸 HTTP/1.0 的
+# 「零客户端 crate」方案就此退役——它省下的体积换不来 https 图片全挂。
+# 体积代价见 docs/metrics.md §2.4 的登记。
+ureq = { version = "3.4.2", default-features = false, features = ["rustls"] }
+
 # --- 日志（基础设施层越界告警用；未列入需求 §5.1，已在 docs/dependencies.md 登记）---
 log = "0.4"
 
 # --- 缓存哈希器 ---
 # 预览/高亮/拼写缓存的键都是 u64 新类型（DocumentId），ahash 的 AHasher
 # 对 8 字节输入比 DefaultHasher 快 ~3×（非加密，完全适合缓存键）。
-ahash = "0.8"
+#
+# **关闭 default 特性**：ahash 默认的 `runtime-rng` 只为「给种子加随机化」而
+# 链入 getrandom（本项目依赖树中 0.2/0.3/0.4 三份并存里的一份，且仅由本处引入）。
+# 三处缓存的键全是**内部单调 u64**（`DocumentId`，非攻击者可控），不需要
+# HashDoS 防护。改用 `no-rng`——与 eframe / egui 对 ahash 的用法完全一致：
+# 种子仍由 ASLR + 实例计数器派生（ahash 文档所述「最弱但可用」档），对缓存
+# 语义无影响，同时去掉 getrandom 依赖。`std` 仍保留以导出 `HashMap`/`HashMapExt`。
+ahash = { version = "0.8", default-features = false, features = ["std", "no-rng"] }
 
 # --- wgpu 后端（DEF-03：必须显式声明，否则应用启动即 panic）---
 #

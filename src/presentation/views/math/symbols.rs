@@ -176,12 +176,18 @@ pub(super) const SYMBOLS: &[(&str, &str)] = &[
 
 /// 大运算符中**带上下限**（限置于符号上/下方）的那些。
 ///
-/// `\int` 系列刻意不在其中：`\int_0^1` 在 TeX 里始终把上下限画在**右侧**，
-/// 放到上下方会让定积分看起来像求和，与用户预期不符。
+/// `\int` 系列在其中：TeX 的 `\int` 在 **display 模式**等价于 `\intop`，
+/// 上下限就是叠在积分号上下方的（KaTeX 官方渲染同样如此，见
+/// `\int_0^\infty` 的展示式）；只有行内模式才把限放到右侧——
+/// 这个「叠不叠」由 `mark_stacked` 按 display 标志决定，两种模式都对齐官方。
 pub(super) const LIMIT_OPS: &[&str] = &[
     "sum",
     "prod",
     "coprod",
+    "int",
+    "iint",
+    "iiint",
+    "oint",
     "bigcup",
     "bigcap",
     "bigoplus",

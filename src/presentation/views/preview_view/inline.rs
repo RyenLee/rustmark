@@ -1,10 +1,12 @@
 //! 行内富文本：span → `TextFormat`、`LayoutJob` 排版与分隔符规范化。
 
-use egui::text::{LayoutJob, TextFormat, TextWrapping};
-use egui::{FontId, Stroke, Ui};
+use egui::text::{CCursor, LayoutJob, TextFormat, TextWrapping};
+use egui::{Align2, FontId, Pos2, Rect, Stroke, Ui, Vec2};
 
-use crate::application::dto::SpanView;
+use crate::application::dto::{RangeView, SpanView};
+use crate::presentation::views::math::{self, MathLayout};
 use crate::shared::geometry::clamp_to_char_boundaries;
+use crate::shared::system;
 
 use super::*;
 
@@ -58,14 +60,9 @@ fn span_format(theme: &Theme, style: &str, size: f32, line_height: f32) -> TextF
             underline: Stroke::new(1.0_f32, theme.syn_link),
             ..base
         },
-        // 行内公式：**只做样式区分，不做二维排版**。
-        //
-        // `LayoutJob` 里没有「行内自定义控件」的位置（epaint 0.33 既没有
-        // placeholder 段，也没有可插进文字流的 `Shape::Callback` 挂点），
-        // 想在段落中段嵌一块二维公式就得自己接管整个段落的折行——
-        // 那是把「段落渲染」这条最常用的代码路径整个重写，风险远大于收益。
-        // 故行内公式渲染为「倾斜 + 公式色」的文字，并把 `$` 分隔符去掉
-        // （见 `render_inline_text`）——分隔符是语法，不是内容。
+        // 行内公式**排版失败**时的退化样式（成功时走二维排版，见
+        // `render_with_math`）：只做样式区分——倾斜 + 公式色，并把 `$`
+        // 分隔符去掉（分隔符是语法，不是内容）。
         "math" => TextFormat {
             color: theme.syn_code,
             italics: true,
@@ -113,17 +110,6 @@ fn span_format(theme: &Theme, style: &str, size: f32, line_height: f32) -> TextF
     }
 }
 
-/// 渲染一段可带行内样式的文本（`spans` 为空时等价于普通 `label`）。
-///
-/// # 为什么用 `LayoutJob` 而不是「一段一个 `ui.label`」
-///
-/// 逐段铺控件会让折行只发生在段与段之间，一段长文本照样整段溢出；
-/// 而 `LayoutJob` 把整行交给 epaint 排版，**折行、行高、对齐都由它统一处理**，
-/// 与普通段落完全一致。这也是段落渲染只有一条代码路径的原因——
-/// 无样式时段数为零，`job` 退化成「一整段纯文本」，与旧实现等价。
-///
-/// 区间一律吸附到字符边界：`spans` 来自解析器，而编辑器里文本可能在
-/// 150ms 防抖窗口内又变过，越界切片会 panic（本项目 `panic = "abort"`）。
 /// 一段行内文本的排版参数：字号、行高、基准样式。
 ///
 /// 三者总是一起决定 `TextFormat`（字号与行高还必须成对——行高一旦给出，
@@ -135,15 +121,50 @@ pub(super) struct Typography<'a> {
     pub(super) base_style: &'a str,
 }
 
+/// 渲染一段可带行内样式的文本（`spans` 为空时等价于普通 `label`）。
+///
+/// # 为什么用 `LayoutJob` 而不是「一段一个 `ui.label`」
+///
+/// 逐段铺控件会让折行只发生在段与段之间，一段长文本照样整段溢出；
+/// 而 `LayoutJob` 把整行交给 epaint 排版，**折行、行高、对齐都由它统一处理**，
+/// 与普通段落完全一致。这也是段落渲染只有一条代码路径的原因——
+/// 无样式时段数为零，`job` 退化成「一整段纯文本」，与旧实现等价。
+///
+/// 区间一律吸附到字符边界：`spans` 来自解析器，而编辑器里文本可能在
+/// 150ms 防抖窗口内又变过，越界切片会 panic（本项目 `panic = "abort"`）。
+///
+/// # 行内公式为什么单独一条路
+///
+/// `LayoutJob` 只能排**文字**：epaint 0.33 既没有行内占位段，也没有能插进
+/// 文字流的绘制挂点。于是含 `$...$` 的段落改走 `render_with_math` 的
+/// **分段流式**排版——文本段照旧交给 epaint（内部折行不变），公式段用
+/// [`math`] 引擎二维排版后按**基线**拼回文字流。这正是官方 KaTeX 的观感；
+/// 旧实现把公式当斜体文本显示，用户看到的是 `\Gamma(n)` 这串源码。
+#[allow(clippy::too_many_arguments)] // 预览内联渲染的完整上下文（UI/主题/文本/片段/排版/交互/宽度/跳转表）本就九项；打包成 struct 会让每个调用方多一次所有权转换，且掩盖「漏传即错」
 pub(super) fn render_inline_text(
     ui: &mut Ui,
+    app: &mut EditorApp,
     theme: &Theme,
     content: &str,
     spans: &[SpanView],
     typo: Typography<'_>,
     sense: egui::Sense,
     wrap_width: f32,
+    internal_targets: &[(String, u64)],
 ) -> egui::Response {
+    if spans.iter().any(|s| s.style == "math") {
+        return render_with_math(
+            ui,
+            app,
+            theme,
+            content,
+            spans,
+            typo,
+            sense,
+            wrap_width,
+            internal_targets,
+        );
+    }
     let Typography {
         size,
         line_height,
@@ -158,6 +179,157 @@ pub(super) fn render_inline_text(
     // 统一走 `LayoutJob`：有 / 无行内样式都先攒出一个 galley 再手工绘制。
     // 「自动换行开 / 关」只由 `wrap_width` 一个值决定（关 = `INFINITY`），
     // 不再依赖 `ui.add(Label)` 那套默认折行逻辑——那样关不掉折行。
+    let (job, hits) = build_text_job(theme, content, spans, typo, done, wrap_width);
+    // 手工排版 + 绘制：比 `ui.add(Label)` 多一步，但能精确控制折行宽度，
+    // 且为「命中区 / 点击」等扩展留好位置（见图表链接的 `draw_diagram`）。
+    //
+    // 命中区 id 用调用方 ui 的 id + 固定盐 `"rinline"`：**要求每个块子树
+    // 的 `ui.id()` 唯一**（`show()` 里已用 `block.id` 作 `id_salt`）。
+    // 若同一父级下多次调用且 sense 可交互（如标题的 `Sense::click()`），
+    // id 会相撞 —— egui 会画出红框与「Double use of widget ID」提示
+    // （2026-10-10 曾因此让预览标题被套红框，改 `show()` 的 `id_salt` 修复）。
+    let galley = ui.painter().layout_job(job);
+    let (_id, rect) = ui.allocate_space(galley.size());
+    ui.painter().galley(rect.min, galley.clone(), base.color);
+    // 行内链接 / 脚注引用：按字符区间求交互矩形，逐个 `interact`，
+    // 点击时打开链接或跳转到目标（见 `handle_span_click`）。
+    let hit_rects = span_rects(&galley, &hits);
+    let mut link_hovered = false;
+    for (idx, local) in hit_rects {
+        let screen = local.translate(rect.min.to_vec2());
+        let resp = ui.interact(
+            screen,
+            ui.id().with(("rinline_hit", idx)),
+            egui::Sense::click(),
+        );
+        let sv = &spans[idx];
+        if resp.hovered() && (sv.style == "link" || sv.style == "footnote_ref") {
+            link_hovered = true;
+        }
+        if resp.clicked() {
+            handle_span_click(app, sv, content, internal_targets);
+        }
+    }
+    if link_hovered {
+        ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::PointingHand);
+    }
+    ui.interact(rect, ui.id().with("rinline"), sense)
+}
+
+/// 某行内片段在排版后文本里的字符区间（用于点击命中）。
+///
+/// `idx` 是片段在 `spans` 中的下标；`c0` / `c1` 是该片段在 `LayoutJob`
+/// 拼接文本中的**字符**区间（不是字节——字形遍历与字符序一致，字节会因
+/// 多字节字符错位）。
+struct SpanHit {
+    idx: usize,
+    c0: usize,
+    c1: usize,
+}
+
+/// 由排版结果与片段字符区间，算出每个可点击片段在 galley 坐标系里的矩形。
+///
+/// 逐行求交：一段文本可能折成多行，片段矩形是这些行的并集（这正是
+/// 「链接被折行」时仍整段可点」的关键）。`pos_from_cursor` 取的是字符光标的
+/// 纵向撑满整行的细矩形，用它左右边即可圈出片段在某一行的横向范围。
+fn span_rects(galley: &egui::Galley, hits: &[SpanHit]) -> Vec<(usize, Rect)> {
+    let mut out: Vec<(usize, Rect)> = Vec::new();
+    let mut running = 0usize;
+    for row in galley.rows.iter() {
+        let row_start = running;
+        let row_end = running + row.char_count_including_newline();
+        running = row_end;
+        let row_rect = row.rect();
+        for hit in hits {
+            let lo = hit.c0.max(row_start);
+            let hi = hit.c1.min(row_end);
+            if lo >= hi {
+                continue;
+            }
+            let a = galley.pos_from_cursor(CCursor {
+                index: lo,
+                prefer_next_row: false,
+            });
+            let b = galley.pos_from_cursor(CCursor {
+                index: hi,
+                prefer_next_row: false,
+            });
+            let piece = Rect::from_min_max(
+                Pos2::new(a.min.x.min(b.min.x), row_rect.top()),
+                Pos2::new(a.min.x.max(b.min.x), row_rect.bottom()),
+            );
+            if let Some(e) = out.iter_mut().find(|(i, _)| *i == hit.idx) {
+                e.1 = e.1.union(piece);
+            } else {
+                out.push((hit.idx, piece));
+            }
+        }
+    }
+    out
+}
+
+/// 行内片段点击分发：链接打开、脚注引用跳转。
+///
+/// - `link`：绝对 / 相对地址交系统默认程序打开（`system::open_external`）；
+///   `#锚点` 在 `internal_targets` 里找对应标题块并跳转；地址经
+///   `system::is_safe_to_open` 过滤，拒绝 `javascript:` 等 XSS 向量。
+/// - `footnote_ref`：依标号在 `internal_targets` 里找脚注定义块并跳转
+///   （预览点击跳转与连续滚动同步解耦，见 `scroll_sync` 改造）。
+fn handle_span_click(
+    app: &mut EditorApp,
+    sv: &SpanView,
+    content: &str,
+    internal_targets: &[(String, u64)],
+) {
+    match sv.style.as_str() {
+        "link" => {
+            let Some(url) = sv.url.as_ref() else {
+                return;
+            };
+            let url = url.trim();
+            if let Some(anchor) = url.strip_prefix('#') {
+                if let Some((_, id)) = internal_targets.iter().find(|(k, _)| k == anchor) {
+                    app.ui.sync.request_click(*id);
+                }
+                return;
+            }
+            if system::is_safe_to_open(url) {
+                let _ = system::open_external(url);
+            }
+        }
+        "footnote_ref" => {
+            let label = footnote_ref_mark(&content[sv.range.start..sv.range.end]);
+            if let Some((_, id)) = internal_targets.iter().find(|(k, _)| k == label) {
+                app.ui.sync.request_click(*id);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// 把一段文本 + 行内 span 攒成 `LayoutJob`，并标出每个可点击片段的字符区间。
+///
+/// 从原单 Galley 路径抽出，与流式排版（`render_with_math`）**共用**：
+/// 同一段文本在两条路径里必须长得一样，否则「加个公式整段变色」这种
+/// 诡异差别会无声出现。`done` 由调用方算好（`task_done` 叠加装饰）。
+///
+/// 返回的 `Vec<SpanHit>` 只记录「链接 / 脚注引用」这类需要交互的片段
+/// （其余片段不记录，省去无谓的命中矩形）；字符区间相对拼接后的 job 文本，
+/// 供 [`span_rects`] 定位。
+fn build_text_job(
+    theme: &Theme,
+    content: &str,
+    spans: &[SpanView],
+    typo: Typography<'_>,
+    done: bool,
+    wrap_width: f32,
+) -> (LayoutJob, Vec<SpanHit>) {
+    let Typography {
+        size,
+        line_height,
+        base_style,
+    } = typo;
+    let base = span_format(theme, base_style, size, line_height);
     let mut job = LayoutJob {
         wrap: TextWrapping {
             max_width: wrap_width.max(0.0),
@@ -165,8 +337,10 @@ pub(super) fn render_inline_text(
         },
         ..Default::default()
     };
+    let mut hits: Vec<SpanHit> = Vec::new();
     let len = content.len();
     let mut cursor = 0usize;
+    let mut char_cursor = 0usize;
     if spans.is_empty() {
         let mut fmt = base.clone();
         if done {
@@ -174,7 +348,7 @@ pub(super) fn render_inline_text(
         }
         job.append(content, 0.0, fmt);
     } else {
-        for span in spans {
+        for (idx, span) in spans.iter().enumerate() {
             // 越界 / 落在多字节字符中间的区间会被吸附或退化为空——跳过而不是崩。
             let Some((start, end)) = clamp_to_char_boundaries(
                 content,
@@ -186,7 +360,9 @@ pub(super) fn render_inline_text(
             let start = start.max(cursor);
             let end = end.max(start);
             if start > cursor {
-                job.append(&content[cursor..start], 0.0, base.clone());
+                let base_slice = &content[cursor..start];
+                job.append(base_slice, 0.0, base.clone());
+                char_cursor += base_slice.chars().count();
             }
             if end > start {
                 let mut fmt = span_format(theme, &span.style, size, line_height);
@@ -202,25 +378,296 @@ pub(super) fn render_inline_text(
                     "footnote_ref" => footnote_ref_mark(&content[start..end]),
                     _ => &content[start..end],
                 };
+                let slice_chars = slice.chars().count();
                 job.append(slice, 0.0, fmt);
+                // 仅给需要交互的片段记命中区间（链接 / 脚注引用）。
+                if span.style == "link" || span.style == "footnote_ref" {
+                    hits.push(SpanHit {
+                        idx,
+                        c0: char_cursor,
+                        c1: char_cursor + slice_chars,
+                    });
+                }
+                char_cursor += slice_chars;
             }
             cursor = end.max(cursor);
         }
         if cursor < len {
-            job.append(&content[cursor..], 0.0, base.clone());
+            let tail = &content[cursor..];
+            job.append(tail, 0.0, base.clone());
         }
     }
-    // 手工排版 + 绘制：比 `ui.add(Label)` 多一步，但能精确控制折行宽度，
-    // 且为「命中区 / 点击」等扩展留好位置（见图表链接的 `draw_diagram`）。
-    //
-    // 命中区 id 用调用方 ui 的 id + 固定盐 `"rinline"`：**要求每个块子树
-    // 的 `ui.id()` 唯一**（`show()` 里已用 `block.id` 作 `id_salt`）。
-    // 若同一父级下多次调用且 sense 可交互（如标题的 `Sense::click()`），
-    // id 会相撞 —— egui 会画出红框与「Double use of widget ID」提示
-    // （2026-10-10 曾因此让预览标题被套红框，改 `show()` 的 `id_salt` 修复）。
-    let galley = ui.painter().layout_job(job);
-    let (_id, rect) = ui.allocate_space(galley.size());
-    ui.painter().galley(rect.min, galley, base.color);
+    (job, hits)
+}
+
+// ============================================================================
+// 行内公式：分段流式排版
+// ============================================================================
+
+/// 流式排版的一个片段。
+enum Piece {
+    /// 一段纯文本（span 区间相对本段起点；为空表示无样式）。
+    Text { text: String, spans: Vec<SpanView> },
+    /// 排版成功的行内公式（版面已按正文字号排好）。
+    Math(MathLayout),
+}
+
+/// 一条绘制指令（坐标相对段落原点，最后统一平移到分配矩形）。
+enum Cmd {
+    Galley {
+        galley: std::sync::Arc<egui::Galley>,
+        pos: Pos2,
+    },
+    Math {
+        layout: MathLayout,
+        rect: Rect,
+    },
+}
+
+/// 把段落按公式 span 切成「文本段 / 公式段」。
+///
+/// 公式排版失败时**降级成文本段**（斜体 + 剥掉 `$`，与旧行为一致）：
+/// 失败不该让整段消失，而半句话 + 半源码比整段源码更接近用户预期。
+fn build_pieces(
+    content: &str,
+    spans: &[SpanView],
+    size: f32,
+    measure: math::Measure<'_>,
+) -> Vec<Piece> {
+    let mut pieces: Vec<Piece> = Vec::new();
+    let mut text = String::new();
+    let mut text_spans: Vec<SpanView> = Vec::new();
+    let len = content.len();
+    let mut cursor = 0usize;
+
+    for span in spans {
+        let Some((start, end)) =
+            clamp_to_char_boundaries(content, span.range.start.min(len), span.range.end.min(len))
+        else {
+            continue;
+        };
+        let start = start.max(cursor);
+        let end = end.max(start);
+        if start > cursor {
+            text.push_str(&content[cursor..start]);
+        }
+        if span.style == "math" {
+            if !text.is_empty() {
+                pieces.push(Piece::Text {
+                    text: std::mem::take(&mut text),
+                    spans: std::mem::take(&mut text_spans),
+                });
+            }
+            let src = strip_math_delimiters(&content[start..end]);
+            match math::layout(src, size, false, measure) {
+                Ok(layout) => pieces.push(Piece::Math(layout)),
+                // 退化段：span 记 `math` 样式，`build_text_job` 会再次剥分隔符
+                // （此时已无 `$`，是空操作）并套上斜体公式样式。
+                Err(_) => {
+                    text.push_str(src);
+                    text_spans.push(SpanView {
+                        range: RangeView::new(0, src.len()),
+                        style: "math".to_string(),
+                        url: None,
+                    });
+                }
+            }
+        } else if end > start {
+            let rel_start = text.len();
+            text.push_str(&content[start..end]);
+            let rel_end = text.len();
+            text_spans.push(SpanView {
+                range: RangeView::new(rel_start, rel_end),
+                style: span.style.clone(),
+                url: None,
+            });
+        }
+        cursor = end.max(cursor);
+    }
+    if cursor < len {
+        text.push_str(&content[cursor..]);
+    }
+    if !text.is_empty() {
+        pieces.push(Piece::Text {
+            text,
+            spans: text_spans,
+        });
+    }
+    pieces
+}
+
+/// 一行在 galley 坐标系里的**基线**（相对 galley 原点）。
+///
+/// epaint 的 `Glyph::pos.y` 注释写的是「相对行的基线位置」，
+/// 而行自身还有 `PlacedRow::pos.y`（行顶相对 galley）。两者相加才是
+/// 基线相对 galley 原点的偏移——数学引擎的 `Item::Text::y` 同样是
+/// 「相对基线」，所以这个偏移就是两条路径对齐的基准。
+/// 无字形（空行）时退化为行顶 + 0.8 倍行高（近似升部）。
+fn row_baseline_offset(row: &egui::epaint::text::PlacedRow) -> f32 {
+    row.pos.y + row.glyphs.first().map_or(row.size.y * 0.8, |g| g.pos.y)
+}
+
+/// 含行内公式的段落：分段流式排版。
+///
+/// # 算法
+///
+/// 逐片段往前走，维护「当前行的光标 x / 行顶 / 行底 / 基线」：
+/// - **文本段**：按剩余宽度攒 `LayoutJob` 交给 epaint 排版（内部折行不变），
+///   画在当前行光标处；若它自己折了行，**最后一行**成为新的当前行，
+///   之前的行整体计入段落高度；
+/// - **公式段**：原子块——当前行放不下就整体挪到下一行，仍放不下
+///   （公式比整行还宽）才等比缩小；落点按**基线**对齐：
+///   矩形顶 = 行基线 − 公式升部，这样公式的基线与文字基线重合。
+///
+/// 基线由每行第一个片段定义，后续片段向它看齐：文本 galley 按
+/// `基线 − 首行基线偏移` 定位，公式按 `基线 − 升部` 定位。
+/// 这正是 TeX 把公式嵌进文字流的方式，也是「公式和文字不像拼起来」
+/// 与「明显错位」之间的全部差别。
+#[allow(clippy::too_many_arguments)] // 与 `render_inline_text` 同构（转发用），参数一一对应
+fn render_with_math(
+    ui: &mut Ui,
+    _app: &mut EditorApp,
+    theme: &Theme,
+    content: &str,
+    spans: &[SpanView],
+    typo: Typography<'_>,
+    sense: egui::Sense,
+    wrap_width: f32,
+    _internal_targets: &[(String, u64)],
+) -> egui::Response {
+    let Typography {
+        size,
+        line_height,
+        base_style,
+    } = typo;
+    let done = base_style == "task_done";
+    let wrap = wrap_width.max(0.0);
+    let measure = |text: &str, sz: f32| {
+        ui.painter()
+            .layout_no_wrap(
+                text.to_owned(),
+                FontId::proportional(sz),
+                egui::Color32::WHITE,
+            )
+            .size()
+            .x
+    };
+    let pieces = build_pieces(content, spans, size, &measure);
+
+    // 行状态。`baseline = None` 表示该行还空着，由第一个片段定义基线。
+    let mut x = 0.0_f32;
+    let mut line_top = 0.0_f32;
+    let mut line_bottom = line_height;
+    let mut baseline: Option<f32> = None;
+    // 段落总范围（可能为负：高公式会把首行顶上去）。
+    let mut top = 0.0_f32;
+    let mut bottom = line_height;
+    let mut max_x = 0.0_f32;
+    let mut cmds: Vec<Cmd> = Vec::new();
+
+    for piece in &pieces {
+        match piece {
+            Piece::Math(ml) => {
+                let nat_w = ml.width;
+                let nat_h = ml.height();
+                // 公式是原子的：当前行放不下就整体换行（不能从中间折断，
+                // 折断的公式含义会变）。
+                if x > 0.0 && wrap.is_finite() && nat_w > wrap - x {
+                    x = 0.0;
+                    line_top = line_bottom;
+                    line_bottom = line_top + line_height;
+                    baseline = None;
+                }
+                // 仍放不下（公式比整行还宽）→ 等比缩小，与块级公式同一策略：
+                // 宁可小一点，也不要右侧被裁掉——裁掉的项会改变数学含义。
+                let scale = if wrap.is_finite() && nat_w > wrap - x && nat_w > 0.0 {
+                    (wrap - x) / nat_w
+                } else {
+                    1.0
+                };
+                let used_w = nat_w * scale;
+                let used_h = nat_h * scale;
+                let rect_top = match baseline {
+                    Some(b) => b - ml.ascent * scale,
+                    None => line_top,
+                };
+                let rect = Rect::from_min_size(Pos2::new(x, rect_top), Vec2::new(used_w, used_h));
+                top = top.min(rect.top());
+                bottom = bottom.max(rect.bottom());
+                line_top = line_top.min(rect.top());
+                line_bottom = line_bottom.max(rect.bottom());
+                baseline = baseline.or(Some(rect.top() + ml.ascent * scale));
+                x += used_w;
+                cmds.push(Cmd::Math {
+                    layout: ml.clone(),
+                    rect,
+                });
+            }
+            Piece::Text {
+                text,
+                spans: piece_spans,
+            } => {
+                if text.is_empty() {
+                    continue;
+                }
+                // 折行宽度 = 当前行剩余宽度（首行之后 epaint 会按同一宽度折，
+                // 与整行宽的偏差只有个把像素，可接受）。
+                let job_wrap = (wrap - x).max(size);
+                let (job, _hits) = build_text_job(theme, text, piece_spans, typo, done, job_wrap);
+                let galley = ui.painter().layout_job(job);
+                let Some(first_row) = galley.rows.first() else {
+                    continue;
+                };
+                let origin_y = match baseline {
+                    Some(b) => b - row_baseline_offset(first_row),
+                    None => line_top - first_row.pos.y,
+                };
+                cmds.push(Cmd::Galley {
+                    galley: galley.clone(),
+                    pos: Pos2::new(x, origin_y),
+                });
+                // 所有行都计入段落高度（折出来的行同样占地方）。
+                for row in &galley.rows {
+                    let ry = origin_y + row.pos.y;
+                    top = top.min(ry);
+                    bottom = bottom.max(ry + row.size.y);
+                }
+                // 最后一行成为新的当前行；基线按它的首字形重算。
+                let last = galley.rows.last().unwrap_or(first_row);
+                line_top = origin_y + last.pos.y;
+                line_bottom = line_top + last.size.y;
+                baseline = Some(origin_y + row_baseline_offset(last));
+                x = last.size.x;
+                max_x = max_x.max(x);
+            }
+        }
+    }
+    max_x = max_x.max(x);
+
+    let total_h = (bottom - top).max(line_height);
+    let (_, rect) = ui.allocate_space(Vec2::new(max_x, total_h));
+    // 段落原点（flow 坐标 0）落在分配矩形的哪里：内容可能从负 top 起。
+    let origin = rect.min - Vec2::new(0.0, top);
+    let color = span_format(theme, base_style, size, line_height).color;
+    for cmd in &cmds {
+        match cmd {
+            Cmd::Galley { galley, pos } => {
+                ui.painter()
+                    .galley(origin + pos.to_vec2(), galley.clone(), color);
+            }
+            Cmd::Math { layout, rect } => {
+                // 矩形高度已等于内容高度，`paint` 的纵向居中成为恒等操作，
+                // 于是版面基线正好落在行基线上。
+                math::paint(
+                    ui.painter(),
+                    rect.translate(origin.to_vec2()),
+                    layout,
+                    color,
+                    Align2::LEFT_CENTER,
+                );
+            }
+        }
+    }
     ui.interact(rect, ui.id().with("rinline"), sense)
 }
 

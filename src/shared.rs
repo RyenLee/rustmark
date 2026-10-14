@@ -9,9 +9,11 @@
 //! - [`event`]：领域事件与事件总线抽象
 //! - [`dialog`]：原生对话框端口（S5-08）
 //! - [`encoding`]：文本编码标签（纯值，V11-03）
+//! - [`fonts`]：编辑区字体族的跨层共享契约（设置页字体选择，S6-06）
 //! - [`path`]：路径值对象（`FilePath`）
 //! - [`time`]：时间戳与可注入时钟
 //! - [`text`]：与层无关的分词工具（V11-07）
+//! - [`system`]：外部打开器与链接安全校验（S6-05 超链接点击）
 
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
@@ -19,9 +21,11 @@ pub mod dialog;
 pub mod encoding;
 pub mod error;
 pub mod event;
+pub mod fonts;
 pub mod geometry;
 pub mod ids;
 pub mod path;
 pub mod result;
+pub mod system;
 pub mod text;
 pub mod time;

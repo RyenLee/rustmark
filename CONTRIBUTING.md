@@ -9,7 +9,7 @@
 
 ```bash
 cargo fmt --check
-cargo clippy --all-targets -- -D warnings
+cargo clippy --all-targets --all-features -- -D warnings
 cargo check
 cargo test
 cargo run --bin check-arch

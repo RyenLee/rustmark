@@ -149,7 +149,8 @@ fn parse_statement(stmt: &str, g: &mut Graph) -> Result<(), MermaidError> {
     Ok(())
 }
 
-fn skip_ws(c: &[char], i: &mut usize) {
+/// 读一个端点前的空白跳过（`flowchart.js` 解析器同样复用）。
+pub(super) fn skip_ws(c: &[char], i: &mut usize) {
     while *i < c.len() && c[*i].is_whitespace() {
         *i += 1;
     }
@@ -269,7 +270,7 @@ fn starts_with(c: &[char], pat: &str) -> bool {
 ///
 /// 之所以此前没被发现：`graph LR / A --> B` 这种最简用例里，
 /// 节点文本恰好等于 id，文本比对「碰巧」是对的。
-fn intern(g: &mut Graph, id: &str, text: Option<String>, shape: NodeShape) -> usize {
+pub(super) fn intern(g: &mut Graph, id: &str, text: Option<String>, shape: NodeShape) -> usize {
     if let Some(pos) = g.node_ids.iter().position(|n| n == id) {
         // 重复出现时**后写的形状与文本覆盖先写的**（与 Mermaid 一致）；
         // 只写 id（`text == None`）则保留原有标签，不被 id 顶掉。

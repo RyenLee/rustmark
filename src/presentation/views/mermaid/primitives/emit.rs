@@ -33,6 +33,8 @@ fn push_node(prims: &mut Vec<Prim>, p: &Placed, text: &str, size: f32) {
         radius,
         fill: true,
         ticks,
+        fill_color: None,
+        stroke_color: None,
     };
     match p.shape {
         NodeShape::Rect => prims.push(corners(hw, hh, 4.0, false)),
@@ -55,6 +57,8 @@ fn push_node(prims: &mut Vec<Prim>, p: &Placed, text: &str, size: f32) {
             radius: 0.0,
             fill: true,
             ticks: false,
+            fill_color: None,
+            stroke_color: None,
         }),
         NodeShape::Hexagon => {
             let inset = hw * 0.5;
@@ -70,6 +74,8 @@ fn push_node(prims: &mut Vec<Prim>, p: &Placed, text: &str, size: f32) {
                 radius: 0.0,
                 fill: true,
                 ticks: false,
+                fill_color: None,
+                stroke_color: None,
             });
         }
         NodeShape::Parallelogram => {
@@ -84,6 +90,8 @@ fn push_node(prims: &mut Vec<Prim>, p: &Placed, text: &str, size: f32) {
                 radius: 0.0,
                 fill: true,
                 ticks: false,
+                fill_color: None,
+                stroke_color: None,
             });
         }
         NodeShape::Asymmetric => {
@@ -98,6 +106,8 @@ fn push_node(prims: &mut Vec<Prim>, p: &Placed, text: &str, size: f32) {
                 radius: 0.0,
                 fill: true,
                 ticks: false,
+                fill_color: None,
+                stroke_color: None,
             });
         }
     }
@@ -106,6 +116,7 @@ fn push_node(prims: &mut Vec<Prim>, p: &Placed, text: &str, size: f32) {
         text: text.to_string(),
         size,
         plate: false,
+        color: None,
     });
 }
 
@@ -157,6 +168,7 @@ fn push_edge(
                 text: label.clone(),
                 size: size * 0.85,
                 plate: false,
+                color: None,
             });
         }
         return;
@@ -222,6 +234,7 @@ fn push_edge(
             text: label.clone(),
             size: size * 0.85,
             plate: true,
+            color: None,
         });
     }
 }

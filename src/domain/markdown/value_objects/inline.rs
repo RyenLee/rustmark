@@ -47,7 +47,7 @@ pub enum InlineStyle {
 }
 
 /// 块内的一段样式化文本（相对块 `content` 的字节区间）。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct InlineSpan {
     /// 起点字节偏移（相对块 `content`）。
     start: usize,
@@ -55,12 +55,38 @@ pub struct InlineSpan {
     end: usize,
     /// 样式类别。
     style: InlineStyle,
+    /// 链接目标（`style == Link` 时为 `Some`；其余为 `None`）。
+    ///
+    /// 放在领域层而非 DTO：解析阶段就能确定目标地址，渲染层只负责消费。
+    /// 取 `Option<String>` 而非内联进枚举，是因为链接目标与「粗体 / 斜体」
+    /// 等纯样式正交——一条文本可以同时是链接且加粗，目标不应和样式耦合。
+    dest: Option<String>,
 }
 
 impl InlineSpan {
-    /// 构造行内片段。
+    /// 构造行内片段（无链接目标）。
     pub const fn new(start: usize, end: usize, style: InlineStyle) -> Self {
-        Self { start, end, style }
+        Self {
+            start,
+            end,
+            style,
+            dest: None,
+        }
+    }
+
+    /// 构造带链接目标的行内片段（`style` 应为 `Link`）。
+    pub fn new_link(start: usize, end: usize, style: InlineStyle, dest: String) -> Self {
+        Self {
+            start,
+            end,
+            style,
+            dest: Some(dest),
+        }
+    }
+
+    /// 链接目标（仅 `style == Link` 时有值）。
+    pub fn dest(&self) -> Option<&str> {
+        self.dest.as_deref()
     }
 
     /// 起点。

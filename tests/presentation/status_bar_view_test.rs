@@ -404,19 +404,40 @@ fn toggles_flip_the_editor_state() {
     assert_ne!(after.word_wrap, model.word_wrap);
 }
 
-/// 主题项显示当前状态；「跟随系统」必须带上解析出的深 / 浅。
+/// 主题项显示当前状态；提示必须说明**点击后会发生什么**（V11-17）。
+///
+/// 轮换是三态序列 `深色 → 浅色 → 跟随系统 → 深色`：
+/// 用户在浅色点一下，下一态是「跟随系统」，而系统当前可能解析为深色，
+/// 界面就变深了——早期提示只写「点击切换主题」，
+/// 「点浅色变深色」由此被判为 bug。现在每一态都预告下一态。
 #[test]
 fn theme_label_includes_the_resolved_side() {
+    use rustmark::presentation::theme::builtin::BuiltinTheme;
     let (_cfg, mut app) = app();
-    let model = status_bar_view::build_model(&app);
-    assert!(!model.theme_label.is_empty());
-    assert!(
-        model.theme_hint.contains("主题"),
-        "提示应说明点击会发生什么"
+
+    // 深色：提示明确说出下一态是浅色主题。
+    app.ui.theme.kind = BuiltinTheme::Dark;
+    let dark = status_bar_view::build_model(&app);
+    assert_eq!(dark.theme_label, "深色主题");
+    assert_eq!(dark.theme_hint, "点击切换为浅色主题");
+
+    // 浅色：下一态是「跟随系统」，并带上系统当前解析出的深浅。
+    app.ui.theme.kind = BuiltinTheme::Light;
+    let light = status_bar_view::build_model(&app);
+    assert_eq!(light.theme_label, "浅色主题");
+    let system_cn = if app.system_prefers_dark() {
+        "深"
+    } else {
+        "浅"
+    };
+    assert_eq!(
+        light.theme_hint,
+        format!("点击切换为跟随系统（当前解析为{system_cn}色）"),
+        "浅色态的提示必须预告下一态是跟随系统及其解析结果"
     );
 
     // 切到「跟随系统」。
-    app.ui.theme.kind = rustmark::presentation::theme::builtin::BuiltinTheme::System;
+    app.ui.theme.kind = BuiltinTheme::System;
     let sys = status_bar_view::build_model(&app);
     assert!(
         sys.theme_label.starts_with("跟随系统（"),
@@ -424,6 +445,11 @@ fn theme_label_includes_the_resolved_side() {
         sys.theme_label
     );
     assert!(sys.theme_label.ends_with('）'));
+    assert_eq!(
+        sys.theme_hint,
+        format!("当前跟随操作系统外观（{system_cn}色），点击切换为深色主题"),
+        "跟随系统态的提示必须说明当前解析结果与下一态"
+    );
 }
 
 /// 行数用**千分位**，四位以上不加分隔符会很难读。

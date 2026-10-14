@@ -38,7 +38,7 @@
 - 阶段 03 领域层：路径用领域值对象 `FilePath`，**不引入 `std::path` 的 IO 语义**（领域层零 IO）。
 - 阶段 05 持久化：文件仓储 + TOML 配置，**无 SQLite、无后端进程**（原型的后端契约不迁移）。
 - 阶段 06 表现层：egui 立即模式 UI；`TextEdit` 的 IME 能力须在 S6-03 优先验证，不达标则启用 `cosmic-text` 自绘方案（预留 2 周打磨）。
-- 阶段 07 对齐：原型的「store 内部替换 localStorage 为 IPC 调用」对接设计不再适用，改为「原型行为契约」对齐（见 `docs/prototype-contract.md`）。
+- 阶段 07 对齐：原型的「store 内部替换 localStorage 为 IPC 调用」对接设计不再适用，改为「原型行为契约」对齐（见 `docs/archive/stage-reports/prototype-contract.md`）。
 
 ## 复盘触发条件
 

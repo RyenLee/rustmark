@@ -114,6 +114,7 @@ fn spans_to_view(spans: &[InlineSpan]) -> Vec<SpanView> {
         .map(|span| SpanView {
             range: RangeView::new(span.start(), span.end()),
             style: inline_style_str(span.style()).to_string(),
+            url: span.dest().map(|d| d.to_string()),
         })
         .collect()
 }
@@ -187,5 +188,40 @@ pub(super) fn span_style_str(style: SpanStyle) -> String {
         SpanStyle::Type => "type".to_string(),
         SpanStyle::Variable => "variable".to_string(),
         SpanStyle::Operator => "operator".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::spans_to_view;
+    use crate::domain::markdown::value_objects::{InlineSpan, InlineStyle};
+
+    /// 超链接修复（S6-05 #9）：链接目标的 `dest` 必须下沉到 DTO 的 `url`，
+    /// 否则预览区点击链接时拿不到地址（见 `preview_view::handle_span_click`）。
+    #[test]
+    fn link_dest_propagates_to_span_view_url() {
+        let spans = vec![InlineSpan::new_link(
+            0,
+            11,
+            InlineStyle::Link,
+            "https://example.com".to_string(),
+        )];
+        let views = spans_to_view(&spans);
+        assert_eq!(views.len(), 1);
+        assert_eq!(views[0].style, "link");
+        assert_eq!(views[0].url.as_deref(), Some("https://example.com"));
+    }
+
+    /// 非链接片段不得携带 `url`：链接目标与「粗体 / 斜体」等纯样式正交，
+    /// 不应污染普通片段。
+    #[test]
+    fn non_link_span_has_no_url() {
+        let spans = vec![
+            InlineSpan::new(0, 4, InlineStyle::Strong),
+            InlineSpan::new_link(5, 16, InlineStyle::Link, "https://x.test".to_string()),
+        ];
+        let views = spans_to_view(&spans);
+        assert_eq!(views[0].url, None);
+        assert_eq!(views[1].url.as_deref(), Some("https://x.test"));
     }
 }

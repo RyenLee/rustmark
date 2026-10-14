@@ -53,7 +53,9 @@ pub(super) fn outline_tab(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
                             },
                         );
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            ui.weak(item.line.to_string());
+                            // `item.line` 是 0-based（与源码偏移同源），状态栏与用户数行
+                            // 都按 1-based，故显示时 +1，使大纲行号与正文行号对齐（#12）。
+                            ui.weak((item.line + 1).to_string());
                         });
                     })
                     .response;

@@ -18,6 +18,20 @@ pub(super) fn layout_graph(
             "图里没有任何节点（只有 `graph LR` 一行？）".to_string(),
         ));
     }
+    layout_from_graph(g, src, size, measure)
+}
+
+/// 解析产物 → 版面：分层、排序、定位、图元、热点。
+///
+/// Mermaid 流程图与 flowchart.js（见 [`super::flow_js`]）的「定义 + 连线」
+/// 都落成同一个 [`Graph`]，故后半段布局管线完全共用；差别只在解析与流向
+/// （flowchart.js 恒为自上而下）。`src` 仅用于提取 `click` 指令的热点。
+pub(super) fn layout_from_graph(
+    g: Graph,
+    src: &str,
+    size: f32,
+    measure: Measure<'_>,
+) -> Result<MermaidLayout, MermaidError> {
     let ranks = rank_nodes(&g);
     let layers = order_within_rank(&g, &ranks);
     let placed = place(&g, &layers, size, measure);

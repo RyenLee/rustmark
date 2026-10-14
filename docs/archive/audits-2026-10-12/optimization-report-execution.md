@@ -1,4 +1,7 @@
 # Rustmark 优化落地报告 · P0 / P1 / P2
+>
+>
+> **已归档（2026-10-14）**：历史一次性文档（阶段报告 / 修复方案 / 实施日志 / 审计快照），结论仍有效但不再维护；归档索引与理由见 `docs/archive/README.md`。
 
 > 审计文档：[optimization-report.md](./optimization-report.md)
 > 执行时间：2026-10-12

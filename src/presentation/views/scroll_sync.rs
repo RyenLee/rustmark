@@ -156,7 +156,17 @@ pub fn apply(app: &mut EditorApp, now_ms: u64) {
         .ui
         .sync
         .observe(now_ms, app.editor.scroll_y, app.preview.scroll_y);
-    let click = app.ui.sync.take_click();
+
+    // 点击跳转**独立于**「连续滚动同步」开关（见 S6-05 #12）：即便用户关掉同步，
+    // 点目录 / 标题 / 脚注仍应跳到编辑区对应行。故先取点击、先行处理，
+    // 再判定连续同步是否启用——原有的顺序会在关闭同步时把点击吞掉，
+    // 表现为「点了大纲 / 目录没反应」。
+    if let Some(block_id) = app.ui.sync.take_click() {
+        if drive_editor(app, Some(block_id)) {
+            app.ui.sync.record_drive(Side::Preview);
+        }
+        return;
+    }
 
     // 预览关掉 / 专注模式 / 大文件降级时没有可同步的对侧。
     let enabled = app.ui.sync.enabled
@@ -164,14 +174,6 @@ pub fn apply(app: &mut EditorApp, now_ms: u64) {
         && !app.ui.focus_mode
         && !app.preview.degraded;
     if !enabled {
-        return;
-    }
-
-    // 点击跳转是离散事件，优先于连续滚动。
-    if let Some(block_id) = click {
-        if drive_editor(app, Some(block_id)) {
-            app.ui.sync.record_drive(Side::Preview);
-        }
         return;
     }
 

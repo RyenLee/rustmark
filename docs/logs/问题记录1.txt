@@ -1,5 +1,272 @@
+================================================================================
+ RustMark 问题记录（流水账 · append-only）
+================================================================================
+ 性质：用户反馈与缺陷的原始记录。**倒序排列（最新在上）**，编号 001 起递增。
+ 约定：每条含「问题 → 根因 → 修复 → 回归 → 门禁」五段；只追加，不改写已写条目
+      （后续纠正以新条目或「⚠ 该初判被 0XX 证伪」显式标注，如 013 被 014 证伪）。
+ 关联：任务状态看 docs/v1.1-backlog.md（V11-16~26 对应 011~027）；
+      调试方法论沉淀看 docs/debug-guide.md §6；截图在 docs/pic/（按条目引用）。
+ 注意：早期条目（002~010）只有问题陈述，其处置记录在 2026-10-10 修复批次的
+      git 提交与 docs/CHANGELOG.md、docs/PROGRESS.md §1.1.3。
+
+--------------------------------------------------------------------------------
+ 条目索引（编号 · 日期 · 主题）
+--------------------------------------------------------------------------------
+ 027 · 10-14 · 依赖审查：eframe accesskit / ahash 收窄（−110 KiB、锁文件 −60 包）
+ 026 · 10-14 · https 图片报「未内置 TLS」→ 引入 ureq+rustls
+ 025 · 10-14 · 「检查」标签侧栏与编辑区之间黑框（lint 行溢出撑爆布局）
+ 024 · 10-14 · 甘特图重写对齐 mermaid.js（真实日期/配色/日期轴/网格）
+ 023 · 10-14 · 内置字体资产（三款西文等宽 + Noto Sans SC 子集 CJK 兜底）
+ 022 · 10-13 · KaTeX 数学符号方框 → 内置数学兜底字体 + 逐字形测试
+ 021 · 10-13 · 设置页字体选择（发现机制 + 置顶进等宽族；自建族方案已废弃）
+ 020 · 10-13 · 大纲行号不对齐、不支持跳转（点击被吞/差一/静默失败）
+ 019 · 10-13 · 图片超链接不渲染（Typora #pic_* 后缀 + 失败无出口）
+ 018 · 10-13 · 注脚不支持跳转（数据链本就完整，补契约回归）
+ 017 · 10-13 · 超链接不支持点击（dest/url 端到端 + scheme 安全 + 分层合规）
+ 016 · 10-13 · 用户反馈六项汇总（上述 017~022 的问题清单）
+ 015 · 10-13 · FLowchart 流程图渲染失效（flowchat 笔误 + 语法家族不同）
+ 014 · 10-13 · 连续回车只一个空行的**最终根因**：空行 Galley 零高度（渲染层）
+ 013 · 10-12 · 连续回车系统性排查（四方向取证；⚠ 方向 1 初判被 014 证伪）
+ 012 · 10-12 · 连续回车 IME 两处修复（⚠ 后被 014 证伪为过度防御，保留无害部分）
+ 011 · 10-11 · 连续回车首报
+ 010 · 10-10 · 设置浮窗异常 / 标题红框（只有问题陈述）
+ 009 · 10-10 · 回车不出行 + 屏幕闪烁（只有问题陈述）
+ 008 · 10-10 · 图表渲染 / 预览滚动 / 自动换行 / 工具栏（只有问题陈述）
+ 007 · 10-10 · 预览滑动 / 列表格式 / 图表 / 层级 / 脚注表格（只有问题陈述）
+ 006 · 10-10 · 行号重叠 / 快捷键与 TOC 渲染（只有问题陈述）
+ 005 · 10-10 · 序号重叠 / 预览滑动 / 菜单不一致 / 大纲黑框 / 搜索开关（只有问题陈述）
+ 004 · 10-10 · 表格换行 / 间距乱（只有问题陈述）
+ 003 · 10-10 · 欢迎页居中 / 等高 / 间距 / 字体族 / 打开文件夹 / 导出路径（只有问题陈述）
+ 002 · 10-10 · 自动换行 / 宽度适配 / 工具栏位置（只有问题陈述）
+ 001 · 10-09 · 首报四项：编辑区白板 / 菜单层级 / 下拉重叠 / 多标签预览（只有问题陈述）
+================================================================================
+
+2026-10-14 027
+问题（用户请求）：
+审查当前项目的依赖配置，找出未被实际使用或可被范围更小的替代方案取代的依赖，将其移除或精化引入范围，以减少包体积。
+
+复查方法与工具（可复现）：
+- 逐 crate 反查引用：`grep -rn "<crate>" src tests`。
+- feature 来源反查：`cargo tree -e features -i <crate>`；重复版本扫描：`cargo tree -d`。
+- 体积：同一 release 口径 `cargo build --release --bin rustmark` 前后对比（本机 target = x86_64-pc-windows-msvc）。
+
+结论与变更（两处，均无功能代价）：
+1. eframe 特性移除 "accesskit"：
+   - 证据：全仓 `grep accesskit` 零命中；该特性只向屏幕阅读器暴露语义树，键盘导航 / IME / 焦点全走 egui 自身实现。
+   - 效果：Windows 产物原链入的 accesskit / accesskit_winit / accesskit_windows / accesskit_consumer 四个 crate 全部移除，并连带去掉仅被它们引用的重复版本 hashbrown 0.15 / foldhash 0.1；跨平台 lock 合计移除 60 个包（含 Linux zbus / atspi / async-*、macOS accesskit_macos）。
+   - 取舍：放弃屏幕阅读器可达性——对单人本地 Markdown 编辑器为可接受取舍。
+2. ahash 由 "0.8" 收窄为 default-features=false + ["std","no-rng"]：
+   - 证据：三处缓存 Map（application/markdown/service/{highlight,render,spell}_cache.rs）键**全是 DocumentId(u64)**，内部单调、非攻击者可控，无需 HashDoS 防护；ahash 的 runtime-rng 是依赖树中 getrandom 0.3.4 的**唯一**引入者。
+   - 效果：getrandom 0.3.4 退出构建图（`cargo tree -i getrandom@0.3.4` → nothing to print）；种子改由 ASLR + 实例计数器派生（ahash 文档「最弱但可用」档），对缓存键无影响；与 eframe / egui 对 ahash 的用法一致。
+
+复核后确认「保持现状」（记录以避免反复讨论）：pulldown-cmark 的 html（HTML 导出用 push_html）、toml 的 display（写盘用 to_string_pretty）、image 的 5 个位图格式（恰为 ALLOWED_MIME 白名单）、ureq 的 rustls（已是该库最小合规 TLS 组合）、rfd 默认特性与 eframe 的 x11/wayland（均 Linux 目标专属，对 Win / macOS 零影响）、default_fonts（UI 需要比例西文字形，项目未自带）。
+
+体积实测：11,576,320 → 11,463,680 bytes（11.04 → 10.93 MiB，**−110 KiB，−0.97%**）。仍超 NFR-PERF-01 红线 0.93 MiB；本次只消掉「零功能代价」的浪费，剩余超限维持 metrics §2.4 的待决策。登记于 docs/dependencies.md §6、docs/metrics.md §2.5。
+
+门禁：cargo fmt --check / check-arch / clippy --all-targets --all-features -- -D warnings / cargo test --all-targets 全绿（1623 用例，0 失败）。
+
+2026-10-14 026
+问题：
+2、图片渲染失败，预览报错「图片无法加载 … 下载图片失败（https://…）：当前版本未内置 TLS，请改用本地图片或 http 地址」。现实文档里的远程图片地址绝大多数是 https。
+根因（asset_loader.rs `load_remote`，S5-11 的历史取舍在真实场景翻车）：
+- 首版为体积拒绝一切 HTTP 客户端 crate，手写 `TcpStream` + 裸 HTTP/1.0；TLS 需要外部实现，于是 https 被**硬编码拒绝**。判定「图片地址多为 http」的前提是错的——如今图床（CSDN、GitHub、对象存储）几乎全是 https。
+修复（改用 ureq，http/https 同一条通路）：
+- 引入 `ureq 3.4.2`（`default-features=false` + `["rustls"]`）：rustls 纯 Rust TLS、三平台行为一致、无系统依赖（native-tls 在 Linux 要 OpenSSL，交叉编译困难）；TLS/重定向/chunked 全部交出去。
+- `load_remote` 只保留三条安全与资源边界：全局超时（沿用 `download_timeout`=5s）、边读边判体积硬上限（`max_inline_bytes`×2，防超大响应先全量进内存）、MIME 白名单（响应头优先、缺失按重定向后最终 URL 扩展名推断，判定次序与旧实现一致）。
+- 非成功状态码显式报 `DownloadFailed`（带 HTTP 状态码）；`split_http_body` 手写切体原语随 TcpStream 方案退役（coding.rs 删除）。
+- 体积代价：登记于 docs/dependencies.md §1 与 metrics.md §2.4；「明确不引入」清单里当年拒绝 reqwest 的理由仍成立，ureq 是体积最小的合规替代。
+回归（asset_loader_test.rs）：
+- 新增 `https_connect_failure_returns_download_error_not_panic`：https 到保留端口必须降级为 `DownloadFailed`（panic=abort 下坏图引用不得终止进程）。
+- 新增 `real_https_download`（`#[ignore]` 需外网，手动跑）：用户报障的原始 CSDN 图床地址实测下载成功（mime=image/gif, 2056 bytes）。
+- 原删除的 `https_url_is_rejected_explicitly_not_downgraded` 所守护的「不静默降级到明文 http」由 ureq 的 scheme 处理天然满足；本地 HTTP 服务下载用例（`remote_download_of_real_image_succeeds`）不改一行即通过。
+门禁：cargo fmt --check / clippy --all-targets --all-features -D warnings / check-arch / cargo test --all-targets 全绿（asset_loader 26 条全过）。
+
+2026-10-14 025
+问题：
+1、左侧菜单切换到「检查」标签后，页面异常：侧栏右侧与编辑区之间出现一条竖向**纯黑**矩形（完整高度，从标签栏下一直贯穿到状态栏），编辑区整体被推右，侧栏内 lint 行的文字在该黑框左缘被截断。文件/大纲/搜索三个标签均正常。
+根因（egui SidePanel 的布局保留规则 × lint 行的水平裸 label）：
+- lint 行（`lint_row`）在 `Layout::left_to_right` 里用裸 `ui.label` 画说明文字——水平布局的 label **不换行**，文字超宽时 `min_rect` 直接溢出分配宽（面板内容区右界 232pt，插桩实测溢到 407.9pt）。
+- egui `SidePanel` 给后续布局保留的空间不是 `exact_width` 的 240，而是**内容 response.rect 的最大 x**（egui panel.rs `allocate_left_panel(Rect::from_min_max(available_rect.min, rect.max))`）。于是侧栏实际占掉 [0, 415.9]，编辑区被推到 423.9。
+- [240, 415.9] 之间**没有任何面板绘制**：侧栏底色被 `set_clip_rect` 裁在面板矩形内，溢出区谁都不画——真实渲染下露出交换链清屏色（黑），即用户看到的黑框。同一溢出对文件/大纲/搜索不触发，因为它们的行文本要么截断（files.rs 文件名「与大纲同一缺陷类」、outline.rs 标题），要么天然短；lint 说明是最长文案却漏了截断。
+修复（与大纲/文件树同款 truncate 模式）：
+- `lint_row`：说明文字改占「剩余宽 − 行号预留」（`OUTLINE_LINE_NO_W`，与大纲同款）并 `Label::truncate()`，超出显示省略号，绝不把行撑出面板；doc 注释完整记录根因链（供未来同类排版自查）。
+- 同类隐患一并修（search.rs）：`group_header` 文件名与 `hit_row` 代码片段此前同样是水平裸 label——长文件名/长片段会以完全相同的机制撑出黑框；改为固定宽子区域 + truncate（高亮三段标签都在子区域内排）。
+- 框架级防御（暂不做）：egui 该保留规则对任何视图的溢出都成立，理论可在 `sidebar_view::show` 统一钳制 response rect，但 egui 未提供干净的 API，且现有四个标签都已有截断约定；留待真出现第三个漏网再上框架级手段。
+回归（lint_tab_test.rs 新增 `lint_tab_does_not_push_the_editor_right`）：真实帧渲染「检查」标签，断言编辑区背景矩形左缘紧贴侧栏右缘（≤240+80）；修复前该值为 423.9，必失败。插桩辅助定位过程（panel-debug eprintln）已全部移除。
+门禁：cargo fmt --check / clippy --all-targets --all-features -D warnings / check-arch / cargo test --all-targets 全绿（lint 标签 7 条、search 相关全过）。
+
+2026-10-14 024
+问题：
+甘特图渲染与 mermaid.js 官方差距过大，需要重写对齐：旧版只做「从 0 顺序累加」占位——无日期轴、无状态配色、任务名在条外、所有条同色。
+根因（旧 gantt.rs）：① `is_date` 仅识别 YYYY-MM-DD 且返回 bool，日期只跳过不解析，任务全按 `after`/分段游标从 0 累加天序号，真实日历日期与跨年跨月无法表达；② 任务名画在条外（左侧 margin），与 mermaid 把名字画进条内相反；③ 无日期轴/刻度/网格，状态只靠 `crit` 描边 + `done` 对勾，无配色。
+修复（gantt.rs 重写 + Prim 增颜色覆盖）：
+- `Prim::Poly` 增 `fill_color`/`stroke_color`、`Prim::Text` 增 `color`（`Option<Color32>`，缺失回落主题色），零依赖给每图元独立上色；`paint`/`shift_prim` 同步适配，emit/class/sequence 全部构造点补 `None`。
+- 零依赖日期算法：`civil_to_days`/`days_to_civil`（Hinnant），`parse_ymd` 支持任意非数字分隔符；`dateFormat` 默认 YYYY-MM-DD；每个任务按「显式起止日期 → after 依赖 → 分段游标」算天序号，整图以最早日期为 0 点对齐日历。
+- 布局：标题居中；任务名画在条内白字（居中）；done 灰/active 蓝/crit 红/默认深灰 四态配色 + 浅描边（填充向白混合 45%）；底部日期轴 + 自动刻度（≤14天→日、≤70→周、≤365→月、否则年）+ 竖向虚线网格；域右端多留一格外空白，末条不贴边。
+- 既有契约不变：click/first_md_link 热点、缺字体警告、回退源码卡。
+回归（tests.rs 新增 4 条：真实日期解析、每任务条带 fill_color 覆盖、标题文本图元、竖向网格/刻度线；原 gantt_tasks_parse 随结构体改造把 `crit` 字段改为 `status` 枚举）。
+门禁：cargo fmt --check / clippy --all-targets --all-features -D warnings / check-arch / cargo test --all-targets 全绿（mermaid 模块 50 测试通过）。
+
+2026-10-14 023
+问题：
+按字体调研的推荐组合实施（承接 021）：① 内置西文等宽字体，让「设置页能选什么」不再取决于用户机器装了什么；② 内置 CJK 子集兜底，让精简 Linux / 最小化容器里中文不再整体变方框。
+根因（021 遗留的两个环境依赖）：
+- 发现机制只吃系统字体：多数 Windows 机器只有 Consolas / Cascadia、macOS 只有 Menlo——用户听说 JetBrains Mono 好用，下拉里根本没有，想选也无从选起；同一份配置换台机器观感就变。
+- CJK 只吃系统字体：`candidate_paths` 找不到任何中文字体时（精简 Linux、最小化容器、部分 CI 镜像）界面中文**全部**为方框，且此前唯一的信号是一句 eprintln。
+修复（assets/fonts/ + infrastructure/fonts.rs 装配）：
+- 新增四份字体资产（合计 1.89MB）：JetBrainsMono-Regular.ttf（114KB）/ FiraCode-Regular.ttf（141KB）/ IBMPlexMono-Regular.ttf（63KB）为可选等宽字体；NotoSansSC-Subset.ttf（1.57MB、7854 字形）为 CJK 兜底。均只含 Regular 字重（egui 不合成加粗，加粗文本回落 Regular，与系统 CJK 兜底同取舍；全字重会把体积推到 2MB 以上）。
+- CJK 子集化方法（可复现）：`pyftsubset NotoSansSC-Regular.ttf --text-file=gb2312.txt --no-hinting --layout-features='' --name-IDs=0,1,2,3,4,5,6`；`gb2312.txt` 由 GB2312 双字节码位经 Python `gb2312` 编解码器枚举而成（94×94 网格可解出的 8105 字符 = 6763 汉字 + 1342 符号），未改任何字形。GB2312 之外的生僻字（堃玥囧等）在有系统中文字体的机器上仍由系统字体渲染。
+- 数据模型：`FontSource` 增加 `FontBytes::{Path, Static}`——内置资产没有路径（`include_bytes!` 进二进制），旧「只做存在性检查」约定只对磁盘候选成立；`discover_font_sources` 改为内置打头 + 按**显示名**去重（用户装了同名字体时内置赢，避免下拉出现两个「JetBrains Mono」）。
+- 兜底链扩展为「西文 → 数学 → 系统 CJK → 内置 CJK」：新增 `builtin-cjk` 键，**无条件**挂载且排最末——系统字体观感更好、字重齐全，内置子集只是「一台机器上什么中文字体都没有」时的保险；顺序反了会让有雅黑的用户也被迫用子集（生僻字反而变方框）。
+- `install_editor_fonts` 的缺字体警告改为如实表述：有内置兜底，不再是「中文将显示为方框」，而是「已改用内置 Noto Sans SC 子集（GB2312），生僻字在此环境下仍可能为方框」。
+回归（fonts.rs 新增 3 条，17 条全过）：
+- `builtin_editor_fonts_are_registered_and_selectable`：三款内置字体已登记 font_data、出现在下拉、且排在哨兵之后最前（钉住「跨平台一定有得选」）。
+- `builtin_cjk_sits_after_system_cjk_in_both_families`：内置子集排在系统 CJK 之后、族最末（钉住链序，防「优化」反了）。
+- `builtin_cjk_subset_alone_provides_glyphs_for_chinese`：**决定性验证**——只用默认定义 + 内置子集装配（刻意不挂系统 CJK），`set_fonts` 后比例族与等宽族对「中文编辑器文档预览测试，。、「」」都有字形；同时守护随仓库分发的字体文件本身是好的（畸形字体在 panic=abort 下直接终止进程）。
+资产来源与许可（assets/fonts/Fonts-LICENSE.txt 逐款列明）：
+- 三款西文字体与 Noto Sans SC 均为 SIL OFL-1.1（可随软件捆绑再分发，禁单独售卖，衍生须改名）；版权串取自各字体 name table（如 "Copyright 2020 The JetBrains Mono Project Authors"）；OFL-1.1 全文自官方站 openfontlicense.org 抓取（scripts.sil.org 已 403 迁站）。
+- 下载渠道备注：GitHub raw / jsdelivr 在本沙箱不可达，字体经 npm 镜像的 @expo-google-fonts TTF 分发包获取（文件与上游一致）；pip 镜像实际可用（022 记录的「pip 被沙箱拦截」是瞬时失败，本次已装上 fonttools 4.66.1）。
+- 未纳入：Sarasa Mono SC（更纱黑体，中英 2:1 等宽，编辑区对齐最佳）与 STIX Two Math（符号覆盖最全）在 npm 无分发包、GitHub 不可达，需手动下载后放入 assets/fonts/ 并补 Fonts-LICENSE.txt。
+门禁：cargo test 全绿；cargo fmt --check / clippy --all-targets -D warnings / check-arch 均通过。
+
+2026-10-13 022
+问题：
+2、（016 复报）KaTeX 数学公式中存在的数学符号不齐缺失：预览里的数学符号出现方框（豆腐块），渲染不全面。
+根因（math/symbols.rs 符号表 + 真实字体配置逐字形实测）：
+- 符号表把 `\forall` 映射到 `∀` 之类 Unicode 字形，但**映射过去不等于渲染得出来**：字形还要落在已装载字体的覆盖范围内。
+- 新增 tests/presentation/math_glyph_test.rs 按真实字体配置（`font_definitions(None)` + 系统 CJK 兜底）逐符号实测：**67 个常用符号在西文（Ubuntu-Light / Hack）与中文字体（雅黑）里全部落空**——数学运算符区 U+2200–22FF 与 U+2A00–2AFF 两边都不覆盖（`\mp \ast \star \circ \ominus \setminus \cong \sim \simeq \ll \gg \subset \supset \subseteq \supseteq \notin \ni \models \vdash \Rightarrow \Leftarrow \Leftrightarrow \mapsto \longrightarrow \coprod \iint \iiint \bigcup \bigcap \bigoplus \bigotimes \bigvee \bigwedge \nabla \forall \exists \nexists \emptyset \varnothing \hbar \Re \Im \cdots \vdots \ddots \langle \rangle \lceil \rceil \lfloor \rfloor`）。
+- 表现是方框：不报错、不崩溃，肉眼在几十个符号里几乎无法归因（工具栏图标踩过同款坑）。
+- 系统里并非没有数学字体（Windows 有 Cambria Math），但**依赖它等于把正确性绑到操作系统**：Linux CI / 极简容器没有、macOS 无公开路径，同一份代码在不同机器上表现不同，覆盖测试也无法作为回归守住。
+修复（内置数学兜底字体，挂进比例族与等宽族的**末尾、CJK 之前**）：
+- 新增 assets/fonts/DejaVuMathTeXGyre.ttf（TeX Gyre DJV Math，578KB）+ 同目录许可证（Bitstream Vera / TeX Gyre 许可证允许随软件再分发）。`infrastructure/fonts.rs` 用 `include_bytes!` 零拷贝登记为 `math-fallback` 键，`extend_with_math_fallback` 追加进两个族。
+- 兜底链定为「西文 → 数学 → 中文」：数学兜底必须在 CJK **之前**——雅黑自带一部分数学字形（≤ ≥ ≠），若让 CJK 先命中，同一页公式会出现两种形状的符号混搭；置前则数学符号形状一致，中文字符继续落到 CJK（数学字体无汉字）。
+- 不做子集化：本机无 fonttools（pip 被沙箱拦截），手写 TTF 子集器风险不可控（畸形字体在 `panic = "abort"` 下直接终止进程）。体积取舍：578KB 换「公式在所有平台都能排出来」，替代方案（内嵌 JS 引擎 +100MB 量级 / resvg 带 C 依赖）均已被 ADR 否决。
+回归：
+- tests/presentation/math_glyph_test.rs 新增 2 条：① 逐符号核对比例族与等宽族都有字形（真实字体配置，跨平台一致）；② 每个符号命令都能独立排版（守住「表里有、排版器不认」那半类故障）。
+- fonts.rs 新增 2 条：兜底链顺序（数学在 CJK 前、不抢西文）；内置字体可被 egui 解析且 `∀∅⇒⟨⨁ℜ` 真的有字形。
+- math 模块另暴露 `symbol_table()` 供测试与将来的符号面板使用。
+门禁：cargo test 全绿；cargo fmt --check / clippy -D warnings / check-arch 均通过。
+
+2026-10-13 021
+问题：
+6、（016 复报）设置页面需要添加字体选择，最好是使用工程本地的（添加 fonts 文件夹来读取）。
+根因（字体流全程取证）：
+- `Theme::editor_font_family` 是个**死设置**：字符串经 `ThemeView.font_family` 写进主题，却没有任何 `FontId` 消费它——编辑区一直硬编码 `FontId::monospace`。
+- 设置页「字体族」给的是 `system-ui` / `sans-serif` / `serif` 这类 **CSS 通用名**，egui 的字体族里没有这些名字，选了也不会生效（领域默认值 `system-ui` 同病）。
+修复（发现真实字体 → 置顶进等宽族 → 下拉只列能生效的选项）：
+- 发现：`infrastructure/fonts.rs` 新增 `discover_font_sources`——项目 `fonts/` 目录（可执行文件旁 + 当前工作目录，扫 ttf/otf/ttc）优先，其后是常见系统等宽字体（Windows Consolas/Lucida Console/Cascadia；macOS Menlo/SF Mono；Linux DejaVu Sans Mono/Liberation Mono/Ubuntu Mono/Noto Sans Mono）。只做存在性检查，读不通的候选静默跳过；键为 `user:<字体名>`，与哨兵 `monospace`（「系统等宽（默认）」）区分。下拉清单经 `shared::fonts::EditorFontChoice`（纯数据）交到表现层，不破坏分层。
+- 装配：`font_definitions(selected_family)` 把选中字体**置顶进内置 `Monospace` 族**（先去重再插入），西文优先命中、中文经 CJK 兜底、缺字再回落内置等宽。
+- ⚠️ **关键决策记录：曾实现为「自建专用字体族」（`FontFamily::Name("editor")`），已废弃**。原因是 egui 的行为与假设相反——epaint fonts.rs:808 对未绑定的 `FontFamily::Name` 是**直接 panic**（`FontFamily::Name(...) is not bound to any fonts`），而本项目 `panic = "abort"`：任何「先排版、后装配字体」的路径（无头测试、将来的新入口）都会让窗口消失。实测改为自建族后 6 条既有单测因测试上下文未装字体而 panic，遂回退为「置顶进内置族」方案（`FontId::monospace` 永远有绑定，零 panic 风险）。代价是选择会连带影响一切等宽界面（编辑区、预览代码块、命令面板、差异对比）——与 VS Code「编辑器字体」同语义，可接受。
+- 生效链路：`EditorApp::ensure_editor_fonts`（`update` 每帧 + 启动各调用一次）比对持久化 `font_family` 与 `installed_font_family`，**没变就不动**（`set_fonts` 会重建字体图集，一次可见卡顿）；启动顺序调整为「先构造应用（持有配置）→ 再装字体」，仍在首帧绘制之前。
+- 缓存一致性：`editor_metrics_signature` 纳入字体族——否则换字体后逐行 Galley 会因「行内容没变」被整批复用，表现为「换了字体但编辑区没变」（与字号同源）。
+- 设置页：「字体族」改为「等宽字体」下拉，只列真实可用字体；保留自定义文本框（同时是「面板已渲染」的焦点锚点 `FONT_INPUT_ID`）。
+回归：fonts.rs 新增 8 条（哨兵保持内置族逐元素一致、非法键安全退化、置顶且不重复、选中内置字体不重复、`set_fonts` 后等宽 FontId 真有字形、清单以哨兵打头且无重复、发现只含真实存在文件、`editor_font_choices` 轻量）；集成测试两处调用点随签名更新。
+门禁：cargo test 全绿；cargo fmt --check / clippy -D warnings / check-arch 均通过。
+
+2026-10-13 020
+问题：
+1、（016 复报）大纲显示：文案和同一区域不在同一行，并且不支持跳转。
+根因（三处独立缺陷，均在大纲/跳转链路上）：
+- ① 点击被吞：`scroll_sync::apply` 把 `take_click()` 放在 `enabled` 门禁**内部**——滚动同步关闭时，预览区大纲/标题/注脚产生的点击请求被无条件吞掉，跳转功能形同虚设。
+- ② 行号差一：侧栏大纲显示 0 基行号（`item.line`），与编辑器行号栏语义不一致，用户按大纲行数找不到对应行。
+- ③ 静默跳转失败：`scroll_to_offset` 依赖 `line_tops`，而高亮缓存签名不匹配（主题/字号/字体变化后的首帧、或本帧尚未排版）时它返回 `None`，旧实现直接放弃跳转——用户点了大纲「什么都没发生」。
+修复：
+- ① `take_click` 移到 `enabled` 判断**之前**：点击驱动编辑器定位与同步开关无关（`drive_editor` + `record_drive`）。
+- ② 大纲行号显示 +1（1 基）。
+- ③ `line_tops` 为 `None` 时退化为「按 editor_font_size × editor_line_height 估算的均匀行顶」——跳转仍会发生（位置近似），下一帧缓存就绪后自然精确；「宁可近似跳到附近，也不要不跳」。
+回归：既有 scroll_sync / find 测试全绿；行为变化均有注释说明取舍。
+门禁：cargo test 全绿；cargo fmt --check / clippy -D warnings / check-arch 均通过。
+
+2026-10-13 019
+问题：
+4、（016 复报）图片使用超链接，但是渲染页面没有加载出来。
+根因（Typora 语法 + 失败兜底缺失）：
+- Typora 的 `#pic_center` / `#pic_left` / `#pic_right` / `#pic_float` 对齐后缀会残留在 URL 里（`![](img.png#pic_center)` → 请求一个不存在的文件 → 加载失败）。`desugar_image_sizes` 此前只剥 ` =宽x高`，不认这些后缀。
+- 远程图片失败（无 TLS 证书链等）时预览只显示一个空白块，用户无从知道「是图挂了还是编辑器坏了」。
+修复：
+- `image_size.rs` 的 `desugar_image_sizes` 增加 `PIC_ALIGN_TOKENS` 剥离（仅在 `](...)` 目标内、无需空格分隔），真实 fragment（`#section`）不受影响。
+- `media.rs` 加载失败分支新增「在浏览器中打开 ↗」按钮（仅 http/https），把「图加载不出来」变成一次可验证的点击。
+回归：image_size.rs 新增 4 条（尺寸后缀、pic 对齐后缀、真实 fragment 保留、正文文本不受影响）。
+门禁：cargo test 全绿；cargo fmt --check / clippy -D warnings / check-arch 均通过。
+
+2026-10-13 018
+问题：
+3、（016 复报）注脚不支持跳转，需要修复。
+根因（数据链核实）：链路本就完整——解析器产出 `footnote_ref` 片段、`internal_targets` 以**裸标号**为键（与 `footnote_ref_mark` 剥括号后的值一致）、`toc::draw_footnote_section` 点击定义行即 `request_click(block.id)`。缺的是**回归护栏**：任何一环的键格式漂移（如标号带不带方括号）都会让跳转静默失效，而此前没有任何测试钉住这个契约。
+修复（不改行为，补契约测试）：
+- preview_view.rs 新增 2 条：`footnote_ref_mark_strips_brackets`（`[^1]`→`1`、不完整片段原样返回）；`heading_slug_is_deterministic_and_ascii_safe`（GitHub 对齐：连续空白各转一个连字符不合并；CJK 字符保留——`is_alphanumeric()` 对汉字为真，中文标题锚点即其本身，可被直接链接）。
+- 顺带修正 `heading_slug` 的实现注释：原文说「CJK 字符直接丢弃」与代码实际行为相反（注释错，行为对）。
+回归：上述 2 条 + 全套。
+门禁：cargo test 全绿；cargo fmt --check / clippy -D warnings / check-arch 均通过。
+
+2026-10-13 017
+问题：
+5、（016 复报）超链接不支持点击。
+根因（数据链断在两端）：领域 `InlineSpan` 有样式无**目标**（`dest` 字段不存在），DTO `SpanView` 无 `url`；即使有，命中测试（span_rects）与点击处理（`handle_span_click`）链路也未接上打开动作。
+修复（端到端接通 + 安全 + 架构合规）：
+- 领域 `InlineSpan` 增加 `dest: Option<String>`；DTO `SpanView` 增加 `url: Option<String>`；`view_mapper` 把 `InlineSpan::new_link` 的目标传播到 DTO（新增 2 条回归）。
+- `inline.rs` 的 `handle_span_click`：`link` 片段 → `shared::system::open_external`（先过 `is_safe_to_open`）；`#锚点` → `request_click`；`[^n]` → `footnote_ref_mark` 剥括号后查 `internal_targets` → `request_click`。
+- 新增 `shared/system.rs`（零依赖 OS 打开器：Win `cmd /C start ""` / Mac `open` / Linux `xdg-open`）+ `is_safe_to_open`。**首版漏了 XSS**：`javascript:` / `vbscript:` / `data:` 不含 `://`，被前缀检查放过；测试用大写 `DATA:` 打出缺口后改为大小写不敏感判定（3 条安全回归）。
+- 架构合规：打开器最初放在 `infrastructure/system.rs`，被 build.rs 的 arch_check 拦下（presentation 不得依赖 infrastructure）——**把端口迁到 `shared` 层**（可被任意层依赖），infrastructure 侧删除。
+- `is_safe_to_open` 放行 http/https/mailto/tel + 相对路径 + `file://` + `#`。
+回归：view_mapper 2 条 + system 3 条 + 既有 span 命中测试全绿。
+门禁：cargo test 全绿；cargo fmt --check / clippy -D warnings / check-arch 均通过。
+
+2026-10-13 016
+问题：
+1、大纲目前显示，文案和同一区域不在同一行，并且不支持跳转（跳转功能是否需要，这个需要评估）
+2、KaTeX数学公式中存在的数学符号不齐缺失，渲染区域渲染不全面
+3、注脚不支持跳转，需要修复
+4、图片使用超链接，但是渲染页面没有加载出来
+5、超链接不支持点击
+6、设置页面需要添加字体选择，最好是使用工程本地的，添加fonts文件夹来读取，给出改造方案
+
+2026-10-13 015
+问题：
+1、（附截图 docs/pic/PixPin_2026-10-13_14-46-45.png）预览区「FLowchart流程图」（示例文档.md 那一节）渲染失效：整块降级为源码卡，橙色提示「未能排版：不支持的图表写法：flowchat」。
+根因（示例文档 + mermaid.rs / graph_parse.rs 取证）：
+- 该节用 ```mermaid 围栏包的是 **flowchart.js 语法**（`id=>type: 文本` 定义 + `->` 连线），且首行是 editor.md 示例流传甚广的著名笔误 `flowchat`（少个 r）。
+- `detect_kind` 把 `flowchat` 当图种关键字 → 不在支持列表 → `Unsupported("flowchat")` → 整卡回退；与支持列表里的 `flowchart` 只差一个字母，极具误导性（看上去像引擎连 flowchart 都不认）。
+- 即使把笔误改对也无济于事：Mermaid 解析器会在 `=` 处报「期望边（`-->` 之类），实际遇到 `=`」——**语法家族不同才是根因**，拼写只是触发器。
+修复（新增 flowchart.js 支持，与 Mermaid 流程图共用同一 `Graph` 模型与布局管线）：
+- 新增 src/presentation/views/mermaid/flow_js.rs：识别签名 = 存在「行首 `id=>type`」定义行（Mermaid 合法行不可能如此，两套语法互不误伤）；七种节点类型映射外形（start/end→胶囊、condition→菱形、operation→矩形、inputoutput→平行四边形、subroutine→子程序形）；连线行 `a->b->c`、来源侧括号标签 `cond(yes)->e` 落到出边、容忍 `-->` 与全角冒号；首行 `flowchart`/`flowchat`（笔误）/`flow` 标题一律忽略；flowchart.js 恒为自上而下。
+- graph_layout.rs 抽出 `layout_from_graph` 共用管线；graph_parse.rs 的 `intern`/`skip_ws` 提为 pub(super) 复用；mermaid.rs 在 `layout()` 里优先分发 flowchart.js（先于 `detect_kind`）。
+回归：mermaid/tests.rs 新增 4 条（示例文档逐字样例含笔误与全角？、`=>` 出现在 Mermaid 节点文本中不误判、纯标题行回退 Unsupported、未定义引用建裸节点）；mermaid 全部 46 条测试通过。
+门禁：cargo build / fmt --check / clippy -D warnings（顺带改掉一处 expect_used）/ check-arch / lib 283 条全绿。
+
+2026-10-12 013
+问题：
+1、（012 复报，附截图 docs/pic/PixPin_2026-10-12_23-27-11.png）编辑区与预览区的连续回车异常：连续按 N 次回车只生成一个空行；预览区未渲染对应的新行。截图中行号栏 9→21 逐行递增（行数在涨），但正文里整段「译文」左缘外移约 2 字符宽——空行被行内文本吞掉，模型与视图不同步。
+处置（系统性根因排查，四方向逐一取证）：
+- 方向 2「换行符一致性（\n / \r\n / 空白）」：**无缺陷**。fs_document_repository 读时把 CRLF 归一为 \n（decode），写时按原风格还原（encode_as），探测走原始字节——「读归一 + 写还原」闭环，无 trim、无空白丢弃。
+- 方向 3「校验规则误判连续空行」：**无缺陷**。4 条 lint 规则逐一核实：heading_jump / list_marker_mixed / trailing_whitespace（且 `trailing == 2` 显式豁免硬换行）/ unclosed_fence——**没有一条**把连续空行或首尾换行判为非法。
+- 方向 4「预览渲染 / white-space / 多行结构」：**无缺陷**。egui LayoutJob 默认 break_on_newline=true，预览 render_inline_text 未覆盖该值 → 块内 \n 正常换行；解析器把 SoftBreak 存为 \n，块按 source_range 排序（保序）。
+- 方向 1「回车事件链路 / IME / 受控值更新」：**本轮初判为 IME 守卫时序缺陷**并改了 apply_pending_editor_state（armed 到期帧抹平 repeat、守卫到期帧保留预编辑串）。⚠️ **该初判在 014 被运行时日志证伪**：真实事件流里 Enter 从未被吞、领域写入零拒绝、预览正常推进到 version 19，数据层完全正常。013 的方向 1 修复属过度防御、非本症根因，但其对组合期预编辑串的保护仍保留（无害）。
+- 关键认知：此前 011/012/013 共十几次修复全打偏在「IME / 回车事件」方向，是因为单测/探针直接注入 egui::Event、跳过真实翻译链，且从未在运行时验证。014 用真实日志才定位到真正的渲染层缺陷。
+
+2026-10-13 014
+问题：
+1、（011/012/013 复报的最终根因）连续按 N 次回车只生成一个空行；只有继续输入可见字符后换行才显示出来；行号栏与正文错位（013 截图 9→21 递增但正文错位）。
+根因（运行时日志 rustmark-input.log 取证 + egui/epaint 源码核实，**与 IME / 回车事件完全无关**）：
+- 编辑区用自定义逐行 `layouter`（`highlight_layout_with_find` + `build_line_job`）把全文按 \n 拆成逐行 Galley 再 `Galley::concat` 拼接。但 `build_line_job("")` 对**空行**产出一个**零行、零高度**的 Galley：epaint text_layout.rs 里 `Paragraph::empty_paragraph_height` 只在 `layout_section` 处理到**非空** section 时才被置为行高；纯空 LayoutJob 不产生任何 section，`layout_section` 不被调用，空段落高度维持默认 0.0 → 整行高度 0 → concat 后空行不可见。
+- 这同时解释全部症状：① 连续回车产生的空行高度全为 0 → "只显示一个空行"；② 空行无高度，须打可见字符变成非空行才有高度 → "打字符才换行"；③ 行号栏 `gutter` 按 0 高度空行定位 → 与有高度的正文错位（013 截图现象）。
+- 日志铁证：每一帧 Enter 都进了 EDIT-diff 并插入 \n，bind/domain 全程一致（末尾 7757==7757），preview 推进到 version 19 —— 数据层无丢失，纯属渲染层空行高度缺失。
+修复（最小、单点，src/presentation/theme/mapper/highlight_cache.rs 的 build_line_job）：空行时补一个空 section（`job.append(line, 0.0, base)`），让 egui 的 `layout_section` 把空段落高度置为行高。空行即排成一行正常行高，空行可见、行号对齐。
+回归：tests 新增 `empty_line_job_yields_nonzero_height_galley`（空行 Galley 高度>0、恰一行）与 `blank_lines_preserve_height`（含空行文本高度随空行线性增长）；既有 10 条 mapper 测试全过。
+门禁：cargo test 全绿（表现层 512 / 全套约 1450）；cargo fmt --check / clippy -D warnings / check-arch 均通过。临时诊断插桩（diag_log + 4 个钩子点）已移除，源码恢复干净。
+
+2026-10-12 012
+问题：
+1、（011 的复报延续）编辑区域按下回车键后，界面不会立即出现新行；只有继续输入可见字符后，换行才显示出来。连续多次按回车，最终也只产生一个空行，回车次数与新增行数不一致。
+处置（本轮，改动最小的两处修复，均在 src/app/frame/editor/ime.rs 的 apply_pending_editor_state）：
+- 根因 A「armed 到期帧吞 repeat 回车」：egui 的 remove_ime_incompatible_events 在 TextEdit::show 控件内部、按当帧仍为真的 state.ime_enabled 剔除全部 repeat: true 按键；armed 到期帧先清零 egui_ime_armed 再做抹平检查，抹平被跳过，补发的 Disabled 排在事件流尾部、排序（在剔除之后）才生效，救不回那一帧。release 丢失（候选窗抢焦点吞 keyup）后的第二次回车被整个吞掉——「连按回车只多出一个新行」的直接原因。修复：抹平判据改为「armed 为真或本帧即将补发 Disabled」。
+- 根因 B「组合新鲜时预编辑串被吃」：armed 窗（50ms）比组合窗（800ms）短一个量级，旧实现在用户斟酌候选的间隔里补发 Disabled 清零 ime_enabled，预编辑选区却还挂在缓冲区里，随后回车/打字的 delete_selected 把已落进领域、用户可见的预编辑串整个吃掉。修复：① armed 到期时组合窗仍新鲜就只续期、不补 Disabled；② 组合窗内到达裸按键/裸文本（真实输入法在组合期会自己吞掉按键转成 Commit，裸按键到达即组合已废）时补一个空 Commit("") 折叠选区，预编辑串转为普通文本。
+- 回归：tests/presentation/enter_ime_test.rs 新增 3 条（armed 到期帧 repeat / 放弃组合后回车 / 放弃组合后打字）；enter_diag_test.rs 场景 4/7 转正为回归并收紧断言、场景 9 修正原写错的预期；新增 enter_sweep_test.rs 暴力扫描（9 类 IME 前缀 × 6 种击键间隔 × 3 种节奏，不变量：每次非 repeat 回车必须让领域/绑定串/可见 galley 立即各多一个 \n）。
+- 门禁：cargo test 全绿（表现层 503，全套约 1400）；cargo fmt --check / clippy -D warnings / check-arch 均通过。
+
 2026-10-11 011
 问题：
+1、编辑区域按下回车键后，界面不会立即出现新行；只有继续输入可见字符后，换行才显示出来。连续多次按回车，最终也只产生一个空行，回车次数与新增行数不一致。期望：每次按回车都在光标处立即插入换行并即时渲染，连续按 N 次回车就新增 N 行，光标位置保持不变。
 
 
 2026-10-10 010

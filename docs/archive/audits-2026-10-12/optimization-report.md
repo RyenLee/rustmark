@@ -1,4 +1,7 @@
 # Rustmark 全项目优化建议 · 2026-10-12
+>
+>
+> **已归档（2026-10-14）**：历史一次性文档（阶段报告 / 修复方案 / 实施日志 / 审计快照），结论仍有效但不再维护；归档索引与理由见 `docs/archive/README.md`。
 
 > 基于 Rust-Full-Stack-Feature-Audit&Fix skill 框架，对重构完成后的 rustmark 项目做 **5 维度静态扫描**。
 > 扫描方法：check-arch 规则校验 / clippy lint / 全量 grep 量化 / 关键路径精读。

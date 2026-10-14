@@ -145,6 +145,59 @@ fn lint_tab_renders_in_a_real_frame() {
     assert!(shapes > 0, "「检查」标签必须画出东西，实际 {shapes} 个形状");
 }
 
+/// 切到「检查」后，编辑区必须紧贴侧栏右缘（缺陷 024 回归钉）。
+///
+/// 缺陷根因：lint 行的说明文字在 `Layout::left_to_right` 里用裸 `label`，
+/// **不换行**、溢出面板内容区（内容区右界 232pt，实测溢到 407.9pt）；而
+/// egui `SidePanel` 给后续布局保留的是**内容 response.rect 的最大 x**
+/// （`panel.rs` 的 `allocate_left_panel`），侧栏因此实际占掉 [0, 415.9]，
+/// [240, 415.9] 之间没有任何面板绘制——真实渲染下露出交换链清屏色（黑），
+/// 编辑区被整体推右。用户看到的是「侧栏与编辑区之间一条竖向黑框」。
+///
+/// 断言方式：渲染真实帧，找编辑区自己画的背景大矩形（`bg_primary` 填充、
+/// 位于顶栏之下），其左缘必须落在侧栏右缘（240）附近；被推右即回归。
+#[test]
+fn lint_tab_does_not_push_the_editor_right() {
+    let (_dir, mut app) = app_with(BAD_DOC);
+    let ctx = egui::Context::default();
+    app.ui.sidebar_tab = SidebarTab::Lint;
+    app.ui.sidebar_visible = true;
+    let input = egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(
+            egui::pos2(0.0, 0.0),
+            egui::vec2(1000.0, 700.0),
+        )),
+        ..Default::default()
+    };
+    let sidebar_right = app.theme().metrics.sidebar_width;
+    let mut editor_bg_left: Option<f32> = None;
+    for _ in 0..2 {
+        let out = ctx.run(input.clone(), |ctx| {
+            rustmark::presentation::theme::mapper::apply(ctx, &app.ui.theme);
+            main_view::show(&mut app, ctx);
+        });
+        for clipped in &out.shapes {
+            if let egui::Shape::Rect(r) = &clipped.shape {
+                // 编辑区背景：大面积 `bg_primary`、顶栏之下、内容区起点附近。
+                let area = r.rect.width() * r.rect.height();
+                if r.fill == app.theme().bg_primary
+                    && area > 20_000.0
+                    && r.rect.min.y > 90.0
+                    && r.rect.min.x > sidebar_right
+                {
+                    editor_bg_left = Some(editor_bg_left.map_or(r.rect.min.x, |l| l.min(l)));
+                }
+            }
+        }
+    }
+    let left = editor_bg_left.expect("编辑区背景矩形应存在于真实帧中");
+    assert!(
+        left <= sidebar_right + 80.0,
+        "编辑区背景左缘 {left} 距侧栏右缘 {sidebar_right} 过远：lint 内容把 \
+         侧栏面板撑宽了（缺陷 024 回归），两者之间会出现无人绘制的黑框"
+    );
+}
+
 /// 跳转：点一条问题后光标应落到该行首。
 #[test]
 fn jumping_to_an_issue_moves_the_cursor_to_that_line() {

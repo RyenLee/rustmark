@@ -610,7 +610,7 @@ fn opening_the_symbol_panel_resets_its_state() {
 /// 与运行时一致——若哪天换掉了字体加载，这里会立刻失败。
 #[test]
 fn every_symbol_glyph_is_renderable_under_the_real_font_setup() {
-    let setup = rustmark::infrastructure::fonts::font_definitions();
+    let setup = rustmark::infrastructure::fonts::font_definitions(None);
     let ctx = egui::Context::default();
     ctx.set_fonts(setup.definitions);
     // 必须先跑一帧，`fonts` 才可用。

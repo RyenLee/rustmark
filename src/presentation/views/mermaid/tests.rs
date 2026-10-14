@@ -1,8 +1,8 @@
 use super::class::{RelKind, parse_class};
-use super::gantt::parse_gantt;
+use super::gantt::{GanttStatus, parse_gantt};
 use super::graph_layout::rank_nodes;
 use super::graph_parse::parse_graph;
-use super::model::{Head, LineStyle, NodeShape};
+use super::model::{Head, LineStyle, NodeShape, Prim};
 use super::sequence::{parse_seq_message, parse_sequence};
 use super::*;
 
@@ -19,6 +19,83 @@ fn lay(src: &str) -> MermaidLayout {
 fn bad(src: &str) -> MermaidError {
     let f = m();
     layout(src, 14.0, &f).expect_err("应报错")
+}
+
+/// 回归（V11-17）：flowchart.js 语法必须能渲染，而不是整卡降级。
+///
+/// 源样例取自 `docs/logs/示例文档.md` 的「FLowchart流程图」一节——**逐字**，
+/// 含首行那处著名的 `flowchat` 笔误与全角 `？`。此前 `detect_kind` 把
+/// `flowchat` 当图种关键字 → `Unsupported("flowchat")` → 源码卡，即使改对
+/// 笔误也会在 `=>` 处报「期望边」：语法家族不同才是根因。
+#[test]
+fn flowchart_js_sample_from_demo_doc_renders() {
+    let src = "flowchat\n\
+               st=>start: 开始\n\
+               e=>end: 结束\n\
+               op=>operation: 我的操作\n\
+               cond=>condition: 确认？\n\
+               \n\
+               st->op->cond\n\
+               cond(yes)->e\n\
+               cond(no)->op\n";
+    let g = super::flow_js::parse(src).expect("解析");
+    // st / e / op / cond 各一个，不得因重复引用而多出。
+    assert_eq!(g.nodes.len(), 4, "{:?}", g.nodes);
+    // st→op、op→cond、cond→e(yes)、cond→op(no)。
+    assert_eq!(g.edges.len(), 4);
+    // 定义决定外形：start/end 胶囊、condition 菱形、operation 矩形。
+    let shape_of = |id: &str| {
+        let pos = g
+            .node_ids
+            .iter()
+            .position(|n| n == id)
+            .unwrap_or_else(|| panic!("缺少节点 {id}"));
+        (g.nodes[pos].0.clone(), g.nodes[pos].1)
+    };
+    assert_eq!(shape_of("st"), ("开始".to_string(), NodeShape::Stadium));
+    assert_eq!(shape_of("e"), ("结束".to_string(), NodeShape::Stadium));
+    assert_eq!(shape_of("op"), ("我的操作".to_string(), NodeShape::Rect));
+    assert_eq!(shape_of("cond"), ("确认？".to_string(), NodeShape::Rhombus));
+    // 括号标签写在来源引用上，落到它引出的边上。
+    let labels: Vec<_> = g.edges.iter().map(|e| e.label.clone()).collect();
+    assert_eq!(
+        labels,
+        vec![None, None, Some("yes".to_string()), Some("no".to_string())],
+        "cond(yes)->e 与 cond(no)->op 的标签应各就各位"
+    );
+    // flowchart.js 恒为自上而下。
+    assert!(!g.horizontal);
+    // 版面完整可画（宽度高度非零、节点框恰好 4 个）。
+    let l = lay(src);
+    assert!(l.width > 0.0 && l.height > 0.0);
+    assert_eq!(l.node_count(), 4);
+}
+
+/// Mermaid 流程图里 `=>` 出现在节点文本中时不得误判为 flowchart.js。
+#[test]
+fn mermaid_flowchart_with_arrow_in_text_is_not_flowchart_js() {
+    assert!(!super::flow_js::is_flowchart_js(
+        "flowchart TD\nA[条件 => 分支] --> B\n"
+    ));
+    assert!(!super::flow_js::is_flowchart_js("graph LR\nA-->B\n"));
+    assert!(super::flow_js::is_flowchart_js("st=>start: 开始\nst->e\n"));
+}
+
+/// 只有标题行（无任何 `=>` 定义）不算 flowchart.js 语法：回退到 Mermaid
+/// 路径报 `Unsupported("flowchat")`——没有可渲染的内容，这样比假装支持更诚实。
+#[test]
+fn flowchat_header_without_defs_is_unsupported() {
+    let e = bad("flowchat\n");
+    assert!(matches!(e, MermaidError::Unsupported(_)), "实际 {e:?}");
+}
+
+/// 未定义就引用的 id 按宽容约定建成裸节点（与 Mermaid 路径一致）。
+#[test]
+fn flowchart_js_edge_reference_creates_bare_node() {
+    let g = super::flow_js::parse("st=>start: 开始\nst->e\n").expect("解析");
+    assert_eq!(g.nodes.len(), 2);
+    assert_eq!(g.edges.len(), 1);
+    assert_eq!(g.nodes[1].0, "e", "未定义的 e 应以 id 为文本");
 }
 
 #[test]
@@ -292,7 +369,7 @@ fn gantt_tasks_parse() {
     let m = parse_gantt("gantt\ntitle T\nsection S\na : a1, 5d\nb : after a1, crit, 6d\n")
         .expect("解析甘特图");
     assert_eq!(m.tasks.len(), 2);
-    assert!(m.tasks[1].crit);
+    assert_eq!(m.tasks[1].status, GanttStatus::Crit);
     assert_eq!(m.tasks[1].dep.as_deref(), Some("a1"));
 }
 
@@ -302,6 +379,60 @@ fn gantt_layout_has_positive_size_and_prims() {
     assert!(l.width > 0.0);
     assert!(l.height > 0.0);
     assert!(prim_count(&l) > 0);
+}
+
+#[test]
+fn gantt_date_tasks_parse_with_real_dates() {
+    let m =
+        parse_gantt("gantt\ntitle T\nsection S\na : 2024-01-01, 5d\nb : 2024-01-06, 2024-01-09\n")
+            .expect("解析甘特图");
+    assert_eq!(m.tasks.len(), 2);
+    assert!(m.tasks[0].start_date.is_some(), "显式开始日期应被解析");
+    assert!(m.tasks[1].end_date.is_some(), "显式结束日期应被解析");
+}
+
+#[test]
+fn gantt_applies_status_colors_per_bar() {
+    let l = lay("gantt\ntitle P\nsection A\na : done, 5d\nb : active, 3d\nc : crit, 2d\nd : 4d\n");
+    let colored = l
+        .prims
+        .iter()
+        .filter(|p| {
+            matches!(
+                p,
+                Prim::Poly {
+                    fill_color: Some(_),
+                    ..
+                }
+            )
+        })
+        .count();
+    // 四个任务条都应带状态填充色覆盖（done/active/crit/默认）。
+    assert!(
+        colored >= 4,
+        "每个任务条都应有状态填充色覆盖，实际 {colored}"
+    );
+}
+
+#[test]
+fn gantt_title_is_drawn_as_text() {
+    let l = lay("gantt\ntitle My Plan\nsection A\na : 5d\n");
+    let has_title = l
+        .prims
+        .iter()
+        .any(|p| matches!(p, Prim::Text { text, .. } if text == "My Plan"));
+    assert!(has_title, "标题应作为文本图元出现");
+}
+
+#[test]
+fn gantt_has_date_axis_grid() {
+    let l = lay("gantt\ntitle P\nsection A\na : 2024-01-01, 10d\n");
+    let grid = l
+        .prims
+        .iter()
+        .filter(|p| matches!(p, Prim::Line { dotted: true, .. }))
+        .count();
+    assert!(grid >= 2, "应有竖向网格线 + 刻度线，实际 {grid}");
 }
 
 #[test]

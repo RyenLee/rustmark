@@ -5,7 +5,7 @@ use std::sync::Arc;
 use egui::text::TextWrapping;
 
 use super::highlight_cache::{
-    LARGE_FILE_BYTES, LAST_STATS, LINE_LAYOUT, WHOLE_CACHE, build_line_job,
+    LARGE_FILE_BYTES, LAST_STATS, LINE_LAYOUT, WHOLE_CACHE, atlas_token, build_line_job,
     editor_metrics_signature,
 };
 use super::*;
@@ -80,8 +80,12 @@ pub fn highlight_layout_with_find(
     let colored = !large && spans.is_some_and(|s| !s.is_empty());
     // 字号 / 行高变了必须重排（见 `editor_metrics_signature` 的文档注释）。
     let metrics = editor_metrics_signature(theme);
+    // 字体图集令牌：egui 重建图集后，跨帧缓存的 `Galley` 字形坐标全部失效，
+    // 必须让缓存作废整篇重排（V11-17，见 `atlas_token` 的长注释）。
+    let atlas = atlas_token(ctx);
 
-    // 1) 整文档缓存：文本 / 主题 / 换行 / 查找命中 / 着色状态 / 排版度量未变 → 直接返回。
+    // 1) 整文档缓存：文本 / 主题 / 换行 / 查找命中 / 着色状态 / 排版度量 /
+    //    图集令牌未变 → 直接返回。
     if let Some((
         cached_sig,
         cached_text,
@@ -90,6 +94,7 @@ pub fn highlight_layout_with_find(
         cached_find,
         cached_colored,
         cached_metrics,
+        cached_atlas,
     )) = WHOLE_CACHE.with(|c| c.borrow().clone())
         && cached_sig == sig
         && cached_text == text
@@ -97,6 +102,7 @@ pub fn highlight_layout_with_find(
         && cached_find == find_sig
         && cached_colored == colored
         && cached_metrics == metrics
+        && cached_atlas == atlas
     {
         return galley;
     }
@@ -122,11 +128,14 @@ pub fn highlight_layout_with_find(
         v
     };
 
-    // 取上一版行布局（主题 / 换行宽度 / 查找命中 / 着色状态一致才谈得上复用）。
+    // 取上一版行布局（主题 / 换行宽度 / 查找命中 / 着色状态 / 图集令牌
+    // 一致才谈得上复用）。
     //
     // `colored` 必须参与：行缓存按**行内容**比对，而防抖期排的纯文本行
     // 与停手后带色的同一行内容完全相同——不带这个标志就会被复用，
     // 颜色永远补不回来。
+    // `atlas` 同理：图集被 egui 重建后，旧 `Galley` 的字形坐标已失效，
+    // 内容再相同也不能复用（V11-17）。
     let previous = LINE_LAYOUT.with(|c| {
         let c = c.borrow();
         if c.valid
@@ -135,6 +144,7 @@ pub fn highlight_layout_with_find(
             && c.find_sig == find_sig
             && c.colored == colored
             && c.metrics == metrics
+            && c.atlas == atlas
         {
             Some((c.lines.clone(), c.galleys.clone()))
         } else {
@@ -219,6 +229,7 @@ pub fn highlight_layout_with_find(
                     line_spans.push(SpanView {
                         range: RangeView::new(start, end),
                         style: prepared[i].1.to_string(),
+                        url: None,
                     });
                 }
             }
@@ -263,6 +274,7 @@ pub fn highlight_layout_with_find(
         c.find_sig = find_sig;
         c.colored = colored;
         c.metrics = metrics;
+        c.atlas = atlas;
         c.valid = true;
     });
 
@@ -310,6 +322,7 @@ pub fn highlight_layout_with_find(
             find_sig,
             colored,
             metrics,
+            atlas,
         ));
     });
     LAST_STATS.with(|s| *s.borrow_mut() = stats);

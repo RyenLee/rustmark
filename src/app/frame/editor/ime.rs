@@ -83,6 +83,38 @@ impl EditorApp {
     /// 症状正是「行号正常递增，光标附近却不见新行」。修复：`Commit` 与
     /// `Disabled` 同样**立即**解冻（仅保留事件帧当帧的冻结，供 egui 的
     /// Commit 处理器依赖未碰的选区），组合结束后光标回设最迟下一帧执行。
+    ///
+    /// # armed 到期帧必须**同时抹平 repeat 回车**（2026-10-12 暴力扫描发现）
+    ///
+    /// egui 的 `remove_ime_incompatible_events` 位于 `TextEdit::show`
+    /// **控件内部**（`text_edit/builder.rs` 的 `events()`），判据是当帧的
+    /// `state.ime_enabled`——它在 show 内、于处理任何事件**之前**执行，
+    /// 把所有 `repeat: true` 的按键连同 Backspace/方向键一起剔除；IME 事件
+    /// 的「排到前面」发生在剔除**之后**。于是 armed 到期那一帧：
+    /// `egui_ime_armed = false` 先执行 → 抹平条件不成立 → 本帧补发的
+    /// `Disabled` 排在事件流尾部、排序后才生效 → `ime_enabled` 仍为真时
+    /// repeat 回车已被删。实测：`Enabled` 后 release 丢失（Windows 上候选窗
+    /// 抢焦点吞 keyup，`keys_down` 残留使下一次按下被判 repeat），第二次
+    /// 回车在到期帧被整个吞掉，内容停在 `"hello\n"`——用户看到的正是
+    /// 「连按回车只多出一个新行」。修复：抹平判据从「armed 仍为真」改为
+    /// 「armed 为真 **或** 本帧即将补发 Disabled」。
+    ///
+    /// # 组合仍新鲜时**不得补发 Disabled**，裸按键要**废弃组合**（同次扫描）
+    ///
+    /// armed 窗（[`IME_ARM_MS`]）比组合窗（[`IME_GUARD_MS`]）短一个量级，
+    /// 而真实组合里用户斟酌候选的击键间隔就超过 50ms——旧实现在这段间隔里
+    /// 补发 `Disabled`，把 egui 的 `ime_enabled` 提前清零，**预编辑选区却
+    /// 还挂在缓冲区里**：随后每一次回车/打字都先 `delete_selected` 把它整个
+    /// 吃掉，而预编辑串早已通过 diff 路径落进领域、用户看得见——内容凭空
+    /// 丢失。两处修复：
+    ///
+    /// 1. armed 到期时若 [`Self::ime_composing`] 仍为真，只把 armed 窗续到
+    ///    组合窗到期，不补 `Disabled`；
+    /// 2. 组合窗内到达**裸按键/裸文本**（本帧无任何 IME 事件——真实输入法
+    ///    在组合期会自己吞掉按键转成 `Commit`，裸按键到达即组合已废），补
+    ///    一个空 `Commit("")`：egui 的 Commit 分支对空串的处理正是「折叠
+    ///    光标到 primary」，预编辑串由此转为普通文本；同时解除两扇守卫，
+    ///    让本次按键的 `pending_cursor` 回设不再被冻结。
     pub fn apply_pending_editor_state(&mut self, ctx: &egui::Context) {
         let now_ms = self.services.markdown.now().millis();
         // 本帧 IME 事件的四分类：
@@ -117,6 +149,12 @@ impl EditorApp {
         //   · 只收到 Enabled 或什么都没收到 → 不进入（或退出）组合期。
         // 于是「守卫标志永久为 true」这条路径在结构上不再存在；且 Commit 不再
         // 续期——组合结束后 `pending_cursor` 的回设最迟下一帧就能执行。
+        //
+        // 先记下**本帧清算之前**的守卫状态：下面的「裸按键废弃组合」兜底必须
+        // 用它、而不是清算后的 `self.ime_composing`——否则「到期帧恰好来按键」
+        // 时兜底会被跳过（见 `probe_enter_during_active_composition_preserves_preedit`
+        // gap=900 的实测：预编辑串 "sheng" 被 TextEdit 的 delete_selected 吃掉）。
+        let composing_before = self.ime_composing;
         if ime_ended || ime_commit_now {
             self.ime_composing = false;
             self.ime_composing_until_ms = 0;
@@ -156,8 +194,22 @@ impl EditorApp {
             self.egui_ime_armed = true;
             self.egui_ime_armed_until_ms = now_ms.saturating_add(IME_ARM_MS);
         } else if self.egui_ime_armed && now_ms >= self.egui_ime_armed_until_ms {
-            self.egui_ime_armed = false;
-            tell_egui_ime_over = true;
+            if self.ime_composing {
+                // 组合窗（[`IME_GUARD_MS`]）还没到期 → 真实的 `Preedit` 序列
+                // 仍在继续（用户斟酌候选词的击键间隔就超过 [`IME_ARM_MS`]）。
+                // 此时**绝不能**补 `Disabled`：egui 的预编辑选区还挂在缓冲区
+                // 里，`ime_enabled` 被提前清零后，TextEdit 对后续按键的
+                // `delete_selected` 会把选区里的预编辑串整个吃掉——而它早已
+                // 通过 diff 路径落进领域、用户看得见（实测：preedit "ni" 后
+                // 按回车 → `"hello\n"`，"ni" 凭空消失）。故只把 armed 窗续到
+                // 组合窗到期，继续等 `Preedit`/`Commit`/`Disabled`。
+                // （`ime_composing` 为真时 `ime_composing_until_ms` 必然
+                // 大于 `now_ms`——上面的守卫分支刚做过到期清算。）
+                self.egui_ime_armed_until_ms = self.ime_composing_until_ms;
+            } else {
+                self.egui_ime_armed = false;
+                tell_egui_ime_over = true;
+            }
         }
         // 给 egui 补一个 `Disabled`。放在事件流**尾部**：本帧若同时有
         // `Preedit`，必须让它先被处理（`Preedit` 会重新置 `ime_enabled = true`），
@@ -165,16 +217,33 @@ impl EditorApp {
         if tell_egui_ime_over {
             ctx.input_mut(|i| i.events.push(egui::Event::Ime(egui::ImeEvent::Disabled)));
         }
-        // Enabled 之后尚未见到任何组合事件（Preedit/Commit）的窗口期内，
-        // egui 的 `ime_enabled` 为真，`remove_ime_incompatible_events` 会剔除
-        // 全部 `repeat: true` 的按键——它的假设是「候选窗开着」。但我们知道
-        // **没有组合在进行**（armed 判据的存在意义），此时 repeat 的回车只会
-        // 来自「上一帧 release 丢失后 `keys_down` 残留」（Windows 上候选窗或
-        // 其他窗口抢焦点时会这样），或用户真的按住回车——两种情况用户都
-        // 期待换行。把 repeat 抹平，让 egui 当作一次普通按下处理。
-        // 只抹 Enter、且仅在「无组合」窗口内：组合期（候选窗真开着）的
-        // repeat 剔除是 egui 的正当防护，不能碰。
-        if !ime_preedit_now && !ime_commit_now && !ime_ended && self.egui_ime_armed {
+        // 抹平 Enter 的 `repeat`，让 egui 当作一次普通按下处理。
+        //
+        // 为什么必须抹：egui 的 `remove_ime_incompatible_events` 是在
+        // **`TextEdit::show` 控件内部**执行的（text_edit/builder.rs 的
+        // `events()`），判据是当帧的 `state.ime_enabled`；本方法跑在 show
+        // **之前**，改的事件流它能看见，所以抹平确实来得及——但**只在抹平
+        // 条件成立时**。
+        //
+        // 放行时机（共用一个判据「本帧没有任何组合事件」）：
+        //   1. armed 窗口内（`Enabled` 后 [`IME_ARM_MS`] 内没见到组合事件）；
+        //   2. armed **刚刚到期**、本帧正要补发 `Disabled` 的那一帧。
+        // 第 2 类曾被漏掉：旧实现先执行 `egui_ime_armed = false` 再检查抹平
+        // 条件，到期帧上抹平被跳过；而剔除发生在 show 内部、按当帧仍为真的
+        // `ime_enabled` 执行，补发的 `Disabled` 要等 IME 事件排序（排在剔除
+        // **之后**）才生效，救不回那一帧。实测：release 丢失后的第二次回车
+        // （`repeat: true`）在 armed 到期帧被整个吞掉——「连按回车只多出
+        // 一个新行」的直接原因之一。
+        //
+        // 组合期（本帧有 `Preedit`/`Commit`/`Disabled`）不抹：那时 egui 的
+        // 剔除是正当防护。注意 armed 在组合期内会被续期（见上），故
+        // 「armed 为真」覆盖了组合期——组合期内的 repeat 回车由下面的
+        // 「裸按键废弃组合」分支兜底放行，不会误伤。
+        if !ime_preedit_now
+            && !ime_commit_now
+            && !ime_ended
+            && (self.egui_ime_armed || tell_egui_ime_over)
+        {
             ctx.input_mut(|i| {
                 for event in &mut i.events {
                     if let egui::Event::Key {
@@ -188,6 +257,55 @@ impl EditorApp {
                     }
                 }
             });
+        }
+        // 组合窗内（或守卫刚到期的那一帧）到达「裸按键 / 裸文本」
+        // （本帧无任何 IME 事件）：
+        // 真实输入法在组合期会自己吞掉按键、转成 `Commit` 送达；裸按键能
+        // 到这里，说明这次组合已经作废。预编辑串早已经 diff 路径落进领域
+        // （用户看得见、领域也已认账），若放任不管，TextEdit 处理该按键时的
+        // `delete_selected` 会把选区里的预编辑串整个吃掉——领域内容凭空丢失。
+        //
+        // 补救：补一个空 `Commit("")`。egui 的 Commit 分支对空串的处理恰是
+        // 「折叠光标到 primary」（`CCursorRange::one(cursor_range.primary)`），
+        // 预编辑串由此转为普通文本、选区被拆除；它同时清零 `ime_enabled`，
+        // 与本帧「组合已废」的判定一致。IME 事件在 TextEdit 内会被排到按键
+        // **之前**处理，折叠必然先于按键生效。
+        //
+        // 同时解除两扇守卫：组合既已废弃，`ime_composing` 继续冻结
+        // `pending_cursor` 只会让「本次按键改写了文本」（如列表续行）后的
+        // 光标回设被卡住，重蹈 V11-14「光标停在旧位置、下一次回车插到同一处」
+        // 的覆辙；`egui_ime_armed` 的使命（等 `Preedit` 出现）也已完成。
+        //
+        // 判据用 `composing_before`（本帧清算**之前**的守卫状态）而不是
+        // 清算后的 `self.ime_composing`：守卫到期帧上后者已被上面的到期分支
+        // 清零，用它会让兜底整段跳过——而那一刻 egui 的预编辑选区**仍在**
+        // 缓冲区里（到期只说明我们等够了时间，不代表输入法已收尾）。实测：
+        // `probe_enter_during_active_composition_preserves_preedit` 的 gap=900
+        // （恰在 800ms 窗口之外那一帧）预编辑串被吃掉。用清算前的状态，
+        // 「Preedit 之后无论隔多久按裸键」都能被兜住——这才是正确的判据：
+        // 组合期的**结束方式**只有 Commit/Disabled 与「裸按键作废」两种，
+        // 超时到期只是我们这侧的观察窗口，不是真实组合的结束信号。
+        if composing_before && !ime_preedit_now && !ime_commit_now && !ime_ended {
+            let has_text_input = ctx.input(|i| {
+                i.events.iter().any(|event| match event {
+                    egui::Event::Key {
+                        key: egui::Key::Enter,
+                        pressed: true,
+                        ..
+                    } => true,
+                    egui::Event::Text(text) => !text.is_empty(),
+                    _ => false,
+                })
+            });
+            if has_text_input {
+                ctx.input_mut(|i| {
+                    i.events
+                        .push(egui::Event::Ime(egui::ImeEvent::Commit(String::new())));
+                });
+                self.ime_composing = false;
+                self.ime_composing_until_ms = 0;
+                self.egui_ime_armed = false;
+            }
         }
         // 组合帧自身也要冻结：`Preedit`/`Commit` 处理器在这一帧稍后执行，
         // 依赖的正是那个未被我们碰过的选区。

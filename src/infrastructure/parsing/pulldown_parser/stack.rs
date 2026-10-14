@@ -78,6 +78,11 @@ pub(crate) struct OpenBlock {
     pub(super) image_mark: Option<usize>,
     /// 行内样式帧的样式（仅合成帧与行内样式标签帧有值）。
     pub(super) style: Option<InlineStyle>,
+    /// 链接帧的目标地址（`Tag::Link { dest_url }` 进入时记录）。
+    ///
+    /// 与 `style` 并列而非并入：同一帧可能是「链接 + 加粗」嵌套，目标与样式
+    /// 正交；链接内的文本按该目标记录 `InlineSpan::dest`（见 `push_content`）。
+    pub(super) link_dest: Option<String>,
     /// 该块已收集到的行内样式片段（相对本帧 `content` 的字节区间）。
     pub(super) spans: Vec<InlineSpan>,
     /// 本帧刚吞掉一个段落，**下一段**的文字到达时要先补一个换行分隔。
@@ -122,6 +127,7 @@ impl OpenBlock {
             image: None,
             image_mark: None,
             style: None,
+            link_dest: None,
             spans: Vec::new(),
             pending_break: false,
         }
@@ -185,9 +191,16 @@ pub(super) fn push_content(stack: &mut [OpenBlock], s: &str, style: Option<Inlin
     if let Some(style) = style
         && (stack[target].kind.is_some() || target_is_owner)
     {
-        stack[target]
-            .spans
-            .push(InlineSpan::new(start, start + s.len(), style));
+        // 链接片段附带目标地址，供预览点击打开（见 `current_link_dest`）。
+        let dest = if style == InlineStyle::Link {
+            current_link_dest(stack)
+        } else {
+            None
+        };
+        stack[target].spans.push(match dest {
+            Some(d) => InlineSpan::new_link(start, start + s.len(), style, d),
+            None => InlineSpan::new(start, start + s.len(), style),
+        });
     }
     // 回流：仅在目标自己不是回流帧时进行（见上文「为什么」）。
     if !target_is_owner
@@ -202,9 +215,15 @@ pub(super) fn push_content(stack: &mut [OpenBlock], s: &str, style: Option<Inlin
         let ostart = stack[owner].content.len();
         stack[owner].content.push_str(s);
         if let Some(style) = style {
-            stack[owner]
-                .spans
-                .push(InlineSpan::new(ostart, ostart + s.len(), style));
+            let dest = if style == InlineStyle::Link {
+                current_link_dest(stack)
+            } else {
+                None
+            };
+            stack[owner].spans.push(match dest {
+                Some(d) => InlineSpan::new_link(ostart, ostart + s.len(), style, d),
+                None => InlineSpan::new(ostart, ostart + s.len(), style),
+            });
         }
     }
 }
@@ -216,6 +235,15 @@ pub(super) fn current_inline_style(stack: &[OpenBlock]) -> Option<InlineStyle> {
         .rev()
         .find(|f| f.is_inline)
         .and_then(|f| f.style)
+}
+
+/// 取当前生效的链接目标（最内层「且带 `link_dest`」的行内帧；无则 `None`）。
+///
+/// 与 [`current_inline_style`] 同源但独立：链接文本可能嵌套在别的行内样式里
+/// （`[**粗链**](url)` 的 `Link` 帧不一定是最内层），而目标只属于 `Link` 帧。
+/// 取**最内层带目标**的帧，正好对应 `push_content` 给链接片段附目标的需求。
+pub(super) fn current_link_dest(stack: &[OpenBlock]) -> Option<String> {
+    stack.iter().rev().find_map(|f| f.link_dest.clone())
 }
 
 /// 把一段**纯文本**并入当前块，并切分其中的 `==高亮==`。

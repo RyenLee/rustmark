@@ -238,8 +238,9 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
     );
     let now_ms = app.services.markdown.now().millis();
     let first = app.preview.last_key.is_none();
+    let want = app.preview.should_render(key, now_ms, false);
 
-    if first || app.preview.should_render(key, now_ms, false) {
+    if first || want {
         match app
             .services
             .markdown
@@ -266,6 +267,24 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
     // 2) 把块序列取出再还回：渲染期间 `app` 需要被可变更改（任务项回写），
     // 借用检查器不允许同时持有 `&app.preview.blocks` 与 `&mut app`。
     // `take` 是零拷贝的，渲染结束后原样放回。
+    //
+    // 内部跳转目标（标题 slug / 脚注标号 → 块 id）必须在 `mem::take` 之前收集：
+    // `take` 会把块序列借走，之后无法再读 `app.preview.blocks`。
+    // 预览里点击 `#锚点` 或脚注引用 `[^n]` 时据此跳到对应块。
+    let internal_targets: Vec<(String, u64)> = app
+        .preview
+        .blocks
+        .iter()
+        .filter_map(|b| {
+            if b.kind == "footnote" {
+                b.label.clone().map(|l| (l, b.id))
+            } else if b.kind == "heading" {
+                Some((heading_slug(&b.content), b.id))
+            } else {
+                None
+            }
+        })
+        .collect();
     let blocks = std::mem::take(&mut app.preview.blocks);
 
     // 目录条目：由**当前块序列**现场收集（标题会随编辑增删，存一份副本必然过期）。
@@ -280,11 +299,19 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
         })
         .collect();
 
+    // 脚注定义：同样现场收集，但**不按源码位置渲染**——统一放到预览末尾的
+    // 「脚注」区（V11-18，见 `toc::draw_footnote_section` 的长注释）。
+    // 主循环里相应跳过，正文里只留上标编号。
+    let footnotes: Vec<&BlockView> = blocks.iter().filter(|b| b.kind == "footnote").collect();
+
     let start_y = if app.preview.scroll_y.is_finite() {
         app.preview.scroll_y
     } else {
         0.0
     };
+    // 脚注区与正文一致地跟随「自动换行」开关（在闭包外取，避免与闭包内的
+    // `&mut app` 重 Borrow 冲突）。
+    let wrap_for_footnotes = app.editor.word_wrap;
     // 预览区需要**双向**滚动：纵向看长文，横向看超宽内容（不折行的代码块、
     // 比面板宽的图表）。`ScrollArea::both()` 的 `direction_enabled` 是
     // `[true, true]`，故两个方向都开滚动条。
@@ -305,6 +332,12 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
                 // 内部的坐标系已经带上了偏移，绝对 y 每帧都不同。
                 let mut origin: Option<f32> = None;
                 for block in blocks.iter() {
+                    // 脚注定义不在正文位置渲染：已收集到末尾的「脚注」区
+                    // （V11-18）。跳过时也不占位、不记矩形——定义的整体
+                    // 位置就在文档末尾，滚动同步按最近的正文块映射即可。
+                    if block.kind == "footnote" {
+                        continue;
+                    }
                     // `scope_builder` 会返回本块占据的**实际矩形**（等价 `min_rect`），
                     // 比「画之前 / 画之后各读一次光标」稳——后者会被块内部
                     // 自己和 `item_spacing` 的交互骗到。
@@ -324,7 +357,7 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
                     // `id_salt` 正是 `ui.push_id` 的等价物（也是 egui 提示里给的解法）：
                     // 传入 `block.id`（单次解析内唯一）后，各块子树 id 互不相同。
                     let res = ui.scope_builder(egui::UiBuilder::new().id_salt(block.id), |ui| {
-                        draw_block(app, ui, &theme, block, &headings)
+                        draw_block(app, ui, &theme, block, &headings, &internal_targets)
                     });
                     let rect = res.response.rect;
                     let base = *origin.get_or_insert(rect.top());
@@ -336,6 +369,17 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
                     // 块间距取刻度 `space_xs`：`scroll_sync` 的块矩形换算
                     // 假定块与块之间就是这个值（见其文件头注释），改这里要同步那边。
                     ui.add_space(theme.metrics.space_xs);
+                }
+                // 脚注区：紧跟最后一个正文块之后（V11-18）。
+                if !footnotes.is_empty() {
+                    toc::draw_footnote_section(
+                        app,
+                        ui,
+                        &theme,
+                        &footnotes,
+                        wrap_for_footnotes,
+                        &internal_targets,
+                    );
                 }
                 rects
             })
@@ -376,33 +420,57 @@ fn draw_block(
     theme: &Theme,
     block: &BlockView,
     headings: &[HeadingEntry],
+    internal_targets: &[(String, u64)],
 ) {
     // 预览区也跟随「自动换行」开关：开 → 正文在面板宽度内折行；关 → 不折行，
     // 长行靠新增的底部横向滚动条查看（与编辑区行为一致）。
     let wrap = app.editor.word_wrap;
     match block.kind.as_str() {
-        "heading" => blocks::draw_heading(app, ui, theme, block),
-        "paragraph" => blocks::draw_paragraph(ui, theme, block, wrap),
-        "quote" => blocks::draw_quote(ui, theme, block, wrap),
+        "heading" => blocks::draw_heading(app, ui, theme, block, internal_targets),
+        "paragraph" => blocks::draw_paragraph(app, ui, theme, block, wrap, internal_targets),
+        "quote" => blocks::draw_quote(app, ui, theme, block, wrap, internal_targets),
         "code_block" => code::draw_code_block(app, ui, theme, block),
-        "list" => list::draw_list(ui, theme, block, wrap),
-        "task_list" => list::draw_task_list(app, ui, theme, block),
+        "list" => list::draw_list(app, ui, theme, block, wrap, internal_targets),
+        "task_list" => list::draw_task_list(app, ui, theme, block, internal_targets),
         "table" => {
             // 结构化缺失（理论上不该发生）时退回纯文本，总比空白好。
             match &block.table {
-                Some(table) => table::draw_table(ui, theme, table),
-                None => blocks::draw_paragraph(ui, theme, block, wrap),
+                Some(table) => table::draw_table(app, ui, theme, table, internal_targets),
+                None => blocks::draw_paragraph(app, ui, theme, block, wrap, internal_targets),
             }
         }
         "image" => media::draw_image(app, ui, theme, block),
         "rule" => toc::draw_rule(ui, theme),
-        "footnote" => toc::draw_footnote(ui, theme, block, wrap),
-        "definition_list" => toc::draw_definition_list(ui, theme, block, wrap),
+        // 脚注定义不在正文位置渲染：统一收集到预览末尾的「脚注」区
+        // （见 `show` 里的收集与 `toc::draw_footnote_section`）。
+        // 主循环已跳过脚注块，这个分支是**防御性**的——万一收集逻辑被改坏，
+        // 脚注也只会安静不画，而不会把 `[^1]: 原文` 当 raw 文本泼在正文里。
+        "footnote" => {}
+        "definition_list" => {
+            toc::draw_definition_list(app, ui, theme, block, wrap, internal_targets)
+        }
         "math" => embedded::draw_math(ui, theme, block),
         "diagram" => embedded::draw_diagram(ui, theme, block),
-        "toc" => toc::draw_toc(app, ui, theme, block, headings),
-        other => toc::draw_raw(ui, theme, block, other),
+        "toc" => toc::draw_toc(app, ui, theme, block, headings, internal_targets),
+        other => toc::draw_raw(app, ui, theme, block, other, internal_targets),
     }
+}
+
+/// 标题锚点 slug：与 CommonMark / GitHub 的锚点生成对齐（小写、空格转连字符、
+/// 去掉标点）。点击预览里的 `#锚点` 链接时据此匹配标题块。
+pub(super) fn heading_slug(text: &str) -> String {
+    let mut slug = String::with_capacity(text.len());
+    for ch in text.trim().chars() {
+        if ch.is_ascii_whitespace() {
+            slug.push('-');
+        } else if ch.is_alphanumeric() || ch == '-' {
+            slug.push(ch.to_ascii_lowercase());
+        }
+        // 标点直接丢弃。CJK 字符**保留**：`is_alphanumeric()` 对汉字为真，
+        // 于是中文标题的锚点就是它本身（`## 第一章` → `#第一章`），
+        // 既可被直接链接，也不会因「全部丢弃」而撞上空 slug。
+    }
+    slug
 }
 
 /// 1px 实线描边（发丝线）。
@@ -434,6 +502,7 @@ mod tests {
         let spans = vec![SpanView {
             range: RangeView::new(1, 5),
             style: "keyword".to_string(),
+            url: None,
         }];
         let job = highlighted_code_job(&theme, text, Some(&spans), f32::INFINITY);
         // 不 panic 即通过；再断言文本被完整覆盖（少上色可以，丢字符不行）。
@@ -457,5 +526,31 @@ mod tests {
             .map(|s| job.text.get(s.byte_range.clone()).unwrap_or(""))
             .collect();
         assert_eq!(covered, text);
+    }
+
+    /// 注脚跳转（S6-05 #10）：正文 `[^1]` 的显示标号必须与 `internal_targets`
+    /// 里脚注定义的 key 一致，点击才能命中对侧块。
+    #[test]
+    fn footnote_ref_mark_strips_brackets() {
+        assert_eq!(footnote_ref_mark("[^1]"), "1");
+        assert_eq!(footnote_ref_mark("[^note]"), "note");
+        // 不完整片段（解析 / 渲染边界不一致时）原样返回，绝不剥错。
+        assert_eq!(footnote_ref_mark("^1]"), "^1]");
+        assert_eq!(footnote_ref_mark("[]"), "[]");
+    }
+
+    /// 标题锚点：`internal_targets` 的 key 由 `heading_slug` 生成，预览里
+    /// 点 `#锚点` 链接即据此匹配标题块。
+    #[test]
+    fn heading_slug_is_deterministic_and_ascii_safe() {
+        assert_eq!(heading_slug("Hello World"), "hello-world");
+        // 与 GitHub 锚点生成对齐：连续空白各转一个连字符，不合并
+        // （GitHub 上 `## Trim  Me` 的锚点就是 `#trim--me`）。
+        assert_eq!(heading_slug("  Trim  Me  "), "trim--me");
+        // 标点直接丢弃；CJK 字符**保留**（`is_alphanumeric()` 对汉字为真），
+        // 于是 `## 第一章` 的锚点就是 `#第一章`——中文标题得以被直接链接，
+        // 且不同中文标题不会因「全部丢弃」而撞同一个空 slug。
+        assert_eq!(heading_slug("第一章"), "第一章");
+        assert_eq!(heading_slug("Chapter 1: 引言"), "chapter-1-引言");
     }
 }

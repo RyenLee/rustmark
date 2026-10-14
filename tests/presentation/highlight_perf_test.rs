@@ -102,6 +102,7 @@ fn spans_of(text: &str) -> Vec<SpanView> {
         .map(|s| SpanView {
             range: RangeView::new(s.range().start().value(), s.range().end().value()),
             style: style_str(s.style()),
+            url: None,
         })
         .collect()
 }

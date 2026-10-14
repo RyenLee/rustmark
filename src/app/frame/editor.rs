@@ -374,6 +374,18 @@ impl EditorApp {
         self.preview.mark_edited(now_ms);
     }
 
+    /// 当前活动文档 ID（**测试用**）。
+    ///
+    /// `active_doc` 是 `pub(crate)`，集成测试（`tests/` 下）读不到。
+    /// 预览链路的探针用例需要它来直接发起 `render_preview` 查询，
+    /// 以便断言「换行结构在解析后仍被保留」——那是用户可见缺陷
+    /// （预览缺行）的最后一环，只能在应用层验证。
+    pub fn active_doc_for_probe(&self) -> DocumentId {
+        // 探针用例在 `focus_at_end` 之后调用，此时活动文档必然已建立。
+        // 仍用 `unwrap_or_else` 而非 `expect`：规范 §四-15 禁止 `expect()`（V11-12）。
+        self.active_doc.unwrap_or_else(|| DocumentId::from_u64(0))
+    }
+
     /// 读取当前文档的完整内容（**从领域**，非 `editor_text` 副本）。
     ///
     /// 存在的理由：集成测试需要断言「三入口执行后文档内容字节一致」，

@@ -262,6 +262,28 @@ pub fn apply(ctx: &egui::Context, theme: &Theme) {
     };
 
     visuals.dark_mode = theme.is_dark();
+    // `text_alpha_from_coverage` 必须**钉死**，不能随明暗模式取 egui 的默认值。
+    //
+    // 这是 V11-17「切换主题后编辑区乱码」的真正根因：egui 每帧 `begin_pass`
+    // 都会拿 `visuals.text_alpha_from_coverage` 与上一帧比对，**一旦变化就
+    // 整体重建 `Fonts`（连字体图集一起）**（egui `Context::begin_pass` →
+    // `Fonts::begin_pass`）。而 `Visuals::dark()` 的默认值是
+    // `TwoCoverageMinusCoverageSq`、`Visuals::light()` 的是 `Linear`——
+    // 深浅主题一切换这个值就变，下一帧图集即被重建。
+    //
+    // egui 自己只 flush 它内部的 galley 缓存；本应用**应用层**的
+    // `LINE_LAYOUT` / `WHOLE_CACHE`（S6-04 增量高亮）持有跨帧的
+    // `Arc<Galley>`，其字形 `uv_rect` 指向旧图集。重建后这些坐标全部失效，
+    // 而缓存键（配色签名 / 文本 / 换行宽度 / 度量）都没变 → 缓存命中 →
+    // 拿旧 uv 去采样新图集 → **中文渲染成错码**。预览区每帧重排故不受影响，
+    // 侧栏 / 工具栏同样每帧重排——所以乱码只出现在编辑区（V11-17 截图）。
+    //
+    // 钉成 egui 启动时的默认值（`Style::default()` → `Visuals::dark()` 的
+    // `TwoCoverageMinusCoverageSq`）：应用生命周期内该值永不变化，
+    // `begin_pass` 永远不会因它重建 Fonts。
+    // （图集填充率 >80% 导致的重建由 `highlight_cache::atlas_token`
+    // 纳入缓存键兜底，见那儿的长注释。）
+    visuals.text_alpha_from_coverage = egui::epaint::AlphaFromCoverage::TwoCoverageMinusCoverageSq;
     visuals.panel_fill = theme.bg_secondary;
     visuals.window_fill = theme.bg_secondary;
     visuals.extreme_bg_color = theme.bg_primary;

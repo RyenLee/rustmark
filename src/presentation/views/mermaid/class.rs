@@ -230,6 +230,8 @@ pub(super) fn layout_class(
             radius: 2.0,
             fill: true,
             ticks: false,
+            fill_color: None,
+            stroke_color: None,
         });
         // 类名（居中于表头）。
         prims.push(Prim::Text {
@@ -237,6 +239,7 @@ pub(super) fn layout_class(
             text: c.name.clone(),
             size,
             plate: false,
+            color: None,
         });
         // 表头分隔线。
         prims.push(Prim::Line {
@@ -255,6 +258,7 @@ pub(super) fn layout_class(
                 text: m.clone(),
                 size: size * 0.85,
                 plate: false,
+                color: None,
             });
         }
         id_rects.push((c.id.clone(), r));
@@ -323,6 +327,8 @@ pub(super) fn layout_class(
                     radius: 0.0,
                     fill: rel.kind == RelKind::Composition,
                     ticks: false,
+                    fill_color: None,
+                    stroke_color: None,
                 });
             }
             RelKind::Plain | RelKind::Dotted => {}
@@ -334,6 +340,7 @@ pub(super) fn layout_class(
                 text: label.clone(),
                 size: size * 0.8,
                 plate: true,
+                color: None,
             });
             if let Some(url) = first_md_link(label) {
                 direct.push((

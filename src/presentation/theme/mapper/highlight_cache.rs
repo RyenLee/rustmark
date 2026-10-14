@@ -36,6 +36,11 @@ pub(super) struct LineLayout {
     pub(super) find_sig: u64,
     /// 上一版所用的**排版度量**签名（字号 / 行高，见 [`editor_metrics_signature`]）。
     pub(super) metrics: u64,
+    /// 上一版所用的字体图集尺寸令牌（见 [`atlas_token`]）。
+    ///
+    /// egui 重建 `Fonts` 时只清自己的 galley 缓存，本结构跨帧持有的
+    /// `Arc<Galley>` 全部失效；令牌变了就必须整篇重排重新取字形坐标。
+    pub(super) atlas: u64,
     /// 上一版**是否带语法着色**（OPT-011 ① 防抖期间为 `false`）。
     ///
     /// 必须进缓存键：防抖期内按纯文本排了一版，停手后文本**没变**，
@@ -74,7 +79,7 @@ pub(super) const LARGE_FILE_BYTES: usize = 500 * 1024;
 // 这是 S6-04「增量高亮」的落点。> 500KB 走降级分支：跳过 span 着色。
 // 真正的「只高亮可视区」需要 viewport，而 `layouter` 接口拿不到滚动位置，
 // 留待阶段 07 真机走查时再做。
-/// 整文档缓存条目：`(主题签名, 全文, 换行宽度, Galley, 查找命中签名, 是否着色, 排版度量签名)`。
+/// 整文档缓存条目：`(主题签名, 全文, 换行宽度, Galley, 查找命中签名, 是否着色, 排版度量签名, 图集令牌)`。
 pub(super) type WholeCacheEntry = (
     Option<[u8; 4]>,
     String,
@@ -83,9 +88,10 @@ pub(super) type WholeCacheEntry = (
     u64,
     bool,
     u64,
+    u64,
 );
 
-/// 编辑区**排版度量**签名：字号与行高。
+/// 编辑区**排版度量**签名：字号 / 行高 / 字体族。
 ///
 /// # 为什么要单独一个签名（不能塞进 [`palette_signature`]）
 ///
@@ -97,12 +103,23 @@ pub(super) type WholeCacheEntry = (
 ///
 /// 故此处把两者量化（字号 ×100、行高 ×1000，取整避免浮点抖动）后折叠成
 /// 一个 u64 并进两层缓存的键。
+///
+/// # 字体族也必须进签名（S6-06 字体选择）
+///
+/// 同理适用于字体族：用户在设置里换了编辑区字体后，`set_fonts` 重建字体，
+/// 但逐行 Galley 的缓存键（配色 / 文本 / 行宽 / 度量）**一切照旧** →
+/// 缓存命中 → 整篇继续用旧字体的字形——表现为「换了字体但编辑区没变」，
+/// 与字号那条同源。字体族的字节折叠进同一签名即可（空串也有稳定哈希）。
 pub(super) fn editor_metrics_signature(theme: &Theme) -> u64 {
     let size = (theme.editor_font_size * 100.0).round() as u64;
     let line = (theme.editor_line_height * 1000.0).round() as u64;
     let mut h: u64 = 1469598103934665603;
     for v in [size, line] {
         h ^= v;
+        h = h.wrapping_mul(1099511628211);
+    }
+    for b in theme.editor_font_family.as_bytes() {
+        h ^= u64::from(*b);
         h = h.wrapping_mul(1099511628211);
     }
     h
@@ -113,6 +130,28 @@ thread_local! {
     // `LineLayout::default()` / `HighlightStats::default` 非 `const fn`，故不用 `const {}` 块。
     pub(super) static LINE_LAYOUT: RefCell<LineLayout> = RefCell::new(LineLayout::default());
     pub(super) static LAST_STATS: RefCell<HighlightStats> = RefCell::new(HighlightStats::default());
+}
+
+/// 字体图集尺寸令牌：`Fonts::font_image_size()`（`[宽, 高]`）折叠成 u64。
+///
+/// # 为什么两层缓存键里必须有它（V11-17）
+///
+/// egui 的 `Fonts::begin_pass` 会**整体重建 `Fonts` 与字体图集**，触发条件
+/// 有三个：`max_texture_side` 变、`text_alpha_from_coverage` 变（该值已被
+/// `theme::mapper::apply` 钉死，见那儿的长注释）、或**图集填充率超过 80%**。
+/// 重建只 flush egui 自己的 galley 缓存，本模块跨帧持有的 `Arc<Galley>`
+/// 不会被告知——其字形 `uv_rect` 全部失效，而缓存键（配色签名 / 文本 /
+/// 换行宽度 / 度量）一切照旧 → 缓存命中 → 拿旧坐标采样新图集 →
+/// **中文渲染成错码**（V11-17：切主题后编辑区乱码、预览区却正常）。
+///
+/// 图集尺寸是重建的**可靠公开探针**：图集高度按 32→64→…→2048 翻倍增长
+/// （epaint `TextureAtlas::resize_to_min_height`），填充率 >80% 时高度
+/// 必然已顶到 2048，重建后归 32 → 尺寸必然变化 → 缓存失效 → 整篇重排，
+/// 重新向 egui 取一遍字形坐标即恢复。日常编辑不引入新字形时尺寸不变，
+/// 增量命中不受影响（一生顶多多重排几次）。
+pub(super) fn atlas_token(ctx: &egui::Context) -> u64 {
+    let [w, h] = ctx.fonts(|f| f.font_image_size());
+    ((w as u64) << 32) | (h as u64)
 }
 
 /// 读取最近一次排版统计（调试面板用）。
@@ -139,6 +178,10 @@ pub fn line_cache_len() -> usize {
 /// 返回 `None` 的情形：从未排版过、换了主题、或行数与当前文本不符
 /// （例如本帧还没走到 `highlight_layout`）。调用方按「本帧无法换算」处理，
 /// 下一帧自然恢复——绝不能凭空猜一个行高，那会让同步**稳定地**错位。
+///
+/// 刻意**不**校验字体图集令牌（[`atlas_token`]）：本函数只消费行**高**，
+/// 而图集重建（egui `Fonts::begin_pass`）不改变任何字体度量与行高，
+/// 旧表对滚动换算依然成立；令牌该管的是字形坐标（见 `highlight_layout`）。
 pub fn line_tops(theme: &Theme, text: &str) -> Option<Vec<f32>> {
     let sig = palette_signature(theme);
     let metrics = editor_metrics_signature(theme);
@@ -234,6 +277,17 @@ pub(super) fn build_line_job(
             };
         }
         job.append(&line[lo..hi], 0.0, fmt);
+    }
+    // 空行（line 为空）必须保留一个「空 section」，否则 egui 会把该行排成 0 高度：
+    // 见 epaint `text_layout.rs` —— `Paragraph::empty_paragraph_height` 只在
+    // `layout_section` 处理到**非空** section 时才被置为 `line_height`；纯空 job
+    // 不触发任何 `layout_section`（没有 section 可迭代），空段落高度维持默认 0.0，
+    // 于是整行高度为 0。拼回整文档 `Galley` 后，连续回车产生的空行统统不可见，
+    // 行号栏又按 0 高度空行定位 → 与正文错位。这正是 V11-16「连续 N 次回车只显示
+    // 一个空行、须再打字符才换行」的真正根因——与 IME / 回车事件无关，是自定义
+    // 逐行排版器对空行高度处理的缺失。补一个空 section 即可让 egui 正确赋予行高。
+    if job.sections.is_empty() {
+        job.append(line, 0.0, base);
     }
     job
 }

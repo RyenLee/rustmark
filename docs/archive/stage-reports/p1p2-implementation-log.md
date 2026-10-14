@@ -1,6 +1,9 @@
 # P1 / P2 功能实施步骤记录
+>
+>
+> **已归档（2026-10-14）**：历史一次性文档（阶段报告 / 修复方案 / 实施日志 / 审计快照），结论仍有效但不再维护；归档索引与理由见 `docs/archive/README.md`。
 
-> 编写：2026-10-08 起（按 `docs/p1p2-remediation-plan.md` 推荐方案与实施顺序）  
+> 编写：2026-10-08 起（按 `docs/archive/stage-reports/p1p2-remediation-plan.md` 推荐方案与实施顺序）  
 > 顺序：拖拽打开 → 自定义主题 → 数学公式/Mermaid → 拼写检查 → 长图 PNG  
 > 门禁：`cargo fmt --check` 零差异 · `clippy --workspace --all-targets -D warnings` 0 告警 · `check-arch` OK · `cargo test --all-targets` 通过  
 > 约定：每项记录「修改文件清单 / 关键步骤 / 验证 / 已知问题」。

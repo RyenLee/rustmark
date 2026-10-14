@@ -16,6 +16,7 @@ mod preview_border_test;
 // S8-05 高亮性能基线（必须 release 下跑，见文件内说明）。
 mod highlight_perf_test;
 mod lint_tab_test;
+mod math_glyph_test;
 mod multi_document_test;
 mod preview_view_test;
 mod s6_11f_test;

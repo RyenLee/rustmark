@@ -262,6 +262,7 @@ pub(super) fn layout_sequence(
             text: label.clone(),
             size: size * 0.9,
             plate: false,
+            color: None,
         });
         let r = Rect::from_min_max(
             Pos2::new(x - col_w * 0.45, 0.0),
@@ -316,6 +317,7 @@ pub(super) fn layout_sequence(
                         text: m.label.clone(),
                         size: size * 0.85,
                         plate: true,
+                        color: None,
                     });
                 }
                 if let Some(url) = first_md_link(&m.label) {
@@ -359,6 +361,8 @@ pub(super) fn layout_sequence(
                     radius: 2.0,
                     fill: true,
                     ticks: false,
+                    fill_color: None,
+                    stroke_color: None,
                 });
                 if !n.text.is_empty() {
                     prims.push(Prim::Text {
@@ -366,6 +370,7 @@ pub(super) fn layout_sequence(
                         text: n.text.clone(),
                         size: size * 0.8,
                         plate: false,
+                        color: None,
                     });
                 }
                 if let Some(url) = first_md_link(&n.text) {

@@ -103,14 +103,38 @@ fn count_hits(app: &mut EditorApp) -> usize {
 }
 
 /// 分组头（文件名 + 命中数）。
+///
+/// 文件名必须截断（缺陷类 024）：水平布局里的裸 `label` 不换行，长文件名
+/// 会把侧栏内容撑出面板——egui `SidePanel` 按**内容 response.rect** 给后续
+/// 布局保留空间，超出面板的部分没有任何面板绘制，真实渲染下露出交换链
+/// 清屏色（黑），编辑区也被整体推右（与「检查」标签的黑框同一根因）。
 fn group_header(ui: &mut Ui, theme: &Theme, group: &SearchGroup) {
     ui.horizontal(|ui| {
-        ui.label(RichText::new(&group.file_name).color(theme.text_primary));
-        ui.weak(format!("{}", group.hits.len()));
+        // 右侧命中数预留一段固定宽，文件名截断到剩余宽。
+        let avail = (ui.available_width() - HITS_COUNT_RESERVE).max(0.0);
+        ui.allocate_ui_with_layout(
+            egui::vec2(avail, 0.0),
+            Layout::left_to_right(Align::Center),
+            |ui| {
+                ui.add(
+                    egui::Label::new(RichText::new(&group.file_name).color(theme.text_primary))
+                        .truncate(),
+                );
+            },
+        );
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            ui.weak(format!("{}", group.hits.len()));
+        });
     });
 }
 
+/// 分组头右侧命中数的预留宽（含行内边距）。
+const HITS_COUNT_RESERVE: f32 = 36.0;
+
 /// 单条命中（行号 + 片段，高亮命中词）。
+///
+/// 片段必须截断（缺陷类 024，见 [`group_header`]）：代码行片段动辄上百字符，
+/// 不截断就会把侧栏撑出一条无人绘制的黑边。
 fn hit_row(
     ui: &mut Ui,
     theme: &Theme,
@@ -122,20 +146,32 @@ fn hit_row(
     ui.horizontal(|ui| {
         ui.add_space(ROW_PAD);
         ui.weak(format!("{}", line + 1));
-        let chars: Vec<char> = snippet.chars().collect();
-        let (start, end) = highlight;
-        let end = end.min(chars.len());
-        let start = start.min(end);
-        if start == end {
-            ui.label(chars.iter().collect::<String>());
-        } else {
-            ui.label(RichText::new(chars[..start].iter().collect::<String>()));
-            ui.label(
-                RichText::new(chars[start..end].iter().collect::<String>())
-                    .background_color(theme.find_current_bg),
-            );
-            ui.label(chars[end..].iter().collect::<String>());
-        }
+        // 片段占「剩余宽」并在子区域内截断；三段高亮标签都在这个固定宽的
+        // 子区域里排，谁超出谁被截，绝不把外层行撑宽。
+        let avail = ui.available_width().max(0.0);
+        ui.allocate_ui_with_layout(
+            egui::vec2(avail, 0.0),
+            Layout::left_to_right(Align::Center),
+            |ui| {
+                let chars: Vec<char> = snippet.chars().collect();
+                let (start, end) = highlight;
+                let end = end.min(chars.len());
+                let start = start.min(end);
+                if start == end {
+                    ui.add(egui::Label::new(chars.iter().collect::<String>()).truncate());
+                } else {
+                    ui.add(egui::Label::new(chars[..start].iter().collect::<String>()).truncate());
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(chars[start..end].iter().collect::<String>())
+                                .background_color(theme.find_current_bg),
+                        )
+                        .truncate(),
+                    );
+                    ui.add(egui::Label::new(chars[end..].iter().collect::<String>()).truncate());
+                }
+            },
+        );
     })
     .response
 }

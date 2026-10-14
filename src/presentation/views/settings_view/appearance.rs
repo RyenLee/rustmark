@@ -61,27 +61,36 @@ pub(super) fn appearance(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
             }
         });
     });
-    field(ui, theme, "字体族", |ui| {
-        // 主选择器：**合法预设下拉**。用下拉而非裸文本，是为了让「能选到的
-        // 都是合法的」——自由文本可以填出系统不存在的字体，落盘后设置项
-        // 不合规，渲染层静默回退，用户以为改了却没变（即本次要修的问题）。
-        let current = FONT_FAMILIES
+    field(ui, theme, "等宽字体", |ui| {
+        // 主选择器：**真实可用字体下拉**。清单由基础设施层启动时发现
+        // （项目 `fonts/` 目录 + 常见系统等宽字体，默认项为「系统等宽」），
+        // 每一项都会在下次装配时置顶进 egui 的等宽字体族，选了必然生效。
+        //
+        // 影响范围：编辑区、预览区代码块，以及命令面板 / 差异对比等
+        // 一切等宽界面（与 VS Code「编辑器字体」同语义）。
+        //
+        // 早期这里是 CSS 通用名（`sans-serif` / `serif`…）+ 自由文本框：
+        // egui 的字体族里根本没有这些名字，选了也不会变——即本次要修的
+        // 「死设置」。现在下拉只列**能生效**的选项。
+        let choices = app.editor_font_choices().to_vec();
+        let current = choices
             .iter()
-            .find(|(id, _)| view.font_family == *id)
-            .map_or("自定义", |(_, label)| *label);
+            .find(|c| c.key == view.font_family)
+            .map_or_else(|| view.font_family.clone(), |c| c.display_name.clone());
         egui::ComboBox::from_id_salt("rustmark.settings.font.preset")
             .selected_text(current)
             .show_ui(ui, |ui| {
-                for (id, label) in FONT_FAMILIES {
-                    let selected = view.font_family == *id;
-                    if ui.selectable_label(selected, *label).clicked() && !selected {
-                        let id = (*id).to_string();
-                        app.apply_theme_field(|t| t.font_family = id);
+                for c in &choices {
+                    let selected = view.font_family == c.key;
+                    if ui.selectable_label(selected, &c.display_name).clicked() && !selected {
+                        let key = c.key.clone();
+                        app.apply_theme_field(|t| t.font_family = key);
                     }
                 }
             });
         // 预设之外的**自定义**入口：保留原文本框（同时是「设置面板已渲染」的
-        // 焦点锚点，见 [`FONT_INPUT_ID`]）。未知字体由渲染层回退，不会不可用。
+        // 焦点锚点，见 [`FONT_INPUT_ID`]）。可填 `user:<字体名>` 形式的键；
+        // 未发现的字体由装配层安全忽略（等宽族保持内置原样），不会不可用。
         let mut family = view.font_family.clone();
         if ui
             .add(

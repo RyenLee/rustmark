@@ -313,6 +313,14 @@ impl EditorApp {
             .unwrap_or_else(|_| SettingsView::fallback())
     }
 
+    /// 设置页「字体」下拉的可选项（启动时发现，含默认哨兵）。
+    ///
+    /// 表现层拿它填充下拉，**不接触文件系统**——发现字体是基础设施层的事
+    /// （`infrastructure::fonts`），这里只转发已经发现的清单。
+    pub fn editor_font_choices(&self) -> &[EditorFontChoice] {
+        &self.editor_fonts
+    }
+
     /// 系统当前是否偏好深色（设置页「跟随系统」提示、状态栏主题文案用）。
     ///
     /// 刻意暴露**系统偏好**而不是「当前生效主题」：后者在

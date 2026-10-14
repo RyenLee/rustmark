@@ -50,11 +50,15 @@ fn shift_prim(p: Prim, d: Vec2) -> Prim {
             radius,
             fill,
             ticks,
+            fill_color,
+            stroke_color,
         } => Prim::Poly {
             points: points.into_iter().map(|q| q + d).collect(),
             radius,
             fill,
             ticks,
+            fill_color,
+            stroke_color,
         },
         Prim::Line {
             a,
@@ -88,11 +92,13 @@ fn shift_prim(p: Prim, d: Vec2) -> Prim {
             text,
             size,
             plate,
+            color,
         } => Prim::Text {
             at: at + d,
             text,
             size,
             plate,
+            color,
         },
     }
 }
@@ -120,23 +126,23 @@ pub fn paint(painter: &Painter, rect: Rect, layout: &MermaidLayout, style: &Merm
                 radius,
                 fill,
                 ticks,
+                fill_color,
+                stroke_color,
             } => {
                 let pts: Vec<Pos2> = points.iter().map(|p| map(*p)).collect();
-                let stroke = Stroke::new(1.2 * scale, style.node_stroke);
+                let fill_c = fill_color.unwrap_or(style.node_fill);
+                let stroke_c = stroke_color.unwrap_or(style.node_stroke);
+                let stroke = Stroke::new(1.2 * scale, stroke_c);
                 if *fill {
                     let r = Rect::from_points(&pts);
                     if pts.len() == 4 && *radius > 0.0 {
                         painter.rect_filled(
                             r,
                             CornerRadius::same(radius.round().clamp(0.0, 255.0) as u8),
-                            style.node_fill,
+                            fill_c,
                         );
                     } else {
-                        painter.add(Shape::convex_polygon(
-                            pts.clone(),
-                            style.node_fill,
-                            Stroke::NONE,
-                        ));
+                        painter.add(Shape::convex_polygon(pts.clone(), fill_c, Stroke::NONE));
                     }
                 }
                 // 描边：圆角矩形用 `rect_stroke`，其余多边形闭合折线。
@@ -161,7 +167,7 @@ pub fn paint(painter: &Painter, rect: Rect, layout: &MermaidLayout, style: &Merm
                         let x = r.left() + r.width() * t;
                         painter.line_segment(
                             [Pos2::new(x, r.top()), Pos2::new(x, r.bottom())],
-                            Stroke::new(1.0 * scale, style.node_stroke),
+                            Stroke::new(1.0 * scale, stroke_c),
                         );
                     }
                 }
@@ -222,18 +228,20 @@ pub fn paint(painter: &Painter, rect: Rect, layout: &MermaidLayout, style: &Merm
                 text,
                 size,
                 plate,
+                color,
             } => {
                 if text.is_empty() {
                     continue;
                 }
                 let at = map(*at);
+                let text_c = color.unwrap_or(style.text);
                 let mut job = LayoutJob::default();
                 job.append(
                     text,
                     0.0,
                     TextFormat {
                         font_id: FontId::proportional(size * scale),
-                        color: style.text,
+                        color: text_c,
                         ..Default::default()
                     },
                 );
@@ -393,21 +401,6 @@ pub fn rect_boundary(center: Pos2, half: Vec2, dir: Vec2) -> Pos2 {
     };
     let k = t.min(u);
     Pos2::new(center.x + dir.x * k, center.y + dir.y * k)
-}
-
-/// 给矩形描一圈边（四段 `Line`，沿用 `edge` 配色）。
-pub fn push_rect_outline(prims: &mut Vec<Prim>, r: Rect, w: f32) {
-    let c = rect_corners(r);
-    for k in 0..4 {
-        let a = c[k];
-        let b = c[(k + 1) % 4];
-        prims.push(Prim::Line {
-            a,
-            b,
-            width: w,
-            dotted: false,
-        });
-    }
 }
 
 /// 在矩形里画一个对勾（两段 `Line`），表示「已完成」。

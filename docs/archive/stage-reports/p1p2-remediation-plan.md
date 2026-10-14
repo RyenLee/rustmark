@@ -1,8 +1,11 @@
 # P1 / P2 未交付功能 · 逐项分析与修复方案
+>
+>
+> **已归档（2026-10-14）**：历史一次性文档（阶段报告 / 修复方案 / 实施日志 / 审计快照），结论仍有效但不再维护；归档索引与理由见 `docs/archive/README.md`。
 
 > 编写：2026-10-08（基于代码实测，非凭记忆）  
 > 范围：数学公式/Mermaid、图片（PNG）导出、自定义主题、拖拽打开文件、拼写检查  
-> 状态：**5 项全部已实施**（均零依赖）；整篇长图 PNG 亦已于 2026-10-09 补齐实施（复用截图回路 + 分段滚动拼接，见实施日志第 5 项）。同日另修复四项交付后遗留缺陷（拖拽目录误开、GB18030 四字节解码、保存未写回原编码、导出 HTML 未注入公式/图表渲染资源），逐步骤记录见 `docs/p1p2-implementation-log.md`。
+> 状态：**5 项全部已实施**（均零依赖）；整篇长图 PNG 亦已于 2026-10-09 补齐实施（复用截图回路 + 分段滚动拼接，见实施日志第 5 项）。同日另修复四项交付后遗留缺陷（拖拽目录误开、GB18030 四字节解码、保存未写回原编码、导出 HTML 未注入公式/图表渲染资源），逐步骤记录见 `docs/archive/stage-reports/p1p2-implementation-log.md`。
 > 约束：保持现有技术选型（Rust 2024 + egui 0.33 + wgpu 后端，ADR-001）；**不引入未经确认的新依赖或架构调整**；表现层不得反向依赖配置读写（须经 application 层）。
 
 ---
@@ -19,7 +22,7 @@
 
 **原则**：零依赖优先、独立可测优先；每项均有「零依赖降级版」可先交付。凡需引入依赖的路线一律显式标注「待裁定」，不自行决定。
 
-**当前进度**：**全部 5 项已完成，均零依赖，未引入任何新依赖**。第 2 项按用户裁定交付的是**视口截图**子集（整篇长图属后续，见第 2 节）。逐步骤记录见 `docs/p1p2-implementation-log.md`。
+**当前进度**：**全部 5 项已完成，均零依赖，未引入任何新依赖**。第 2 项按用户裁定交付的是**视口截图**子集（整篇长图属后续，见第 2 节）。逐步骤记录见 `docs/archive/stage-reports/p1p2-implementation-log.md`。
 
 > 各节「需裁定」小节保留**原始问题原文**以便追溯；实际裁定答案见每节末尾的「✅ 实施状态」，汇总见第 7 节。
 
@@ -66,7 +69,7 @@
 
 ### ✅ 实施状态（2026-10-08 已完成，路线①，零依赖）
 
-采用**路线①**并已实施完毕，步骤详见 `docs/p1p2-implementation-log.md` 第 3 项。实施中对本节的两处判断做了修正，记录如下：
+采用**路线①**并已实施完毕，步骤详见 `docs/archive/stage-reports/p1p2-implementation-log.md` 第 3 项。实施中对本节的两处判断做了修正，记录如下：
 
 1. **「导出丢弃 math」并非真 bug**。核查 pulldown-cmark 0.13.4 `src/html.rs:112-121`，公式实际输出为 `<span class="math math-inline">` / `<span class="math math-display">`，而 `span` 与 `class` 均在清洗白名单内——**不会**被 `DROP_TAGS` 丢弃。真实缺口只是解析器与导出器的 `Options` 都未开启 `ENABLE_MATH`（故 `$...$` 被当普通文本，且不报错）。因此**未从 `DROP_TAGS` 移除 `math`**（该项仅对手写原生 `<math>` 生效，保留更安全），改以导出单测锁定公式不丢。
 2. **行内公式不独立成块**。`$...$` 在事件流里位于段落内部，若拆成独立块会把一句话分成三块、割裂段落语义。改为补回 `$` 分隔符并入段落 `content`（大纲/搜索仍可命中）；仅当整段内容**整体**是 `$$...$$` 时才升级为独立 `Math { display: true }` 块。
@@ -114,7 +117,7 @@ ctx.send_viewport_cmd(ViewportCommand::Screenshot(user_data))   // 帧 N 发出
 ### 验收
 
 已达成：导出 PNG 为**预览区在窗口中的可见部分**；1217 测试全绿；四项门禁全绿。
-未达成（属后续）：整篇长图。详见 `docs/p1p2-implementation-log.md` 第 5 项。
+未达成（属后续）：整篇长图。详见 `docs/archive/stage-reports/p1p2-implementation-log.md` 第 5 项。
 
 ---
 
@@ -148,7 +151,7 @@ ctx.send_viewport_cmd(ViewportCommand::Screenshot(user_data))   // 帧 N 发出
 1. 第一版核心色集合是否就这 8 个，还是要更细（语法高亮色也开放）。
 2. 是否要第二版导入（影响工作量评估）。
 
-> **状态（2026-10-08）**：第一版已实施（推荐方案，零依赖）。8 个核心色集合按方案落地；持久化经既有 `PreferencesRepository` 自动生效；`cargo test` 新增 5 例（3 例 `resolve` + 2 例服务回读）全过；`clippy -D warnings` / `check-arch` 全绿。详见 `docs/p1p2-implementation-log.md` 第 2 项。第二版（VS Code 主题导入）仍待裁定。
+> **状态（2026-10-08）**：第一版已实施（推荐方案，零依赖）。8 个核心色集合按方案落地；持久化经既有 `PreferencesRepository` 自动生效；`cargo test` 新增 5 例（3 例 `resolve` + 2 例服务回读）全过；`clippy -D warnings` / `check-arch` 全绿。详见 `docs/archive/stage-reports/p1p2-implementation-log.md` 第 2 项。第二版（VS Code 主题导入）仍待裁定。
 
 ---
 
@@ -181,7 +184,7 @@ ctx.send_viewport_cmd(ViewportCommand::Screenshot(user_data))   // 帧 N 发出
 
 ### ✅ 实施状态（2026-10-08 已完成，零依赖）
 
-采用零依赖方案并已实施完毕，步骤详见 `docs/p1p2-implementation-log.md` 第 1 项。两处裁定的实际答案：
+采用零依赖方案并已实施完毕，步骤详见 `docs/archive/stage-reports/p1p2-implementation-log.md` 第 1 项。两处裁定的实际答案：
 
 1. **非 markdown 家族的处理**：不是简单按 `.md` 判定，而是引入 `is_openable_text` 接受 `.md` / `.markdown` / `.txt`（大小写不敏感）——纯文本本就适合在编辑器里打开，一并拒绝会让用户无法查看 README 之类。**其余类型拒绝**并用 `set_status_notice` 明确提示（不静默丢弃，那会让人以为程序没收到文件）。
 2. **多文件**：**批量打开全部可识别项**，而非只开第一个。拖多个文件本身就是批量意图，只开一个会让其余文件无声消失。
@@ -223,7 +226,7 @@ ctx.send_viewport_cmd(ViewportCommand::Screenshot(user_data))   // 帧 N 发出
 
 ### ✅ 实施状态（2026-10-08 已完成，路线①，零依赖）
 
-采用**路线①**并已实施完毕，步骤详见 `docs/p1p2-implementation-log.md` 第 4 项。三处裁定的实际答案：
+采用**路线①**并已实施完毕，步骤详见 `docs/archive/stage-reports/p1p2-implementation-log.md` 第 4 项。三处裁定的实际答案：
 
 1. **路线 → ①**：内置词表 + 近邻门槛，**零依赖**（路线②需 libhunspell 系统库，路线③需三平台分支）。
 2. **语言范围 → 仅英文**：中文按字节扫描天然不产出候选，行为已在测试中固化。其他语言需各自的词表与形态规则，属独立工作项。

@@ -1099,7 +1099,7 @@ fn task_marker_removal_keeps_inline_span_offsets_aligned() {
     let items = only_list("- [x] **重点**\n");
     assert_eq!(items[0].text(), "重点");
     assert_eq!(items[0].checked(), Some(true));
-    let span = items[0].spans()[0];
+    let span = &items[0].spans()[0];
     assert_eq!(span.style(), InlineStyle::Strong);
     assert_eq!(&items[0].text()[span.start()..span.end()], "重点");
 }

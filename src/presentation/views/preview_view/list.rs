@@ -44,7 +44,14 @@ fn bullet_for(depth: u8) -> &'static str {
 /// `BlockView` 当初根本没带层级信息。现在解析器把整棵列表树**拍平**进
 /// 同一个 `items`（见其 `root_list_index`），层级只存在于 `ListItemView::depth`：
 /// 想从 `text` 的前导空格反推是行不通的（pulldown 已把标记与缩进吃掉）。
-pub(super) fn draw_list(ui: &mut Ui, theme: &Theme, block: &BlockView, wrap: bool) {
+pub(super) fn draw_list(
+    app: &mut EditorApp,
+    ui: &mut Ui,
+    theme: &Theme,
+    block: &BlockView,
+    wrap: bool,
+    internal_targets: &[(String, u64)],
+) {
     let marker_w = list_marker_width(theme);
     for item in block.items.iter() {
         ui.horizontal(|ui| {
@@ -63,13 +70,19 @@ pub(super) fn draw_list(ui: &mut Ui, theme: &Theme, block: &BlockView, wrap: boo
                 )
                 .halign(Align::RIGHT),
             );
-            draw_item_text(ui, theme, item, wrap);
+            draw_item_text(app, ui, theme, item, wrap, internal_targets);
         });
     }
 }
 
 /// 任务列表：复选框可点击，点击后回写源码。
-pub(super) fn draw_task_list(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, block: &BlockView) {
+pub(super) fn draw_task_list(
+    app: &mut EditorApp,
+    ui: &mut Ui,
+    theme: &Theme,
+    block: &BlockView,
+    internal_targets: &[(String, u64)],
+) {
     let wrap = app.editor.word_wrap;
     for item in block.items.iter() {
         let mut checked = item.checked.unwrap_or(false);
@@ -78,7 +91,7 @@ pub(super) fn draw_task_list(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, bl
             if ui.checkbox(&mut checked, "").changed() {
                 toggle_task(app, item, checked);
             }
-            draw_item_text(ui, theme, item, wrap);
+            draw_item_text(app, ui, theme, item, wrap, internal_targets);
         });
     }
 }
@@ -115,7 +128,14 @@ pub fn task_marker_offset(text: &str, start: usize, end: usize) -> Option<usize>
 
 /// 列表项文本：走行内富文本（`- **粗体**` 必须与正文里的粗体一致），
 /// 已勾选的项叠上删除线 + 次级色。
-fn draw_item_text(ui: &mut Ui, theme: &Theme, item: &ListItemView, wrap: bool) {
+fn draw_item_text(
+    app: &mut EditorApp,
+    ui: &mut Ui,
+    theme: &Theme,
+    item: &ListItemView,
+    wrap: bool,
+    internal_targets: &[(String, u64)],
+) {
     let size = theme.metrics.preview_font_size;
     let max_w = if wrap {
         ui.available_width()
@@ -124,6 +144,7 @@ fn draw_item_text(ui: &mut Ui, theme: &Theme, item: &ListItemView, wrap: bool) {
     };
     render_inline_text(
         ui,
+        app,
         theme,
         &item.text,
         &item.spans,
@@ -138,5 +159,6 @@ fn draw_item_text(ui: &mut Ui, theme: &Theme, item: &ListItemView, wrap: bool) {
         },
         egui::Sense::hover(),
         max_w,
+        internal_targets,
     );
 }

@@ -19,6 +19,19 @@ fn size_suffix_len(s: &str) -> Option<usize> {
     Some(1 + w + 1 + h)
 }
 
+/// Typora 私有扩展的图片对齐后缀（`#pic_center` / `#pic_left` /
+/// `#pic_right` / `#pic_float`）。这些不是 Markdown，会让 `url#pic_center`
+/// 把 `pic_center` 当成 URL 片段带进加载器，本地图片因此「文件不存在」、
+/// 远程图片则把片段拼进请求路径，两种都加载失败。
+const PIC_ALIGN_TOKENS: &[&str] = &["#pic_center", "#pic_left", "#pic_right", "#pic_float"];
+
+/// 若 `s` 以某个 Typora 对齐后缀开头，返回其长度（含前导 `#`）。
+fn pic_align_suffix_len(s: &str) -> Option<usize> {
+    PIC_ALIGN_TOKENS
+        .iter()
+        .find_map(|t| s.starts_with(t).then_some(t.len()))
+}
+
 /// `pos` 处是否位于某个链接 / 图片的**无引号地址**之内。
 ///
 /// 判据：向前找最近的 `](`，且它与 `pos` 之间不含空白或括号——
@@ -50,14 +63,16 @@ fn in_link_destination(text: &str, pos: usize) -> bool {
 /// 不做任何分配。
 pub fn desugar_image_sizes(text: &str) -> (std::borrow::Cow<'_, str>, SourceOffsets) {
     let mut removals: Vec<(usize, usize)> = Vec::new();
-    if text.contains(" =") {
+    if text.contains(" =") || text.contains("#pic_") {
         let bytes = text.as_bytes();
         let mut out = String::with_capacity(text.len());
         // `copied` 是原文中已拷进 `out` 的位置。
         let mut copied = 0usize;
         let mut i = 0usize;
         while i < bytes.len() {
-            if bytes[i] == b' '
+            let byte = bytes[i];
+            // ` =宽x高`：空格 + `=` 触发，仅限链接地址内。
+            if byte == b' '
                 && in_link_destination(text, i)
                 && let Some(len) = size_suffix_len(&text[i + 1..])
                 && bytes.get(i + 1 + len) == Some(&b')')
@@ -66,6 +81,18 @@ pub fn desugar_image_sizes(text: &str) -> (std::borrow::Cow<'_, str>, SourceOffs
                 // 记的是「处理后」的偏移，供还原用。
                 removals.push((out.len(), 1 + len));
                 i += 1 + len;
+                copied = i;
+                continue;
+            }
+            // `#pic_center` 等对齐后缀：直接接在 URL 之后（无空格），同样只在
+            // 链接地址内才剥，避免误伤正文里的 `#`。其后是 `)`，无需特判。
+            if byte == b'#'
+                && in_link_destination(text, i)
+                && let Some(len) = pic_align_suffix_len(&text[i..])
+            {
+                out.push_str(&text[copied..i]);
+                removals.push((out.len(), len));
+                i += len;
                 copied = i;
                 continue;
             }
@@ -105,5 +132,43 @@ impl SourceOffsets {
     /// 是否发生过预处理（没发生时可跳过一切还原开销）。
     pub fn is_identity(&self) -> bool {
         self.removals.is_empty()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::desugar_image_sizes;
+
+    /// `=宽x高` 后缀被剥除，且保留正常的图片语法。
+    #[test]
+    fn strips_size_suffix() {
+        let (src, off) = desugar_image_sizes("![a](http://x/y.png =30x30)");
+        assert_eq!(src, "![a](http://x/y.png)");
+        assert!(!off.is_identity());
+    }
+
+    /// Typora 对齐后缀 `#pic_center` 等被剥除，URL 还原干净。
+    #[test]
+    fn strips_pic_align_suffix() {
+        let (src, _) = desugar_image_sizes("![a](http://x/y.png#pic_center)");
+        assert_eq!(src, "![a](http://x/y.png)");
+        let (src2, _) = desugar_image_sizes("![a](http://x/y.png#pic_left)");
+        assert_eq!(src2, "![a](http://x/y.png)");
+    }
+
+    /// 真实 URL 片段（非对齐令牌）不得被误删。
+    #[test]
+    fn keeps_real_fragment() {
+        let (src, off) = desugar_image_sizes("![a](http://x/y.png#section)");
+        assert_eq!(src, "![a](http://x/y.png#section)");
+        assert!(off.is_identity());
+    }
+
+    /// 正文里的 `=数字` 不在链接地址内，绝不可改写。
+    #[test]
+    fn does_not_touch_body_text() {
+        let (src, off) = desugar_image_sizes("尺寸 =30x30 不是图片后缀");
+        assert_eq!(src, "尺寸 =30x30 不是图片后缀");
+        assert!(off.is_identity());
     }
 }

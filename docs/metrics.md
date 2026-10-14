@@ -9,7 +9,7 @@
 
 | 编号 | 指标 | 阈值 | 测量命令 / 工具 | 采样与取值 | 状态 |
 |---|---|---|---|---|---|
-| `NFR-PERF-01` | 安装包体积 | ≤ 10 MB（预警 8 MB） | Windows：`dir` 或 `stat` 产物；macOS：`du -h *.dmg`；Linux：`stat -c%s *.AppImage` | 三平台各 1 次，取最大值 | 待阶段 09 |
+| `NFR-PERF-01` | 安装包体积 | ≤ 10 MB（预警 8 MB） | Windows：`dir` 或 `stat` 产物；macOS：`du -h *.dmg`；Linux：`stat -c%s *.AppImage` | 三平台各 1 次，取最大值 | **Windows 实测 10.93 MiB，仍越线 0.93 MiB**——初始 11.04 MiB 见 §2.4 归因，依赖复查后的复测见 §2.5 |
 | `NFR-PERF-02` | 冷启动 | ≤ 2s（p50 目标 300–500ms） | 计时脚本：exec 到首帧提交（`app.rs` 内埋点输出） | 每平台 5 次，取中位数；**排除首次磁盘冷缓存** | 待阶段 08 |
 | `NFR-PERF-03` | 空闲内存 | **按平台各自阈值**（ADR-006 修订）：Windows **≤ 150 MB**（判定口径 **Private Working Set**）；macOS / Linux 待 Stage 09 真机补测后填入 | Windows：PowerShell `Get-Process` 取 **PrivateMemorySize64 之外的 Private Working Set**（WorkingSet64 仅作参考，噪声 ±20 MB）；macOS：`footprint <pid>`；Linux：`/proc/<pid>/status` VmRSS | 打开空白文档静置 10s 后取值；三口径**不可横向比较**，各记各的；定阈值前**必须先做地板探针**分清图形栈基线与自有代码 | ✅ 已裁定（Windows 125.3 MB / 阈值 150 MB） |
 | `NFR-PERF-04` | 编辑响应 | ≤ 16ms（一帧），p95 | 帧内埋点：输入事件到重绘完成 | 连续输入 100 次，取 p95 | 待阶段 08 |
@@ -87,6 +87,9 @@
 `wgpu-hal` 无命中属**正常**：Windows 上它走 d3d12 / vulkan 原生动态加载，
 符号名不留在字符串表里。
 
+> 注（2026-10-14）：上表是**阶段 05 当时**的字符串表快照。此后 V11-26 依赖复查移除了
+> `accesskit` 特性，**当前二进制已不再含 `accesskit`**（其余仍命中）——见 §2.5。
+
 **结论：ADR-001 选 egui + wgpu 的体积代价是可控的**，6.19 MiB 在 10 MB 红线内。
 S8-01 用 `cargo bloat` 做逐 crate 归因，重点看 wgpu 与 naga 各自的占比，
 以及是否还有进一步裁剪空间。
@@ -143,6 +146,59 @@ S8-01 用 `cargo bloat` 做逐 crate 归因，重点看 wgpu 与 naga 各自的�
 macOS（`.dmg`）与 Linux（`.AppImage`）产物体积**本机无法构建**（无对应工具链与目标机），
 `NFR-PERF-01` 的三平台数字转由 Stage 09 打包后在真机补测；本阶段 CI 门禁（S8-07）按
 「各平台各自阈值」判定，不假设 Windows 数字可外推。
+
+## 2.4 v1.1 增强后的体积实测（2026-10-14，**⚠️ 已越过红线，待决策**）
+
+> 环境：Windows / `x86_64-pc-windows-msvc` / rustc 1.99.0 / `--release`（口径与 §2.3 相同）。
+> 复现：`cargo build --release --bin rustmark`；产物在 `target/x86_64-pc-windows-msvc/release/rustmark.exe`
+> （本机全局 cargo 配置了 `build.target`，CI 布局见 §4）。
+
+| 项 | 实测 | 阈值 | 结论 |
+|---|---|---|---|
+| **release 文件总大小** | **11,576,320 bytes = 11.04 MiB** | ≤ 10 MB（预警 8 MB） | ❌ **越过红线 1.04 MiB**（见下方待决策） |
+| 相对 S8-01 出口（6.85 MiB） | **+4.19 MiB** | – | 两笔功能性增量，逐项列于下表 |
+
+**增量归因（2026-10-13 ~ 10-14 两笔，均有问题记录可查）**
+
+| 增量 | 估算体积 | 内容 | 记录 |
+|---|---|---|---|
+| 内置字体资产（`include_bytes!`） | **≈ +2.4 MiB**（资产原始字节） | JetBrains Mono / Fira Code / IBM Plex Mono 各 Regular + Noto Sans SC GB2312 子集（1.57MB）+ DejaVuMathTeXGyre 数学兜底（578KB）；TTF 在 `.rodata` 压缩率有限 | 问题记录 022 / 023（V11-22 / V11-21） |
+| `ureq` + `rustls` + `ring` 依赖链 | **≈ +1.8 MiB**（差值倒推） | https 图片下载（缺陷 026）：纯 Rust TLS 的代码 + webpki 根证书 | 问题记录 026（V11-25）、`docs/dependencies.md` §1 |
+| 其余（甘特图重写、检查/搜索截断修复等代码） | ≈ +0.0~0.1 MiB | 均为小量代码增长 | 问题记录 024 / 025 |
+
+**⚠️ 待决策（不自行处置，理由如下）**：`NFR-PERF-01` 的 10 MB 红线被越过，
+但两笔增量都是**用户明确要求的功能**（「内置字体，下拉不再取决于本机装了什么」
+「https 图片要能显示」），回退任何一笔都等于撤功能。可选缓解方案（供评审）：
+
+1. **字体改为「首次使用时解包到用户数据目录」或安装器外置资源**：主程序立减
+   ≈2.4 MiB 回到 8.6 MiB（预警线之上、红线之下）；代价是「开箱即用」变两步。
+2. **CJK 子集从 GB2312 缩到常用 3500 字**：资产 1.57MB → 约 0.8MB；生僻字在
+   无系统中文字体的环境下变方框（与内置初衷相悖，不推荐单做）。
+3. **TLS 换 `native-tls`（Windows=schannel / macOS=Security.framework）**：
+   预计省 ≈1 MiB（ring + webpki 不进二进制）；代价是 Linux 链 OpenSSL（交叉
+   编译困难）且三平台行为不再一致。
+4. **维持现状**：11.04 MiB 对桌面编辑器仍是轻量级（vs 典型 Electron 100 MiB+），
+   红线数字本身来自 v1.0 需求基线，可在 v1.1 评审中修订。
+
+在决策落地前，`NFR-PERF-01` 视为**已知超限、带豁免候选**，不做静默处置。
+
+## 2.5 依赖复查后的复测（2026-10-14，S8-02 依赖复查）
+
+> 口径同 §2.4。本轮变更：移除 `eframe` 的 `accesskit` 特性、收窄 `ahash` 特性
+> （详见 `docs/dependencies.md` §6 与问题记录 027）。两次均用同一 `cargo build --release --bin rustmark` 口径。
+
+| 项 | 实测 | 相对 §2.4 | 结论 |
+|---|---|---|---|
+| **release 文件总大小** | **11,463,680 bytes = 10.93 MiB** | **−112,640 bytes = −110 KiB（−0.97%）** | 仍越红线 0.93 MiB，但已消掉一笔**零功能代价**的浪费 |
+
+- **归因**：`accesskit` 特性此前在 Windows 上链入 accesskit / accesskit_winit / accesskit_windows /
+  accesskit_consumer 四个 crate（另含重复版本 `hashbrown 0.15` / `foldhash 0.1`）；
+  `ahash` 的 `runtime-rng` 是 `getrandom 0.3.4` 的唯一引入者。二者**均无任何功能使用**。
+- **跨平台意义更大**：`Cargo.lock` 同步移除 **60 个包**，其中 Linux 的 `zbus` / `atspi` / `async-*`
+  与 macOS 的 `accesskit_macos` 只在对应平台编译，**Linux / macOS 产物的实际缩减会大于本机 Windows 的 110 KiB**
+  （待 Stage 09 真机补测）。
+- **`NFR-PERF-01` 状态**：**10.93 MiB，仍超 10 MB 红线 0.93 MiB**。§2.4 的四条缓解方案依旧有效，
+  本次先把其中「零功能代价」的部分落地，剩余超限仍需在 v1.1 评审中决策。
 
 ## 3. 启动耗时分解表
 
@@ -205,7 +261,7 @@ pulldown-cmark 均不参与链接）与完整应用对比：
    已上报需求方，裁定结果为 **ADR-006：阈值改为按平台各自口径，Windows ≤ 150 MB
    （判定口径改为 Private Working Set）**，实测 125.3 MB ✅ 达标
    （见 `docs/adr/ADR-006-memory-threshold-revision.md` 与
-   `docs/optimization-log.md` OPT-007）。
+   `docs/archive/stage-reports/optimization-log.md` OPT-007）。
 4. 判定口径改为 Private Working Set 的实测依据：完整应用的 WorkingSet 甚至
    **略低于**空窗口探针（189.2 vs 210.1 MB，另一次 189.4 vs 186.8 MB）——
    说明 WorkingSet 受 OS 换页与共享页影响，噪声可达 ±20 MB，
@@ -258,7 +314,7 @@ pulldown-cmark 均不参与链接）与完整应用对比：
 （打字期 ≈ 0.00 ms，不上色），`clock` 推进过窗口后再做一次 syntect 全文高亮
 （~59 ms，每 150 ms 至多一次）。代价是连续打字时语法色暂时消失（FR-03 观感降级），
 停手即恢复。② 增量高亮（扩领域接口）与 ③ 接受现状均未采用。详见
-`docs/optimization-log.md` OPT-011。
+`docs/archive/stage-reports/optimization-log.md` OPT-011。
 
 #### 3.2.1 编辑帧成本归因（`measure_markdown_highlight_parse_vs_classify`）
 
@@ -335,5 +391,5 @@ OPT-011 已选 **① 防抖降级**（打字期返回空片段、停手后一次
 
 1. 数字只写进本文件，禁止散落在代码注释或 PR 描述；
 2. 每次填写须同时记录：命令、采样次数、环境（OS / 工具链版本 / commit）；
-3. 阶段 08 的每条优化在 `docs/optimization-log.md` 记录「手段 / 前值 / 后值 / 代价 / 结论」，含放弃项；
+3. 阶段 08 的每条优化在 `docs/archive/stage-reports/optimization-log.md` 记录「手段 / 前值 / 后值 / 代价 / 结论」，含放弃项；
 4. 三平台内存口径不可横向比较，门禁按「各平台各自阈值」判定。

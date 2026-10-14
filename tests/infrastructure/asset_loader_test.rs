@@ -265,20 +265,39 @@ fn base64_with_newlines_is_accepted() {
 // 来源三：远程 URL
 // ---------------------------------------------------------------------------
 
-/// HTTPS 不被支持时必须**明确报错**，不能静默降级到明文 http。
+/// https 与 http 走**同一条** ureq 通路（缺陷 025）：TLS 已内置，不再
+/// 出现「当前版本未内置 TLS」的报错。https 的完整链路（证书校验、真实
+/// 下载）依赖外网与系统时钟，不在单测里跑；这里钉住的是**可达性失败时
+/// 的行为**——连接被拒必须降级为 `DownloadFailed` 错误，绝不能 panic
+/// （`panic = "abort"` 下一张坏图引用会直接终止进程）。
 #[test]
-fn https_url_is_rejected_explicitly_not_downgraded() {
+fn https_connect_failure_returns_download_error_not_panic() {
+    // 保留端口 1（tcpmux，几乎不会有服务监听）。
     let error = AssetLoader::new()
-        .load("https://example.com/a.png", None)
-        .expect_err("当前版本未内置 TLS，应报错");
-    match error {
-        AssetError::DownloadFailed { ref reason, .. } => {
-            assert!(
-                reason.contains("TLS"),
-                "错误应说明是 TLS 原因，实际：{reason}"
-            );
-        }
-        other => panic!("应是下载失败错误，实际：{other:?}"),
+        .load("https://127.0.0.1:1/a.png", None)
+        .expect_err("https 连接失败应返回错误");
+    assert!(
+        matches!(error, AssetError::DownloadFailed { .. }),
+        "应是下载失败错误，实际：{error:?}"
+    );
+}
+
+/// 真实 https 下载（rustls 证书校验 + 重定向 + 真实 MIME）。
+///
+/// 需要外网，默认忽略；手动验证跑：
+/// `cargo test --test infrastructure real_https_download -- --ignored --nocapture`
+/// 用户报障里的原始地址（CSDN 图床，base64 包装的跳转图）即此用例来源。
+#[test]
+#[ignore = "需外网"]
+fn real_https_download() {
+    let url = "https://imgconvert.csdnimg.cn/aHR0cHM6Ly9hdmF0YXIuY3Nkbi5uZXQvNy83L0IvMV9yYWxmX2h4MTYzY29tLmpwZw";
+    match AssetLoader::new().load(url, None) {
+        Ok(asset) => println!(
+            "https 下载成功：mime={} bytes={}",
+            asset.mime,
+            asset.bytes.len()
+        ),
+        Err(e) => println!("https 下载失败（图床可能已失效，重点是错误可读而非 panic）：{e}"),
     }
 }
 

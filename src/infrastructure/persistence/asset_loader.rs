@@ -35,11 +35,11 @@
 mod coding;
 mod policy;
 
-use std::io::{Read as _, Write as _};
+use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use coding::{decode_base64, percent_decode, split_http_body};
+use coding::{decode_base64, percent_decode};
 use policy::{ALLOWED_MIME, alt_of, mime_from_extension};
 
 pub use policy::{AssetError, AssetLimits, LoadedAsset};
@@ -224,73 +224,65 @@ impl AssetLoader {
         })
     }
 
-    /// 下载远程图片。
+    /// 下载远程图片（http / https 同一条通路）。
     ///
-    /// 首版用系统能力做同步下载，故只能支持 `http(s)` 且必须能超时。
-    /// 这里**不引入 HTTP 客户端 crate**：一个最小实现只用到
-    /// `TcpStream`，而 `reqwest` 之类的完整客户端会显著增加体积
-    /// （且带一堆 TLS 依赖）。真正的异步下载留给阶段 08。
+    /// 历史注记：首版手写 `TcpStream` + 裸 HTTP/1.0（S5-11 当时为体积拒绝
+    /// 一切 HTTP 客户端 crate），代价是 https 直接报错「未内置 TLS」——而
+    /// 现实文档里的图片地址绝大多数是 https（缺陷 025）。现改用 `ureq`
+    /// （只开 `rustls` feature：纯 Rust TLS，三平台行为一致、无系统依赖），
+    /// TLS / 重定向 / chunked 等 HTTP 细节全部交出去；本函数只保留三条
+    /// **安全与资源边界**——超时、体积硬上限、MIME 白名单。
     fn load_remote(&self, url: &str) -> Result<LoadedAsset, AssetError> {
-        let rest = url
-            .strip_prefix("https://")
-            .or_else(|| url.strip_prefix("http://"))
-            .ok_or_else(|| AssetError::DownloadFailed {
+        let agent = ureq::Agent::new_with_config(
+            ureq::Agent::config_builder()
+                .timeout_global(Some(self.limits.download_timeout))
+                .build(),
+        );
+        let response = agent
+            .get(url)
+            .header("User-Agent", "rustmark")
+            .call()
+            .map_err(|e| AssetError::DownloadFailed {
                 url: url.to_string(),
-                reason: "仅支持 http/https".to_string(),
+                reason: e.to_string(),
             })?;
 
-        let (authority, path) = match rest.find('/') {
-            Some(slash) => rest.split_at(slash),
-            None => (rest, "/"),
-        };
-        // 只支持 http（明文）——TLS 需要外部 crate，
-        // 静默降级到 http 会让用户以为是安全的，故直接报错提示。
-        if url.starts_with("https://") {
+        if !response.status().is_success() {
             return Err(AssetError::DownloadFailed {
                 url: url.to_string(),
-                reason: "当前版本未内置 TLS，请改用本地图片或 http 地址".to_string(),
+                reason: format!("HTTP 状态码 {}", response.status().as_u16()),
             });
         }
 
-        let mut stream =
-            std::net::TcpStream::connect(authority).map_err(|e| AssetError::DownloadFailed {
-                url: url.to_string(),
-                reason: e.to_string(),
-            })?;
-        stream
-            .set_read_timeout(Some(self.limits.download_timeout))
-            .map_err(|e| AssetError::DownloadFailed {
-                url: url.to_string(),
-                reason: e.to_string(),
-            })?;
-        stream
-            .set_write_timeout(Some(self.limits.download_timeout))
-            .map_err(|e| AssetError::DownloadFailed {
-                url: url.to_string(),
-                reason: e.to_string(),
-            })?;
-
-        let request = format!(
-            "GET {path} HTTP/1.0\r\nHost: {authority}\r\nConnection: close\r\nUser-Agent: rustmark\r\n\r\n"
-        );
-        stream
-            .write_all(request.as_bytes())
-            .map_err(|e| AssetError::DownloadFailed {
-                url: url.to_string(),
-                reason: e.to_string(),
+        // MIME 优先取响应头；缺失时按**最终 URL**（重定向后）的扩展名推断，
+        // 判定次序与白名单和旧实现一致。
+        let final_path = ureq::ResponseExt::get_uri(&response).path().to_string();
+        let mime = response
+            .body()
+            .mime_type()
+            .map(str::to_ascii_lowercase)
+            .filter(|v| ALLOWED_MIME.contains(&v.as_str()))
+            .or_else(|| {
+                mime_from_extension(Path::new(&final_path))
+                    .filter(|m| ALLOWED_MIME.contains(m))
+                    .map(str::to_string)
+            })
+            .ok_or_else(|| AssetError::DisallowedMime {
+                mime: "unknown".to_string(),
             })?;
 
-        let mut response = Vec::new();
         // 边读边判上限：恶意/超大响应不应先全量进内存。
+        let mut reader = response.into_body().into_reader();
+        let mut bytes = Vec::new();
         let mut chunk = [0u8; 8192];
         loop {
-            match stream.read(&mut chunk) {
+            match reader.read(&mut chunk) {
                 Ok(0) => break,
                 Ok(n) => {
-                    response.extend_from_slice(&chunk[..n]);
-                    if response.len() > self.limits.max_inline_bytes * 2 {
+                    bytes.extend_from_slice(&chunk[..n]);
+                    if bytes.len() > self.limits.max_inline_bytes * 2 {
                         return Err(AssetError::TooLarge {
-                            actual: response.len(),
+                            actual: bytes.len(),
                             limit: self.limits.max_inline_bytes,
                         });
                     }
@@ -304,34 +296,7 @@ impl AssetLoader {
             }
         }
 
-        let body = split_http_body(&response).ok_or_else(|| AssetError::DownloadFailed {
-            url: url.to_string(),
-            reason: "响应格式非法".to_string(),
-        })?;
-
-        // MIME 优先取响应头；缺失时按路径扩展名推断。
-        let mime = String::from_utf8_lossy(&response)
-            .lines()
-            .find(|l| l.to_ascii_lowercase().starts_with("content-type:"))
-            .and_then(|l| l.split(':').nth(1))
-            .map(|v| {
-                v.split(';')
-                    .next()
-                    .unwrap_or("")
-                    .trim()
-                    .to_ascii_lowercase()
-            })
-            .filter(|v| ALLOWED_MIME.contains(&v.as_str()))
-            .or_else(|| {
-                mime_from_extension(Path::new(path))
-                    .filter(|m| ALLOWED_MIME.contains(m))
-                    .map(str::to_string)
-            })
-            .ok_or_else(|| AssetError::DisallowedMime {
-                mime: "unknown".to_string(),
-            })?;
-
-        if body.is_empty() {
+        if bytes.is_empty() {
             return Err(AssetError::DownloadFailed {
                 url: url.to_string(),
                 reason: "响应体为空".to_string(),
@@ -339,9 +304,9 @@ impl AssetLoader {
         }
 
         Ok(LoadedAsset {
-            bytes: body.to_vec(),
+            bytes,
             mime,
-            alt: alt_of(path),
+            alt: alt_of(&final_path),
         })
     }
 }

@@ -280,7 +280,7 @@ src/.../foo.rs (900行)            src/.../foo.rs        ← facade：模块文�
 **P4 — [state/sidebar_ui_state.rs](file:///d:/data/WorkBuddyCache/workspace/rustmark/src/presentation/state/sidebar_ui_state.rs)（766）** → `sidebar_ui_state/`：`search.rs`(SearchOptions/SearchToggle/SEARCH_TOGGLES/SearchGroup/SearchHitRow/group_hits/locate_in_snippet 14-101,126-153,517-569)、`tree.rs`(TreeRow/NameEdit/tree_rows/is_under_root/depth_of/visible_ancestors 102-125,154-195,434-516)；facade 留 SidebarUiState 两个 impl(196-433)+测试(570-766)。
 
 **P5 — [state/find_replace_ui_state.rs](file:///d:/data/WorkBuddyCache/workspace/rustmark/src/presentation/state/find_replace_ui_state.rs)（1156）** → `find_replace_ui_state/`：facade 留 FindOptions/PatternError/OptionKind/FIND_INPUT_ID/REPLACE_INPUT_ID/FindReplaceUiState(25-72,901-907,908-1156)；`pattern.rs`(Node/ClassItem/Regex+impl/compile/parse_alternatives/parse_sequence/read_class_atom/chars_eq/fold_lower 82-534)、`engine.rs`(Match/Finder/ReplaceSummary/matches_with/find_from/find_literal/find_literal_ignore_case/scan_literal_ignore_case_all/word 边界 535-900)。
-**专项约束**：`find_literal_ignore_case`(767-817) 即 [large-file-report.md](file:///d:/data/WorkBuddyCache/workspace/rustmark/docs/large-file-report.md) 登记的 DEF-01 O(N×M) 代码，**逐字符原样搬迁，禁止修算法、禁止"顺手优化"**；`large_*` 性能用例是行为门禁。
+**专项约束**：`find_literal_ignore_case`(767-817) 即 [large-file-report.md](file:///d:/data/WorkBuddyCache/workspace/rustmark/docs/archive/stage-reports/large-file-report.md) 登记的 DEF-01 O(N×M) 代码，**逐字符原样搬迁，禁止修算法、禁止"顺手优化"**；`large_*` 性能用例是行为门禁。
 
 波次门禁：`--test presentation`、`--test app`（frame 使用这些 state）、全量比对。
 
