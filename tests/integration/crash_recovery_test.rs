@@ -36,6 +36,8 @@ use std::fs;
 use std::sync::Arc;
 use std::time::Duration;
 
+use eframe::App;
+
 use rustmark::app::bootstrap::{ConfigPaths, Services};
 use rustmark::app::frame::EditorApp;
 use rustmark::application::document::commands::{InsertTextCommand, OpenFileCommand};
@@ -471,8 +473,8 @@ fn e2e_crash_recovery_restores_unsaved_draft() {
     let ctx = egui::Context::default();
     let mut frame = eframe::Frame::_new_kittest();
     for _ in 0..3 {
-        let _ = ctx.run(frame_input(), |ctx| {
-            eframe::App::update(&mut app, ctx, &mut frame);
+        crate::support::run_ui(&ctx, frame_input(), |ui| {
+            app.ui(ui, &mut frame);
         });
     }
     assert_eq!(
@@ -500,8 +502,8 @@ fn e2e_crash_recovery_restores_unsaved_draft() {
     let ctx2 = egui::Context::default();
     let mut frame2 = eframe::Frame::_new_kittest();
     for _ in 0..3 {
-        let _ = ctx2.run(frame_input(), |ctx| {
-            eframe::App::update(&mut restarted, ctx, &mut frame2);
+        crate::support::run_ui(&ctx2, frame_input(), |ui| {
+            restarted.ui(ui, &mut frame2);
         });
     }
     assert_eq!(
@@ -537,8 +539,8 @@ fn recovery_prompt_discard_clears_leftover_drafts() {
     let ctx = egui::Context::default();
     let mut frame = eframe::Frame::_new_kittest();
     for _ in 0..2 {
-        let _ = ctx.run(frame_input(), |ctx| {
-            eframe::App::update(&mut app, ctx, &mut frame);
+        crate::support::run_ui(&ctx, frame_input(), |ui| {
+            app.ui(ui, &mut frame);
         });
     }
     assert_eq!(draft_files(&drafts_dir).len(), 1, "应写出 1 份草稿");

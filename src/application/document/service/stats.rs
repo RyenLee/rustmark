@@ -75,7 +75,7 @@ pub fn compute_stats(text: &str, title: &str) -> StatsView {
         words,
         characters: text.chars().count(),
         characters_no_space: text.chars().filter(|c| !c.is_whitespace()).count(),
-        lines: text.split('\n').count().max(1),
+        lines: crate::shared::text::line_count(text),
         paragraphs,
         headings,
         code_blocks,

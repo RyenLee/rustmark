@@ -53,7 +53,7 @@ fn pointer_at(g: &egui::Galley, char_index: usize) -> egui::Pos2 {
 fn right_clicking_a_flagged_word_opens_a_menu_for_it() {
     let (_dir, mut app) = app_with("teh quick brown");
     let ctx = egui::Context::default();
-    let _ = ctx.run(egui::RawInput::default(), |_| {});
+    crate::support::run_ui(&ctx, egui::RawInput::default(), |_| {});
     let g = galley(&ctx, "teh quick brown");
     let origin = egui::pos2(0.0, 0.0);
 
@@ -79,7 +79,7 @@ fn right_clicking_a_flagged_word_opens_a_menu_for_it() {
 fn right_clicking_a_correct_word_opens_nothing() {
     let (_dir, mut app) = app_with("teh quick brown");
     let ctx = egui::Context::default();
-    let _ = ctx.run(egui::RawInput::default(), |_| {});
+    crate::support::run_ui(&ctx, egui::RawInput::default(), |_| {});
     let g = galley(&ctx, "teh quick brown");
     let origin = egui::pos2(0.0, 0.0);
 
@@ -93,7 +93,7 @@ fn right_clicking_a_correct_word_opens_nothing() {
 fn right_clicking_whitespace_opens_nothing() {
     let (_dir, mut app) = app_with("teh quick brown");
     let ctx = egui::Context::default();
-    let _ = ctx.run(egui::RawInput::default(), |_| {});
+    crate::support::run_ui(&ctx, egui::RawInput::default(), |_| {});
     let g = galley(&ctx, "teh quick brown");
     let origin = egui::pos2(0.0, 0.0);
 
@@ -107,7 +107,7 @@ fn spell_check_off_means_no_menu() {
     let (_dir, mut app) = app_with("teh quick brown");
     app.editor.spell_check = false;
     let ctx = egui::Context::default();
-    let _ = ctx.run(egui::RawInput::default(), |_| {});
+    crate::support::run_ui(&ctx, egui::RawInput::default(), |_| {});
     let g = galley(&ctx, "teh quick brown");
     let origin = egui::pos2(0.0, 0.0);
 

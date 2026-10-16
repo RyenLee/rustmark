@@ -27,7 +27,7 @@ mod outline;
 mod render;
 mod table;
 
-pub use block::{BlockId, BlockKind};
+pub use block::{BlockId, BlockKind, ImageAlign, ImageDisplay, InlineImage};
 pub use inline::{InlineSpan, InlineStyle, SpanStyle, SyntaxSpan};
 pub use outline::OutlineItem;
 pub use render::{Misspelling, RenderedBlock};

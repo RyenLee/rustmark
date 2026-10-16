@@ -1,12 +1,13 @@
 //! 领域渲染产物 → DTO 视图的映射函数（块 / 行内片段 / 样式稳定字符串）。
 
 use crate::domain::markdown::value_objects::{
-    BlockKind, CellAlignment, InlineSpan, InlineStyle, RenderedBlock, SpanStyle,
+    BlockKind, CellAlignment, ImageAlign, InlineImage, InlineSpan, InlineStyle, RenderedBlock,
+    SpanStyle,
 };
 
 use crate::application::dto::{
-    BlockView, CellAlignView, DefinitionBodyView, DefinitionEntryView, ListItemView, RangeView,
-    SpanView, TableView,
+    BlockView, CellAlignView, DefinitionBodyView, DefinitionEntryView, ImageSpecView,
+    InlineImageView, ListItemView, RangeView, SpanView, TableView,
 };
 
 /// 渲染块 → DTO 视图。
@@ -30,6 +31,7 @@ pub(super) fn to_block_view(block: &RenderedBlock) -> BlockView {
                     depth: item.depth(),
                     ordinal: item.ordinal(),
                     spans: spans_to_view(item.spans()),
+                    images: images_to_view(item.images()),
                 })
                 .collect()
         }),
@@ -69,6 +71,20 @@ pub(super) fn to_block_view(block: &RenderedBlock) -> BlockView {
             BlockKind::Image { url, .. } => Some(url.clone()),
             _ => None,
         },
+        // 图片显示参数（问题 3）：源码私有扩展 `#pic_center` / ` =30x30`
+        // 随块上行，渲染层按它区分尺寸与对齐。
+        image_width: match kind {
+            BlockKind::Image { display, .. } => display.width,
+            _ => None,
+        },
+        image_height: match kind {
+            BlockKind::Image { display, .. } => display.height,
+            _ => None,
+        },
+        image_align: match kind {
+            BlockKind::Image { display, .. } => Some(image_align_str(display.align).to_string()),
+            _ => None,
+        },
         marker: match kind {
             BlockKind::Raw { marker } => Some(marker.clone()),
             _ => None,
@@ -100,7 +116,25 @@ pub(super) fn to_block_view(block: &RenderedBlock) -> BlockView {
                 .collect()
         }),
         spans: spans_to_view(block.spans()),
+        images: images_to_view(block.images()),
     }
+}
+
+/// 领域行内图片 → DTO 图片（区间相对所属文本）。
+fn images_to_view(images: &[InlineImage]) -> Vec<InlineImageView> {
+    images
+        .iter()
+        .map(|image| InlineImageView {
+            range: RangeView::new(image.start(), image.end()),
+            image: ImageSpecView {
+                url: image.url().to_string(),
+                alt: image.alt().to_string(),
+                width: image.display().width,
+                height: image.display().height,
+                align: image_align_str(image.display().align).to_string(),
+            },
+        })
+        .collect()
 }
 
 /// 领域行内片段 → DTO 片段（区间 + 样式字符串）。
@@ -133,6 +167,15 @@ fn inline_style_str(style: InlineStyle) -> &'static str {
         InlineStyle::Subscript => "sub",
         InlineStyle::Superscript => "sup",
         InlineStyle::FootnoteRef => "footnote_ref",
+    }
+}
+
+/// 图片对齐 → 稳定字符串（供表现层选择居中 / 左 / 右布局）。
+fn image_align_str(align: ImageAlign) -> &'static str {
+    match align {
+        ImageAlign::Center => "center",
+        ImageAlign::Left => "left",
+        ImageAlign::Right => "right",
     }
 }
 

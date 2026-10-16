@@ -59,7 +59,14 @@ impl EditorApp {
         // 撤销待删目标。若跟着路径类结果一起短路返回，`pending_delete`
         // 会一直悬着，用户下次点「删除」反而被「已有确认在飞」吞掉。
         if let DialogOutcome::Confirm(result) = &outcome {
-            self.apply_delete_confirm(result);
+            // 两类确认框（删除 / 全部关闭）共用同一个 `Confirm` 出口，
+            // 靠「哪个 pending 有值」分流——与 `PendingDialog` 当年
+            // 「一个字段多种含义」的缺陷相反：这里两个字段各自只有一种含义。
+            if self.pending_close_all {
+                self.apply_close_all_confirm(result);
+            } else {
+                self.apply_delete_confirm(result);
+            }
             return;
         }
         if outcome.is_cancelled() {
@@ -156,6 +163,54 @@ impl EditorApp {
     /// 报告「对话框本身不可用」这类失败。
     pub(super) fn report_dialog_failure(&mut self, what: &str, error: &AppError) {
         self.set_status_error(&format!("{what}对话框不可用：{error}"));
+    }
+
+    /// 关闭全部文档；**有未保存修改时先弹确认**（问题 038）。
+    ///
+    /// 标签条的「全部关闭」按钮与「关掉最后一个标签」都走这里：
+    /// 两条路径都会丢弃未保存修改，风险相同，保护也相同。
+    /// 没有脏文档时直接关，不为一个零风险操作弹框。
+    pub fn close_all_with_confirm(&mut self) {
+        if self.open_document_list().iter().any(|doc| doc.is_dirty) {
+            self.request_close_all();
+        } else {
+            self.close_all_documents();
+        }
+    }
+
+    /// 请求「全部关闭」确认（登记意图 → 后台确认框 → 每帧取回）。
+    ///
+    /// 与 [`Self::request_delete`] 同一套路，理由同源：`confirm` 是同步
+    /// 阻塞的原生模态框。文案报出脏文档数——用户要凭这条信息决定
+    /// 「值是不值得为它再存一次」。
+    pub fn request_close_all(&mut self) {
+        if self.pending_close_all {
+            return;
+        }
+        let dirty = self
+            .open_document_list()
+            .iter()
+            .filter(|doc| doc.is_dirty)
+            .count();
+        self.pending_close_all = true;
+        let message =
+            format!("有 {dirty} 个文档有未保存的修改，「全部关闭」将丢失这些修改。确定继续吗？");
+        self.dialogs.spawn(DialogRequest::Confirm { message });
+    }
+
+    /// 兑现一次「全部关闭」确认的答复（问题 038）。
+    ///
+    /// 三种答复与删除确认同义：是 → 执行；否 / 关掉对话框 → 什么都不做
+    /// （用户刚明确拒绝，再弹一条「已取消」是废话）；对话框系统不可用 →
+    /// 必须提示，否则用户以为关了、实际一个都没关。
+    fn apply_close_all_confirm(&mut self, result: &Result<bool, AppError>) {
+        self.pending_close_all = false;
+        match result {
+            Ok(true) => self.close_all_documents(),
+            Ok(false) => {}
+            Err(AppError::Cancelled) => {}
+            Err(e) => self.set_status_error(&format!("未能确认全部关闭：{e}")),
+        }
     }
 
     /// 请求删除一个工作区条目（**先弹二次确认，答复为「是」才真删**）。

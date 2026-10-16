@@ -19,7 +19,16 @@ impl MarkdownAppService {
     /// 3. **大文件降级**：超过 [`TRUNCATE_THRESHOLD_BYTES`] 直接返回空集——
     ///    与高亮 / 预览同策略，保证大文档下编辑帧不因可选功能退化。
     ///
+    /// # 帧路径上只碰 O(1) 元数据（问题 046）
+    ///
+    /// 「大文件降级」与「版本号缓存命中」都只需要**字节长度与版本号**，
+    /// 故先用 [`DocumentContentProvider::revision_and_len`]（O(1)）判断，
+    /// **只有真的要检查时才取全文**。此前每帧 `fetch` 全文，开着拼写检查
+    /// 在 1MB 文档上就是每帧一次 MB 级快照——与高亮同一个根因。
+    ///
     /// [`TRUNCATE_THRESHOLD_BYTES`]: super::TRUNCATE_THRESHOLD_BYTES
+    /// [`DocumentContentProvider::revision_and_len`]:
+    ///     crate::application::document::DocumentContentProvider::revision_and_len
     pub fn spell_check(&self, q: SpellCheckQuery) -> Vec<(usize, usize)> {
         let Some(checker) = self.spell.as_ref() else {
             return Vec::new();
@@ -27,15 +36,18 @@ impl MarkdownAppService {
         if !q.enabled || !checker.is_available() {
             return Vec::new();
         }
-        let Ok((content, revision)) = self.fetch(q.doc_id) else {
+        let Some((revision, len)) = self.provider.revision_and_len(q.doc_id) else {
             return Vec::new();
         };
-        if content.len() > TRUNCATE_THRESHOLD_BYTES {
+        if len > TRUNCATE_THRESHOLD_BYTES {
             return Vec::new();
         }
         if let Some(hits) = lock_or_recover(&self.spell_cache).get(q.doc_id, revision) {
             return hits;
         }
+        let Ok((content, _)) = self.fetch(q.doc_id) else {
+            return Vec::new();
+        };
         let Ok(marks) = checker.check(&content) else {
             // 检查失败按「无错词」处理：宁可漏标，不可弹错。
             return Vec::new();

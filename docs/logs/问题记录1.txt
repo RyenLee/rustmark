@@ -12,6 +12,27 @@
 --------------------------------------------------------------------------------
  条目索引（编号 · 日期 · 主题）
 --------------------------------------------------------------------------------
+ 048 · 10-16 · `NFR-PERF-04` 的验收口径闭合：指标原文是「连续输入 100 次，取 p95 ≤ 16ms」，但此前只有空闲帧实测（§3.2.2），击键帧一直挂账「整链路埋点待阶段 09」。补：注入**真实的** `Event::Text`（走 egui 文本输入而非直接改文本模型）、每帧显式推进 8ms 模拟 125fps 连续人手节奏、装配用可控时钟（否则用例随时钟漂移改变被测行为）。实测（release p95）10KB **0.58ms** ✅ ｜ 100KB **4.01ms** ✅ ｜ 1MB **42.00ms** ❌ 超 2.6×——1MB 超限根因是 egui 文本一变即重建 58,514 行 `Galley`，0.37 的 `TextEdit` 无视口虚拟化 API（§3.2.2 结论 6 同源），不假装达标。回归用**计数**（100 次输入期间高亮 `misses` 增量为 0）+ 变异验证（注掉防抖短路即抓到 99 次解析）；顺带查清「高亮查询跑在文本写回之前，见到的版本总落后一帧」并加可观测入口
+ 047 · 10-16 · 用户诉求（问题 044 遗留议题，方向 A）：编辑区「框不满面板」——`TextEdit` 自带的 frame 尺寸 = 控件尺寸，而控件高度默认只由 `desired_rows(行数)` 决定，短文档下框只包住那几行，框底到状态栏之间留一大片裸底色（本机 800pt 窗口实测框 96pt vs 视口 625pt，即 529pt 空白）。修：滚动区 `auto_shrink([false,false])`（默认 `TRUE`，「内容多高滚动区就多高」）+ `TextEdit::min_size` 高度给满视口（取 `ui.clip_rect()` 而非 `available_height()`——后者顶端是 `inner_rect.min − offset`，越滚越长；宽度一个点都不给，`min_size.x` 会顶掉 `available_width` 撑出横滚动条）
+ 046 · 10-16 · 用户诉求「egui TextEdit 卡顿优化」（附 docs/logs/T.txt 通用分析）：逐条审计后该文三条成因在本项目两类不成立、一类已被行级增量排版覆盖，三条方案 ②已满足 / ①不可用（0.37 的 TextEdit 无虚拟化 API）/ ③在 0.37 已换成 epaint::TextOptions（有意不改：影响的不是实测热点）；实测另找到真因——**为两个整数付 O(全文)**：编辑区每帧 fetch 全文只为拿版本号与长度、高亮结果按值返回导致每帧克隆整张 span 表、行数与光标行号用 split/chars 而非字节扫描、光标行号在行号栏关闭时也照算。修：新增 O(1) revision_and_len、高亮结果 Arc 共享、行数规则收敛到 shared::text 并按字节扫描
+ 045 · 10-16 · 用户诉求：文件打开只允许文本格式白名单（默认 .md/.txt/.csv，可扩展），白名单外（图片/二进制）禁用入口或提示「暂不支持打开该格式」以免乱码；统一扩展名判断（大小写不敏感）、按 UTF-8 读取、白名单集中管理。根因是同一规则散在三处各写一份必然漂移（.csv 拖放能进、原生对话框选不中）。修：新建 shared::text_format 作唯一出处，FilePath::extension / 原生对话框过滤器 / 四条打开入口（含拖放分类与两处置灰拦截）全部同源
+ 044 · 10-16 · 用户诉求：升级 egui/eframe 以解决 TextEdit 大文本卡顿（0.33.3 → 0.37.0，连带 wgpu 27.0.1 → 30.0.1）。修：App trait 拆 ui/logic、Panel 统一、ScrollArea offset 私有化、TexturesDelta Drop 断言（无头测试统一 clear）、LayoutJob::debug_sanity_check 踩坑（预填 text 又 append 致文本翻倍，0.37 直接 panic）、emoji 字体拆 feature
+ 043 · 10-16 · 用户反馈两项（截图 12-33-36）：标签条 ◀ ▶ 与「全部关闭」图标挤成一团重叠（「全部关闭」手写绝对坐标漏加面板内边距基准 `strip_left`，按钮压进 ▶ 热区、分隔线画在 ▶ 矩形里）/ 打开多个文档后应用明显卡顿（勘察确认**不是磁盘 IO**——切标签不读盘、无文件 watcher、侧栏不每帧扫描；热路径是每帧为 N 个打开文档各做一次 rope 全文快照 + 高亮缓存容量 8 小于打开上限 12 且驱逐是 HashMap 任意序，来回切标签就触发 56ms 级 syntect 重算尖峰）。修：标签条改走轻量 `TabSummary` 投影（构造 O(1)）、统计按版本缓存、预览只取版本号、高亮缓存 32 + 真 LRU；右侧控件坐标补 `strip_left` 基准
+ 042 · 10-16 · 用户反馈：导航箭头 ◀ 修好后 ▶ 又失效。真根因不是动画（041 的初判只对了一半）——① `reveal` 的「上一帧 active id」存在 egui **temp memory** 里，temp 项每帧 `begin_frame` 就被清掉，读回恒为 `None` → 「活动标签变化」恒成立 → reveal **每帧**触发，把用户刚点出来的滚动位移立刻拉回；② egui 的滚动增量 `pass_state.scroll_delta` 是**全局**的、不分滚动区，标签条在顶栏总是第一个 begin，把编辑区/预览区的滚动请求整个抢走 → offset 随机漂移（实测 584→481.5→595，既不按步长也不按方向）；③ 真实槽宽被 `item_spacing.x`(8pt) 撑成 176 而估算按 170 → 滚到底最后一个标签仍被切一半。修：偏移提升为应用状态 + 每帧末尾无条件钳制写回 + 横向 spacing 归零并把间隙并入槽位
+ 041 · 10-16 · 用户反馈两项（截图 10-38-54）：「全部关闭」换图标（原文案 ~70pt 全在挤占滚动区）/ 导航箭头 ◀ 点击失效（`scroll_to_rect` 动画目标存于 `State.offset_target` 私有字段，每帧把 offset 拉回旧目标 → `.animated(false)` + 滚入改手动写 offset）
+040 · 10-16 · 用户反馈三项汇总（一次消息提 3 个缺陷，两张截图 09-35-21 / 09-42-05）：展开目录后子项被拼到文件树底部（`FsWorkspaceRepository::collect` 先推完本层再统一递归，不是 `tree_rows` 契约要求的前序 DFS）/ 右键菜单点别处不消失（只有树底部空白点击会关闭）/ 标签条溢出无滚动手段（只有 AlwaysHidden 的横向滚动区，滚轮不动横向、滚动条不画）→ 补左右导航箭头
+ 039 · 10-15 · 用户反馈三项汇总（一次消息提 3 个缺陷）：右下角主题切换不对称（深色→浅色点一次、浅色→深色点两次，三态轮换经 system 中转所致）/ 导出浮窗顶部标签文案不可见（切主题后又正常——选中文字 accent 同色 + to_theme 调色板丢失两因）/ 浅色模式侧栏大纲标签下黑色线条（sidebar/editor 边界亚像素缝隙露黑清屏色，与 025/033/037 同源）
+ 038 · 10-15 · 用户反馈三项汇总（一次消息提 3 个缺陷）：保存全部无效果（execute 汇聚点漏接线）/ 标签条三项（打开数量上限可设置+「全部关闭」按钮+单行横向滚动；竖向堆叠根因是内层 Ui 继承 top_down）/ 恢复默认快捷键移入设置对话框页脚；连带修掉「去重被分隔符形态绕过」
+ 037 · 10-15 · 用户反馈五项汇总（一次消息提 5 个缺陷）：文件树无图标/无树线/不能双击打开 / 快速打开搜索栏双绘重叠 / 欢迎页长名压路径 / 搜索范围按钮文案不可见+范围语义改为「打开的文档」/ 重复打开+标签条黑框
+ 036 · 10-15 · 侧栏高度异常（035 活动栏布局的后续）：`ui.horizontal` 初始高只有 interact_size.y=18pt，内容压扁半屏即断 → `horizontal_top`
+ 035 · 10-15 · 活动栏 + 作用域分组落地（034 续）：侧栏整行可点条目点击失效（scope_builder().response 返回内层 hover-sense）+ 改用 ui.interact
+ 034 · 10-15 · 侧栏作用域重构第一步：搜索范围切换器（当前文档 / 整个工作区），默认当前文档
+ 033 · 10-15 · 切「搜索」标签侧栏右侧黑框复发（025 同类）：三段 truncate 的残条 + epaint「行不为空」越界
+ 032 · 10-15 · 图片前的文案被吞（图片是行内元素却被整块替换成图片块）→ 行内图片建模
+ 031 · 10-15 · 图片位置摆放补充：无标记默认左对齐（截图证伪「默认居中」）+ 尺寸/标记顺序无关 + 参数规则表
+ 030 · 10-15 · 图片参数化方向修正（029 只猜对一半）：`#pic_center` 对齐 + `=WxH` 尺寸必须随块上行
+ 029 · 10-14 · 用户反馈三项：侧栏条目点击全废（egui sense）/ 换行时代码块撑横向滚动条 / 图片不按 URL 尺寸参数区分
+ 028 · 10-14 · 搜索功能崩溃：摘要窗口按字节切片切进多字节字符中间
  027 · 10-14 · 依赖审查：eframe accesskit / ahash 收窄（−110 KiB、锁文件 −60 包）
  026 · 10-14 · https 图片报「未内置 TLS」→ 引入 ureq+rustls
  025 · 10-14 · 「检查」标签侧栏与编辑区之间黑框（lint 行溢出撑爆布局）
@@ -39,7 +60,1165 @@
  003 · 10-10 · 欢迎页居中 / 等高 / 间距 / 字体族 / 打开文件夹 / 导出路径（只有问题陈述）
  002 · 10-10 · 自动换行 / 宽度适配 / 工具栏位置（只有问题陈述）
  001 · 10-09 · 首报四项：编辑区白板 / 菜单层级 / 下拉重叠 / 多标签预览（只有问题陈述）
+2026-10-16 048
+问题（`NFR-PERF-04` 的验收口径长期未闭合）：
+指标原文是「连续输入 100 次，取 p95 ≤ 16ms（一帧）」，但此前的实测只有**空闲帧**
+（§3.2.2），击键帧一直挂账「整链路埋点待阶段 09」。缺这一档既没法回答「用户真打字时
+几毫秒一帧」，也没法自动发现「防抖失效」这类回归。
+
+处置（补齐埋点 + 三档实测 + 确定性守卫）：
+- 口径：注入**真实的** `Event::Text`，走 egui 文本输入 → `TextEdit` 改写文本 →
+  应用侧 diff / 排版 → 重绘；不直接改 `editor_text`（那会绕过「输入事件到文本模型」
+  这一段，量不到用户真正等待的部分）。
+- 节奏：每帧显式推进 8ms（约 125fps，连续人手间隔 < 150ms 防抖窗）。装配用**可控时钟**
+  （`Services::assemble_with_clock_and_dialogs`）——真实 `SystemClock` 下用例会随时钟
+  漂移而改变被测行为：跑得快则全程在窗内，跑得慢则中途越窗触发一次 59ms 级全量解析，
+  属随机失败而非回归。
+- 新增 `tests/support/clock.rs`：把 IME 测试里的私有 `TestClock` 提升为**共享测试设施**
+  （两处都要用），并按 `run_ui` / `settle` 的既有做法加 `#![allow(dead_code)]`
+  （`tests/support` 被每个测试目标用 `#[path]` 引入，非每个目标都用得到它）。
+- 帧驱动抽为 `editor_frame` / `warm_editor`，支撑三种跑法：击键帧、同运行空闲帧对照、停手帧。
+
+实测（release，`cargo test --release --test presentation -- --nocapture measure_textedit_typing`）：
+
+| 档位 | 击键帧 p50 / p95 | 16ms 预算 |
+|---|---|---|
+| 10KB（573 行） | 0.44 / **0.58** ms | ✅ 余量 27× |
+| 100KB（5,721 行） | 3.34 / **4.01** ms | ✅ 余量 4× |
+| 1MB（58,514 行，降级纯文本） | 39.21 / **42.00** ms | ❌ **超 2.6×** |
+
+- **≤ 100KB 达标**：击键帧 = 空闲帧 + 「文本变更」引发的增量重排——10KB 只贵 0.29ms、
+  100KB 贵 2.7ms，都是「只重建改动那一行」的量级（与 §3.2.2 的增量设计一致）。
+- **1MB 超限，根因在 egui**：文本一变就要重建 58,514 行的 `Galley`，42ms 与空闲帧
+  3.25ms（§3.2.2 的 30 帧基线）之间的约 39ms 来自这里；本项目每帧的前置工作（高亮查询 /
+  行数 / 旧文本克隆）在 100KB 上合计 < 0.2ms（§3.2.2 分项表），线性外推到 1MB 也只有
+  2ms 量级。egui 0.37 的 `TextEdit` **不提供**视口虚拟化 API（§3.2.2 结论 6 同源），
+  这笔成本无法在本项目内规避。**故不假装 1MB 达标**：阈值按档位分（≤ 500KB 守 16ms
+  指标本身，1MB 给 64ms 防数量级退化），事实与归因写在 §3.2.3。
+
+回归（确定性优先，耗时只做量化）：
+- 三档断言「连续输入 100 次期间高亮缓存 `misses` 增量为 **0**」——即打字期**一次全量高亮
+  都没有发生**。这是计数而非耗时，不受机器快慢与抖动影响；1MB 档同样成立（> 500KB 走
+  降级路径，压根不进高亮器），故断言与档位是否降级无关。
+- 对照用例 `typing_cheap_because_highlight_is_deferred_not_absent`：停手越过 150ms 窗口后
+  `misses` 必须**涨 1**（否则「击键帧便宜」无从区分「防抖生效」与「压根没上色」），
+  且停手帧必须显著贵于击键期 p50（实测 316ms vs 3.2ms，debug）。
+- **变异验证**：把 `highlight` 的防抖短路注掉后，计数断言立刻抓到 **99 次**解析（10KB 档）
+  ——断言不是空转。
+- 顺带查清并记录一个易被忽略的事实：**高亮查询跑在把 `TextEdit` 缓冲写回文档之前**，
+  因此它见到的版本总比文档当前版本**落后一帧**（停手后第一帧只是补上这个差值、第二帧
+  才满足静止窗口并上色）。现状不构成缺陷——150ms 窗口本就吞掉一帧的量级——但回归必须
+  照实写，否则会把它误判成「防抖失效」。为此新增可观测入口 `HighlightPace::snapshot` /
+  `MarkdownAppService::highlight_pace_snapshot`（与既有 `highlight_cache_stats` 同类），
+  对照用例用它钉住「停手后防抖已追上文档版本」。
+
+门禁（2026-10-16 当日实测）：
+- `cargo fmt --check` ✓
+- `cargo run --bin check-arch` ✓（未发现分层依赖违规）
+- `cargo clippy --all-targets --all-features -- -D warnings` ✓
+- `cargo test --all-targets` ✓ **1754 passed · 0 failed · 2 ignored**
+  （presentation 530 → 532，新增两条用例；两例 ignored 为既有平台/环境豁免）
+- 数字一律 release 取；耗时阈值按编译档位给（debug ×8），日常门禁跑 debug。
+
+2026-10-16 047
+问题（用户诉求，继承 044 勘察的「编辑区框不满面板」议题；用户选定方向 A「框撑满面板」）：
+编辑区那个圆角框只包住文本，短文档下框底到状态栏之间是一大片裸底色。
+本机实测（1280×800 窗口、关预览与侧栏）：框高 96pt，编辑区视口高 625pt。
+
+根因（044 已逐条像素取证，本条只记结论）：
+- 那个框是 `TextEdit` **自带**的 frame，尺寸 = 控件尺寸；
+- 控件高度由 `desired_rows(行数)` 与排版结果决定，与「编辑面板有多高」无关；
+- 外层 `ScrollArea` 的 `auto_shrink` 默认是 `Vec2b::TRUE`，语义是「内容多高、滚动区就多高」
+  （egui 0.37 `scroll_area.rs` 实证），于是短文档下滚动区自身也收缩到文本高度——
+  既让框不满面板，也让横滚动条贴在「收缩后的框底」而不是面板底。
+
+修复（`src/presentation/views/editor_view.rs`，方向 A「框撑满」）：
+- 滚动区加 `.auto_shrink([false, false])`——`inner_rect` 从此保持满高，
+  `ui.clip_rect()` 才等于真实视口高，横滚动条也随 `inner_rect` 落回面板底；
+- `TextEdit` 加 `.min_size(vec2(0.0, viewport_h))`，`viewport_h` 取闭包内的
+  `ui.clip_rect().height()`（已扣滚动条占位）。两个易错点都写进了代码注释：
+  ① 不能用 `ui.available_height()`——`content_max_rect` 的顶端是 `inner_rect.min − offset`，
+     滚动后它反而随 offset 变大，会把 frame 越撑越长；
+  ② 宽度一个点都不能给——egui 算宽度是
+     `allocate_width = desired_width.at_most(available_width).at_least(min_size.x)`，
+     `min_size.x` 会**顶掉** `available_width`，把正文撑出视口、凭空生出横滚动条。
+- ⚠ 撑满剩余高的滚动区会把**其后**在同层 Ui 绘制的元素推出面板底缘（既有硬规则）。
+  已核实编辑区面板内滚动区之后只有 `ctx` 绘制的浮层菜单（`draw_spell_menu`），
+  不参与同层布局，故本次改动安全；注释里写明「后续要在编辑区底部加常驻提示必须放在滚动区之前」。
+
+实测（2026-10-16，无头、800×1280 窗口、关预览与侧栏，见新增用例的探针输出）：
+- 短文档三行：框高 **96 → 625**（= 视口高），裸底色带 529pt → 0；
+- 长文档 400 行：框高 8830 > 视口 625，可滚能力不变（内容高 8830）；
+- 不换行模式的短文档：框高与换行模式一致（均 625）——**未复现** 044 记录的第 4 条成因
+  「短文档也出横滚动条」：0.37 的 `TextEdit` 宽高计算已随 atom layout 重写，
+  `allocate_width` 取 `min(desired_width, available_width)`，不再像 0.33 那样等于视口宽。
+
+回归（新增 `tests/presentation/editor_frame_geometry_test.rs`，3 例）：
+- `short_document_frame_fills_the_edit_pane`：框高 = 视口高（±1pt）、短文档内容高不超视口；
+- `long_document_frame_is_at_least_the_viewport_and_still_scrolls`：长文档框 ≥ 视口且仍可滚；
+- `nowrap_short_document_does_not_lose_height_to_a_horizontal_bar`：不换行不吃掉视口高。
+做法是**几何断言**而非截图比对：`Context::read_response(EditorApp::editor_id()).rect` 取框矩形、
+`app.ui.sync.geometry(Side::Editor)` 取视口 / 内容高，确定性强且不受主题与字体影响；
+时间轴用 `RawInput::time` 显式推进（0.2s/帧）——滚动条显隐是 `animate_bool_responsive` 动画，
+测试帧的微秒间隔永远走不完动画（既有硬规则）。
+**变异验证**：把 `auto_shrink` 改回 `[true, true]`、`min_size` 归零，用例立即红
+（`框高应等于视口高：框 96 vs 视口 625`）——断言钉住的是缺陷本身，不是空转。
+
+门禁：fmt ✓ / check-arch ✓ / clippy `-D warnings` ✓ /
+`cargo test --all-targets` **1752 passed · 0 failed · 2 ignored**（原 1749，+3 为本次新增）；
+表现层单目标 530 passed（原 527）。
+
+2026-10-16 046
+问题（用户诉求）：按 `docs/logs/T.txt`（egui 0.33 的 `TextEdit` 大文本卡顿成因分析与
+优化建议）做 `TextEdit` 卡顿优化。
+
+根因（先逐条审计、后实测；⚠ `T.txt` 的结论在本项目大部分不成立）：
+- **三条成因**：① 「每次编辑重排整篇」——本项目编辑区自 S6-04 起就走自己的两层缓存
+  （整文档缓存 + 逐行差分映射），10KB 改一行只重排 1 行，比 `T.txt` 方案二的
+  「段落级缓存」粒度更细；② 「Galley 缓存键是全 `LayoutJob` 哈希，长文本必全失效」
+  ——编辑区不经过 `Fonts::layout_job` 的整篇缓存，且 0.37 已在 `epaint` 内置段落级
+  缓存（PR #5411，硬编码 `allow_split_paragraphs = true`），走该路径的渲染自动获益；
+  ③ 「wgpu 字形分配退化 / 每帧变字号」——wgpu 是需求 §5.1 硬约束（ADR-001），
+  且项目内没有 zoom、字号来自持久化设置，不构成「字形缓存病态用例」。
+- **三条方案**：① 视口虚拟化——0.37 的 `TextEdit` 无 `show_viewport` / `visible_range`，
+  **不可用**（要它只能自绘编辑器，属架构级改动）；② 段落级缓存——**已满足**；
+  ③ `font_hinting` / `subpixel_binning` 在 0.37 已变成 `epaint::TextOptions`
+  （挂 `egui::Visuals::text_options`，默认全开）——**有意不改**：它影响的是字形栅格化
+  与图集占位，而实测归因显示每帧成本不在这两项上，改它只换来用户可见的清晰度代价。
+- **实测找到的真因（`T.txt` 未覆盖）：为两个整数付 O(全文)**。
+  `MarkdownAppService::highlight` / `spell_check` 每帧先 `fetch` →
+  `content_and_revision` → `Document::text()`，把整篇从 rope 快照成一个新 `String`，
+  而这一帧真正需要的只有**版本号**（防抖计时 + 缓存键）与**字节长度**（>500KB 降级）。
+  同源浪费另有三处：高亮结果按值返回 → 每帧克隆整张片段表（100KB 文档 3080 个
+  `SpanView`，每个含一个 `style` 串）；行数与光标行号用 `split('\n')` / `chars()`
+  而非字节扫描；光标行号在**行号栏关闭（默认）**时也照算。
+
+修复：
+- **新增 `DocumentContentProvider::revision_and_len`**（O(1)：`Document::revision()` +
+  `len_bytes()`），`DocumentRegistry` / `RegistryProvider` 覆写为 O(1)，trait 默认实现
+  退回慢路径以免打脸既有 fake。`highlight` / `spell_check` 改为先做廉价判断，
+  **只有真要解析时才取全文**——防抖期、缓存命中、大文件降级三条路径从此一次都不快照。
+- **高亮结果改 `Arc<Vec<SpanView>>`**：服务返回共享快照，`HighlightCache` 存 `Arc`，
+  防抖与大文件两条「本帧不上色」路径共用同一个空 `Arc`（零分配）。
+- **行数规则收敛到 `shared::text::{line_count, line_index_at}`**：按字节数换行
+  （依据 UTF-8 续字节恒 ≥ 0x80），替换编辑区 / 行号栏 / 状态栏 / 文档统计 / 文档视图 /
+  行首表容量预估六处各自写的 `split('\n').count()`；光标行号改为 `show_gutter`
+  为真时才计算。
+- **新增 `tests/presentation/textedit_frame_perf_test.rs`**：真实 `EditorApp` +
+  `main_view::show` 驱动，覆盖 10KB/100KB/1MB 三档空闲帧 + 每帧前置工作分项，
+  带数量级守卫阈值（release 8 / 8 / 24 ms，debug ×8）。
+
+回归：
+- **确定性钉法用「调用计数」而非耗时阈值**（亚毫秒样本的抖动比信号大，阈值会 flaky）：
+  `tests/common/fakes.rs` 的 `FakeDocumentContentProvider` 增加 `snapshot_calls()` /
+  `revision_len_calls()`，新增
+  `highlight_frame_path_never_snapshots_the_whole_document`、
+  `spell_check_frame_path_never_snapshots_the_whole_document`、
+  `oversized_document_is_rejected_without_snapshotting` 三例。
+- `shared::text` 单测：`line_count_matches_split_semantics`（与
+  `split('\n').count()` 逐例相等）、`line_count_is_utf8_safe`、
+  `line_index_agrees_with_char_counting`（含落在多字节字符中间不 panic）。
+- **实测（release，语料 100KB / 5721 行 / 3080 span）**：空闲帧 p50
+  **0.56 → 0.33ms**；高亮查询命中 **0.108 → 0.000ms**；光标行号 **0.102 → 0.027ms**；
+  行数 **0.048 → 0.029ms**。1MB：p50 **4.44 → 3.16ms**、p95 **8.33 → 4.06ms**
+  （p95 的大幅改善即修复前每帧大块分配造成的毛刺）。
+  数字进 `docs/metrics.md` §3.2.2；审计全文归档
+  `docs/archive/stage-reports/textedit-lag-audit.md`。
+- **证否项**：`prev = editor_text.clone()` 每帧执行看似浪费，实测 100KB 仅 0.002ms
+  （1MB 约 0.02ms），改动它要动 diff 的旧文本来源（正确性风险 > 收益），**不动**。
+- **剩余成本不在本项目**：1MB 空闲帧剩 3.16ms，全部来自 egui 对 58,514 行 `Galley`
+  的逐行处理（该档已降级纯文本、不含 syntect），只有方案一能治而本期不可用。
+- 门禁：fmt ✓ / check-arch ✓ / clippy `--all-targets --all-features -D warnings` ✓ /
+  `cargo test --all-targets` ✓ **1749 passed · 0 failed · 2 ignored**。
+
+2026-10-16 045
+问题（用户诉求）：「文件」标签页的文件打开功能要限制可打开的格式——只允许以文本方式
+打开白名单内的类型（默认 .md / .txt / .csv，并可扩展其它纯文本格式）；白名单外
+（尤其 .png/.jpg/.jpeg/.gif/.bmp/.webp 等图片以及二进制文件）禁止打开以避免乱码，
+改为禁用打开入口或提示「暂不支持打开该格式」。要求统一扩展名白名单（大小写不敏感）、
+文本按 UTF-8 读取、白名单集中管理以便后续扩展。
+
+根因：这条规则原先在三处各写一份——drag_drop::is_openable_text、
+shared::dialog::default_filters、files::current_document_kind。三份必然漂移，
+已可观测的后果就是「.csv 拖放能进来，原生对话框里却选不中」。
+
+修复：
+- **新建 `shared::text_format` 作为唯一出处**：`BUILTIN_TEXT_EXTENSIONS`
+  （md/markdown/mdown/mkd、txt/text、csv）、`extension_index` / `extension_of` /
+  `display_name`、`TextFormats`（`builtin` / `from_extensions` / `extended_with` /
+  `accepts` / `accepts_extension` / `file_filter`）。
+  放 `shared` 而非 domain / application：三方共用，且分层约束禁止
+  presentation→domain 与 infrastructure→application，`shared` 是各层唯一公共依赖点
+  （与 `shared::encoding` / `shared::dialog` 同一模式）。
+  按**扩展名**而非内容嗅探判断：打开入口有四条，嗅探会把 IO 摊到 UI 路径；
+  且「避免乱码」靠白名单**拒绝**，而不是读进来猜编码。
+- **同源化**：`FilePath::extension()` 改走同一个 `extension_index`（消除第二份实现）；
+  `shared::dialog::default_filters()` 由白名单派生；原生对话框标题
+  「打开 Markdown 文件」→「打开文本文件」。
+- **四条入口全部派生于 `EditorApp::text_formats` 这一个实例**：
+  ① 打开守卫（`open_workspace_file` 开头，**先于去重与限额**——先判格式才谈得上去重）；
+  ② 拖放分类 `classify_dropped(&formats, files)`；
+  ③ 文件树置灰 + 双击拦截 + 悬停提示；
+  ④ 快速打开置灰 + 选中拦截（不关浮层，便于用户换个候选）。
+- UTF-8 读取由既有基础设施编码探测保证（默认 UTF-8 无 BOM，仅 BOM / UTF-16 / GBK 才启用探测）。
+
+回归：
+- 新建 `tests/app/text_format_guard_test.rs` 7 例：白名单放行、大小写不敏感、
+  图片被拒且**无副作用**（断言 `Ok` 而非 `Err`、无新标签、`current_content()` 为 None、
+  状态栏为「暂不支持打开该格式：photo.png」、最近文件列表不变）、最近入口不能绕过守卫、
+  无扩展名被拒、树谓词与共享白名单同源、提示文本单一出处。
+- 表现层：`sidebar_view_test` 的两例（双击文本打开 / 非文本置灰且拒绝打开）、
+  `s6_11f` 的快速打开拦截（用候选下标 + 注入 Enter 走 `apply_pick`）。
+- 集成：`integration/drag_open_test` 补状态栏提示断言与混合批次（含 .csv）。
+- 门禁：fmt ✓ / check-arch ✓ / clippy ✓ / 相关测试目标全绿
+  （lib 355 / app 74 / integration 79 / sidebar 35 / s6_11f 38）。
+
+2026-10-16 044
+问题（用户诉求）：升级 egui / eframe 以解决 TextEdit 大文本卡顿（附 `docs/logs/T.txt`）。
+
+根因：`T.txt` 三条成因对本项目的核实结果见 046（本次升级的前置调研）。
+版本动作：`egui` / `eframe` 0.33.3 → 0.37.0，连带 `wgpu` 27.0.1 → 30.0.1。
+
+修复（迁移要点；**全量 API 清单与逐处代码映射见
+`docs/archive/stage-reports/egui-0.37-upgrade.md`**）：
+- **eframe `App` trait 拆分**：`update` 移除 → 必选 `fn ui(&mut self, ui: &mut Ui,
+  frame: &mut Frame)` + 可选 `fn logic(ctx, frame)`；
+- `Context::run` → `run_ui(input, impl FnMut(&mut Ui)) -> FullOutput`；
+  `run_logic` **不初始化字体**（`fonts_mut` 会 panic），测字体必须走 `run_ui`；
+- `Panel` 统一：`SidePanel` / `TopBottomPanel` → `egui::Panel::left/right/top/bottom(salt)`，
+  `exact_width/height` → `exact_size(f32)`；`CentralPanel::show` 现收 `ui`；
+- `ScrollArea::State.offset` 私有 → 写用 `.scroll_offset(Vec2)`；
+- `FullOutput` 携带 `TexturesDelta`，其 `Drop` `debug_assert!` 非空即 panic →
+  无头测试统一走 `tests/support/mod.rs::run_ui`（内部 `textures_delta.clear()`）；
+- **踩坑**：`epaint::LayoutJob::debug_sanity_check`（0.37 新，`Fonts::layout_job` 调用）
+  要求 sections 从 byte 0 起、无空隙覆盖全文。`build_line_job` 曾既预填 `text`
+  又 `append`（文本翻倍），0.33 容忍、0.37 **直接 panic** → 删除预填；
+- **emoji 字体从 `default_fonts` 拆到 `monochrome_emoji_fonts`** feature：
+  只开 default 会缺 ✅❌⚠💡🔗☑ → 豆腐块，符号面板 / 工具栏依赖它们，
+  egui 须并开（eframe 无此 feature，别加）。
+
+回归：四道门禁全绿；`cargo test --all-targets` 1722 passed · 0 failed · 2 ignored；
+release 性能用例 3/3；冒烟启动 15s 无 panic。
+
+2026-10-16 043
+问题（用户一条消息提 2 项，截图 docs/pic/PixPin_2026-10-16_12-33-36.png）：
+1. 标签条的按钮样式重叠：◀ ▶ 与「全部关闭」图标挤成一团。
+2. 打开多个文档后应用明显卡顿，要求梳理文档加载机制优化。
+
+根因：
+1. 「全部关闭」按钮与分隔线是手写绝对坐标（041 图标化时引入），x 少加了
+   面板内边距基准 `strip_left`（导航箭头在 042 已加，此处漏网）——按钮整体
+   左移一个内边距宽，压进 ▶ 的热区；分隔线 `rect.left() - 4` 正好画进 ▶ 的
+   矩形。headless 测试测不出：既有断言比较的是「箭头 vs 图标」，而图标在
+   按钮内缩 14pt，恰好躲过 8pt 的偏差。
+2. 全链路勘察（每帧热路径清单）确认：**没有磁盘 IO**——切标签不读盘、
+   无文件 watcher、自动保存事件驱动不轮询、侧栏文件树读内存快照。
+   真正的热路径（按嫌疑排序）：
+   ① 标签条每帧 `open_document_list()` → `to_document_view` 为**每个**打开
+      文档做一次 `rope.to_string()` 全文快照 + 全文行数扫描，而标签只用
+      标题/脏标记/路径。10 个 100KB 文档 ≈ 每帧 1MB 分配 + 10 次全文扫描，
+      唯一随打开数 N 线性增长的每帧开销；
+   ② 高亮缓存容量 8 < 打开上限 12，且驱逐用 `HashMap::keys().next()`
+      （任意序）——开满标签后来回切标签必互相驱逐，miss 一次就是一次
+      syntect 全文重算（自述 10KB 文档 56.5ms），卡顿尖峰来源；
+   ③ 状态栏每帧 `get_stats` 两次（写作目标 + 字数项）+ `get_document`
+      两三次（脏标记/类型/面包屑），每次都是全文快照 + 全文统计；
+   ④ 预览区每帧 `content_and_revision` 只为拿一个 u64 版本号克隆整篇文本；
+   ⑤ 次级：`get_settings` 每帧克隆整个 SettingsView、多处 `theme().clone()`。
+
+修复：
+- **新增轻量投影 `TabSummary`**（application/dto/document.rs）：id/title/
+  path/is_dirty/byte_len，构造 O(1) 不做全文快照。`list_open_tabs` 查询 +
+  `get_tab_summary` 单文档查询；`EditorApp::open_document_list()` 改返
+  `Vec<TabSummary>`（全部调用方只用这五个字段，编译期即验证），状态栏
+  脏标记/类型/面包屑路径一并切换。`list_open`（完整视图）保留给点击时刻。
+- **统计按版本缓存**（DocumentAppService::stats_cache）：单槽
+  `(id, revision, StatsView)`，`get_stats` 同版本直接命中（配
+  `stats_cache_hits` 计数器），编辑后版本变即失效重算。
+- **高亮缓存 8 → 32 + 真 LRU**（highlight_cache.rs）：`order: Vec` 维护
+  访问序，get 命中触碰、insert 从头部驱逐最旧者，行为确定。
+- **预览只取版本号**：`DocumentRegistry::revision_of(id)`（O(1)），
+  preview_view 不再为缓存键克隆全文。
+
+回归：
+- `list_open_tabs_matches_list_open_fields_and_order`（摘要与完整视图
+  逐字段对账 + 打开序一致）、`get_stats_is_cached_until_the_document_changes`
+  （命中计数 + 编辑后必须重算）、`highlight_cache_evicts_the_least_recently_
+  used_entry`（旧任意序驱逐会红）、`highlight_cache_holds_at_least_the_max_
+  open_documents`（12 份互不驱逐）、`the_close_all_divider_never_crosses_a_
+  nav_arrow`（收集条带内全部竖直线段断言不进箭头矩形；**变异验证**：撤销
+  `strip_left` 修复该测试立即红）。
+- 门禁：fmt ✓ / check-arch ✓ / clippy `--all-targets --all-features
+  -D warnings` ✓ / `cargo test --all-targets` ✓ 1722 passed · 0 failed · 2 ignored。
+
+2026-10-16 042
+问题（用户反馈）：041 修完 ◀ 之后，**▶ 又失效了**——◀ 能一步一步滚，▶ 点了
+没反应。
+
+根因（三条叠加；041 只修对了第二条的一半，主因其实是第一条）：
+① **「上一帧 active id」存错了地方**（主因）。判定「活动标签是否刚变化」用的是
+   egui 的 temp memory（`data.insert_temp` / `get_temp`）。temp 项在每帧
+   `begin_frame` 就被清掉，下一帧读回来恒为 `None`，于是
+   `prev_active != now_active` **恒成立** → reveal **每帧**触发。好在 reveal
+   的语义是「仅在标签不可见时滚动」，所以小幅位移不会被撤销——但一旦用户把
+   视口滚到活动标签之外，reveal 立刻把视图拽回，表现即「▶ 点了像没生效」。
+   连点 ◀ 时也永远到不了最左（滚出活动标签就被拉回）。
+② **外部滚动增量泄漏**。egui 的 `pass_state.scroll_delta` 是**全局**的、不分
+   滚动区：任何视图调 `ui.scroll_to_rect` 都会写进去，由**下一个 begin 的
+   ScrollArea** 消费。标签条在顶栏、总是最先执行，于是把编辑区 / 预览区的滚动
+   请求整个抢走，offset 随机漂移（诊断实测 924 → 754 → 584 → **481.5** →
+   **595** → **499**，既不按 170 步长也不单调）。
+③ **真实槽宽与估算不符**。横向布局的 `item_spacing.x`（默认 8pt）会掺进每个
+   标签的占位，真实槽宽是 176 而估算按 `TAB_MAX_W + TAB_GAP` = 170；且尾部
+   `ui.add_space` 高度为 0、不计入内容 Ui 的 `min_size()`（实测 content_size
+   = 2016 = 12×168）。结果滚到「底」时最后一个标签仍被切一截，用户据此以为
+   右边还有。
+
+修复（`src/presentation/views/toolbar_view.rs`）：
+① 滚动偏移**提升为应用状态** `AppUiState::tabstrip_scroll_x`（会话级、不落盘），
+   上一帧 active id 放 `tabstrip_last_active`——**不再**用 egui temp memory。
+② 每帧末尾**无条件**钳制 + 写回 `State.offset`：外部泄漏当帧即被纠正，
+   offset 从此只有一个写者。
+③ `horizontal_top` 内层把 `item_spacing.x` 归零，并**按槽位分配**
+   （`allocate_exact_size(vec2(TAB_MAX_W + TAB_GAP, ...))`），槽宽精确
+   = 170 = 内容宽 / 标签数；`estimated_w` 与真实布局同源。
+④ 滚轮仍可用：仅当指针悬停在标签条内才采信 egui 算出的偏移，否则视为泄漏丢弃。
+
+回归（tests/presentation/tab_strip_test.rs）：新增
+`nav_arrows_step_in_both_directions_and_stop_at_the_ends`——连点 ◀ 一路滚到最左
+（doc0 可见）、连点 ▶ 一路滚回最右（doc11 可见）、到头到底后继续点击不再变化
+（幂等、不抖动）。原有 7 例标签条用例保持绿。
+
+门禁：fmt ✓ / check-arch ✓ / clippy `--all-targets --all-features -D warnings` ✓
+exit 0 / `cargo test --all-targets` ✓ **1701 passed · 0 failed · 2 ignored**。
+
+2026-10-16 041
+问题（用户一条消息提 2 项，截图 docs/pic/PixPin_2026-10-16_10-38-54.png）：
+① 「全部关闭」文案换成图标，节约应用显示区域（原文案连内边距吃 ~70pt，
+   标签一多全在挤占滚动区）；
+② 040 刚补的导航箭头，**向左（◀）点击失效**——▶ 看着正常。
+
+根因：
+① 纯需求，无缺陷。
+② 不是点击判定问题，是**egui 滚动动画覆盖了手动 offset**。040 的「活动标签
+   自动滚入」用 `ui.scroll_to_rect` 实现：它把动画目标写进
+   `ScrollArea State.offset_target`（**私有字段**，外部清不掉），此后每帧
+   插值器把 offset 拉向旧目标、到 1pt 内才清除。导航箭头在 show 之后手动
+   改 `state.offset` 写回，下一帧就被插值器抹掉。自动滚入的目标恰在右边：
+   ◀ 的位移被逐帧拉回（「点击失效」），▶ 与旧目标同向反而「看着正常」。
+   滚轮同理——开启动画时滚轮也走 offset_target。
+
+修复（toolbar_view.rs）：
+- `ScrollArea::animated(false)`：滚轮与 scroll_to 类请求都立即生效，
+  `offset_target` 从此**永远不会被写入**——offset 的唯一写者就是本函数
+  （箭头 / 活动标签滚入），行为完全确定；
+- 活动标签滚入重写：不再走 `scroll_to_rect`，闭包里把活动标签的**内容坐标**
+  rect 存进 `Cell`，show 之后按「内容原点 = inner_rect.min − offset」换算，
+  把 rect 挪进视口区间所需的 offset 直接解出写回（与箭头共用同一写回点，
+  即时生效，也正是 VS Code 标签条的形态）；
+- 「全部关闭」换图标按钮：固定 28pt 宽，向量手绘「圆角方框（一枚标签）+
+  内部 ×」（与单标签裸 × 区分；项目纪律图标不走字形），语义走
+  `on_hover_text("全部关闭")`；原文案量宽逻辑删除。
+
+回归（tab_strip_test.rs，7 例全绿）：
+- 新增「◀ 两步 + ▶ 两步」互逆与步进可累积、「滚入之后 ◀ 仍生效」（显式
+  `RawInput.time` 驱动动画时间轴——测试帧墙钟间隔是微秒级，动画永远走
+  不完，不给时间轴测不出旧缺陷）；「全部关闭」锚点从文本查找改为**条带内
+  唯一描边矩形**（图标没有文字了）；nav 测试按新语义重写：滚入即时生效，
+  初始即停在右端（活动标签 doc11），断言从右端出发；
+- 教训：测试帧的墙钟间隔会让所有时间相关行为「碰巧不发作」，旧测试曾因此
+  掩盖了滚入动画的真实落点。
+
+门禁：fmt / check-arch / clippy -D warnings / cargo test --all-targets
+**1716 passed · 0 failed · 2 ignored**（12 套件）。
+
+2026-10-16 040
+问题（用户一条消息提 3 项，两张截图 docs/pic/PixPin_2026-10-16_09-35-21.png、
+09-42-05.png）：
+① 侧栏「文件」标签下，点击文件夹展开后子项不显示在文件夹下方，而是**拼接到
+   文件树底部**（09-35-21 红框：`archive` 的子项 audits/stage-reports/README
+   与 `logs` 的子项 crash/示例文档/问题记录1 全挤在所有根级文件之后）；
+② 右键弹出悬浮菜单后，左键点击其他地方菜单**不消失**（截图里菜单挂在树上）；
+③ 标签条打开的文档超过窗口宽度时**没有左右滑动按钮**，看不到后面打开的文档
+   （09-42-05 红框：`全部关闭` 左侧全是标签，右边再无入口）。
+
+根因（三项，分述）：
+① 遍历顺序违约。`sidebar_ui_state::tree::tree_rows` 的输入契约是「深度优先
+   前序（父目录紧跟其子项）」——它按列表顺序逐项渲染，全靠输入顺序画对层级，
+   刻意不重排（重排会破坏「重命名后位置不动」）。而 `FsWorkspaceRepository::
+   collect` 的写法是先推完本层全部条目、循环末尾再统一递归子目录，产出的是
+   「本层全部条目 → 再逐目录递归」，所有子项被推到列表尾部。
+   连带后果：`tree_projection_builds_hierarchical_rows` 测试把这份错误顺序
+   （`["docs","readme.md","img","guide.md"]`，注释宣称「本层目录→本层文件→
+   逐个递归子目录」）当作预期固化了——错误顺序被锁进了回归。
+② 行内自绘菜单的关闭条件不全。菜单由 `context_menu` 在行内自己画（egui 0.33
+   没有 ContextMenu），关闭只有一条路径：`files_tab` 末尾的「空白处左键」。
+   点别的行走的是 `select` / `toggle` 分支，不关菜单；点树外（编辑区）更没有
+   任何代码负责收尾。原型语义是 `window click → closeMenu`（任意左键即关）。
+③ 038 为标签条选了 `ScrollArea::horizontal` + `ScrollBarVisibility::AlwaysHidden`
+   （理由充分：滚动条在视口内占位会吃掉行高）。但由此**纯鼠标没有任何横向
+   滚动手段**——滚轮不动横向、滚动条不画、标签又有 `Sense::click()` 吞拖拽，
+   12 个标签时后 5 个永远看不到。
+
+修复：
+① `src/infrastructure/persistence/fs_workspace_repository.rs` 的 `collect`
+   改为真正的前序 DFS：推入目录条目后**立即**递归（`max_depth > 0` 时），
+   再继续兄弟条目；`max_entries` 截断语义保持不变（溢出即 `return false`
+   逐级中止）。同步更新函数头文档。
+② `sidebar_view/files.rs`：
+   - 新增 `dismiss_menu_on_outside_click`：菜单开着的帧里若 `pointer.
+     primary_clicked()` 且落点不在 `ui.clip_rect()` 内（树外），立即关闭；
+   - `run_file_intent`：低优先级分支——本帧没有 `menu` 意图但发生了行点击
+     （select / toggle / open）时关闭菜单（树内那一半）；
+   - 切活动栏标签也关菜单（`sidebar_view::activity_entry`）：切走后面板不再
+     渲染它，回来时它还挂着会显得凭空出现。
+③ `toolbar_view::draw_tab_strip` 新增第 4 条硬规则——溢出必须有左右导航箭头：
+   - 溢出判定用**预估**（`docs.len() * (TAB_MAX_W + TAB_GAP)` 与让出导航位后的
+     宽度比较），避免依赖滚动区输出导致的「画上又缩回」抖动；
+   - 两个 18pt 向量三角形按钮贴在滚动区与「全部关闭」之间（`◀/▶` 字形不在
+     字体覆盖内，故 `paint_nav_arrow` 与文件树箭头同法手绘）；到头到底置灰；
+   - 点击按 `NAV_STEP`（一个标签宽）步进，改 `ScrollAreaOutput.state.offset`
+     后 `state.store(ctx, id)` 写回，下一帧生效；
+   - 活动标签**变化时**自动滚入视野（egui temp memory 记上一帧 active id，
+     只在变化时才 `scroll_to_rect`——逐帧强拉会把用户手动滚走的视图拽回来）。
+
+回归（新增 4 例 + 纠正 1 例）：
+- 仓储层 `scan_lists_children_immediately_after_their_parent`：双层结构断言
+  `["a_dir","nested.md","b_dir","inner.md","z.md"]`，加一层后再断言深层序列
+  `["a_dir","deep","grand.md","nested.md","b_dir","inner.md","z.md"]`；
+- 展示层 `the_context_menu_closes_on_left_clicks_elsewhere`：真实指针事件
+  右键开菜单 → 左键点别的行断言关闭 → 再右键 → 左键点树外（编辑区）
+  断言关闭（新增 `right_click_at` 助手）；
+- 展示层 `nav_arrows_scroll_the_strip_when_tabs_overflow`：12 个标签溢出时
+  从真实帧里取 3 顶点闭合路径（按标签条 y 区间过滤掉菜单栏下拉三角）
+  断言两个箭头都在「全部关闭」左侧；点最右箭头后断言 doc0 滚出视口、
+  doc1 随之可见；
+- **`sidebar_view_test::tree_projection_builds_hierarchical_rows` 纠正**：
+  把每位期待改为前序 DFS 的 `["docs","img","guide.md","readme.md"]` /
+  depths `[0,1,1,0]`，注释改为说明「子项必须紧跟父目录」，
+  删掉原先为错误顺序背书的表述。
+
+门禁：fmt ✓ / check-arch ✓ / clippy --all-targets --all-features -D warnings ✓
+（exit 0）/ `cargo test --all-targets` ✓ 1698 passed、0 failed、2 ignored。
+
+2026-10-15 039
+问题（用户一条消息提 3 项，两张截图 docs/pic/PixPin_2026-10-15_21-02-22.png、
+21-07-39.png）：
+① 右下角「深色模式」与「浅色模式」切换不对称：深色切浅色点一次，浅色切深色
+   要点两次（用户期望「点一下直接换深浅」）；
+② 导出浮窗顶部标签（格式行）按钮文案不可见，但「点击右下角主题切换后又正常了」
+   （截图红框标注格式行）；
+③ 浅色模式下，侧边栏「大纲」标签下出现黑色线条（截图红框标注，两条竖线 + 红字）。
+
+根因（三项，分述）：
+① 主题切换用三态轮换：`cycle_theme` 的 `CYCLE = ["dark","light","system"]`，
+   dark→light 一步，但 light→dark 经 system 中转要两步——浅色点一次变成
+   「跟随系统」而非深色，再点才到深色，故「反过来点两次」。用户心智模型是
+   二态（深↔浅）直接互换。
+② 双根因：
+   2a 展示层：`export_view::format_row` 选中态文字取 `theme.accent`，与 037 同源
+       （用户 `preferences.toml` 的 `selection_bg` 可为实色 accent 蓝，选中态
+       文字与底色同色 → 不可见）。无头浅色主题测不出，深色主题 + 用户首选项取证。
+   2b 数据层：`preferences::service::to_theme` 只在 `kind == Custom` 时附调色板，
+       从 custom 切到 light/dark 时自定义配色被静默丢弃写盘。这恰好解释了
+       「切主题后又正常了」：切到 light 后调色板被丢掉 → 回退默认 22% alpha 的
+       selection_bg → 文字重新可见。两因叠加，本身配色对的用户也会偶尔看不见。
+③ 侧栏与编辑区之间的「黑色线条」是 egui 相邻 SidePanel 的亚像素缝隙露出交换链
+   清屏色（黑）——深色主题下缝隙同为黑、浑然一体，故只在浅色模式被察觉。
+   main_view 既有 divider / preview 边界已修（025/033/037 同源家族），但
+   sidebar/editor 这条边界从未铺过防御底色。
+
+修复：
+① `src/app/frame/settings.rs` 的 `cycle_theme` 由三态轮换改为按当前生效明暗直接
+   互换：`effective_dark = self.ui.theme.is_dark()`；目标 kind = 若已深则 "light"
+   否则 "dark"；调 `preferences.set_theme` 持久化后立即 `ui.set_theme(builtin::resolve)`
+   刷新生效。system / custom 仍经设置页下拉可达，未被移除。
+   `status_bar_view::theme_label` 改为二态：深色→("深色主题","点击切换为浅色主题")、
+   浅色→("浅色主题","点击切换为深色主题")；`ToggleTheme` 动作文案改为
+   「切换主题（深 / 浅）」。
+② 2a `export_view.rs`：抽 `pub(crate) fn selected_format_label_color(theme) -> Color32`
+   返回 `theme.text_primary`，`format_row` 选中态改用它；文件末尾加单测
+   `selected_format_label_uses_text_primary_not_accent`（遍历 light/dark 断言
+   色 = text_primary 且 ≠ accent）。
+   2b `service.rs` 的 `to_theme` 改为 match 双分支：custom 补默认调色板；非 custom
+   若 `view.custom.is_some()` 则保留配色（与 kind 无关，堵数据丢失）。
+③ `src/presentation/views/main_view.rs` 的 `show()` 起始处铺最底层防御底色：
+   `ctx.layer_painter(egui::LayerId::background()).rect_filled(ctx.available_rect(),
+   CornerRadius::ZERO, app.theme().bg_secondary)`——整块可用区域先画一层
+   主题次背景，任何亚像素缝隙漏出的都是主题色而非黑清屏色。
+
+回归 / 验证：
+- `tests/app/frame_test.rs`：删旧三态测试 `theme_cycles_light_dark_system_and_persists`
+   与 `theme_cycle_is_a_fixed_sequence_not_derived_from_current_value`；新增
+   `theme_toggle_swaps_dark_and_light_directly`、
+   `theme_toggle_from_system_resolves_by_effective_mode`（断言 dark↔light 互换）。
+- `tests/application/preferences_service_test.rs`：新增
+   `set_theme_light_keeps_custom_palette_through_to_theme`（带调色板写入 light 再
+   `get_settings` 回读，断言 `custom` 仍在、accent == "#33AAFF"）。
+- `tests/presentation/export_view.rs` 内单测见 2a。
+- `tests/presentation/sidebar_boundary_test.rs`（由 `dbg_line_test.rs` `git mv` 改名，
+   main.rs 已 `mod sidebar_boundary_test;`）：ppp=1.3 下无头渲染浅色 + 大纲 + 预览关，
+   扫描侧栏/编辑区边界邻域每列，断言内容高度上「被覆盖」（无贯穿黑缝）；
+   `LineSegment` 用 match guard 折叠以过 clippy collapsible_match。
+- `tests/presentation/status_bar_view_test.rs`：`theme_label_includes_the_resolved_side`
+   改为二态断言（dark→「点击切换为浅色主题」、light→「点击切换为深色主题」，
+   不再含「跟随系统」分支）。
+
+门禁（10-15 实测）：
+cargo fmt --check ✓（首次跑发现一处 assert_eq 格式差异，cargo fmt 自动修正后复跑通过）；
+cargo run --bin check-arch ✓（未发现分层依赖违规）；
+cargo clippy --all-targets --all-features -- -D warnings ✓（exit 0；Windows 增量编译
+锁文件删除噪音 os error 5 与既往一致，非 lint 警告）；
+cargo test --all-targets ✓ 全绿（约 1708 passed / 0 failed / 2 ignored；presentation
+516 / application 345 / integration 79 等，含本条目新增回归）。
+
+2026-10-15 038
+问题（用户一条消息提 3 项，截图 docs/pic/PixPin_2026-10-15_20-35-13.png）：
+① 应用级菜单「文件 → 保存全部」点击后无任何反应；
+② 标签条：需要「打开文档数量限制（可在设置页面设置限制数量）」、
+   在合适位置添加「全部关闭」按钮、标签多时单行横向滚动
+   （截图实证当前竖向逐行堆叠）；
+③ 设置页面「恢复默认快捷键」埋在快捷键列表滚动区最底部，
+   60 个条目要滑很久才能看到，要求调整到父级页面。
+
+根因（三项，分述）：
+① `UiAction::SaveAll` 在动作表、「文件」菜单（MenuGroup::APP_LEVEL
+   按 UiAction::ALL 生成）、快捷键（Ctrl+Alt+S）、命令面板四处都有，
+   但 `EditorApp::execute` 没有对应分支，落进 `_ => {}` 兜底——
+   与当年 Ctrl+S / Ctrl+N 静默失效同根因：三入口汇聚点漏接线。
+② 竖向堆叠：`ScrollArea` 的内层 Ui **继承父级 top_down 布局**，
+   `allocate_exact_size` 沿纵向前进光标，于是一个标签占一行。
+   横向是**内层 Ui 的属性**（ui.horizontal_top），不是滚动区的属性。
+   附带发现（读 egui-0.33.3 源码确认）：滚动条在视口**内部占位**
+   （inner_size = outer_size − current_bar_use），画出横向条会吃掉
+   约 12pt 宽，而内容高钉死 TAB_ROW_H——于是每个多标签帧都会附带
+   一条毫无用处的竖向滚动条。故用 AlwaysHidden（只隐藏绘制，
+   滚轮 / 触控板 / 拖拽仍可滚）。
+③ 「恢复默认快捷键」按钮做在快捷键分区的滚动列表里，60 个条目
+   一屏展示不完，按钮在最后一项之后，必须滑到底。
+
+修复：
+① `execute` 接线 `UiAction::SaveAll => self.save_all_documents()`。
+   新方法（files.rs）：收集脏文档 → 无路径者单独计数（未命名，
+   提示「需先另存为」而非报失败）→ 逐个 SaveCommand{save_as:false}
+   + clear_draft → 失败收集不中断 → refresh_text 后汇总提示；
+   无脏文档时明确提示「没有未保存的文档」。
+② 限额：`EditorSettings` 新增 `max_open_documents`（默认 12，范围
+   1..=30；设置页滑块 + 弱提示）。**serde 入口把 0 收敛为 1**：
+   `TomlPreferencesRepository::load()` 对校验失败的处理是「备份 +
+   整体回退默认」，为单字段的 0 丢掉用户全部配置不可接受；
+   `is_valid` 保留 0 非法判定作不变量。限额检查在**去重之后**
+   （已打开文档走切换，不占新名额——放在前面会挡住「切回已打开
+   文档」这个最常见操作），`open_workspace_file` 与 `new_document`
+   两处覆盖（`ensure_document` 兜底不经此处：列表为空永远够名额）。
+   「全部关闭」：常驻标签条右端（先量文案宽，滚动区宽 = 可用宽 −
+   按钮宽 − 间距；固定矩形 + 1px 分隔线 + 手绘 hover；无文档不画），
+   关最后一个标签与按钮同险同防；有脏文档走原生确认框（复用
+   V11-06 的 pending + DialogRunner 后台确认模式，新增
+   `pending_close_all` 布尔字段，Confirm 出口按「哪个 pending
+   有值」分流）。横向：标签循环包进 `ui.horizontal_top`，每标签
+   后 add_space(2pt) 避免选中+悬停两块底色连成色带；
+   ScrollBarVisibility::AlwaysHidden。
+③ 按钮移入设置对话框页脚（与「恢复本组默认」互斥显示）：页脚在
+   父级页面、不随分区内容滚动。快捷键列表里的旧按钮与 reset_all
+   机制删除（模块文档注明按钮在页脚，问题 038）。
+
+连带修复（038 的限额测试踩出的 037 缺口）：
+`open_workspace_file` 的去重原本直接比较「调用方原始路径」与「库里
+归一化路径」：Windows 拖放 / 原生对话框给 `\`，文件树与快速打开给
+归一化的 `/`——同一文件从两条入口打开会被判成两个文档（重复标签），
+达上限时还会把「切回已打开文档」一起挡掉。修复为去重前先把请求
+路径过 `FilePath::new` 归一化再比；`expand_ancestors` 的两个调用点
+也改用归一化路径（它按 `/` 切段，反斜杠路径下一段都切不出来）。
+
+回归 / 验证：
+- 新增 tests/app/save_all_test.rs（5 例：全部落盘 / 未命名计数 /
+  无脏文档明确提示 / 单个写盘失败不中断且汇总报告 / 单存后幂等）；
+- 新增 tests/app/open_limit_test.rs（6 例：拒绝+提示带上限值 /
+  上限时仍可切回已打开文档 / 关一个腾一名 / 新建受限 / 配置落盘
+  重启仍在 / 两种分隔符形态去重）；
+- 新增 tests/app/close_all_confirm_test.rs（7 例：无脏不弹框 /
+  有脏先确认且文案报脏数 / 确认后全关回欢迎页 / 否与取消同效 /
+  对话框不可用报错且不关 / 二次请求被吞）；
+- 新增 tests/presentation/tab_strip_test.rs（4 例：单行横排以
+  「全部关闭」为行锚且 x 递增 / 12 标签溢出时按钮仍在右端 1/4
+  且不越顶栏 / 点击全关回欢迎页 / 条带不越 100pt 预算）；
+  settings_view_test 补「恢复默认快捷键在页脚且列表滚到底位置不变」；
+- 仓储层补「手改 0 收敛为 1 且无备份」「缺字段按 12 读出」。
+- 测试设计自我纠正六处（都是本轮实测踩正的）：
+  ① DocumentView.title 是**去扩展名的词干**（DTO 文档原义），
+     open_limit / tab_strip 的期望按 "a.md" 写全名 → 改词干；
+  ② 确认框计数 confirm_calls 在**后台线程**自增，drain 之前读它
+     是赛马 → 同步可观测的「已弹出」用 dialog_busy()，次数断言
+     移到 drain 之后（与既有删除确认测试一致的时序）；
+  ③ save_all 的失败构造「删父目录」不可行——atomic_write 会把
+     父目录建回来（「另存为到新目录」场景），实测存成功了 →
+     改为「把文件换成同名目录」让 rename 失败（跨平台确定）；
+  ④ egui Window 首帧是测量 pass，对话框内容第二帧起才进绘制
+     指令 → 页脚用例先跑两帧再取画面；
+  ⑤ 行序用例 8 文档 → 6（第 7 个会被横向滚出视口）；
+  ⑥ walker 必须按 clip_rect 过滤可见性（滚走的文字形状仍在
+     shapes 里）。
+
+门禁（10-15 实测，fmt 自动修格式后对最终状态复跑）：
+cargo fmt --check ✓；cargo run --bin check-arch ✓（无分层依赖违规）；
+cargo clippy --all-targets --all-features -- -D warnings ✓（exit 0）；
+cargo test --all-targets ✓ 13 个测试目标全 ok（1708 passed / 0 failed /
+2 ignored；其中 app 67 / presentation 515 / application 345）。
+
+2026-10-15 037
+问题（用户一条消息提 5 项，截图 docs/pic/PixPin_2026-10-15_19-13-22.png、
+19-01-39.png、19-10-38.png）：
+① 侧栏文件树加载后无法区分文件/文件夹、没有树形结构、不能双击打开到
+   预览区；应用默认 Markdown，还需兼容 TXT 等格式；
+② 快速打开悬浮窗搜索栏存在重叠文案，疑似代码重复添加；
+③ 欢迎页「最近文件」文档名过长时与后面的路径地址重叠；
+④ 侧栏切「搜索」标签，选「当前文档」「整个工作区」时看不到按钮文案；
+   并明确范围语义：「当前文档」= 当前应用选中的文档；「整个工作区」=
+   多文档标签条中所有打开的文档，**不是**侧栏文件夹下所有文件；
+⑤ 同一文档重复打开会出现重复标签；文档数超出标签条区域后出现黑框。
+
+根因（五项四个根因，分述）：
+① 文件树图标走字形：目录箭头用 `▾`(U+25BE) 字形，本机字体链路无该
+   字形渲染成豆腐块，干脆没区分文件/目录形态；且从没有树形引导线与
+   双击打开语义（旧 file_row 单击即 select）。格式兼容不是新功能：
+   Markdown/TXT 早已在打开过滤器里，是树里缺「这是文件」的可见形态
+   让人以为不支持。
+② `quick_open_view::search_box` 双绘：先用 `layout_no_wrap` 手绘一版
+   galley（占位/查询文本），又在同一矩形 `ui.put` 一个带 `hint_text`
+   的 `TextEdit`——同一段字画两遍，像素级重叠。
+③ `welcome_view/recent_row` 的文件名直接 `layout_no_wrap` 排全名，
+   不与右侧目录 galley 协商宽度，长名必然压到路径上。
+④ 选中态文字取 `theme.accent`：用户 `preferences.toml` 自定义主题
+   `selection_bg = "#6AA9FF"`（实色，恰为 accent 蓝），选中行文字与
+   底色同色 → 不可见。无头浅色主题测不出，深色主题 + 用户首选项取证
+   定位。范围语义则是实现与声明矛盾：Workspace 真去读磁盘全工作区。
+⑤ 重复打开：五条打开入口（文件树/搜索跳转/最近/快速打开/拖放）都汇
+   聚到 `open_workspace_file`，但入口只按路径新建 DocumentId，无去重。
+   标签条黑框：旧 `draw_tab_strip` 用 `ScrollArea::horizontal_wrapped`，
+   标签多时换行 → 撑爆 `TopBottomPanel::exact_height(100)` 的顶栏预算
+   → 面板按内容伸展 → 中央面板顶边无人绘制黑带（025/033 同类家族）。
+   headless 实测（TDBG 逐段）：ScrollArea 占 32pt，而菜单栏+分隔线
+   实测占 52pt、面包屑再需 24pt，总 108 > 100 → 挤爆。
+
+修复：
+① `sidebar_view/files.rs` 重写 `file_row`：图标全部 painter 向量绘制
+   （目录 = `convex_polygon` 三角箭头 + 两个 accent 填充矩形拼文件夹；
+   文件 = `closed_line` 折角页面 + 两条 fold 线），不依赖任何字体字形；
+   新增 `paint_tree_guides`（每级缩进竖线 + 横向 tick，`is_last` 时竖线
+   止于中线）；交互改为**目录单击展开/收起、文件单击选中、双击打开**；
+   `FileIntent` 增 `select` 字段 → `sidebar.selected_path`。格式兼容是
+   既有能力（打开过滤器含 .md/.markdown/.txt），无需新代码，树形态修
+   复后即可用。
+② 删手绘 galley，只留 `rect_filled` 底色 + `TextEdit`（hint 由
+   TextEdit 自己画）。同函数 results 列表还有一个同源缺陷：文件名
+   `layout_no_wrap` 全名不限宽，长名会盖掉右侧分组名——改为
+   `ui.put(name_rect, Label::truncate())`，宽度按「行宽 − 徽标 − 分组
+   宽」预算，过窄（<80）时名字独占整行。
+③ `welcome_view/recent_row`：先量目录 galley，`show_dir = 剩余宽 ≥ 80`
+   才画目录；名字用 `ui.put(name_rect, Label::truncate())`；窄屏保名字
+   舍目录（全路径看悬浮提示）。
+④ 选中态文字色 `theme.accent` → `theme.text_primary`（`scope_row` /
+   `toggle_row` 两处，函数文档标注「问题 037」）；语义改名
+   `SearchScope::Workspace` → `SearchScope::OpenDocuments`（label
+   「打开的文档」），`SearchQuery` 增 `only_open_documents: bool`；
+   服务层 `gather_candidates(include_disk)` 把读盘跳过做在**候选收集
+   阶段**（先收草稿即已打开文档，`!include_disk` 直接 return），省掉
+   最贵的全盘读盘；`open_documents()` 从 HashMap `values()` 改为 `ids()`
+   插入序（原来搜索分组顺序随机）。
+⑤ `open_workspace_file` 开头去重：按路径（`eq_ignore_ascii_case`）命中
+   已打开文档则 `switch_document` + 选中侧栏 + 展开祖先 + touch 最近，
+   直接返回（五入口汇聚一处全覆盖）。`draw_tab_strip` 重写：高度钳制
+   `strip_h = min(tabstrip_height, available_height − BREADCRUMB_ROW_H)`
+   + `allocate_ui` 精确推进；`ScrollArea::horizontal()` 单行横向滚动
+   （不换行就不撑高）；每标签 `allocate_exact_size(168×24)`，标题
+   `Label::truncate()`，关闭按钮 `ui.put(... Button::new("×"))`。
+
+回归 / 验证：
+- `tests/presentation/sidebar_view_test.rs`：`SearchScope::Workspace` 全
+  改 `OpenDocuments`；新增
+  `open_documents_scope_skips_files_that_are_not_open`（只开 guide.md，
+  断言 readme.md 不出现在结果）；`search_results_are_grouped_by_file`
+  期望顺序按插入序改 `["guide.md","readme.md"]`；切换器点击落点改
+  「打开的文档」（整段相等匹配，空状态文案里也有该字样）。
+- `tests/application/workspace_service_test.rs`：6 处 `SearchQuery` 构造
+  补 `only_open_documents: false`。
+- 连带修复 036 之后引入的两条回归：`preview_border_test` /
+  `three_pane_top_bars_align`（顶栏 100pt 预算：最终实测 menu 2..40 /
+  strip 50..78 / breadcrumb 78..100 = 恰好 100，两条通过）。
+- 删除遗留临时探针 `tests/font_glyph_probe.rs`（未跟踪、自称跑完即删、
+  编译错误挡住 `--all-targets`）。
+- 有效性验证：把 `search_workspace` 的 `only_open_documents` 传错 /
+  注释 retain，新用例以「实际搜到磁盘文件」失败 → 守卫承重。
+
+门禁：
+cargo fmt --check OK；check-arch OK（未发现分层依赖违规）；
+clippy --all-targets --all-features -- -D warnings exit 0；
+cargo test --all-targets 全 0 failed（presentation 510 / application 345 /
+infrastructure 148·291 / app 191，其余 49·14·16·79·37·1 全 passed）。
+
+2026-10-15 036
+问题（用户截图 docs/pic/PixPin_2026-10-15_17-17-05.png）：
+035 的活动栏布局上线后，侧栏高度异常：活动栏与内容面板被压在窗口上半部
+（约 220pt），底色条到半屏就断掉，大纲提示「点击标题可跳转…」溢出侧栏
+背景之外浮在编辑区上；面板下半部全部空置。
+
+根因（egui 0.33 `Ui::horizontal` 的初始高语义）：
+`draw` 里用 `ui.horizontal(|ui| { 活动栏(allocate_ui 48×available_height)
++ 分隔线 + 内容面板 })` 排水平行。egui 0.33 文档原话：horizontal 的
+「初始高度是 `style.spacing.interact_size.y`」（默认 18pt）、交叉轴居中——
+子 Ui 的 max_rect 只有 18pt 高。headless 实测：`draw` 的 max_rect 全高
+672pt，但 horizontal 内 `available_height=18`、`allocate_ui(48, 672)` 被
+钳到 [102..120]。旧版用 `ui.vertical` 排标签栏，此语义从未暴露。
+
+修复：
+1. `sidebar_view::draw` 改用 `ui.horizontal_top`（文档钦定替代：初始高取
+   `available_size_before_wrap()` 即面板全高，内容顶对齐）；
+2. 连带发现：大纲提示原在滚动区**之后**绘制，而滚动区
+   `auto_shrink([false, false])` 撑满剩余高后提示被推出面板底缘、永远
+   不可见（旧版同样存在，压扁缺陷反而让它「溢出可见」过）——把提示移到
+   层级过滤条之下、列表之上（控件行 + 指引 + 列表，正好是阅读顺序）。
+
+回归 / 验证：
+- 新增 `sidebar_view_test::sidebar_content_fills_the_panel_height`：从真实
+  形状钉两条不变量——大纲提示可见且早于列表条目（hint_top < entry_top，
+  两种坏形态：被推出面板 / 浮在半屏，一并钉住）；活动栏底色矩形纵向
+  贯穿面板（高度 > 300pt，压扁时只有 18pt）。
+- 侧栏判据写法教训：**不能**用「clip_rect.left() <= 1」识别侧栏形状——
+  面板 frame 自带 8pt 内边距，内容 clip 左界是 8；要用「clip_rect.right()
+  不越过面板宽（~320）」区分侧栏与编辑区。
+- 020 的 `clicking_outline_item_jumps_cursor`、033 的黑框用例等既有
+  侧栏用例不受影响。
+
+门禁：
+cargo fmt --check OK；check-arch OK；clippy -D warnings exit 0；
+cargo test --all-targets 全绿（presentation 509，含新增回归 1 条）。
+
+2026-10-15 035
+问题（布局重构第二步 / 用户「继续修复」）：
+034 完成搜索范围切换器后，继续「活动栏 + 作用域分组」这一核心步：侧栏从
+「顶部平铺四个标签」改为「左侧活动栏（按作用域分两组、组间分隔线）+ 右侧单
+内容面板（面板标题带作用域声明）」的 VS Code 式布局。纯展示层重组，
+领域/应用层零改动。落地同时，问题记录 020（大纲点击）的回归用例
+`clicking_outline_item_jumps_cursor` 开始失败——这是本次重构暴露的隐藏缺陷。
+
+根因（egui 0.33 `scope_builder` 的 `.response` 语义）：
+大纲/搜索/检查/文件树四个标签的整行可点条目都用
+`ui.scope_builder(UiBuilder::new().sense(Sense::click()), ...).response` 取点击。
+但 egui 0.33 里 `scope_builder` 的 `.response` 返回的是**闭包内最后一个子
+widget 的响应**（行号 / 文件名 / 命中片段等 label，默认只有 hover sense），
+**不是** scope 自身的 click-sense 响应——于是 `response.clicked()` 恒为 false，
+症状即「点了没反应」。旧垂直布局（标签栏在顶部平铺）下这条路径竟能命中，
+活动栏把内容面板塞进 `ui.horizontal` 父布局后点击不再落到 scope 上，缺陷被
+稳定复现。headless 实测：大纲条目字形中心 (117,204.5) 精确点击，`selection`
+始终 None、行 rect 内 `hovered()` 在按下态恒 false（后者是 pressed 态
+`hover_pos()` 为 None 的红鲱鱼，关键是 `clicked()` 永不为真）。
+
+修复（与文件树 `file_row` 同款、规范做法）：
+整行先用 `ui.horizontal`（/ `with_layout`）排出内容并取回整行矩形
+`row_response.rect`，再 `ui.interact(row_response.rect, row_id, Sense::click())`
+挂一个 click-sense 命中区——它在绘制顺序上位于内容之上，点击稳稳落到行上。
+四个标签统一切换：sidebar_view/outline.rs、search.rs `hit_row`、lint.rs
+`lint_row`、files.rs `file_row`。`row_id` 用 `ui.id().with(("rustmark.*.row", 唯一键))`
+确保 ScrollArea 内多行 id 不撞（搜索用 group.path+line+snippet+highlight，
+lint 用 line+rule_label+message，文件用 row.path）。
+
+回归 / 验证：
+- `sidebar_view_test::clicking_outline_item_jumps_cursor`：从本帧形状取「第二节」
+  字形中心点击（不写死坐标），断言光标落到第 4 行（`editor.cursor == starts[4]`）
+  且落点行含「第二节」；旧版写死 y 扫描 + 只判 selection != before 的脆弱写法
+  已替换为字形中心 + 精确行号断言。
+- `clicking_sidebar_tab_switches_to_outline`（活动栏「大纲」项切换）保持通过，
+  佐证活动栏 `selectable_label` 点击通路本就正常，问题只在 scope_builder 行。
+- `search_hit_row_never_widens_the_sidebar_panel`（033）等既有布局/黑框用例
+  不受本次交互改写影响，仍全绿。
+
+门禁：
+cargo fmt --check OK；cargo run --bin check-arch OK（未发现分层依赖违规）；
+cargo clippy --all-targets --all-features -- -D warnings exit 0（仅增量锁文件噪音，
+与既往一致）；cargo test --all-targets 全绿（含 035 修复的 1 条回归用例，共
+508 presentation + 其余套件全 passed / 0 failed）。
+
+2026-10-15 034
+问题（用户报告）：
+侧栏把「文件」与「大纲 / 搜索 / 检查」混在同一组标签里，但二者作用域不同：
+「文件」是工作区级，「大纲 / 搜索 / 检查」是文档级。用户要求重构整体布局，
+并明确「先从搜索范围切换器开始」——「搜索」虽然归入文档级分组，但现有实现是
+**全工作区**检索（跨文件分组、点击跳转），与文档级作用域不符。
+
+根因（不是缺陷，是作用域错配）：
+搜索的唯一形态是跨文件检索：`SearchQuery` 没有范围参数，
+`gather_candidates()` 收全部候选，命中按文件分组展示。于是「搜索」这个
+文档级标签实际干的是工作区级的活——用户在当前文档里找个词，侧栏先把
+整个工作区扫一遍（每帧！），结果按文件铺开，与旁边的大纲 / 检查
+（只看活动文档）形成语义断层。缺的不是算法，是一个**范围选择**。
+
+修复（切换器 + 一层过滤，展示层重组，业务逻辑零改动）：
+1. 状态层新增 `SearchScope { CurrentDocument, Workspace }`（默认当前文档，
+   会话内有效、不落偏好）与 `SEARCH_SCOPES`，带 label / hint / placeholder；
+   搜索框占位提示随范围变化（「在当前文档中搜索」/「在所有文件中搜索」）。
+2. `SearchQuery` 新增 `only_document: Option<DocumentId>`；服务在
+   **候选收集之后、读盘之前** retain 过滤——「当前文档」范围下逐个读全
+   工作区文件是最贵的路径，必须在这里砍掉。用 DocumentId 而非路径：
+   未落盘草稿同样有 ID，且天然命中「草稿优先于磁盘内容」的既有规则。
+3. `search_workspace()` 按 scope 传参；「当前文档 + 无活动文档」**返回空
+   结果**而不是退化成整个工作区——否则界面声明的范围与实际搜索对象
+   互相矛盾。空状态文案由视图负责（「没有打开的文档」+ 指路切换范围）。
+4. 视图在输入框下新增范围切换行（`selectable_label` 两段式，形态与顶部
+   标签栏 / 大纲层级条一致）；层级差别靠位置与用词表达：它紧贴输入框
+   （「搜谁」先于「怎么搜」），且写的是词不是符号。
+
+回归：
+- tests/application：`search_can_be_limited_to_one_document`——限定到草稿
+  只剩它一条且取内存内容、限定到不存在的 ID 得空结果而非报错。
+- tests/presentation：`search_scope_current_document_only_searches_the_open_file`
+  ——默认范围 + 无文档必须为空（防「悄悄变成全工作区」）、打开 guide.md
+  只剩它一组、切工作区恢复两组；
+  `clicking_the_scope_switcher_changes_the_search_scope`——真实帧里点
+  「整个工作区」（落点取字形中心，不写死坐标）后范围切换且结果立即刷新。
+- 状态层单测：每个范围都有 label/hint/placeholder，默认当前文档。
+- 有效性验证：临时把两处守卫改坏（early return 改为 None、retain 注释掉），
+  两条用例分别以「实际搜到 [readme.md, guide.md]」「只应剩目标文档的命中」
+  失败——守卫承重，非摆设。
+
+门禁：
+cargo fmt --check OK；cargo run --bin check-arch OK（未发现分层依赖违规）；
+cargo clippy --all-targets --all-features -- -D warnings exit 0（仅增量锁
+文件噪音 8 条，与既往一致）；cargo test --all-targets 全绿（含新增 4 条）。
+
+2026-10-15 033
+问题（用户报告）：
+侧边栏切到「搜索」标签时，侧栏右侧出现一条竖向黑色矩形（黑框），编辑区
+被整体推右。截图 docs/pic/检查标签有黑色框.png（2245×1405，红框为用户
+标注）。这是 025 修过的同类黑框（那次是 lint 行溢出）的**另一处复发**，
+且根因比「忘了 truncate」深一层：这次三行代码都写了 truncate，仍然溢出。
+
+根因（三环相扣，源码级取证）：
+1. `search.rs::hit_row` 把片段拆成「前 / 命中 / 后」三个**独立**的
+   `Label::truncate()` 排在 `left_to_right` 里。前两段吃掉大部分可用宽后，
+   第三段只剩几个点——比一个字形还窄（实测第三段可用宽 ≈ 5pt）。
+2. epaint 的截断实现保证「行不为空」：可用宽装不下任何字形时它仍会排出
+   一个字形（`replace_last_glyph_with_overflow_character` 里
+   `... || row.glyphs.is_empty()` 那一支），于是该段 galley 宽**超过**
+   max_width，本行 `min_rect.max.x` 冲出面板（真实应用插桩实测
+   232.2 → 242.2，同帧逐级放大到 292.6；用户字体/缩放下平衡在 382）。
+3. 侧栏 `ScrollArea` 用 `auto_shrink([false, false])`，横向取值是
+   `inner_size.max(content_size)`（Expand to fit content）——溢出宽度被
+   记进 content_size，内容 Ui 的 max_rect 随之变宽，下一行可用宽更大，
+   形成**同帧正反馈**；事后 `ui.set_max_width` 钳制无效（
+   `placer.set_max_width` 会 `region.max_rect |= region.min_rect`，
+   缩不回已经撑大的 min_rect）。
+   最后 `SidePanel` 的 frame 响应矩形取内容最大 x（`panel.rs`
+   `allocate_left_panel`），`cursor.min.x = rect.max.x` 据此把编辑区面板
+   整体推右：[240, 382] 之间没有任何面板绘制，真实渲染露出交换链清屏色
+   (8,8,8)——用户看到的黑框。
+排除的假设（均有实测 / 源码证据）：主题漏覆盖深色字段（visuals 里没有
+(8,8,8)）；滚动条背景（`extreme_bg_color` 是白的）；浮层 / 右键菜单；
+Lint 页签（插桩实测 `SB max_x = 232.0`，干净——与「只有搜索才黑框」一致）。
+
+修复（一个 galley，只截断一次）：
+`hit_row` 改为把三段拼成**一个** `LayoutJob`——命中词 section 带
+`background = theme.find_current_bg`，其余 section 用 `Color32::PLACEHOLDER`
+（取主题正文色），交给同一个 `Label::truncate()`。可用宽就是整行的剩余宽，
+不再出现「只够放一个字形」的残条。新增 `highlight_bytes` / `byte_index` 把
+DTO 的**字符**下标换算成字节区间（夹紧 + 字符边界对齐；中文 3 字节，切错
+就是 028 那个 panic）。`Align`  import 随之不再需要。
+注：`auto_shrink` 未改——查证 `(true,false)` 在「该方向未启用滚动」时取值
+是 `content_size`（Follow the content），同样不钳制，改了不解决问题。
+
+回归：
+- 新增 `search_hit_row_never_widens_the_sidebar_panel`（tests/presentation/
+  sidebar_view_test.rs）：真实磁盘 + 真实字体（`font_definitions(Some(
+  "user:Consolas"))`，用户真实配置）跑三帧，按**裁剪矩形**区分侧栏 / 编辑区 /
+  通栏，断言两条：① 侧栏内任何形状右界 ≤ 面板宽 240，且编辑区左界 = 240；
+  ② 命中片段必须是**一个** galley（其文本同时含命中词前后文），与字体无关。
+- 有效性验证：临时还原三段实现 → ② 失败（实测「实际 []」）；还原修复 → 通过。
+
+门禁：
+`cargo fmt --check` / `cargo run --bin check-arch`（OK，未发现分层违规）/
+`cargo clippy --all-targets --all-features -- -D warnings` /
+`cargo test --all-targets`：**1675 passed / 0 failed / 2 ignored**。
+（定位期临时插桩与 tests/presentation/tmp_repro.rs 已全部移除。）
+
+2026-10-15 032
+问题（用户报告）：
+插入链接与图片时，`![Alt](https://imgconvert.csdnimg.cn/aHR0...)` 能正常渲染
+图片，但 `![Alt]` **前面的文案被吞了**，没有展示。示例文档里的写法是
+`图片: ![Alt](url)`——预览里只剩一张图，「图片: 」三个字不见了。
+
+根因（一处设计错误，两类表现）：
+1. 主因：图片在 CommonMark 里是**行内**元素，它可以出现在段落 / 标题 /
+   引用 / 列表项的文字中间。解析器的 `end.rs` 却在块闭合时只要该帧挂了
+   image（`Tag::Image` 曾出现），就把**整个块替换成 `BlockKind::Image`**
+   ——块内其它文字（图片前 / 后的文案）随之丢弃，而图片块的渲染只画图片、
+   不画 content。于是用户看到「插入图片后前面的文案被吞」。
+2. 次因（同一处代码的两个副作用）：
+   a. image 只有一个槽位（`open.image`），一段里写两张图时后者覆盖前者，
+      第一张整张消失；
+   b. 列表项 / 引用走的是「段落被吸收」路径，图片挂在被丢掉的段落帧上，
+      `- ![图标](u.png) 说明` 与 `> ![a](u.png)` 的图同样消失（文字还在）。
+
+修复（把「行内图片」建模出来，而不是继续用「整块替换」）：
+1. 领域层：新增 `InlineImage`（`range` = 图片在所属文本里的字节区间，区间内
+   文字即 alt + `alt` / `url` / `display`）；`RenderedBlock` 与 `ListItem`
+   各增 `images: Vec<InlineImage>`（列表项是文本容器，无法升级成图片块，
+   只能挂在项上）。
+2. 解析层：`OpenBlock` 的 `image` / `image_mark` 两个槽位改为
+   `images: Vec<InlineImage>`（已收集完）+ `image_open: Option<PendingImage>`
+   （正在收集 alt；记录 alt 起点）。`End(Image)` 时按起点截出 alt、
+   按原文锚点取显示参数后入列。块闭合时：
+   - 整块只有图（抠掉所有图片区间后只剩空白）→ 沿用旧行为，升级为图片块
+     （连续多张则逐张产出，各自带自己的参数）；
+   - 否则保持块的本来类型，图片挂在块上（`with_images`）。
+   判定函数 `has_text_outside_images`；文本回流（引用 / 列表项吞掉内层段落、
+   嵌套引用、任务标记裁剪）时用 `shifted_images` 同步平移区间——
+   与 `trim_spans` / `strip_task_marker` 同源的偏移修正，不平移图片会落到
+   别的字上。
+3. DTO / 映射：新增 `ImageSpecView`（url/alt/width/height/align）与
+   `InlineImageView`（range + spec）；`BlockView.images`、
+   `ListItemView.images` 由 `images_to_view` 透传。
+4. 渲染层：`media.rs` 抽出 `draw_image_spec`（图片块与行内图片共用一条
+   绘制路径，避免两种形态的渲染效果分叉）；新增
+   `blocks::draw_text_with_images`——按图片区间把文字切成「文字段 / 图片」
+   序列，段内样式片段同步平移到段坐标系（`spans_in_range`），切点再做一次
+   字符边界对齐防御。段落 / 标题 / 引用 / 列表项文本统一改走它。
+   已知取舍：预览的行内文本是手工排版（自算 galley），没有开放的行内
+   占位段，故图片按 `#pic_*` 的对齐**单独占一行**——文字一张不丢，
+   但不等价于 Typora 的「图文同行」版式（已在函数文档注明）。
+
+回归：
+- 解析层 5 条新增：`text_around_inline_image_is_not_swallowed`（前导 / 后续
+  文案都在 + 图片区间正好覆盖 alt）、`standalone_image_still_promotes_to_image_block`
+  （独占仍升级）、`inline_image_survives_quote_absorption`（引用混排挂块上 /
+  独占升级）、`inline_image_survives_list_item_and_task_marker`（挂项上 +
+  随 `[x] ` 裁剪左移，区间 0..6）、`inline_image_in_heading_keeps_heading_text`；
+- 既有 3 条按新语义改写：`csdn_image_size_suffix_still_parses_as_image`、
+  `per_image_params_do_not_leak_between_images`（旧断言承认「只产出最后一张」，
+  现改为**两张都在且各带各的参数**）、`sample_doc_four_image_forms_reach_the_blocks`
+  与 `real_world_sample_document_parses_cleanly` 改用 `all_images`
+  （同时统计图片块与行内图片）；
+- 应用层 2 条：行内图片 / 列表项图片的 DTO 映射（含 `=30x30` / `#pic_center`
+  参数不断链）；
+- 表现层 2 条（headless 只渲染预览区，避免编辑区源码污染断言）：
+  图片前后文案与图片（占位）都画进预览、列表项图文都在；
+- 有效性验证：临时把判定改成「只要块里有图就升级」（回退旧行为），
+  `text_around_inline_image_is_not_swallowed` 与
+  `text_around_inline_image_is_rendered_in_preview` 双双失败，还原后通过。
+
+门禁（10-15 实测）：
+cargo fmt --check ✓；cargo run --bin check-arch ✓（无分层依赖违规）；
+cargo clippy --all-targets --all-features -- -D warnings ✓（退出码 0；
+`draw_text_with_images` 十参按同族惯例加 `#[allow(clippy::too_many_arguments)]`）；
+cargo test --all-targets ✓ 12 套件 0 failed。
+golden 快照经 UPDATE_GOLDEN=1 更新：仅 `ListItem` 的 Debug 多出 `images: []`
+（语义与 source_range 均未变）。
+
 ================================================================================
+
+2026-10-15 031
+问题（用户补充 030 的图片位置摆放规则）：
+「如果需要图片居中，在图片范围内添加最后#pic_center即可。同理，若是需要
+图片居左或者居右，添加#pic_right或者#pic_left。也可以自定义参数规则。」
+配套效果截图（docs/pic/图片.png，CSDN 编辑器 + 预览同屏）显示：无标记图片
+（`![Alt](url =30x30)`）在预览里贴在左缘，只有写了 #pic_center 的才居中。
+
+根因（与补充规则的三处差异）：
+1. 默认对齐错：030 取「未写标记默认居中」，被截图实证证伪——CSDN 的无标记
+   图片就是左对齐，#pic_* 标记的存在意义正是把默认的左对齐改掉；
+2. 顺序敏感：030 只认 `url#pic_center =30x30`（先标记后尺寸）。用户表述
+   「位置标记加在最后」覆盖另一种顺序 `url =30x30#pic_center`——该顺序下
+   脱糖的「尺寸后缀后随 )」判据失败（后随 # 不剥），且 in_link_destination
+   的「无空白」规则把跟在尺寸后的对齐令牌一并挡掉，pulldown 直接把整段
+   当普通文本吐出；
+3. 规则不可扩展：对齐 / 尺寸的识别逻辑散落在脱糖与解析两处，新增一条参数
+   规则要同时改两个地方，迟早漂移（「自定义参数规则」无处落地）。
+
+修复：
+1. ImageAlign 默认值 Center → Left（领域层 #[default]；DTO image_align
+   未写标记时为 "left"；image_align_of 的 None / 未知值 → Align::LEFT）；
+2. 顺序无关：新增 closes_destination——尺寸后缀允许后随「) 或一个完整的
+   对齐令牌」；in_link_destination 放行「地址 + 尺寸后缀」前缀；parse_image_display
+   的尺寸扫描改为从左往右找第一个「后随地址结尾或一个完整对齐令牌」的
+   ` =宽x高`。两种顺序（先标记后尺寸 / 先尺寸后标记）解析结果完全一致；
+3. 规则表化：image_size.rs 模块文档写明参数规则表（对齐令牌地址内任意
+   位置 / 尺寸后缀仅地址结尾，顺序无关、可叠加），新增规则只需改一处
+   （对齐加一行 PIC_ALIGN_TOKENS，尺寸形态扩展 size_suffix_len），脱糖与
+   解析自动同源；不变式由 desugar_and_parse_agree_on_the_same_rules 守住。
+
+回归：
+- 单测 20 项（image_size）：反向顺序解析 / 反向顺序脱糖（含段落夹多图）、
+  同源不变式七例（含真实 URL 片段、中间形态尺寸、双令牌拒绝）、默认左对齐；
+- 集成：reverse_order_size_then_align_reaches_the_block（反向顺序全链）、
+  sample_doc_four_image_forms_reach_the_blocks（效果截图 / docs/logs/示例文档.md
+  四形态全链：无标记左 / 仅尺寸左 / 仅居中 / 居中+尺寸，URL 均洗净）、
+  plain_image_gets_default_display 改为显式断言 Left；
+- markdown_service_test::image_alt_and_url_reach_the_view 的 image_align
+  期望 center → left（030 遗留断言，本次门禁实测暴露）。
+
+门禁（10-15 实测）：
+cargo fmt --check ✓；cargo run --bin check-arch ✓（无分层依赖违规）；
+cargo clippy --all-targets --all-features -- -D warnings ✓（退出码 0、无
+lint；日志里 17 条 warning 均为 Windows 增量编译锁文件删除噪音 os error 5）；
+cargo test --all-targets ✓ 12 套件 0 failed（合计约 1665 项）。
+golden 快照经 UPDATE_GOLDEN=1 更新：仅两张普通图片 align Center → Left，
+source_range 不变。
+
+================================================================================
+
+2026-10-15 030
+问题（用户报告；对 029 问题 3 的方向修正）：
+用户指出文档里的图片实际语法是
+`![Alt](https://imgconvert.csdnimg.cn/aHR0cHM6Ly9hdmF0YXIuY3Nkbi5uZXQvNy83L0IvMV9yYWxmX2h4MTYzY29tLmpwZw#pic_center =30x30)`
+——「图片地址（本地 / 网络 http / https） + #位置 + =大小」，与 029
+实现的 URL 查询参数形态（`?x-oss-process=image/resize,w_50`）存在差异。
+要求：图片按参数区分渲染（尺寸 + 居中）。
+
+根因：
+029 只解析 URL query 里的图床参数，而文档实际用的是 Typora / CSDN
+私有扩展：`#pic_center` 等对齐标记 + ` =宽x高` 尺寸后缀。这两段在
+parser 的脱糖步骤（`desugar_image_sizes`）里被**直接剥掉丢弃**——
+脱糖的职责只是「让 pulldown 认得出图片」（无引号地址一遇空白即终止），
+被剥掉的语义没有任何地方捕获。于是到达渲染层时 URL 是干净的、不带
+任何参数，所有图片只能按纹理实际尺寸渲染——「参数变化反映不到视图」。
+029 的 URL query 解析对此无能为力：这些 URL 本来就没有 query。
+
+修复（数据链四层）：
+1. 领域层：`BlockKind::Image` 增加 `display: ImageDisplay`
+   （width/height: Option<u32> + align: ImageAlign）。用 u32 是因为
+   BlockKind 派生 Eq，f32 没有全序会破坏枚举的 Eq。
+2. 解析层：`image_size.rs` 新增 `parse_image_display`（与脱糖**同源**的
+   识别规则：对齐令牌任意位置；尺寸后缀只认贴在地址结尾的 ` =宽x高`——
+   与脱糖「后随 `)`」判据一致）与 `image_display_at_source`（锚点提取）。
+   锚点精确性有源码级依据：pulldown 0.13.4 的 OffsetIter 对行内节点的
+   Start/End 事件携带**同一个** span（parse.rs：`item.start..item.end`），
+   Image 节点的 end 在 scan_inline_link 成功时被设为 `)` 之后；该 span 经
+   SourceOffsets::to_original 还原后仍指向**原文**中本图 `)` 之后。
+   回退一字节即右括号，`](` 到它之间就是完整目标地址；多图段落各按
+   自己的 `)` 锚点提取，互不串扰。`end.rs` 在 Image End 分支提取并随帧
+   上行（image 三元组第三项），父帧闭合时并入图片块。
+3. DTO / 映射：BlockView 增加 image_width / image_height / image_align，
+   view_mapper 透传。ImageEntry 缓存移除 size_param——同一 URL 可被
+   `=30x30` 与 `=600x200` 两个块引用，按块计算才能区分。
+4. 渲染层：media.rs `effective_size_param`——源码语法参数优先、
+   URL 查询参数（029 的 OSS 形态）兜底；任一维度声明了语法值就整体以
+   语法为准，不与 URL 参数混用。`image_align_of` 按 #pic_center /
+   #pic_left / #pic_right 选择居中 / 左 / 右（#pic_float 的文字环绕
+   egui 无对应版式，降为左对齐并注释）；未写标记默认居中。加载失败的
+   占位宽度同样按参数区分。
+
+回归：
+- image_size.rs 单测 15 条（新增 11）：全套语法解析、只对齐 / 只尺寸、
+  干净地址、真实 URL 片段（#section）不误判、尺寸后缀必须贴尾、
+  半组尺寸忽略、锚点提取（多图段落逐图提取 / 干净图 / 残缺源码不
+  panic / 越界偏移安全）。
+- tests/infrastructure/pulldown_parser_test.rs 新增 4 条集成：
+  csdn_align_and_size_params_reach_the_image_block（用户原始 URL 全链）、
+  left_align_with_asymmetric_size_reaches_the_block、
+  per_image_params_do_not_leak_between_images、
+  plain_image_gets_default_display。已验证回归有效性：把
+  image_display_at_source 临时改为恒返回默认值时，csdn_align... 失败
+  （display 为 None/None/Center），恢复后通过。
+- tests/application/markdown_service_test.rs：image_display_params_reach_the_view
+  （领域字段到达 DTO，映射处不丢）。
+- media.rs 单测 13 条（新增 5）：语法优先 / URL 兜底 / 半组语法仍优先 /
+  两者皆无 / 对齐映射（含无法识别值一律居中）。
+- 快照：gfm-full-blocks.expected 经 UPDATE_GOLDEN=1 更新——两张普通图片
+  新增默认 display，range 不变（证明源码区间未受牵连）；语料里带 title
+  的图片同时验证锚点方案不受标题语法影响。
+
+门禁（当日实测）：
+cargo fmt --check / cargo run --bin check-arch（未发现分层依赖违规）/
+cargo clippy --all-targets --all-features -- -D warnings /
+cargo test --all-targets：12 个测试套件全部 ok、0 failed
+（lib 339 / presentation 503 / infrastructure 284 / application 145 /
+integration 79 等，含本条目新增 21 条）。
+
+2026-10-14 029
+问题（用户报告，三项；问题 3 附效果截图 docs/pic/图片.png）：
+1. 左侧侧边栏标签点击无响应：要求检查事件绑定与路由/锚点跳转逻辑，
+   确保点击后导航到对应内容或位置。
+2. 预览区域意外出现横向滚动条：开启「自动换行」时内容宽度仍超出容器。
+3. 图片渲染未按参数区分：所有图片渲染结果一致；效果截图显示图床 URL 的
+   `?x-oss-process=image/resize,w_50` / `m_fill,w_600,h_200` / `m_fill,w_200,h_100`
+   应分别渲染成小/大/中三档尺寸且**居中**。
+
+根因：
+1. 侧边栏四个内容行（大纲行 / 文件树行 / 检查行 / 搜索命中行）的行容器都用
+   `ui.horizontal(...)` 或 `ui.allocate_ui(...)`，而 egui 子 Ui 的默认 sense 是
+   **hover**（egui 0.33.3 `UiBuilder::sense` 文档明示 "Default is Sense::hover"），
+   其 `Response::clicked()` / `secondary_clicked()` **恒为 false**——点击全部落空。
+   tab_bar 用 `selectable_label`（自带 click sense）因此能切，形成「页签能切、
+   条目全废」的分化；预览区点击走 `ui.interact(..., Sense::click())` 未受波及。
+2. 代码块（code.rs）与 Mermaid / 公式**降级源码卡**把 `wrap_width` 写死
+   `INFINITY`，「自动换行」开关对这两类不生效，超宽长行撑出预览区横向滚动条。
+   段落 / 列表 / 标题 / 表格 / 图片 / 图表本体均已跟随开关，遗漏的正是源码卡。
+3. URL 里的图片尺寸参数从未被解析：parser 只完整透传 URL，渲染层只有
+   「等比缩放进面板」一种逻辑；加载失败时更统一降级为 max_w×96 的同款占位，
+   参数变化反映不到视图。图片块亦为左对齐。
+
+修复：
+1. 四个行容器统一改 `scope_builder(UiBuilder::new().sense(Sense::click()), ...)`
+   （检查行改 `max_rect` 保持 34pt 行高）。行内是 label（无 sense），sense
+   注册在其之下，互不冲突；右键（secondary）同属 click 大类一并覆盖。
+2. `draw_code_block` / `draw_math` / `draw_diagram` / `draw_unrendered_source`
+   增加 `wrap` 参数（draw_block 已有）：源码卡 wrap_width = 开 ? 面板可用宽 : INFINITY。
+3. media.rs 新增 `parse_image_size_params`（OSS `x-oss-process` 处理串与通用
+   `?w=&h=` 两形态，`w_50` 的下划线分隔也认）与 `fitted_size`（参数只收紧
+   不放大；宽高都给按 contain；面板宽度上限兜底），解析结果随 `ImageEntry`
+   缓存；图片块 `top_down(Align::Center)` 居中；占位宽同样按参数区分，
+   并在占位内显示「请求尺寸」。
+
+回归：
+- tests/presentation/sidebar_view_test.rs：clicking_sidebar_tab_switches_to_outline
+  （真实指针事件：移动→按下→释放在同一点）与 clicking_outline_item_jumps_cursor
+  （点击大纲 → 光标跳到对应行）；后者修复前实测失败（横扫 y=140..320 全无响应），
+  修复后通过——根因由此测试定位。
+- preview_view.rs 单测：highlighted_code_job_wraps_at_requested_width
+  （wrap_width 透传，关时仍 INFINITY）。
+- media.rs 单测 8 条：OSS / 通用参数解析、无参数、只收紧不放大、contain、
+  面板上限、前导数字提取。
+- tests/infrastructure/pulldown_parser_test.rs：image_url_query_params_survive_parsing、
+  query_params_are_not_mistaken_for_size_suffix（query 不被尺寸后缀剥离误伤）。
+
+门禁（当日实测）：
+cargo fmt --check / cargo run --bin check-arch（未发现分层依赖违规）/
+cargo clippy --all-targets --all-features -- -D warnings /
+cargo test --all-targets：12 个测试套件全部 ok、0 failed
+（lib 323 / presentation 503 / infrastructure 69 / application 144 等，含本条目新增 14 条）。
+
+2026-10-14 028
+问题（用户报告）：
+搜索功能崩溃，附崩溃报告 docs/logs/crash-20261014135941-29300.txt：
+panic at src\application\workspace\service.rs:468:27（main 线程），
+消息 "end byte index 305 is not a char boundary; it is inside '行'
+(bytes 304..307 of string)"。触发条件：命中行附近是混合字节宽度的上下文
+（中文 3 字节 / emoji 4 字节），前后各 24 字节的摘要窗口落点切进字符内部。
+
+根因：
+search_text() 的摘要窗口按**字节**截取：snippet_start = start_off - 24、
+snippet_end = min(end_off + 24, 行尾)，而 ±24 后的落点不保证是字符边界。
+值得记录的坑：**单一宽度序列复现不出来**——24 能被 3 和 4 整除，
+紧跟命中的一段同宽度字符的 ±24 落点恰好都是边界；只有混合宽度
+（如 emoji 后接中文）才必然暴露。find('\n') 那条路径本身是边界，无需处理。
+
+修复：
+新增 floor_char_boundary(text, idx)：切片前把窗口两端向下对齐到最近字符
+边界（UTF-8 最长 4 字节，最多回退 3 字节）。该函数单调不减，
+snippet_start <= snippet_end 的不变式不受影响；摘要语义不变（最多少取
+半个字符）。UI 层高亮 locate_in_snippet 本就按字符坐标重扫，不依赖
+snippet 的字节偏移，无连带影响。
+
+回归：
+tests/application/workspace_service_test.rs 新增
+search_snippet_never_splits_utf8_chars（"🎉中文测试" 混合上下文，同时
+覆盖窗口两端）；已验证：把 floor_char_boundary 临时改为恒等时该用例
+panic（复现崩溃），恢复对齐后通过。断言 snippet 完整包含命中词，
+且 line / col 不受边界对齐影响。
+
+门禁（当日实测）：
+cargo fmt --check / cargo run --bin check-arch（未发现分层依赖违规）/
+cargo clippy --all-targets --all-features -- -D warnings /
+cargo test --all-targets：13 个测试套件全部 ok、0 failed（含本条目新增 1 条）。
 
 2026-10-14 027
 问题（用户请求）：

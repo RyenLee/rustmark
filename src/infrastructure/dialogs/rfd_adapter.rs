@@ -69,8 +69,7 @@ impl RfdDialogAdapter {
 
 impl DialogPort for RfdDialogAdapter {
     fn open_file(&self, filters: &[FileFilter]) -> Result<FilePath, AppError> {
-        let dialog =
-            Self::apply_filters(FileDialog::new().set_title("打开 Markdown 文件"), filters);
+        let dialog = Self::apply_filters(FileDialog::new().set_title("打开文本文件"), filters);
         Self::to_result(dialog.pick_file())
     }
 
@@ -79,8 +78,7 @@ impl DialogPort for RfdDialogAdapter {
         suggested_name: &str,
         filters: &[FileFilter],
     ) -> Result<FilePath, AppError> {
-        let mut dialog =
-            Self::apply_filters(FileDialog::new().set_title("保存 Markdown 文件"), filters);
+        let mut dialog = Self::apply_filters(FileDialog::new().set_title("保存文本文件"), filters);
         if !suggested_name.is_empty() {
             dialog = dialog.set_file_name(suggested_name);
         }

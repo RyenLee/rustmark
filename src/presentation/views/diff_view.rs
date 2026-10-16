@@ -36,7 +36,7 @@ const SIGN_W: f32 = 16.0;
 pub fn show(app: &mut EditorApp, ctx: &Context) {
     let mut open = true;
     egui::Window::new(Overlay::Diff.title())
-        .id(egui::Id::new("rustmark.overlay.diff"))
+        .id(egui::Id::unique("rustmark.overlay.diff"))
         .open(&mut open)
         .collapsible(false)
         .resizable(true)

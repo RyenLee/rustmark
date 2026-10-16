@@ -53,7 +53,7 @@ pub(super) fn paint_gutter(
     let Some(tops) = mapper::line_tops(theme, text) else {
         return;
     };
-    let line_count = text.split('\n').count().max(1);
+    let line_count = crate::shared::text::line_count(text);
     let font = FontId::monospace(font_size);
     let clip = ui.clip_rect();
     let painter = ui.painter();
@@ -88,12 +88,10 @@ pub(super) fn paint_gutter(
 }
 
 /// 给定字节偏移，返回其所在行号（0-based）。
+///
+/// 规则本身（按字节数换行、越界夹紧、多字节中间不 panic）住在
+/// [`crate::shared::text::line_index_at`]——状态栏与编辑器其它位置要的是同一个数，
+/// 各写一份必然漂移。
 pub(super) fn current_line_index(text: &str, byte: usize) -> usize {
-    let clamped = byte.min(text.len());
-    // 光标字节偏移可能落在多字节字符**中间**（程序化设值只按长度夹紧，
-    // 见状态栏 `cursor_line_col` 的同款处理）：直接切片会 panic，
-    // `panic = "abort"` 下即整窗口消失（实测崩溃日志
-    // crash-20261011005255：3887 落在「右」的 3885..3888 中间）。
-    let clamped = crate::shared::geometry::floor_char_boundary(text, clamped);
-    text[..clamped].chars().filter(|&c| c == '\n').count()
+    crate::shared::text::line_index_at(text, byte)
 }

@@ -14,7 +14,7 @@
 //! **面板内部的导航键属于面板自己**，不进全局动作表——
 //! 命令面板同理（S6-12）。
 
-use egui::{Align, Context, Layout, ScrollArea, Ui};
+use egui::{Align, Context, Layout, RichText, ScrollArea, Ui};
 
 use crate::app::frame::EditorApp;
 use crate::presentation::state::dialog_ui_state::Overlay;
@@ -37,7 +37,7 @@ pub const QUICK_OPEN_INPUT_ID: &str = "rustmark.quick_open.search";
 pub fn show(app: &mut EditorApp, ctx: &Context) {
     let mut open = true;
     egui::Window::new(Overlay::QuickOpen.title())
-        .id(egui::Id::new("rustmark.overlay.quick_open"))
+        .id(egui::Id::unique("rustmark.overlay.quick_open"))
         .open(&mut open)
         .collapsible(false)
         .resizable(true)
@@ -50,7 +50,7 @@ pub fn show(app: &mut EditorApp, ctx: &Context) {
     // `Memory::has_focus` 认不到窗口（`Area`）的 id，于是每帧都抢焦点，
     // 用户点不开别处。详见 `DialogUiState::take_open_focus`。
     if app.dialog.take_open_focus(Overlay::QuickOpen) {
-        ctx.memory_mut(|m| m.request_focus(egui::Id::new(QUICK_OPEN_INPUT_ID)));
+        ctx.memory_mut(|m| m.request_focus(egui::Id::unique(QUICK_OPEN_INPUT_ID)));
     }
     if !open {
         app.quick_open_ui.open();
@@ -159,6 +159,15 @@ fn footer(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, empty: bool) {
 }
 
 /// 搜索框。
+///
+/// # 文字只由 `TextEdit` 画一遍（问题 037）
+///
+/// 旧实现在这里**手绘**了一份占位/查询文本的 galley，又在同一矩形上
+/// `ui.put` 了一个带 `hint_text` 的 `TextEdit`——同一段字被画两遍
+/// （错开一两个像素），用户看到的就是「搜索栏有重叠的重影文案」。
+/// 手绘那份是多余的：`TextEdit` 自己会按焦点态渲染查询文本与占位提示，
+/// 颜色也已由 `.text_color` / 主题的 `weak_text_color` 给出。
+/// 这里只保留框底与点击聚焦。
 fn search_box(app: &mut EditorApp, ui: &mut Ui) {
     let mut query = app.quick_open_ui.query.clone();
     let (rect, response) = ui.allocate_exact_size(
@@ -167,34 +176,12 @@ fn search_box(app: &mut EditorApp, ui: &mut Ui) {
     );
     ui.painter()
         .rect_filled(rect, egui::CornerRadius::ZERO, app.theme().bg_primary);
-    let galley = ui.painter().layout_no_wrap(
-        if query.is_empty() {
-            "按文件名快速打开…".to_string()
-        } else {
-            query.clone()
-        },
-        egui::FontId::proportional(13.0),
-        if query.is_empty() {
-            app.theme().text_secondary.gamma_multiply(0.7)
-        } else {
-            app.theme().text_primary
-        },
-    );
-    ui.painter().galley(
-        rect.left_top() + egui::vec2(12.0, (rect.height() - galley.size().y) / 2.0),
-        galley,
-        if query.is_empty() {
-            app.theme().text_secondary.gamma_multiply(0.7)
-        } else {
-            app.theme().text_primary
-        },
-    );
     // 真实输入能力靠 `TextEdit`：外层仍然自己画边框与分隔线。
     let edit = ui.put(
         rect,
         egui::TextEdit::singleline(&mut query)
-            .id(egui::Id::new(QUICK_OPEN_INPUT_ID))
-            .frame(false)
+            .id(egui::Id::unique(QUICK_OPEN_INPUT_ID))
+            .frame(egui::Frame::NONE)
             .desired_width(rect.width())
             .text_color(app.theme().text_primary)
             .hint_text("按文件名快速打开…"),
@@ -203,11 +190,16 @@ fn search_box(app: &mut EditorApp, ui: &mut Ui) {
         app.quick_open_ui.set_query(&query);
     }
     if response.clicked() {
-        ui.memory_mut(|m| m.request_focus(egui::Id::new(QUICK_OPEN_INPUT_ID)));
+        ui.memory_mut(|m| m.request_focus(egui::Id::unique(QUICK_OPEN_INPUT_ID)));
     }
 }
 
 /// 结果列表。返回被点击的行下标（`None` = 未点击）。
+///
+/// 行内文件名必须**截断到剩余宽**：右侧还排着来源分组（「工作区」等），
+/// 旧实现用 `layout_no_wrap` 画全名，长文件名会直接盖在分组文字上
+/// （与欢迎页最近文件同一缺陷类）。截断只做一个 galley（缺陷类 033：
+/// 多个截断标签会把固定宽容器撑出面板）。
 fn results(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, list: &[QuickOpenItem]) {
     if list.is_empty() {
         ui.add_space(theme.metrics.space_xl);
@@ -235,21 +227,17 @@ fn results(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, list: &[QuickOpenIte
                     ui.painter()
                         .rect_filled(rect, egui::CornerRadius::same(4), theme.bg_tertiary);
                 }
-                let name_color = if i == selected {
-                    theme.accent
-                } else {
+                // 文字色三分（问题 045，与文件树同一判据）：白名单外的文件
+                // 用次要色——快速打开列的是**工作区全部文件**，其中图片 /
+                // 二进制打不开；不置灰的话用户会以为「点了没反应」。
+                // 选中态一律用正文色：全仓纪律（037 / 039）——选中底色在
+                // 用户自定义主题里可以是实色强调蓝，强调色文字压上去会糊掉。
+                let openable = app.can_open_as_text(&item.path);
+                let name_color = if openable {
                     theme.text_primary
+                } else {
+                    theme.text_secondary
                 };
-                let galley = ui.painter().layout_no_wrap(
-                    item.name.clone(),
-                    egui::FontId::proportional(13.0),
-                    name_color,
-                );
-                ui.painter().galley(
-                    rect.left_top() + egui::vec2(8.0, (rect.height() - galley.size().y) / 2.0),
-                    galley,
-                    name_color,
-                );
                 // 右侧显示分组来源：两个同名文件分属不同来源时，
                 // 只看名字分不清（对齐原型的 `aria-selected` 语义）。
                 let group = ui.painter().layout_no_wrap(
@@ -257,13 +245,29 @@ fn results(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, list: &[QuickOpenIte
                     egui::FontId::proportional(11.0),
                     theme.text_secondary,
                 );
+                let group_w = group.size().x;
                 ui.painter().galley(
                     egui::pos2(
-                        rect.right() - 8.0 - group.size().x,
+                        rect.right() - 8.0 - group_w,
                         rect.center().y - group.size().y / 2.0,
                     ),
                     group,
                     theme.text_secondary,
+                );
+                // 文件名可用宽 = 行宽 − 左内边距 − 分组宽 − 间距 − 右内边距；
+                // 太窄（窗口被压）时舍弃分组文字，保证名字至少有整行可用。
+                let mut name_avail = rect.width() - 8.0 - 8.0 - 8.0 - group_w;
+                if name_avail < 80.0 {
+                    name_avail = rect.width() - 16.0;
+                }
+                let name_rect = egui::Rect::from_min_size(
+                    egui::pos2(rect.left() + 8.0, rect.top()),
+                    egui::vec2(name_avail.max(0.0), rect.height()),
+                );
+                ui.put(
+                    name_rect,
+                    egui::Label::new(RichText::new(&item.name).color(name_color).size(13.0))
+                        .truncate(),
                 );
                 let clicked = response.clicked();
                 if response.hovered() {
@@ -288,6 +292,13 @@ fn results(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, list: &[QuickOpenIte
 /// 2. 关闭浮层与打开文件要放在同一处：顺序错了会闪现
 ///    「新文件已载入而浮层还盖在上面」，用户以为没生效而连点。
 fn apply_pick(app: &mut EditorApp, item: &QuickOpenItem) {
+    // 格式白名单外：**不关浮层**、不开文档，只说明原因（问题 045）。
+    // 关掉浮层会让这次点击看起来「生效了」——用户以为文件开了，
+    // 却发现标签没变。留在浮层上，他还能立刻改选另一个文件。
+    if !app.can_open_as_text(&item.path) {
+        app.report_unsupported_format(&item.path);
+        return;
+    }
     app.quick_open_ui.open();
     app.dialog.close(Overlay::QuickOpen);
     // 失败由 `open_path` **自己**报到状态栏（见其文档），

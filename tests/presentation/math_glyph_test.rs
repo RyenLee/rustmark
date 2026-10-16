@@ -19,7 +19,7 @@ fn ctx_with_app_fonts() -> egui::Context {
     let ctx = egui::Context::default();
     let setup = rustmark::infrastructure::fonts::font_definitions(None);
     ctx.set_fonts(setup.definitions);
-    let _ = ctx.run(egui::RawInput::default(), |_| {});
+    crate::support::run_ui(&ctx, egui::RawInput::default(), |_| {});
     ctx
 }
 

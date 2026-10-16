@@ -54,6 +54,29 @@ pub struct DocumentView {
     pub byte_len: usize,
 }
 
+/// 打开文档的**轻量摘要**（标签条 / 打开列表 / 脏标记判定用）。
+///
+/// # 为什么不直接用 [`DocumentView`]（问题 043）
+///
+/// 构造 `DocumentView` 必须先 `doc.text()`——那是 rope 的 O(全文) 快照，
+/// 为的是填 `content_preview` 与 `line_count`。而标签条每帧只需要
+/// 标题 / 脏标记 / 路径，却按打开文档数 N 各付一次全文克隆：
+/// 10 个 100KB 文档 ≈ 每帧 1MB 分配 + 10 次全文档扫描，这正是
+/// 「打开多个文档后明显卡顿」的主因。摘要只读聚合元数据，构造 O(1)。
+#[derive(Clone, Debug, Serialize)]
+pub struct TabSummary {
+    /// 文档 ID。
+    pub id: DocumentId,
+    /// 标题（文件名去扩展名，或「未命名」）。
+    pub title: String,
+    /// 保存路径；未保存过的新文档为 `None`。
+    pub path: Option<FilePath>,
+    /// 是否存在未保存修改。
+    pub is_dirty: bool,
+    /// 字节长度。
+    pub byte_len: usize,
+}
+
 /// 文档字数统计视图（字段对齐原型 `StatsDialog.vue`）。
 ///
 /// # 口径必须与原型逐项一致

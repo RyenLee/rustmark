@@ -2,7 +2,7 @@
 //! 文本回流、行内标记扫描、键帽合成帧、区间收口、独立公式判定。
 
 use crate::domain::markdown::value_objects::{
-    BlockKind, CellAlignment, InlineSpan, InlineStyle, ListItem,
+    BlockKind, CellAlignment, InlineImage, InlineSpan, InlineStyle, ListItem,
 };
 use crate::shared::geometry::{ByteOffset, TextRange};
 
@@ -70,12 +70,16 @@ pub(crate) struct OpenBlock {
     pub(super) list_depth: u8,
     /// 该有序列表下一个待分配的序号（`Tag::List(Some(n))` 给初值）。
     pub(super) list_next_ordinal: u64,
-    /// 该项是否为独立图片（`Tag::Image` 需要单独成块）。
+    /// 本帧文字里**已收集完**的图片（区间相对 `content`）。
     ///
-    /// 值为 `(alt 或 title, url)`。
-    pub(super) image: Option<(String, String)>,
-    /// `image` 生效时父块 `content` 的长度（用来从后续文本里截出 alt）。
-    pub(super) image_mark: Option<usize>,
+    /// 一张块里可以有多张图（`前 ![a](1.png) 中 ![b](2.png) 后`），故是
+    /// `Vec` 而不是 `Option`：旧实现只留一张，第二张会整张丢掉。
+    pub(super) images: Vec<InlineImage>,
+    /// 正在收集 alt 的图片（`Start(Image)` 已到达、`End(Image)` 未到达）。
+    ///
+    /// 图片是行内标签、不进栈（见 `start.rs`），故「在图里」这个状态只能
+    /// 挂在**宿主帧**上；`start` 记录 alt 在本帧 `content` 里的起点。
+    pub(super) image_open: Option<PendingImage>,
     /// 行内样式帧的样式（仅合成帧与行内样式标签帧有值）。
     pub(super) style: Option<InlineStyle>,
     /// 链接帧的目标地址（`Tag::Link { dest_url }` 进入时记录）。
@@ -124,8 +128,8 @@ impl OpenBlock {
             in_head: false,
             list_depth: 0,
             list_next_ordinal: 1,
-            image: None,
-            image_mark: None,
+            images: Vec::new(),
+            image_open: None,
             style: None,
             link_dest: None,
             spans: Vec::new(),
@@ -137,6 +141,83 @@ impl OpenBlock {
     pub(super) const fn absorbs_text(&self) -> bool {
         self.is_item || self.is_cell || self.absorbs
     }
+}
+
+/// 正在收集 alt 的图片（见 [`OpenBlock::image_open`]）。
+///
+/// 图片是行内标签、不进栈，故「在图里」这个状态只能挂在宿主帧上。
+///
+/// 显示参数（`#pic_center` / ` =30x30`）不在这里：它们要在 `End(Image)`
+/// 时按**原文**偏移取（此刻偏移才还原，见 `end.rs`），`Start` 阶段取不到。
+#[derive(Clone, Debug)]
+pub(super) struct PendingImage {
+    /// alt 文本在宿主帧 `content` 里的起点字节（`Start(Image)` 时的长度）。
+    pub(super) start: usize,
+    /// `![a](url "标题")` 里的标题（方括号里没字时充当 alt）。
+    pub(super) title: String,
+    /// 图片地址。
+    pub(super) url: String,
+}
+
+/// 把一组图片区间整体平移 `delta` 字节（正 = 右移）。
+///
+/// 两类场合必须挪：文本**回流**给外层帧（引用 / 列表项吞掉内层段落时，
+/// 段落的图片区间是相对段落 `content` 的）与列表项的**任务标记裁剪**
+/// （`strip_task_marker` 砍掉头部若干字节）。不挪的话图片会落在别的字上。
+///
+/// 平移后区间退化（起点越界或倒挂）的图片直接丢弃——它们的文字已被裁掉，
+/// 留着只会让渲染方切出错误的段。
+pub(super) fn shifted_images(images: &[InlineImage], delta: i64) -> Vec<InlineImage> {
+    images
+        .iter()
+        .filter_map(|img| {
+            let start = i64::try_from(img.start()).unwrap_or(i64::MAX) + delta;
+            let end = i64::try_from(img.end()).unwrap_or(i64::MAX) + delta;
+            if start < 0 || end <= start {
+                return None;
+            }
+            let Ok(start) = usize::try_from(start) else {
+                return None;
+            };
+            let Ok(end) = usize::try_from(end) else {
+                return None;
+            };
+            Some(InlineImage::new(
+                TextRange::new(ByteOffset::new(start), ByteOffset::new(end)),
+                img.alt(),
+                img.url(),
+                img.display(),
+            ))
+        })
+        .collect()
+}
+
+/// 该帧文字里**除图片外是否还有别的文字**。
+///
+/// `true` 表示整块就只有图（可以有连续多张）——此时把整块升级为图片块
+/// 没有任何代价，沿用旧行为；`false` 表示图片前后还有文案，块必须保持
+/// 本来类型，否则那些文案会随块一起消失（问题 032）。
+///
+/// 判定方式是「抠掉所有图片区间后剩下的是不是只有空白」：`content` 里
+/// 图片占的那段文字就是 alt，不会是用户写的正文。
+pub(super) fn has_text_outside_images(content: &str, images: &[InlineImage]) -> bool {
+    if images.is_empty() {
+        return true;
+    }
+    let mut rest = String::new();
+    let mut cursor = 0usize;
+    for img in images {
+        let start = img.start().min(content.len());
+        let end = img.end().min(content.len());
+        if start > cursor {
+            rest.push_str(content.get(cursor..start).unwrap_or_default());
+        }
+        cursor = cursor.max(end);
+    }
+    if cursor < content.len() {
+        rest.push_str(content.get(cursor..).unwrap_or_default());
+    }
+    !rest.trim().is_empty()
 }
 
 /// 取最内层「会产出块」的栈帧（列表 / 表格 / 段落等）。

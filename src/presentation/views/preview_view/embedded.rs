@@ -25,7 +25,7 @@ use super::*;
 ///
 /// 排版后的公式是**图**，选不中也复制不了。用户把公式贴到别处时需要的仍是
 /// LaTeX 源码，故按钮留着。
-pub(super) fn draw_math(ui: &mut Ui, theme: &Theme, block: &BlockView) {
+pub(super) fn draw_math(ui: &mut Ui, theme: &Theme, block: &BlockView, wrap: bool) {
     let m = theme.metrics;
     let display = block.display.unwrap_or(false);
     // 块级公式放大一档：它是版面上的「展示元素」，与正文同号会显得局促。
@@ -59,6 +59,7 @@ pub(super) fn draw_math(ui: &mut Ui, theme: &Theme, block: &BlockView) {
             block,
             "公式",
             layout.as_ref().err().map(ToString::to_string),
+            wrap,
         );
         return;
     };
@@ -118,7 +119,9 @@ pub(super) fn draw_math(ui: &mut Ui, theme: &Theme, block: &BlockView) {
 /// 现在直接画成节点—连线图（分层布局 + 正交走线 + 箭头 + 边标签）。
 ///
 /// 子集外的图种（`sequenceDiagram` 等）与 `subgraph` 回退到源码卡并说明原因。
-pub(super) fn draw_diagram(ui: &mut Ui, theme: &Theme, block: &BlockView) {
+///
+/// `wrap` 跟随「自动换行」开关：回退源码卡内的长行在开启时折行（问题 2）。
+pub(super) fn draw_diagram(ui: &mut Ui, theme: &Theme, block: &BlockView, wrap: bool) {
     let m = theme.metrics;
     let engine = block.diagram.as_deref().unwrap_or("diagram");
     let layout = {
@@ -144,6 +147,7 @@ pub(super) fn draw_diagram(ui: &mut Ui, theme: &Theme, block: &BlockView) {
             block,
             engine,
             layout.as_ref().err().map(ToString::to_string),
+            wrap,
         );
         return;
     };
@@ -203,7 +207,11 @@ pub(super) fn draw_diagram(ui: &mut Ui, theme: &Theme, block: &BlockView) {
                     origin + hot.min.to_vec2() * scale,
                     origin + hot.max.to_vec2() * scale,
                 );
-                let resp = ui.interact(screen, ui.id().with(("mhot", i)), egui::Sense::click());
+                let resp = ui.interact(
+                    screen,
+                    ui.scope_id().with(("mhot", i)),
+                    egui::Sense::click(),
+                );
                 if resp.hovered() {
                     // 指到可点击区域时换成手型，提示「这里能点」。
                     ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::PointingHand);
@@ -223,12 +231,16 @@ pub(super) fn draw_diagram(ui: &mut Ui, theme: &Theme, block: &BlockView) {
 /// 只显示源码时用户的下一步动作是「去查 Mermaid / LaTeX 语法」，
 /// 而那多半是浪费时间——**不支持的是本编辑器，不是他的写法**。
 /// 把原因写出来（`不支持的图表写法：sequenceDiagram`）就能立刻说清责任归属。
+///
+/// `wrap` 跟随「自动换行」开关（问题 2）：源码卡里的长行同样会在开启时
+/// 折行，不再撑出预览区横向滚动条。
 fn draw_unrendered_source(
     ui: &mut Ui,
     theme: &Theme,
     block: &BlockView,
     label: &str,
     reason: Option<String>,
+    wrap: bool,
 ) {
     let m = theme.metrics;
     egui::Frame::new()
@@ -248,7 +260,12 @@ fn draw_unrendered_source(
                     }
                 });
             });
-            draw_highlighted_code(ui, theme, &block.content, None);
+            let wrap_width = if wrap {
+                ui.available_width().max(0.0)
+            } else {
+                f32::INFINITY
+            };
+            draw_highlighted_code(ui, theme, &block.content, None, wrap_width);
             if let Some(reason) = reason {
                 ui.add_space(m.space_xs);
                 ui.label(

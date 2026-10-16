@@ -23,6 +23,7 @@
 
 use crate::shared::error::AppError;
 use crate::shared::path::FilePath;
+use crate::shared::text_format::TextFormats;
 
 /// 文件类型过滤器。
 ///
@@ -75,10 +76,12 @@ pub trait DialogPort: Send + Sync {
     fn show_error(&self, message: &str) -> Result<(), AppError>;
 }
 
-/// 取默认的 Markdown 过滤器集合（`.md` / `.markdown` / `.txt`）。
+/// 取默认的**文本文件**过滤器集合。
 ///
-/// `.txt` 一并放行：用户从别的编辑器迁移过来的纯文本文档很常见，
-/// 而拒绝打开只会被当作「程序坏了」。
+/// 清单**派生自** [`TextFormats`]（问题 045 的「唯一出处」）：在这里另写
+/// 一份就会与其他三条入口（打开守卫、拖放分类、文件树置灰）漂移。
+/// 曾经的实情正是如此——原生对话框只认 `.md` / `.markdown` / `.txt`，
+/// 而拖放已经放行 `.csv`：同一个文件，拖进来能开、用对话框选却选不中。
 pub fn default_filters() -> Vec<FileFilter> {
-    vec![FileFilter::new("Markdown", &["md", "markdown", "txt"])]
+    vec![TextFormats::builtin().file_filter()]
 }

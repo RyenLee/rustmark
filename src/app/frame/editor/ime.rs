@@ -3,6 +3,37 @@ use super::*;
 use crate::app::frame::{IME_ARM_MS, IME_GUARD_MS};
 
 impl EditorApp {
+    /// 组合期预编辑串在 `editor_text` 里的**字符区间**（无组合 / 读不到状态时为 `None`）。
+    ///
+    /// egui 0.37 把预编辑串真实插进 TextEdit 的缓冲区，并在处理完 `Preedit`
+    /// 时把状态里的光标区间设成该串（`cursor_purpose = ImeComposition`）。
+    /// 本方法由 [`Self::apply_pending_editor_state`] 调用、跑在 `TextEdit::show`
+    /// **之前**，读到的正是上一帧留下的那个区间；`CharIndex` 是**字符**下标
+    /// （epaint 0.37 明确区分 `CharIndex` / `ByteIndex`），可与 `chars()` 配对。
+    fn composition_char_range(&self, ctx: &egui::Context) -> Option<std::ops::Range<usize>> {
+        let state = egui::TextEdit::load_state(ctx, Self::editor_id())?;
+        let range = state.cursor.char_range()?;
+        let a = range.primary.index.0;
+        let b = range.secondary.index.0;
+        Some(a.min(b)..a.max(b))
+    }
+
+    /// 当前预编辑串的内容（无组合时为空串）。
+    ///
+    /// 供「裸按键废弃组合」兜底补发的 `Commit` 使用：egui 0.37 的 Commit 分支
+    /// 会先删掉该区间再插回提交文本，故只有回提交**同一段文本**才能得到
+    /// 「折叠选区、文本不变」的净效果（详见 `apply_pending_editor_state`）。
+    fn composition_text(&self, ctx: &egui::Context) -> String {
+        let Some(r) = self.composition_char_range(ctx) else {
+            return String::new();
+        };
+        self.editor_text
+            .chars()
+            .skip(r.start)
+            .take(r.end - r.start)
+            .collect()
+    }
+
     /// 把上一帧领域编辑留下的「重设光标 / 清撤销栈」意图落到 egui 内部状态。
     ///
     /// 必须在 `TextEdit::show` **之前**调用（写入的状态会在本帧 show 时被读走）。
@@ -133,11 +164,13 @@ impl EditorApp {
             let mut enabled = false;
             for event in &i.events {
                 if let egui::Event::Ime(ime) = event {
+                    #[allow(deprecated)]
                     match ime {
-                        egui::ImeEvent::Preedit(_) => preedit = true,
+                        egui::ImeEvent::Preedit { .. } => preedit = true,
                         egui::ImeEvent::Commit(_) => commit = true,
                         egui::ImeEvent::Disabled => ended = true,
                         egui::ImeEvent::Enabled => enabled = true,
+                        egui::ImeEvent::DeleteSurrounding { .. } => {}
                     }
                 }
             }
@@ -215,6 +248,11 @@ impl EditorApp {
         // `Preedit`，必须让它先被处理（`Preedit` 会重新置 `ime_enabled = true`），
         // 否则这个 `Disabled` 会被随后的 `Preedit` 覆盖回去。
         if tell_egui_ime_over {
+            // egui 0.37 起 `ImeEvent::Enabled`/`Disabled` 已被废弃、egui 不再消费
+            // （IME 开关由 egui 自己管理）。这里保留「补一个 Disabled」的意图并
+            // 显式压制告警：推送一个被忽略的事件对运行时无副作用，且若将来回退
+            // 到会消费该事件的版本，这段复位逻辑可立即恢复作用。
+            #[allow(deprecated)]
             ctx.input_mut(|i| i.events.push(egui::Event::Ime(egui::ImeEvent::Disabled)));
         }
         // 抹平 Enter 的 `repeat`，让 egui 当作一次普通按下处理。
@@ -265,11 +303,26 @@ impl EditorApp {
         // （用户看得见、领域也已认账），若放任不管，TextEdit 处理该按键时的
         // `delete_selected` 会把选区里的预编辑串整个吃掉——领域内容凭空丢失。
         //
-        // 补救：补一个空 `Commit("")`。egui 的 Commit 分支对空串的处理恰是
-        // 「折叠光标到 primary」（`CCursorRange::one(cursor_range.primary)`），
-        // 预编辑串由此转为普通文本、选区被拆除；它同时清零 `ime_enabled`，
-        // 与本帧「组合已废」的判定一致。IME 事件在 TextEdit 内会被排到按键
-        // **之前**处理，折叠必然先于按键生效。
+        // 补救：补一个 `Commit(<预编辑串>)`，让 egui 自己把预编辑选区**折叠**成
+        // 普通文本（选区被拆掉后，按键的 `delete_selected` 就无从下手）。
+        //
+        // # 为什么不再用空串（egui 0.37 语义变了）
+        //
+        // 0.33 的 Commit 分支对**空串**的处理是「只把光标折叠到 primary」、
+        // 不碰文本，所以旧实现补 `Commit("")` 即可。0.37 改成先
+        // `delete_selected(cursor_range)` 再插入 `commit_text`——组合期
+        // `cursor_range` 正是预编辑区间，空串于是把预编辑串**真删掉**
+        // （实测 `"helloni"` + 回车 → `"hello\n"`）。故必须回提交**与预编辑串
+        // 等长的同一段文本**：delete 与 insert 相抵，净效果才等价于「折叠选区、
+        // 文本不变」。串的内容与位置从 TextEdit 状态读回（见 `composition_text`）。
+        //
+        // # 为什么必须插到事件流**最前**
+        //
+        // 0.33 在 `ime_enabled` 时会把 IME 事件稳定排序到最前
+        // （`events.sort_by_key(|e| !matches!(e, Event::Ime(_)))`），旧实现的
+        // 注释据此写下「IME 事件必然先于按键处理」。0.37 删掉了这个排序，
+        // 改为按列表顺序就地处理——同一个 Commit 若仍 push 到尾部，回车会
+        // **先**执行（吃掉预编辑串），Commit 只是事后补刀。故这里显式插到 0。
         //
         // 同时解除两扇守卫：组合既已废弃，`ime_composing` 继续冻结
         // `pending_cursor` 只会让「本次按键改写了文本」（如列表续行）后的
@@ -298,9 +351,10 @@ impl EditorApp {
                 })
             });
             if has_text_input {
+                let commit_text = self.composition_text(ctx);
                 ctx.input_mut(|i| {
                     i.events
-                        .push(egui::Event::Ime(egui::ImeEvent::Commit(String::new())));
+                        .insert(0, egui::Event::Ime(egui::ImeEvent::Commit(commit_text)));
                 });
                 self.ime_composing = false;
                 self.ime_composing_until_ms = 0;
@@ -331,11 +385,11 @@ impl EditorApp {
             && let Some((cursor, anchor)) = self.pending_cursor.take()
         {
             let primary = egui::text::CCursor {
-                index: cursor,
+                index: egui::text::CharIndex(cursor),
                 prefer_next_row: false,
             };
             let secondary = egui::text::CCursor {
-                index: anchor,
+                index: egui::text::CharIndex(anchor),
                 prefer_next_row: false,
             };
             state.cursor.set_char_range(Some(egui::text::CCursorRange {

@@ -17,6 +17,7 @@ impl EditorApp {
             spell_check: view.editor.spell_check,
             show_line_numbers: view.editor.show_line_numbers,
             lint: view.editor.lint,
+            max_open_documents: view.editor.max_open_documents,
         }
     }
 
@@ -135,6 +136,9 @@ impl EditorApp {
             writing_goal: self.settings().editor.writing_goal,
             // 取消时把 lint 开关也回滚到打开设置那一刻（V11-08）。
             lint: snapshot.lint,
+            // 打开文档上限同理：设置页改小了，「取消」要回到原值，
+            // 否则用户会被困在一个「改小了却退不回去」的上限里。
+            max_open_documents: snapshot.max_open_documents,
         };
         // 主题与编辑器各自独立失败：主题写失败不该让编辑器也回滚不了。
         let mut errors: Vec<String> = Vec::new();
@@ -258,7 +262,7 @@ impl EditorApp {
         }
         // egui 每帧把系统偏好写进 `visuals.dark_mode`（随系统外观变化更新），
         // 直接读它即可，不必引入额外的探测 crate。
-        let system_dark = ctx.style().visuals.dark_mode;
+        let system_dark = ctx.style_of(ctx.theme()).visuals.dark_mode;
         if system_dark == self.system_dark {
             return;
         }
@@ -273,20 +277,23 @@ impl EditorApp {
     ///
     /// # 必须是**固定序列**，不能按当前值推导下一态
     ///
-    /// 原型 `THEME_CYCLE = ['dark', 'light', 'system']`，即「下一态」只取决于
-    /// 当前态在序列中的位置。若改成 `dark→system、light→dark、system→light`
-    /// 这类按值推导的映射，用户从「跟随系统」点一下得到的会是**浅色**而不是深色——
-    /// 与原型不一致，且用户按第二次时回到的位置也不同。
+    /// 状态栏「一键切换主题」= 直接深↔浅互换，符合「点一下换深浅」的直觉。
     ///
-    /// 循环而非二元切换：「跟随系统」一旦不可达，用户就再也回不到跟随系统的状态。
+    /// 原来三态轮换（`dark→light→system→dark`）会导致「浅色点回深色要点两次」，
+    /// 与用户预期不符（#039 反馈）。改为以「当前**生效**的明暗」为基准取反：
+    ///
+    /// - 当前是深色 → 切浅色；当前是浅色 → 切深色（两向都是一次点击）。
+    /// - `system` / `custom` 自身没有明暗，按当前解析/渲染出的明暗取反
+    ///   （`system` 取系统偏好、`custom` 取其 baseline 的深浅）。
+    ///
+    /// 切换只动明暗、不删除种类：`system` / `custom` 仍可在「设置页」下拉选回
+    /// （`THEME_KINDS` 含四项），不会因一键切换而变得不可达。
     pub(super) fn cycle_theme(&mut self) {
-        /// 轮换序列，**顺序即语义**，不要重排。
-        const CYCLE: [&str; 3] = ["dark", "light", "system"];
         let settings = self.settings();
-        let current = settings.theme.kind.as_str();
-        let index = CYCLE.iter().position(|c| *c == current).unwrap_or(0);
         let mut view = settings.theme;
-        view.kind = CYCLE[(index + 1) % CYCLE.len()].to_string();
+        // 以当前**正在显示**的主题明暗为准取反，而不是按 kind 字符串推导。
+        let effective_dark = self.ui.theme.is_dark();
+        view.kind = if effective_dark { "light" } else { "dark" }.to_string();
         // 写盘失败不回滚内存状态：主题是**显示偏好**而非数据，
         // 拦住用户切换只会让界面「看起来没反应」。
         let _ = self.services.preferences.set_theme(SetThemeCommand {

@@ -125,7 +125,7 @@ fn preview_region_has_no_unpainted_black_border() {
     app.ui.set_theme(Theme::light());
 
     let ctx = egui::Context::default();
-    let _ = ctx.run(egui::RawInput::default(), |_| {}); // 装载字库
+    crate::support::run_ui(&ctx, egui::RawInput::default(), |_| {}); // 装载字库
     let mut frame = eframe::Frame::_new_kittest();
     let screen = screen_rect();
     let mut out_full = None;
@@ -134,8 +134,8 @@ fn preview_region_has_no_unpainted_black_border() {
             screen_rect: Some(screen),
             ..Default::default()
         };
-        let out = ctx.run(input, |ctx| {
-            app.update(ctx, &mut frame);
+        let out = crate::support::run_ui(&ctx, input, |ui| {
+            app.ui(ui, &mut frame);
         });
         out_full = Some(out);
     }

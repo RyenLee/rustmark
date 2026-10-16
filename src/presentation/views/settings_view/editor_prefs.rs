@@ -54,6 +54,20 @@ pub(super) fn editor(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
     if view.auto_save_interval.is_none() {
         ui.colored_label(theme.text_secondary, "自动保存已关闭。");
     }
+    // 打开文档数量上限（问题 038）：标签条限额，达上限后拒绝**新的**打开。
+    field(ui, theme, "打开文档上限", |ui| {
+        let mut limit = view.max_open_documents;
+        if ui
+            .add(egui::Slider::new(&mut limit, MAX_OPEN_DOCUMENTS_RANGE).suffix(" 个"))
+            .changed()
+        {
+            app.apply_editor_field(|e| e.max_open_documents = limit);
+        }
+    });
+    ui.colored_label(
+        theme.text_secondary,
+        "达到上限后，新的打开请求会被拒绝并提示；已打开的文档与切换不受影响。",
+    );
 }
 
 /// 「语法检查」分区。

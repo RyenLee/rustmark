@@ -165,6 +165,53 @@ fn scan_entries_are_sorted_directories_first() {
     );
 }
 
+/// 前序 DFS：目录条目之后**立即**是它的子项，然后才是下一个兄弟。
+///
+/// 文件树折行（`sidebar_ui_state::tree::tree_rows`）按列表顺序逐项渲染，
+/// 输入不是「父目录紧跟子项」时，展开目录后子项会被拼到整棵树的尾部
+/// （问题 040 截图实证：`logs` 的三个文件出现在所有根级文件之后）。
+/// 旧实现先推完本层全部条目、末尾再统一递归——正是这个症状的根源。
+#[test]
+fn scan_lists_children_immediately_after_their_parent() {
+    let dir = TempDir::new("scan-dfs");
+    dir.write("b_dir/inner.md", "i");
+    dir.write("a_dir/nested.md", "n");
+    dir.write("z.md", "z");
+
+    let repo = repo_in(&dir);
+    let entries = repo.scan(&fp(dir.path()), 3).expect("扫描应成功");
+
+    let names: Vec<String> = entries
+        .iter()
+        .map(|e| e.path().file_name().to_string())
+        .collect();
+    assert_eq!(
+        names,
+        vec!["a_dir", "nested.md", "b_dir", "inner.md", "z.md"],
+        "子项必须紧跟父目录（前序 DFS），实际：{names:?}"
+    );
+    // 多层同样成立：孙项紧跟子目录，不跨过任何中间条目。
+    dir.write("a_dir/deep/grand.md", "g");
+    let entries = repo.scan(&fp(dir.path()), 5).expect("扫描应成功");
+    let names: Vec<String> = entries
+        .iter()
+        .map(|e| e.path().file_name().to_string())
+        .collect();
+    assert_eq!(
+        names,
+        vec![
+            "a_dir",
+            "deep",
+            "grand.md",
+            "nested.md",
+            "b_dir",
+            "inner.md",
+            "z.md"
+        ],
+        "深层子项也必须紧跟其父目录，实际：{names:?}"
+    );
+}
+
 #[test]
 fn scan_respects_max_entries_limit() {
     let dir = TempDir::new("scan-limit");

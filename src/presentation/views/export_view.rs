@@ -28,7 +28,7 @@
 //! **不做假的进度条**：原型的进度是 `setInterval` 随机数，纯装饰。
 //! 装饰性进度条会让用户在导出早已完成后仍以为「还在导出」，从而再点一次。
 
-use egui::{Align, Context, Layout, RichText, Ui};
+use egui::{Align, Color32, Context, Layout, RichText, Ui};
 
 use crate::app::frame::{EditorApp, PendingDialog};
 use crate::application::dto::ExportRequestView;
@@ -58,7 +58,7 @@ pub const FILE_STEM_INPUT_ID: &str = "rustmark.export.stem";
 pub fn show(app: &mut EditorApp, ctx: &Context) {
     let mut open = true;
     egui::Window::new(Overlay::Export.title())
-        .id(egui::Id::new("rustmark.overlay.export"))
+        .id(egui::Id::unique("rustmark.overlay.export"))
         .open(&mut open)
         .collapsible(false)
         .resizable(true)
@@ -87,7 +87,7 @@ pub fn show(app: &mut EditorApp, ctx: &Context) {
     // 「文件名」框会被立刻拽回来，一个字也打不进去。
     // 详见 `DialogUiState::take_open_focus` 的文档。
     if app.dialog.take_open_focus(Overlay::Export) {
-        ctx.memory_mut(|m| m.request_focus(egui::Id::new(OUTPUT_DIR_INPUT_ID)));
+        ctx.memory_mut(|m| m.request_focus(egui::Id::unique(OUTPUT_DIR_INPUT_ID)));
     }
 }
 
@@ -108,6 +108,16 @@ fn body(app: &mut EditorApp, ui: &mut Ui) {
     footer(app, ui, &theme);
 }
 
+/// 选中态格式标签的文字色。
+///
+/// **必须**用 `theme.text_primary`（正文色），不能用 `theme.accent`：
+/// 选区底色（`selection_bg`）在用户自定义主题里可以是实色强调蓝，
+/// 此时「强调蓝文字压在强调蓝底上」会完全糊掉、看不见（#039，与 037 同源）。
+/// 抽成函数是为了让这条规则有一处唯一真相、可被单测直接锁定。
+pub(crate) fn selected_format_label_color(theme: &Theme) -> Color32 {
+    theme.text_primary
+}
+
 /// 格式单选组。
 fn format_row(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
     ui.horizontal_wrapped(|ui| {
@@ -120,7 +130,7 @@ fn format_row(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
                 None => format.label().to_string(),
             };
             let text = if selected {
-                RichText::new(label).color(theme.accent)
+                RichText::new(label).color(selected_format_label_color(theme))
             } else if available {
                 RichText::new(label)
             } else {
@@ -139,7 +149,7 @@ fn path_rows(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
         ui.label("输出路径");
         ui.add(
             egui::TextEdit::singleline(&mut app.export_ui.output_dir)
-                .id(egui::Id::new(OUTPUT_DIR_INPUT_ID))
+                .id(egui::Id::unique(OUTPUT_DIR_INPUT_ID))
                 .hint_text("导出到（留空则用当前目录）")
                 .desired_width(280.0),
         );
@@ -166,7 +176,7 @@ fn path_rows(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
             ui.label("文件名");
             ui.add(
                 egui::TextEdit::singleline(&mut app.export_ui.file_stem)
-                    .id(egui::Id::new(FILE_STEM_INPUT_ID))
+                    .id(egui::Id::unique(FILE_STEM_INPUT_ID))
                     .desired_width(320.0)
                     .hint_text("文档名"),
             )
@@ -381,5 +391,31 @@ fn run_export(app: &mut EditorApp, pixels_per_point: f32) {
             }
         }
         Err(e) => app.export_ui.fail(e.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::presentation::theme::builtin::Theme;
+
+    #[test]
+    fn selected_format_label_uses_text_primary_not_accent() {
+        // #039 回归：导出浮层选中格式标签的文字色必须是正文色，
+        // 不能回到强调色（accent）——选区底色在自定义主题里可能是实色强调蓝，
+        // accent 文字压在 accent 底上会糊成一片、看不见（与 037 同源）。
+        for theme in [Theme::light(), Theme::dark()] {
+            let c = selected_format_label_color(&theme);
+            assert_ne!(
+                c, theme.accent,
+                "选中格式标签不得用强调色（k={:?}）",
+                theme.kind
+            );
+            assert_eq!(
+                c, theme.text_primary,
+                "选中格式标签应用正文色（k={:?}）",
+                theme.kind
+            );
+        }
     }
 }

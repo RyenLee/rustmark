@@ -34,7 +34,7 @@ pub const FILTER_INPUT_ID: &str = "rustmark.shortcut_overview.filter";
 pub fn show(app: &mut EditorApp, ctx: &Context) {
     let mut open = true;
     egui::Window::new(Overlay::ShortcutOverview.title())
-        .id(egui::Id::new("rustmark.overlay.shortcut_overview"))
+        .id(egui::Id::unique("rustmark.overlay.shortcut_overview"))
         .open(&mut open)
         .collapsible(false)
         .resizable(true)
@@ -48,7 +48,7 @@ pub fn show(app: &mut EditorApp, ctx: &Context) {
     // 「过滤框当前没有焦点」——后者恒为真：`Memory::has_focus` 认不到
     // 窗口（`Area`）的 id。详见 `DialogUiState::take_open_focus` 的文档。
     if app.dialog.take_open_focus(Overlay::ShortcutOverview) {
-        ctx.memory_mut(|m| m.request_focus(egui::Id::new(FILTER_INPUT_ID)));
+        ctx.memory_mut(|m| m.request_focus(egui::Id::unique(FILTER_INPUT_ID)));
     }
     if !open {
         app.dialog.close(Overlay::ShortcutOverview);
@@ -74,7 +74,7 @@ fn filter_row(app: &mut EditorApp, ui: &mut Ui) {
         if ui
             .add(
                 egui::TextEdit::singleline(&mut query)
-                    .id(egui::Id::new(FILTER_INPUT_ID))
+                    .id(egui::Id::unique(FILTER_INPUT_ID))
                     .hint_text("按操作名或关键字筛选")
                     .desired_width(ui.available_width() - 48.0),
             )

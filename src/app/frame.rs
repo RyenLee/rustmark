@@ -22,7 +22,7 @@ use crate::application::document::queries::{
     GetContentQuery, GetDocumentQuery, GetStatsQuery, ListOpenDocumentsQuery,
 };
 use crate::application::dto::{
-    DocumentView, EditorSettingsView, RecentFileView, SettingsView, StatsView, ThemeView,
+    EditorSettingsView, RecentFileView, SettingsView, StatsView, TabSummary, ThemeView,
 };
 use crate::application::dto::{
     ExportRequestView, ExportResultView, LintIssueView, OutlineItemView, SearchResultView,
@@ -44,6 +44,7 @@ use crate::shared::error::AppError;
 use crate::shared::fonts::EditorFontChoice;
 use crate::shared::path::FilePath;
 use crate::shared::result::AppResult;
+use crate::shared::text_format::{self, TextFormats};
 
 use crate::presentation::shortcuts::dispatcher::{Dispatch, ShortcutDispatcher};
 use crate::presentation::shortcuts::registry::{ShortcutRegistry, UiAction};
@@ -62,7 +63,9 @@ use crate::presentation::state::scroll_sync_state::Side;
 use crate::presentation::state::settings_ui_state::{SettingsUiState, Snapshot};
 use crate::presentation::state::shortcut_overview_ui_state::ShortcutOverviewUiState;
 use crate::presentation::state::sidebar_ui_state::SidebarUiState;
-use crate::presentation::state::sidebar_ui_state::{SearchGroup, group_hits, locate_in_snippet};
+use crate::presentation::state::sidebar_ui_state::{
+    SearchGroup, SearchScope, group_hits, locate_in_snippet,
+};
 use crate::presentation::state::status_bar_ui_state::StatusBarUiState;
 use crate::presentation::state::symbol_ui_state::SymbolUiState;
 use crate::presentation::theme::builtin::{self, BuiltinTheme, Theme};
@@ -123,6 +126,13 @@ pub struct EditorApp {
     pub diff_ui: DiffUiState,
     /// 命令面板状态（S6-12）。
     pub command_palette_ui: CommandPaletteUiState,
+    /// 可打开的文本格式白名单（问题 045）。
+    ///
+    /// 全应用**唯一**一份：文件树置灰、双击拦截、拖放分类、原生对话框
+    /// 过滤器都由它派生。放在应用状态而非写死常量，是为了未来接设置页
+    /// 时只需在此处换成一个「内置 + 用户自定义」的实例，
+    /// 各入口不必逐一改动。
+    text_formats: TextFormats,
     /// 系统当前是否偏好深色（「跟随系统」用）。
     system_dark: bool,
     /// 设置页「字体」下拉的可选项（启动时发现一次：项目 `fonts/` 目录
@@ -225,6 +235,10 @@ pub struct EditorApp {
     /// 两次截图捕获的是**同一帧画面**（egui 每帧只绘制一次），
     /// 排队等两次毫无意义，用户要的也不是「同一张图存两份」。
     pending_capture: Option<PendingCapture>,
+    /// 截图回传收件箱：egui 0.37 起 `request_screenshot` 以回调方式交付像素，
+    /// 回调在 `self` 之外触发，故用 `Arc<Mutex<...>>` 共享。
+    screenshot_sink:
+        std::sync::Arc<std::sync::Mutex<Option<std::sync::Arc<egui::epaint::ColorImage>>>>,
     /// 已发出确认框、等待用户答复的删除目标（V11-06）。
     ///
     /// 删除是唯一不可逆的工作区操作，而 `DialogPort::confirm` 是**同步阻塞**
@@ -234,6 +248,13 @@ pub struct EditorApp {
     /// 记**路径**而不是「待执行的闭包」：路径是可打印、可断言的值，
     /// 测试能直接读出「还悬着的是哪一个」，闭包只能靠副作用观察。
     pending_delete: Option<String>,
+    /// 已发出确认框、等待用户答复的「全部关闭」（问题 038）。
+    ///
+    /// 与 [`Self::pending_delete`] 同款两步走：全部关闭会丢弃**所有**未保存
+    /// 修改，不可逆；而 `DialogPort::confirm` 同步阻塞，不能在 `update()` 里调。
+    /// 布尔而非路径：待确认的目标就是「当前打开的全部文档」，
+    /// 没有第二个自由度，记路径反而是假精度。
+    pending_close_all: bool,
     /// 后台工作区扫描的待处理结果（PickFolder 首次扫描路径异步化）。
     ///
     /// channel 发回 `(root, Result<Vec<FileEntryView>, String>)` ——
@@ -327,6 +348,8 @@ impl EditorApp {
             symbol_ui: SymbolUiState::new(),
             diff_ui: DiffUiState::new(),
             command_palette_ui: CommandPaletteUiState::new(),
+            // 白名单以内置清单起步（唯一出处见 `shared::text_format`）。
+            text_formats: TextFormats::builtin(),
             // 执行器要克隆 `services.dialogs`，故必须在移动 `services` 之前建。
             dialogs: DialogRunner::new(services.dialogs.clone()),
             services,
@@ -346,7 +369,9 @@ impl EditorApp {
             pending_recoveries,
             preview_rect: None,
             pending_capture: None,
+            screenshot_sink: std::sync::Arc::new(std::sync::Mutex::new(None)),
             pending_delete: None,
+            pending_close_all: false,
             scan_pending: None,
             scan_loading: false,
         };
@@ -385,57 +410,71 @@ pub(crate) use drag_drop::classify_dropped;
 /// `take_focus_return` 也从未被调用——是一套空转的半套机制。现已移除，
 /// 浮层关闭后焦点按 egui 默认行为处理即可。
 impl eframe::App for EditorApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // 1) 「跟随系统」在主题落地**之前**刷新：本帧必须用最终主题画，
-        //    否则系统外观变化的那一帧会闪一下旧配色。
-        self.refresh_system_theme(ctx);
-        mapper::apply(ctx, &self.ui.theme);
+    // egui 0.37 把旧的 `update` 拆成 `logic`（窗口隐藏时也要跑的状态更新）
+    // 与 `ui`（仅绘制）。本项目所有状态更新都依赖绘制结果（如拖放命中、快捷键
+    // 触发、截图回传），且旧 `update` 就是「每帧当要重绘时调用」，与 `ui`
+    // 的语义一致，故全部逻辑统一收进 `ui`，不实现空的 `logic`。
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        // 状态更新阶段：需要 `ctx`。这段借用必须**在 `main_view::show` 之前结束**，
+        // 因为绘制阶段要的可变 `ui` 与这里的不可变 `ctx` 借用冲突。
+        {
+            let ctx = ui.ctx();
 
-        // 1.5) 编辑区字体：设置页改过（或首帧）时重装。
-        //      放在任何控件布局之前——`set_fonts` 要赶在本帧排版之前生效。
-        //      内部按「键没变就跳过」短路，未改字体时每帧只多一次字符串比对。
-        self.ensure_editor_fonts(ctx);
+            // 1) 「跟随系统」在主题落地**之前**刷新：本帧必须用最终主题画，
+            //    否则系统外观变化的那一帧会闪一下旧配色。
+            self.refresh_system_theme(ctx);
+            mapper::apply(ctx, &self.ui.theme);
 
-        // 2) 收后台对话框的结果。
-        //
-        //    放在快捷键**之前**：用户刚在系统对话框里选了文件，
-        //    这一帧就应该把文件打开，而不是先让窗口里残留的按键事件
-        //    触发别的动作。
-        if let Some(outcome) = self.dialogs.poll() {
-            self.apply_dialog_outcome(outcome);
+            // 1.5) 编辑区字体：设置页改过（或首帧）时重装。
+            //      放在任何控件布局之前——`set_fonts` 要赶在本帧排版之前生效。
+            //      内部按「键没变就跳过」短路，未改字体时每帧只多一次字符串比对。
+            self.ensure_editor_fonts(ctx);
+
+            // 2) 收后台对话框的结果。
+            //
+            //    放在快捷键**之前**：用户刚在系统对话框里选了文件，
+            //    这一帧就应该把文件打开，而不是先让窗口里残留的按键事件
+            //    触发别的动作。
+            if let Some(outcome) = self.dialogs.poll() {
+                self.apply_dialog_outcome(outcome);
+            }
+
+            // 2.1) 工作区后台扫描结果轮询（PickFolder 首次扫描路径异步化）。
+            //
+            //     扫描是磁盘 IO，大目录会阻塞 UI 帧循环——用户选完文件夹后窗口
+            //     会「冻住」几百毫秒到几秒（视目录规模而定）。改成后台线程后，
+            //     用户选完文件夹立刻回到 UI 继续操作，侧栏短暂显示 loading 态。
+            //     领域层 scan_tree（RwLock 写入 + EventBus publish）线程安全，
+            //     放后台无副作用。其他扫描路径（reload / refresh）保持同步。
+            self.poll_scan_result();
+
+            // 2.5) 文件拖放：把 .md 文件拖入窗口即打开（P2 拖拽打开）。
+            //      放在快捷键之前，与对话框结果同级——拖入文件即开，不被残留按键干扰。
+            self.handle_dropped_files(ctx);
+
+            // 3) 快捷键 → 动作。
+            for action in self.collect_actions(ctx) {
+                self.execute(action);
+            }
+
+            // 3.5) 自动保存（DEF-02 修复）：周期把脏文档写入草稿，崩溃后可恢复。
+            self.run_autosave();
         }
-
-        // 2.1) 工作区后台扫描结果轮询（PickFolder 首次扫描路径异步化）。
-        //
-        //     扫描是磁盘 IO，大目录会阻塞 UI 帧循环——用户选完文件夹后窗口
-        //     会「冻住」几百毫秒到几秒（视目录规模而定）。改成后台线程后，
-        //     用户选完文件夹立刻回到 UI 继续操作，侧栏短暂显示 loading 态。
-        //     领域层 scan_tree（RwLock 写入 + EventBus publish）线程安全，
-        //     放后台无副作用。其他扫描路径（reload / refresh）保持同步。
-        self.poll_scan_result();
-
-        // 2.5) 文件拖放：把 .md 文件拖入窗口即打开（P2 拖拽打开）。
-        //      放在快捷键之前，与对话框结果同级——拖入文件即开，不被残留按键干扰。
-        self.handle_dropped_files(ctx);
-
-        // 3) 快捷键 → 动作。
-        for action in self.collect_actions(ctx) {
-            self.execute(action);
-        }
-
-        // 3.5) 自动保存（DEF-02 修复）：周期把脏文档写入草稿，崩溃后可恢复。
-        self.run_autosave();
 
         // 4) 绘制。视图层在 S6-02~S6-11 逐步接入。
-        crate::presentation::views::main_view::show(self, ctx);
+        //    egui 0.37 起根 `Ui` 已自带全窗口可用区，Panel 全部从 `ui` 切分。
+        crate::presentation::views::main_view::show(self, ui);
 
         // 4.5) 草稿恢复提示（DEF-02）：启动发现遗留草稿时居中提示。
-        self.render_recovery_prompt(ctx);
+        {
+            let ctx = ui.ctx();
+            self.render_recovery_prompt(ctx);
 
-        // 4.6) 图片导出回路（P2）。必须在**绘制之后**：egui 在帧末才把
-        //      `ViewportCommand::Screenshot` 交给后端，帧内发命令、
-        //      收上一帧的回传，两件事分处两帧才闭环。
-        self.pump_capture(ctx);
+            // 4.6) 图片导出回路（P2）。必须在**绘制之后**：egui 在帧末才把
+            //      `ViewportCommand::Screenshot` 交给后端，帧内发命令、
+            //      收上一帧的回传，两件事分处两帧才闭环。
+            self.pump_capture(ctx);
+        }
 
         // 4.7) 冷启动埋点（S8-03）：首帧画完 = 用户看到窗口。
         // 未开启环境变量时是空操作，不影响正常启动路径。

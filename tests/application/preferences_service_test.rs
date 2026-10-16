@@ -87,6 +87,7 @@ fn set_editor_valid_persists() {
             split_ratio: 0.5,
             writing_goal: 500,
             lint: Default::default(),
+            max_open_documents: 12,
         },
     })
     .unwrap();
@@ -109,6 +110,7 @@ fn set_editor_goal_beyond_max_saturates_instead_of_failing() {
             // 远超领域上限：必须饱和到 1_000_000，而不是让保存失败（V11-05）。
             writing_goal: u32::MAX,
             lint: Default::default(),
+            max_open_documents: 12,
         },
     })
     .unwrap();
@@ -132,6 +134,7 @@ fn set_editor_invalid_tab_size_fails() {
             split_ratio: 0.5,
             writing_goal: 0,
             lint: Default::default(),
+            max_open_documents: 12,
         },
     });
     assert!(res.is_err());
@@ -258,4 +261,42 @@ fn set_theme_custom_without_palette_still_defaults() {
     assert_eq!(settings.theme.kind, "custom");
     let got = settings.theme.custom.expect("默认调色板应被补齐");
     assert_eq!(got.bg_primary, "#14161B");
+}
+
+#[test]
+fn set_theme_light_keeps_custom_palette_through_to_theme() {
+    // #039 回归：从 custom 切到 light/dark 时，`to_theme` 不得静默丢弃自定义调色板。
+    // 旧实现只在 `kind == Custom` 时附上调色板，于是带调色板的 light 主题经
+    // `set_theme → to_theme` 重建领域对象后调色板被清空，等同于无声改了用户设置。
+    // 这里带调色板地写入 light，再经 `get_settings → to_theme_view` 回读，
+    // 调色板必须仍在。
+    let (svc, _repo) = build();
+    let palette = CustomThemePaletteView {
+        bg_primary: "#0A0A0A".to_string(),
+        bg_secondary: "#1A1A1A".to_string(),
+        text_primary: "#EEEEEE".to_string(),
+        text_secondary: "#AAAAAA".to_string(),
+        accent: "#33AAFF".to_string(),
+        code_bg: "#222222".to_string(),
+        border: "#333333".to_string(),
+        selection_bg: "#44BBFF".to_string(),
+        ..Default::default()
+    };
+    svc.set_theme(SetThemeCommand {
+        theme: ThemeView {
+            kind: "light".to_string(),
+            font_family: "monospace".to_string(),
+            font_size: 14.0,
+            line_height: 1.6,
+            custom: Some(palette.clone()),
+        },
+    })
+    .unwrap();
+    let settings = svc.get_settings(GetSettingsQuery).unwrap();
+    assert_eq!(settings.theme.kind, "light");
+    let got = settings
+        .theme
+        .custom
+        .expect("切到 light 后自定义调色板不应被丢弃");
+    assert_eq!(got.accent, "#33AAFF");
 }

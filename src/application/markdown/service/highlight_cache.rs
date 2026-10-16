@@ -1,5 +1,7 @@
 //! 高亮缓存与高亮防抖计时表（版本 / 语言 / 区间为键，近似 LRU）。
 
+use std::sync::Arc;
+
 use ahash::{HashMap, HashMapExt};
 
 use crate::application::dto::SpanView;
@@ -7,14 +9,29 @@ use crate::shared::ids::DocumentId;
 use crate::shared::time::Timestamp;
 
 /// 一份缓存的高亮结果。
+///
+/// `spans` 用 `Arc` 共享：编辑区**每帧**都要向服务要这份片段，
+/// 若按值返回就等于每帧把几千个 `String` 克隆一遍（问题 046 实测：
+/// 100KB 文档 3080 个 span，每帧 0.108ms 纯粹花在这上面）。
+/// 片段是不可变快照，共享零成本且语义完全一致。
 struct CachedHighlight {
     revision: u64,
     lang: Option<String>,
     range: (usize, usize),
-    spans: Vec<SpanView>,
+    spans: Arc<Vec<SpanView>>,
 }
 
-/// 高亮缓存：文档 ID → 上一次的高亮结果（近似 LRU，达到容量后驱逐一个旧键）。
+/// 空片段常量：防抖期与大文件降级两条路径每帧都要返回它。
+///
+/// 返回共享的 `Arc` 而不是每次 `Arc::new(Vec::new())`，让这两条
+/// 「本帧不上色」的路径做到零分配。`Arc<Vec<T>>` 本身不是 `Send` 约束的
+/// 障碍（`SpanView` 全是 `Send + Sync`）。
+pub(super) fn empty_spans() -> Arc<Vec<SpanView>> {
+    static EMPTY: std::sync::OnceLock<Arc<Vec<SpanView>>> = std::sync::OnceLock::new();
+    EMPTY.get_or_init(|| Arc::new(Vec::new())).clone()
+}
+
+/// 高亮缓存：文档 ID → 上一次的高亮结果（**真 LRU**：按访问序驱逐最旧者）。
 ///
 /// # 为什么需要（S8-05 实测）
 ///
@@ -22,11 +39,20 @@ struct CachedHighlight {
 /// 文档未变的帧（滚动 / 空闲 / 切换面板）占绝大多数，却要反复付这份钱。
 /// 键里带上版本号 → 内容一改即失效，**语义与重算完全一致**，不存在「颜色滞后」。
 ///
+/// # 为什么必须是 LRU 而不是「驱逐任意一个键」（问题 043）
+///
+/// 原实现用 `self.entries.keys().next()`（`HashMap` **任意**迭代序）挑驱逐对象，
+/// 可能正好驱逐下一次就要命中的文档：容量 8 小于打开文档数时，切一轮标签
+/// 就是一次 56ms 级的重算尖峰。现在用 `order: Vec` 维护访问序——`get` 命中
+/// 把键挪到尾部，`insert` 从头部驱逐最旧者，行为完全确定。
+///
 /// 与 [`RenderCache`](super::RenderCache) 的区别：那份缓存的是解析产物（预览用），这份缓存的是
 /// 高亮产物（编辑区用）；两者的失效条件都是「文档版本变化」。
 #[derive(Default)]
 pub struct HighlightCache {
     entries: HashMap<DocumentId, CachedHighlight>,
+    /// 访问序（LRU）：最旧在前。与 `entries` 的键集保持一致。
+    order: Vec<DocumentId>,
     capacity: usize,
     /// 命中次数（调试 / 测试断言用）。
     pub hits: u64,
@@ -39,6 +65,7 @@ impl HighlightCache {
     pub fn new(capacity: usize) -> Self {
         Self {
             entries: HashMap::new(),
+            order: Vec::new(),
             capacity: capacity.max(1),
             hits: 0,
             misses: 0,
@@ -46,42 +73,57 @@ impl HighlightCache {
     }
 
     /// 取缓存命中（版本 / 语言 / 区间任一不同即视为失效）。
+    ///
+    /// 返回共享的 `Arc`：命中路径**不得**克隆片段本身（见 [`CachedHighlight`]）。
     pub fn get(
         &mut self,
         id: DocumentId,
         revision: u64,
         lang: Option<&str>,
         range: (usize, usize),
-    ) -> Option<&Vec<SpanView>> {
+    ) -> Option<Arc<Vec<SpanView>>> {
         let matched = self.entries.get(&id).is_some_and(|e| {
             e.revision == revision && e.lang.as_deref() == lang && e.range == range
         });
         if matched {
             self.hits += 1;
+            // 触碰访问序：命中的键挪到尾部（最新）。
+            self.touch(&id);
         } else {
             self.misses += 1;
         }
         if !matched {
             return None;
         }
-        self.entries.get(&id).map(|e| &e.spans)
+        self.entries.get(&id).map(|e| Arc::clone(&e.spans))
     }
 
-    /// 写入缓存（达到容量且为新键时驱逐一个旧键）。
+    /// 把键挪到访问序尾部；键不在序中时补进去（防御：两表应同步）。
+    fn touch(&mut self, id: &DocumentId) {
+        if let Some(pos) = self.order.iter().position(|k| k == id) {
+            self.order.remove(pos);
+        }
+        self.order.push(*id);
+    }
+
+    /// 写入缓存（达到容量且为新键时驱逐**最旧**的一个键）。
     pub fn insert(
         &mut self,
         id: DocumentId,
         revision: u64,
         lang: Option<String>,
         range: (usize, usize),
-        spans: Vec<SpanView>,
+        spans: Arc<Vec<SpanView>>,
     ) {
         if self.entries.len() >= self.capacity
             && !self.entries.contains_key(&id)
-            && let Some(&old) = self.entries.keys().next()
+            && let Some(old) = self.order.first().copied()
         {
             self.entries.remove(&old);
+            self.order.remove(0);
         }
+        // 覆盖已有键时也要刷新访问序。
+        self.touch(&id);
         self.entries.insert(
             id,
             CachedHighlight {
@@ -96,11 +138,13 @@ impl HighlightCache {
     /// 失效单个文档的缓存。
     pub fn invalidate(&mut self, id: DocumentId) {
         self.entries.remove(&id);
+        self.order.retain(|k| *k != id);
     }
 
     /// 失效全部缓存。
     pub fn invalidate_all(&mut self) {
         self.entries.clear();
+        self.order.clear();
     }
 
     /// 缓存条目数。
@@ -186,5 +230,16 @@ impl HighlightPace {
     /// 是否为空（测试用）。
     pub fn is_empty(&self) -> bool {
         self.seen.is_empty()
+    }
+
+    /// 防抖状态快照（测试与调试用）：`(文档 ID, 上次见到的版本, 上次见到的时刻毫秒)`。
+    ///
+    /// 与 `len` / `is_empty` 同类，回答「这一帧为什么不上色」：版本刚变（未静止）、
+    /// 还是静止未满 `interval_ms`。缺了它，回归只能凭耗时间接推断。
+    pub fn snapshot(&self) -> Vec<(DocumentId, u64, u64)> {
+        self.seen
+            .iter()
+            .map(|(id, (rev, at))| (*id, *rev, at.millis()))
+            .collect()
     }
 }

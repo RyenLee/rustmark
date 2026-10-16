@@ -65,7 +65,7 @@ fn row(ui: &mut Ui, theme: &Theme, label: &str, value: &str, hint: Option<&str>)
 pub fn show(app: &mut EditorApp, ctx: &Context) {
     let mut open = true;
     egui::Window::new(Overlay::Stats.title())
-        .id(egui::Id::new("rustmark.overlay.stats"))
+        .id(egui::Id::unique("rustmark.overlay.stats"))
         .open(&mut open)
         .collapsible(false)
         .resizable(true)

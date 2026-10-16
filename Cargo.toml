@@ -28,8 +28,13 @@ path = "src/bin/check-arch.rs"
 
 [dependencies]
 # --- UI（ADR-001：egui 原生，wgpu 后端）---
-# 注意：eframe 0.33.3 的 default 渲染后端是 glow(OpenGL)，需求 §5.1 要求 wgpu，
+# 注意：eframe 的 default 渲染后端是 glow(OpenGL)，需求 §5.1 要求 wgpu，
 # 故关闭 default 并显式启用 wgpu + 必要的平台特性，避免同时编译两个渲染后端。
+#
+# 0.37 起 `wgpu` 这个 feature 会连带打开 `egui-wgpu/default` → `wgpu/default`
+# （等于各平台后端全开，体积回到 DEF-03 之前的水平）。故改启用
+# `wgpu_no_default_features`：只引入 `dep:wgpu` + `dep:egui-wgpu` 而不带默认特性，
+# 后端仍由下方各平台的 `wgpu` 直接声明按平台各开一个（体积最小）。
 #
 # **不启用 `accesskit`**（cf. S8-02 依赖复查）：accesskit 只负责向辅助技术
 # （屏幕阅读器）暴露语义树，本应用代码零引用，键盘导航 / IME / 焦点链路
@@ -37,10 +42,16 @@ path = "src/bin/check-arch.rs"
 # accesskit / accesskit_winit / accesskit_windows / accesskit_consumer 四个 crate，
 # 以及仅被它们引用的重复版本 hashbrown 0.15 / foldhash 0.1。代价是放弃
 # 屏幕阅读器可达性——对单人本地 Markdown 编辑器是已知且可接受的取舍。
-egui = { version = "0.33.3", default-features = false, features = ["default_fonts"] }
-eframe = { version = "0.33.3", default-features = false, features = [
+# egui 0.37 起把 emoji 字体从 `default_fonts` 拆到 `monochrome_emoji_fonts`：
+# 只开 `default_fonts` 会缺 ✅❌⚠💡🔗☑ 等码位的字形（界面上显示为豆腐块）。
+# 本项目符号面板 / 工具栏图标依赖它们，故必须同时开启。
+egui = { version = "0.37.0", default-features = false, features = [
     "default_fonts",
-    "wgpu",
+    "monochrome_emoji_fonts",
+] }
+eframe = { version = "0.37.0", default-features = false, features = [
+    "default_fonts",
+    "wgpu_no_default_features",
     "x11",
     "wayland",
 ] }
@@ -127,13 +138,13 @@ ahash = { version = "0.8", default-features = false, features = ["std", "no-rng"
 # `wgpu` 是本已在依赖树内的 crate（经 eframe 引入），此处只是补一份直接声明
 # 以便打开 feature；应用代码不直接调用它，唯一引用是 tests/startup_smoke.rs 的守卫断言。
 [target.'cfg(target_os = "windows")'.dependencies]
-wgpu = { version = "27.0.1", default-features = false, features = ["std", "dx12"] }
+wgpu = { version = "30.0.1", default-features = false, features = ["std", "dx12"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-wgpu = { version = "27.0.1", default-features = false, features = ["std", "metal"] }
+wgpu = { version = "30.0.1", default-features = false, features = ["std", "metal"] }
 
 [target.'cfg(not(any(target_os = "windows", target_os = "macos")))'.dependencies]
-wgpu = { version = "27.0.1", default-features = false, features = [
+wgpu = { version = "30.0.1", default-features = false, features = [
     "std",
     "vulkan",
     "gles",

@@ -62,7 +62,6 @@ use std::collections::HashMap;
 use egui::{Align, CornerRadius, Layout, RichText, ScrollArea, Stroke, Ui};
 
 use crate::app::frame::EditorApp;
-use crate::application::document::registry::DocumentContentProvider;
 use crate::application::dto::BlockView;
 use crate::application::markdown::queries::RenderPreviewQuery;
 use crate::presentation::state::scroll_sync_state::{BlockRect, Side};
@@ -145,6 +144,10 @@ fn image_entry(ui: &Ui, app: &EditorApp, url: &str) -> ImageEntry {
     let base_dir = app.document_dir();
     // 「加载失败」与「解码失败」是两类不同的错误（前者 AssetError、后者 String），
     // 但对预览的意义相同——都降级成占位。故在这里统一成一条消息。
+    //
+    // 尺寸参数**不进缓存**：同一 URL 可被 `=30x30` 与 `=600x200` 两个块
+    // 引用（问题 3），按块计算才能区分；URL 查询参数同样是纯函数，
+    // 每帧重算的成本可忽略。
     let failed = |msg: String| ImageEntry {
         texture: None,
         size: [0.0, 0.0],
@@ -220,13 +223,15 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
 
     // 1) 取文档版本号 → 由 UI State 判定是否该重解析（换文档与外观变化立即生效，
     //    同一份文档的内容变化需等 150ms 防抖窗口）。
+    //    只取版本号而不做全文快照：`content_and_revision` 会把整篇文本从
+    //    rope 快照出来，每帧一次只为拿一个 u64（问题 043）。
     let version = app
         .services
         .registry
         .read()
         .ok()
-        .and_then(|reg| reg.content_and_revision(doc_id))
-        .map_or(0, |(_, v)| v);
+        .and_then(|reg| reg.revision_of(doc_id))
+        .unwrap_or(0);
 
     // 缓存键必须带上**文档标识**：`version` 是每份文档各自的计数器，
     // 两份都还没编辑过的文档版本号相同，只比对版本号会让切 tab 后的预览
@@ -388,7 +393,7 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
 
     app.preview.blocks = blocks;
     app.preview.rects = out.inner;
-    app.preview.scroll_y = out.state.offset.y;
+    app.preview.scroll_y = out.state.clamped_offset().y;
     app.ui
         .sync
         .set_geometry(Side::Preview, out.content_size.y, out.inner_rect.height());
@@ -422,14 +427,15 @@ fn draw_block(
     headings: &[HeadingEntry],
     internal_targets: &[(String, u64)],
 ) {
-    // 预览区也跟随「自动换行」开关：开 → 正文在面板宽度内折行；关 → 不折行，
-    // 长行靠新增的底部横向滚动条查看（与编辑区行为一致）。
+    // 预览区也跟随「自动换行」开关：开 → 正文、列表、代码块、降级源码卡
+    // 都在面板宽度内折行，不出现横向滚动条；关 → 不折行，长行靠预览区
+    // 底部横向滚动条查看（与编辑区行为一致）。
     let wrap = app.editor.word_wrap;
     match block.kind.as_str() {
         "heading" => blocks::draw_heading(app, ui, theme, block, internal_targets),
         "paragraph" => blocks::draw_paragraph(app, ui, theme, block, wrap, internal_targets),
         "quote" => blocks::draw_quote(app, ui, theme, block, wrap, internal_targets),
-        "code_block" => code::draw_code_block(app, ui, theme, block),
+        "code_block" => code::draw_code_block(app, ui, theme, block, wrap),
         "list" => list::draw_list(app, ui, theme, block, wrap, internal_targets),
         "task_list" => list::draw_task_list(app, ui, theme, block, internal_targets),
         "table" => {
@@ -449,8 +455,8 @@ fn draw_block(
         "definition_list" => {
             toc::draw_definition_list(app, ui, theme, block, wrap, internal_targets)
         }
-        "math" => embedded::draw_math(ui, theme, block),
-        "diagram" => embedded::draw_diagram(ui, theme, block),
+        "math" => embedded::draw_math(ui, theme, block, wrap),
+        "diagram" => embedded::draw_diagram(ui, theme, block, wrap),
         "toc" => toc::draw_toc(app, ui, theme, block, headings, internal_targets),
         other => toc::draw_raw(app, ui, theme, block, other, internal_targets),
     }
@@ -509,7 +515,11 @@ mod tests {
         let covered: String = job
             .sections
             .iter()
-            .map(|s| job.text.get(s.byte_range.clone()).unwrap_or(""))
+            .map(|s| {
+                job.text
+                    .get(s.byte_range.start.0..s.byte_range.end.0)
+                    .unwrap_or("")
+            })
             .collect();
         assert_eq!(covered, text, "吸附边界后不得丢字符");
     }
@@ -523,9 +533,37 @@ mod tests {
         let covered: String = job
             .sections
             .iter()
-            .map(|s| job.text.get(s.byte_range.clone()).unwrap_or(""))
+            .map(|s| {
+                job.text
+                    .get(s.byte_range.start.0..s.byte_range.end.0)
+                    .unwrap_or("")
+            })
             .collect();
         assert_eq!(covered, text);
+    }
+
+    /// 问题 2 回归：开启「自动换行」时，代码块必须按给定宽度折行。
+    ///
+    /// 修复前 `draw_highlighted_code` 把 `wrap_width` 写死 `INFINITY`，
+    /// 长代码行永远撑出预览区横向滚动条——「自动换行」开关对代码块
+    /// 完全不生效。现在宽度由调用方（`draw_code_block` 的 `wrap` 分支）
+    /// 透传，本测试钉住这条通路。
+    #[test]
+    fn highlighted_code_job_wraps_at_requested_width() {
+        let theme = Theme::dark();
+        let text = "let x = 1;";
+        let wrapped = highlighted_code_job(&theme, text, None, 120.0);
+        assert_eq!(
+            wrapped.wrap.max_width, 120.0,
+            "开启自动换行时代码应按面板宽度折行"
+        );
+        // 关闭时（INFINITY）保持不折行：由预览区横向滚动条查看，
+        // 与编辑区行为一致（既有设计不变）。
+        let nowrap = highlighted_code_job(&theme, text, None, f32::INFINITY);
+        assert!(
+            nowrap.wrap.max_width.is_infinite(),
+            "关闭自动换行时代码不应折行"
+        );
     }
 
     /// 注脚跳转（S6-05 #10）：正文 `[^1]` 的显示标号必须与 `internal_targets`

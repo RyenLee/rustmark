@@ -557,3 +557,105 @@ fn closing_a_document_preserves_the_order_of_the_rest() {
         "关掉中间一个后，其余顺序应保持"
     );
 }
+
+/// 轻量摘要与完整视图的字段一致、顺序一致（问题 043）。
+///
+/// 标签条每帧走 `list_open_tabs`，若它的投影字段与 `list_open` 出现偏差，
+/// 界面会悄悄显示旧标题 / 旧脏标记——这条测试把「摘要 = 视图的子集」钉死。
+#[test]
+fn list_open_tabs_matches_list_open_fields_and_order() {
+    let repo = Arc::new(InMemoryDocumentRepository::new());
+    repo.seed(fp("/docs/alpha.md"), "# A\n内容甲", None);
+    repo.seed(fp("/docs/beta.txt"), "B", None);
+    let (mut svc, _bus) = build(repo);
+
+    let a = svc
+        .open(OpenFileCommand {
+            path: fp("/docs/alpha.md"),
+        })
+        .unwrap();
+    let b = svc
+        .open(OpenFileCommand {
+            path: fp("/docs/beta.txt"),
+        })
+        .unwrap();
+    svc.insert_text(InsertTextCommand {
+        id: b,
+        offset: 1,
+        text: "!".to_string(),
+    })
+    .unwrap();
+
+    let tabs = svc.list_open_tabs(ListOpenDocumentsQuery).unwrap();
+    assert_eq!(tabs.len(), 2);
+    assert_eq!(tabs[0].id, a, "顺序应与打开序一致（标签条顺序的依据）");
+    assert_eq!(tabs[0].title, "alpha");
+    assert_eq!(tabs[0].path.as_ref(), Some(&fp("/docs/alpha.md")));
+    assert!(!tabs[0].is_dirty, "刚打开未编辑应为干净");
+    assert_eq!(tabs[0].byte_len, "# A\n内容甲".len());
+
+    assert_eq!(tabs[1].id, b);
+    assert_eq!(tabs[1].title, "beta");
+    assert!(tabs[1].is_dirty, "插入文本后应标记为脏");
+
+    // 与完整视图逐字段对账。
+    let full = svc.list_open(ListOpenDocumentsQuery).unwrap();
+    for (tab, view) in tabs.iter().zip(full.iter()) {
+        assert_eq!(tab.id, view.id);
+        assert_eq!(tab.title, view.title);
+        assert_eq!(tab.path, view.path);
+        assert_eq!(tab.is_dirty, view.is_dirty);
+        assert_eq!(tab.byte_len, view.byte_len);
+    }
+}
+
+/// 统计按版本缓存：同一版本内重复查询命中缓存，编辑后重算（问题 043）。
+///
+/// 状态栏每帧调两次 `get_stats`（写作目标 + 字数项），此前每次都是
+/// rope 全文快照 + O(全文) 统计。缓存键带版本号——文本没变帧帧命中，
+/// 文本变了（版本变）立即失效重算，不存在「数字滞后」。
+#[test]
+fn get_stats_is_cached_until_the_document_changes() {
+    let repo = Arc::new(InMemoryDocumentRepository::new());
+    repo.seed(fp("/docs/notes.md"), "hello world\nsecond line", None);
+    let (mut svc, _bus) = build(repo);
+    let id = svc
+        .open(OpenFileCommand {
+            path: fp("/docs/notes.md"),
+        })
+        .unwrap();
+
+    let first = svc.get_stats(GetStatsQuery { id }).unwrap();
+    assert_eq!(
+        svc.stats_cache_hits
+            .load(std::sync::atomic::Ordering::Relaxed),
+        0
+    );
+
+    // 未编辑：重复查询（哪怕换一个调用方）直接命中缓存。
+    let second = svc.get_stats(GetStatsQuery { id }).unwrap();
+    assert_eq!(first.words, second.words, "同一版本的两次统计应一致");
+    assert_eq!(first.lines, second.lines);
+    assert_eq!(
+        svc.stats_cache_hits
+            .load(std::sync::atomic::Ordering::Relaxed),
+        1,
+        "第二次查询应命中缓存"
+    );
+
+    // 编辑后版本变化：必须反映新内容，不许吐旧数。
+    svc.insert_text(InsertTextCommand {
+        id,
+        offset: 11,
+        text: " plus".to_string(),
+    })
+    .unwrap();
+    let third = svc.get_stats(GetStatsQuery { id }).unwrap();
+    assert_ne!(first.words, third.words, "编辑后统计必须重算");
+    assert_eq!(
+        svc.stats_cache_hits
+            .load(std::sync::atomic::Ordering::Relaxed),
+        1,
+        "版本变了不该命中旧缓存"
+    );
+}

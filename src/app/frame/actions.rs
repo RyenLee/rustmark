@@ -97,6 +97,11 @@ impl EditorApp {
             // 不能让各视图各写一套保存逻辑。
             UiAction::Save => self.run_save(false),
             UiAction::SaveAs => self.run_save(true),
+            // `SaveAll` 此前落在 `_ => {}`：动作表里有、菜单里有、快捷键
+            // （`Ctrl+Alt+S`）也注册了，但没有任何分支处理——点「保存全部」
+            // 毫无反应，与 `Ctrl+S` 当年同款缺陷。三入口（菜单 / 快捷键 /
+            // 命令面板）都汇聚到本方法，故在此接线即全覆盖。
+            UiAction::SaveAll => self.save_all_documents(),
             UiAction::NewDocument => self.run_new_document(),
             // 「打开文件夹」：请求工作区目录选择（后台对话框），结果由
             // `apply_dialog_outcome` 扫盘装载。入口从侧栏上移到「文件」菜单后，
@@ -206,8 +211,8 @@ impl EditorApp {
         // 只放行 `CloseOverlay`：Esc 必须仍然能关掉面板，
         // 否则用户会被困在查找框里（这与 S6-09「关浮层永远放行」同源）。
         let find_input_focused = ctx.memory(|m| {
-            m.has_focus(egui::Id::new(FIND_INPUT_ID))
-                || m.has_focus(egui::Id::new(REPLACE_INPUT_ID))
+            m.has_focus(egui::Id::unique(FIND_INPUT_ID))
+                || m.has_focus(egui::Id::unique(REPLACE_INPUT_ID))
         });
         let mut out = Vec::new();
         let events = ctx.input(|i| i.events.clone());

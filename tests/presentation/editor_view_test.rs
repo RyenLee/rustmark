@@ -58,7 +58,7 @@ fn app_fixture() -> (tempfile::TempDir, EditorApp) {
 /// 关掉预览 / 侧栏后，画面上的正文**只可能**来自编辑区。
 fn run_frame(app: &mut EditorApp, dark: bool) -> String {
     let ctx = egui::Context::default();
-    let _ = ctx.run(egui::RawInput::default(), |_| {}); // 装载字库
+    crate::support::run_ui(&ctx, egui::RawInput::default(), |_| {}); // 装载字库
     let theme = if dark {
         rustmark::presentation::theme::builtin::Theme::dark()
     } else {
@@ -76,9 +76,9 @@ fn run_frame(app: &mut EditorApp, dark: bool) -> String {
         ..Default::default()
     };
     let mut painted = String::new();
-    let output = ctx.run(input, |ctx| {
-        rustmark::presentation::theme::mapper::apply(ctx, &app.ui.theme);
-        rustmark::presentation::views::main_view::show(app, ctx);
+    let output = crate::support::run_ui(&ctx, input, |ui| {
+        rustmark::presentation::theme::mapper::apply(ui.ctx(), &app.ui.theme);
+        rustmark::presentation::views::main_view::show(app, ui);
     });
     painted.push_str(&painted_text(&output.shapes));
     painted

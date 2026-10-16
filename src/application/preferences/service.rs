@@ -220,15 +220,29 @@ fn to_theme(view: &ThemeView) -> AppResult<Theme> {
         view.font_size,
         view.line_height,
     );
-    if kind == ThemeKind::Custom {
-        // 自定义种类必须有调色板；缺失时退回默认调色板，
-        // 保证首次切到 custom（尚无任何配色改动）不崩、也不丢配色。
-        let palette: CustomThemePalette = view
-            .custom
-            .clone()
-            .map(CustomThemePalette::from)
-            .unwrap_or_default();
-        theme.custom = Some(palette);
+    // 调色板处理分两种语义，缺一不可：
+    // - `custom` 种类：必须有调色板，缺失时退回默认调色板（保持原行为，
+    //   否则首次切到 custom 且无任何配色改动时会崩 / 丢配色）。
+    // - 非 `custom` 种类：仅当视图里**确实带上了**自定义配色才保留它，
+    //   避免从 custom 切到 light/dark 后自定义配色被静默丢弃（#039：
+    //   用户从 custom 切走，再次启动由 `to_theme` 重建领域对象时调色板被丢，
+    //   等于无声改了用户设置）。`resolve` 只在 kind 为 custom 时应用调色板，
+    //   故保留它不改变当前渲染，只是不再丢失数据——用户仍可在设置页把
+    //   kind 选回 custom 来重新应用这套配色。
+    match kind {
+        ThemeKind::Custom => {
+            let palette = view
+                .custom
+                .clone()
+                .map(CustomThemePalette::from)
+                .unwrap_or_default();
+            theme.custom = Some(palette);
+        }
+        _ => {
+            if let Some(custom_view) = &view.custom {
+                theme.custom = Some(CustomThemePalette::from(custom_view.clone()));
+            }
+        }
     }
     Ok(theme)
 }
@@ -249,6 +263,9 @@ fn to_editor(view: &EditorSettingsView) -> AppResult<EditorSettings> {
         // 目标在领域层饱和到上限：界面填多大都不会让设置保存失败（V11-05）。
         WritingGoal::new(view.writing_goal),
         to_lint_settings(&view.lint),
+        // 0 在领域构造时收敛到 1；这里再兜一层是因为 DTO 可能来自
+        // 手改的配置文件（反序列化不经过 `new`）。
+        view.max_open_documents.max(1),
     ))
 }
 
@@ -292,6 +309,9 @@ fn to_editor_view(editor: &EditorSettings) -> EditorSettingsView {
         split_ratio: editor.split_ratio(),
         writing_goal: editor.writing_goal().words(),
         lint: to_lint_rules_view(editor.lint()),
+        // 兜底收敛：领域值只可能经 serde / `new` 两条路变 0，前者已收敛，
+        // 后者会被 `is_valid` 拒绝——这里再钳一次，保证视图永远拿得到 ≥1。
+        max_open_documents: editor.max_open_documents().max(1),
     }
 }
 

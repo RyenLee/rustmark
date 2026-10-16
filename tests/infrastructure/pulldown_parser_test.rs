@@ -9,7 +9,9 @@
 //! 3. **映射稳定性**：`BlockMapper` 对块首/ 块中 / 块尾 / 空隙 / 空输入的返回。
 
 use rustmark::domain::markdown::services::{BlockMapper, MarkdownParser};
-use rustmark::domain::markdown::value_objects::{BlockKind, InlineStyle};
+use rustmark::domain::markdown::value_objects::{
+    BlockKind, ImageAlign, ImageDisplay, InlineStyle, RenderedBlock,
+};
 use rustmark::infrastructure::parsing::pulldown_parser::PulldownMarkdownParser;
 use rustmark::shared::geometry::ByteOffset;
 
@@ -17,6 +19,32 @@ fn parse(text: &str) -> Vec<rustmark::domain::markdown::value_objects::RenderedB
     PulldownMarkdownParser::new()
         .parse(text)
         .expect("解析不应失败")
+}
+
+/// 文档里出现的**全部**图片：`(alt, url, display)`。
+///
+/// 图片是行内元素：写着前缀文案时（`图片: ![a](u.png)`）块保持段落类型、
+/// 图片挂在块上（问题 032），只统计 `BlockKind::Image` 会把这些图整片漏掉。
+fn all_images(blocks: &[RenderedBlock]) -> Vec<(String, String, ImageDisplay)> {
+    blocks
+        .iter()
+        .flat_map(|block| match block.kind() {
+            BlockKind::Image { alt, url, display } => {
+                vec![(alt.clone(), url.clone(), *display)]
+            }
+            _ => block
+                .images()
+                .iter()
+                .map(|image| {
+                    (
+                        image.alt().to_string(),
+                        image.url().to_string(),
+                        image.display(),
+                    )
+                })
+                .collect(),
+        })
+        .collect()
 }
 
 /// 取某个块的源码切片（用于校验 `source_range` 的正确性）。
@@ -539,7 +567,7 @@ fn image_url_is_preserved() {
     let blocks = parse("![替代文本](images/a.png)\n");
     assert_eq!(blocks.len(), 1);
     match blocks[0].kind() {
-        BlockKind::Image { alt, url } => {
+        BlockKind::Image { alt, url, .. } => {
             assert_eq!(alt, "替代文本");
             assert_eq!(url, "images/a.png", "图片地址丢失会让预览无从加载");
         }
@@ -833,14 +861,328 @@ fn csdn_image_size_suffix_still_parses_as_image() {
     let text = "带尺寸的图片: ![Alt](images/a.png =30x30)\n";
     let blocks = parse(text);
     assert_eq!(blocks.len(), 1);
+    // 图片前还写着「带尺寸的图片: 」，块必须是**段落**而不是图片块：
+    // 换成图片块那段前缀就随块一起消失了（问题 032）。
+    assert!(
+        matches!(blocks[0].kind(), BlockKind::Paragraph),
+        "图片与文字混排时块应保持段落：{:?}",
+        blocks[0].kind()
+    );
+    assert_eq!(blocks[0].content(), "带尺寸的图片: Alt");
+    let images = blocks[0].images();
+    assert_eq!(images.len(), 1, "图片应挂在块上：{images:?}");
+    assert_eq!(images[0].alt(), "Alt");
+    assert_eq!(images[0].url(), "images/a.png", "尺寸后缀不应混进图片地址");
+    assert_eq!(
+        images[0].display(),
+        ImageDisplay {
+            width: Some(30),
+            height: Some(30),
+            align: ImageAlign::Left,
+        }
+    );
+}
+
+/// 问题 3（CSDN 语法全链）：`![Alt](url#pic_center =30x30)` 的
+/// **对齐标记与尺寸后缀必须随块上行**——脱糖把它们从解析副本里剥掉，
+/// 但原文完好，`End(Image)` 锚点可精确取回。渲染层靠这两个字段
+/// 区分每张图的尺寸与对齐，而不是所有图片一个样。
+#[test]
+fn csdn_align_and_size_params_reach_the_image_block() {
+    let text = "![Alt](https://imgconvert.csdnimg.cn/aHR0cHM6Ly9hdmF0YXIuY3Nkbi5uZXQvNy83L0IvMV9yYWxmX2h4MTYzY29tLmpwZw#pic_center =30x30)\n";
+    let blocks = parse(text);
+    assert_eq!(blocks.len(), 1);
     match blocks[0].kind() {
-        BlockKind::Image { alt, url } => {
-            assert_eq!(alt, "Alt");
-            assert_eq!(url, "images/a.png", "尺寸后缀不应混进图片地址");
+        BlockKind::Image { url, display, .. } => {
+            // URL 必须干净：对齐标记与尺寸后缀都不得混进地址
+            // （否则加载器按带片段的路径请求，图片必然 404）。
+            assert_eq!(
+                url,
+                "https://imgconvert.csdnimg.cn/aHR0cHM6Ly9hdmF0YXIuY3Nkbi5uZXQvNy83L0IvMV9yYWxmX2h4MTYzY29tLmpwZw"
+            );
+            assert_eq!(
+                *display,
+                ImageDisplay {
+                    width: Some(30),
+                    height: Some(30),
+                    align: ImageAlign::Center,
+                }
+            );
         }
         other => panic!("期望 Image，实际 {other:?}"),
     }
-    assert_eq!(blocks[0].content(), "带尺寸的图片: Alt");
+}
+
+/// 左对齐标记 + 非对称尺寸：`#pic_left =50x100` 三个字段各不相同，
+/// 验证参数不是「有就全填」的占位。
+#[test]
+fn left_align_with_asymmetric_size_reaches_the_block() {
+    let blocks = parse("![图](images/a.png#pic_left =50x100)\n");
+    assert_eq!(blocks.len(), 1);
+    match blocks[0].kind() {
+        BlockKind::Image { display, .. } => {
+            assert_eq!(
+                *display,
+                ImageDisplay {
+                    width: Some(50),
+                    height: Some(100),
+                    align: ImageAlign::Left,
+                }
+            );
+        }
+        other => panic!("期望 Image，实际 {other:?}"),
+    }
+}
+
+/// 反向顺序（先尺寸后对齐，「位置标记加在最后」）与 canonical 顺序
+/// 在全链上完全一致：URL 洗净、参数上行。
+#[test]
+fn reverse_order_size_then_align_reaches_the_block() {
+    let blocks = parse("![Alt](images/a.png =30x30#pic_center)\n");
+    assert_eq!(blocks.len(), 1);
+    match blocks[0].kind() {
+        BlockKind::Image { url, display, .. } => {
+            assert_eq!(url, "images/a.png", "URL 必须洗净，否则图片加载不到");
+            assert_eq!(
+                *display,
+                ImageDisplay {
+                    width: Some(30),
+                    height: Some(30),
+                    align: ImageAlign::Center,
+                }
+            );
+        }
+        other => panic!("期望 Image，实际 {other:?}"),
+    }
+}
+
+/// 效果截图 / `docs/logs/示例文档.md` 的四种图片形态全链验证：
+/// 无标记（左对齐）、仅尺寸（左对齐）、仅居中、居中 + 尺寸。
+#[test]
+fn sample_doc_four_image_forms_reach_the_blocks() {
+    const URL: &str = "https://imgconvert.csdnimg.cn/aHR0cHM6Ly9hdmF0YXIuY3Nkbi5uZXQvNy83L0IvMV9yYWxmX2h4MTYzY29tLmpwZw";
+    let text = format!(
+        "图片: ![Alt]({URL})\n\n\
+         带尺寸的图片: ![Alt]({URL} =30x30)\n\n\
+         居中的图片: ![Alt]({URL}#pic_center)\n\n\
+         居中并且带尺寸的图片: ![Alt]({URL}#pic_center =30x30)\n"
+    );
+    let blocks = parse(&text);
+    // 四张图前面都写着「图片: 」这类前缀文案，块保持段落、图挂在块上
+    // （问题 032）；`all_images` 同时覆盖「图片块」与「混排图片」两种形态。
+    let images = all_images(&blocks);
+    let displays: Vec<ImageDisplay> = images.iter().map(|(_, _, d)| *d).collect();
+    assert_eq!(
+        displays,
+        vec![
+            // 无标记 → 左对齐、按纹理实际尺寸（效果截图：贴在左缘）。
+            ImageDisplay::default(),
+            // 仅尺寸 → 左对齐 + 30×30。
+            ImageDisplay {
+                width: Some(30),
+                height: Some(30),
+                align: ImageAlign::Left,
+            },
+            // 仅居中标记 → 居中、实际尺寸。
+            ImageDisplay {
+                width: None,
+                height: None,
+                align: ImageAlign::Center,
+            },
+            // 居中 + 尺寸。
+            ImageDisplay {
+                width: Some(30),
+                height: Some(30),
+                align: ImageAlign::Center,
+            },
+        ]
+    );
+    // 四种形态的 URL 都必须洗净：任何后缀残留都会让图片加载不到。
+    let urls: Vec<&str> = images.iter().map(|(_, u, _)| u.as_str()).collect();
+    assert_eq!(urls, vec![URL; 4]);
+    // 前缀文案必须留在块里（问题 032 的验收点）。
+    assert!(
+        blocks[0].content().contains("图片:"),
+        "图片前的文案不应被吞：{:?}",
+        blocks[0].content()
+    );
+}
+
+/// 多图段落：每张图按**自己的** `)` 锚点提取，参数互不串扰。
+#[test]
+fn per_image_params_do_not_leak_between_images() {
+    let text = "![a](x.png =1x1) 中间文字 ![b](y.png#pic_right =2x2)";
+    let blocks = parse(text);
+    assert_eq!(blocks.len(), 1, "混排多图仍是**一个**段落块");
+    assert_eq!(blocks[0].content(), "a 中间文字 b");
+    let images = all_images(&blocks);
+    let displays: Vec<ImageDisplay> = images.iter().map(|(_, _, d)| *d).collect();
+    // 两张图**都**要在（旧实现只有最后一张：后者覆盖前者的 `image` 槽），
+    // 且各自带自己的参数。
+    assert_eq!(
+        displays,
+        [
+            ImageDisplay {
+                width: Some(1),
+                height: Some(1),
+                align: ImageAlign::Left,
+            },
+            ImageDisplay {
+                width: Some(2),
+                height: Some(2),
+                align: ImageAlign::Right,
+            },
+        ]
+    );
+}
+
+// ============================================================================
+// 行内图片：图片与文字混排（问题 032）
+// ============================================================================
+//
+// 图片是**行内**元素，前后都能写字。旧实现只要块里出现过图片就把整块替换
+// 成图片块，于是「图片: ![a](u.png)」里的「图片: 」被整段吞掉——用户看到的
+// 就是「插入图片后前面的文案不见了」。现在的规则：整块只有图才升级为图片块，
+// 否则块保持本来类型、图片挂在块 / 列表项上。
+
+/// 图片前后的文案必须留在块里（问题 032 的正面验收）。
+#[test]
+fn text_around_inline_image_is_not_swallowed() {
+    let text = "前面的文案 ![Alt](a.png) 后面的文案";
+    let blocks = parse(text);
+    assert_eq!(blocks.len(), 1, "混排图文仍是**一个**块");
+    assert!(
+        matches!(blocks[0].kind(), BlockKind::Paragraph),
+        "块应保持段落：{:?}",
+        blocks[0].kind()
+    );
+    assert_eq!(blocks[0].content(), "前面的文案 Alt 后面的文案");
+    let images = blocks[0].images();
+    assert_eq!(images.len(), 1);
+    assert_eq!(images[0].alt(), "Alt");
+    assert_eq!(images[0].url(), "a.png");
+    // 区间必须落在 alt 上：渲染层按它把图片插回文字流，偏一格就会切错字。
+    assert_eq!(
+        (images[0].start(), images[0].end()),
+        ("前面的文案 ".len(), "前面的文案 Alt".len()),
+        "图片区间应正好覆盖 alt"
+    );
+}
+
+/// 整块就一张图（没有别的文字）→ 仍升级为独立的图片块。
+#[test]
+fn standalone_image_still_promotes_to_image_block() {
+    let blocks = parse("![Alt](a.png)\n");
+    assert_eq!(blocks.len(), 1);
+    assert!(
+        matches!(blocks[0].kind(), BlockKind::Image { .. }),
+        "独占图片应仍是图片块：{:?}",
+        blocks[0].kind()
+    );
+    assert!(blocks[0].images().is_empty(), "图片块不需要再挂行内图片");
+}
+
+/// 引用里的图片：混排时挂在引用块上，独占时整块升级为图片块。
+#[test]
+fn inline_image_survives_quote_absorption() {
+    // 引用会吞掉内层段落，图片必须跟着文字一起上行，否则图就丢了。
+    let blocks = parse("> 引用 ![Alt](a.png) 引用后\n");
+    assert_eq!(blocks.len(), 1);
+    assert!(matches!(blocks[0].kind(), BlockKind::Quote));
+    assert_eq!(blocks[0].content(), "引用 Alt 引用后");
+    let images = blocks[0].images();
+    assert_eq!(images.len(), 1);
+    assert_eq!((images[0].start(), images[0].end()), (7, 10));
+
+    let only = parse("> ![Alt](a.png)\n");
+    assert_eq!(only.len(), 1);
+    assert!(
+        matches!(only[0].kind(), BlockKind::Image { .. }),
+        "引用里只有一张图时仍是图片块：{:?}",
+        only[0].kind()
+    );
+}
+
+/// 列表项里的图片：挂在项上（项是文本容器，无法升级成图片块），
+/// 且要跟着任务标记 `[x] ` 的裁剪一起左移。
+#[test]
+fn inline_image_survives_list_item_and_task_marker() {
+    let blocks = parse("- 项前 ![Alt](a.png) 项后\n");
+    let items = blocks[0].kind().list_items().expect("列表块");
+    assert_eq!(items[0].text(), "项前 Alt 项后");
+    assert_eq!(items[0].images().len(), 1);
+    assert_eq!(items[0].images()[0].url(), "a.png");
+
+    let task = parse("- [x] ![图标](i.png) 已核对\n");
+    let items = task[0].kind().list_items().expect("任务列表块");
+    assert_eq!(items[0].text(), "图标 已核对", "任务标记不进项文本");
+    let images = items[0].images();
+    assert_eq!(images.len(), 1);
+    // `图标` 是两个 3 字节汉字：裁剪掉 `[x] ` 后区间从 0 开始。
+    assert_eq!(
+        (images[0].start(), images[0].end()),
+        (0, 6),
+        "区间必须随任务标记的裁剪左移"
+    );
+}
+
+/// 标题里的图片同样按混排处理（标题文字不能丢）。
+#[test]
+fn inline_image_in_heading_keeps_heading_text() {
+    let blocks = parse("# 标题 ![Alt](a.png)\n");
+    assert!(matches!(blocks[0].kind(), BlockKind::Heading { level: 1 }));
+    assert_eq!(blocks[0].content(), "标题 Alt");
+    assert_eq!(blocks[0].images().len(), 1);
+}
+
+/// 干净图片（无扩展）→ 默认参数：按纹理实际尺寸、居中。
+#[test]
+fn plain_image_gets_default_display() {
+    let blocks = parse("![图](images/a.png)\n");
+    match blocks[0].kind() {
+        BlockKind::Image { display, .. } => {
+            // 无标记 → **左对齐**（效果截图：CSDN 无标记图片贴在左缘，
+            // 要居中必须显式写 `#pic_center`）+ 不声明尺寸。
+            assert_eq!(
+                *display,
+                ImageDisplay {
+                    width: None,
+                    height: None,
+                    align: ImageAlign::Left,
+                }
+            );
+        }
+        other => panic!("期望 Image，实际 {other:?}"),
+    }
+}
+
+/// 问题 3：URL 的图片处理参数（`?x-oss-process=image/resize,w_50`）必须
+/// 完整保留到 `BlockKind::Image::url`——预览渲染层靠它区分每张图的
+/// 展示尺寸，查询串一旦被吞，所有图片就只能按同一实际尺寸渲染。
+#[test]
+fn image_url_query_params_survive_parsing() {
+    let text = "![图](https://imgconvert.csdnimg.cn/aHR0cHM?x-oss-process=image/resize,w_50)\n";
+    let blocks = parse(text);
+    assert_eq!(blocks.len(), 1);
+    match blocks[0].kind() {
+        BlockKind::Image { url, .. } => {
+            assert!(
+                url.contains("x-oss-process=image/resize,w_50"),
+                "查询参数必须完整保留，实际：{url}"
+            );
+        }
+        other => panic!("期望 Image，实际 {other:?}"),
+    }
+}
+
+/// 带查询参数的 URL 不得被 `desugar_image_sizes` 误伤（`?` 后的内容
+/// 不是 CSDN 尺寸后缀，也不是 Typora 对齐后缀）。
+#[test]
+fn query_params_are_not_mistaken_for_size_suffix() {
+    let text = "![a](https://x.test/y.png?x-oss-process=image/resize,m_fill,w_600,h_200)";
+    let (src, off) = rustmark::infrastructure::parsing::pulldown_parser::desugar_image_sizes(text);
+    assert_eq!(src, text);
+    assert!(off.is_identity());
 }
 
 #[test]
@@ -949,17 +1291,13 @@ fn real_world_sample_document_parses_cleanly() {
         .expect("样例文档应有目录块");
     assert_eq!(toc.content(), "欢迎");
 
-    // 3) 带尺寸后缀的图片也要成为图片块，地址里不能混进 `=30x30`。
-    let images: Vec<&str> = blocks
-        .iter()
-        .filter_map(|b| match b.kind() {
-            BlockKind::Image { url, .. } => Some(url.as_str()),
-            _ => None,
-        })
-        .collect();
+    // 3) 带尺寸后缀的图片也要被认出来，地址里不能混进 `=30x30`。
+    //    样例文档里每张图前都写着「图片: 」这类文案，故它们以**行内图片**
+    //    挂在段落上（问题 032），不是独立图片块。
+    let images = all_images(&blocks);
     assert_eq!(images.len(), 4, "样例文档有四张图片，实际 {images:?}");
     assert!(
-        images.iter().all(|u| !u.contains("=30x30")),
+        images.iter().all(|(_, u, _)| !u.contains("=30x30")),
         "尺寸后缀不该混进地址：{images:?}"
     );
 

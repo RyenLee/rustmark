@@ -20,8 +20,15 @@ pub(super) fn handle_start(state: &mut ParseState, tag: Tag, range: std::ops::Ra
     } = tag
     {
         if let Some(top) = state.stack.last_mut() {
-            top.image_mark = Some(top.content.len());
-            top.image = Some((title.to_string(), dest_url.to_string()));
+            // alt 的起点就是此刻宿主帧 `content` 的长度：`![...]` 方括号里的
+            // 文本随后以普通 Text 事件抵达，并进同一个 `content`。
+            top.image_open = Some(PendingImage {
+                start: top.content.len(),
+                // `title` 只在 `![a](url "标题")` 里出现，此时它比 alt 更具体
+                // （alt 是方括号里的字）；`End(Image)` 时方括号里没字才用它。
+                title: title.to_string(),
+                url: dest_url.to_string(),
+            });
         }
         return;
     }

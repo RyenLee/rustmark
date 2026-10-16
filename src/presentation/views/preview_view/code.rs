@@ -9,7 +9,17 @@ use crate::shared::geometry::clamp_to_char_boundaries;
 use super::*;
 
 /// 代码块：语言标签 + 复制按钮 + 语法高亮。
-pub(super) fn draw_code_block(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, block: &BlockView) {
+///
+/// `wrap` 跟随「自动换行」开关：开 → 代码随面板宽度折行，不再撑出预览区
+/// 横向滚动条（问题 2）；关 → 保持一行不折，由预览区底部横向滚动条查看
+/// （与编辑区行为一致，长代码行折断会破坏缩进可读性）。
+pub(super) fn draw_code_block(
+    app: &mut EditorApp,
+    ui: &mut Ui,
+    theme: &Theme,
+    block: &BlockView,
+    wrap: bool,
+) {
     let lang = block
         .lang
         .as_deref()
@@ -43,8 +53,24 @@ pub(super) fn draw_code_block(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, b
                     lang: block.lang.clone(),
                 })
                 .ok();
-            draw_highlighted_code(ui, theme, &block.content, spans.as_deref());
+            draw_highlighted_code(
+                ui,
+                theme,
+                &block.content,
+                spans.as_deref(),
+                code_wrap_width(ui, wrap),
+            );
         });
+}
+
+/// 代码块的排版宽度：开「自动换行」时取面板可用宽（`Frame` 的内边距已扣过），
+/// 关闭时取 `INFINITY`（不折行）。
+fn code_wrap_width(ui: &Ui, wrap: bool) -> f32 {
+    if wrap {
+        ui.available_width().max(0.0)
+    } else {
+        f32::INFINITY
+    }
 }
 
 /// 把带 span 的代码文本画成彩色文本（无 span 时退化为等宽纯色）。
@@ -53,10 +79,8 @@ pub(super) fn draw_highlighted_code(
     theme: &Theme,
     text: &str,
     spans: Option<&[crate::application::dto::SpanView]>,
+    wrap_width: f32,
 ) {
-    // 代码**不折行**（`INFINITY`）：长代码行超出面板宽时由预览区底部横向滚动条
-    // 查看，而不是把一行代码从中间折断（折行会破坏缩进可读性）。
-    let wrap_width = f32::INFINITY;
     let job = highlighted_code_job(theme, text, spans, wrap_width);
 
     // 唯一 id 保证每个代码块的选择状态互相独立。

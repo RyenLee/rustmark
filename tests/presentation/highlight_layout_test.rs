@@ -28,7 +28,7 @@ use rustmark::presentation::theme::mapper::{
 /// 故每个用例都先跑一次空帧把字库装好。
 fn test_ctx() -> egui::Context {
     let ctx = egui::Context::default();
-    let _ = ctx.run(egui::RawInput::default(), |_| {});
+    crate::support::run_ui(&ctx, egui::RawInput::default(), |_| {});
     ctx
 }
 

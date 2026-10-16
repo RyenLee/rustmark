@@ -543,9 +543,9 @@ fn frame(app: &mut EditorApp, ctx: &egui::Context) {
         )),
         ..Default::default()
     };
-    let _ = ctx.run(input, |ctx| {
-        rustmark::presentation::theme::mapper::apply(ctx, &app.ui.theme);
-        rustmark::presentation::views::main_view::show(app, ctx);
+    crate::support::run_ui(ctx, input, |ui| {
+        rustmark::presentation::theme::mapper::apply(ui.ctx(), &app.ui.theme);
+        rustmark::presentation::views::main_view::show(app, ui);
     });
 }
 

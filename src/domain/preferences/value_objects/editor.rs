@@ -106,6 +106,44 @@ fn default_show_line_numbers() -> bool {
     true
 }
 
+/// `EditorSettings::max_open_documents` 的 serde 缺省值（与默认设置一致）。
+///
+/// 旧配置文件里没有这个字段，缺了按默认上限读出，而不是让配置加载失败
+/// （同 `split_ratio` / `writing_goal` 的处理）。
+fn default_max_open_documents() -> u32 {
+    MAX_OPEN_DOCUMENTS_DEFAULT
+}
+
+/// 反序列化 `max_open_documents`：把 0 收敛到 1。
+///
+/// # 为什么必须在 serde 入口收敛，而不是留给 `is_valid` 拒绝
+///
+/// 仓储 `load()` 对「校验失败」的处理是**备份 + 整体回退默认**
+/// （见 `TomlPreferencesRepository::load`）——用户手改配置写了个 0，
+/// 代价会是整个配置文件作废。0 的含义（「一个都不让开」）也没有意义，
+/// 收敛到 1 既保住了其余字段，也给出可用的行为。
+///
+/// serde 派生会**绕过** `new()` 直接填字段，这是唯一能拦住手改配置的位置。
+fn de_max_open_documents<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = u32::deserialize(deserializer)?;
+    Ok(if value == 0 { 1 } else { value })
+}
+
+/// 打开文档数量的**默认上限**（问题 038：用户要求的标签条限额）。
+///
+/// 取 12：低于常见「同时对照几份文档」的工作量会碍事；高于此值后标签条
+/// 本就靠横向滚动浏览，再大只是让「哪个是哪个」更难认。
+pub const MAX_OPEN_DOCUMENTS_DEFAULT: u32 = 12;
+
+/// 打开文档数量的**可选上限**（设置页滑块量程，含端点）。
+///
+/// 下限 1（「一次只看一份」也是合法用法）；上限 30 与默认值同源——
+/// 再大没有意义，且 30 个标签早已超出任何常见窗口一屏放得下的宽度。
+pub const MAX_OPEN_DOCUMENTS_MAX: u32 = 30;
+
 /// 编辑器设置。
 #[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
 pub struct EditorSettings {
@@ -141,6 +179,20 @@ pub struct EditorSettings {
     /// 旧配置缺这个字段时按 [`LintSettings::default`]（全启用）读出。
     #[serde(default)]
     lint: LintSettings,
+    /// 打开文档数量上限（问题 038）：标签条里最多同时开几个文档。
+    ///
+    /// 达上限后**新的打开请求被拒绝**（状态栏提示），已打开的文档不受影响
+    /// ——限额管的是「标签数量」，不是「不许切换」。
+    ///
+    /// `#[serde(default)]`：旧配置文件没有这个字段，缺了按
+    /// [`MAX_OPEN_DOCUMENTS_DEFAULT`] 读出（同 `split_ratio`）。
+    /// `deserialize_with`：手改配置写成 0 时收敛到 1——0 会让「一个文档都
+    /// 打不开」，且若交给 `is_valid` 拒绝，代价是整个配置被回退默认。
+    #[serde(
+        default = "default_max_open_documents",
+        deserialize_with = "de_max_open_documents"
+    )]
+    max_open_documents: u32,
 }
 
 impl EditorSettings {
@@ -157,6 +209,7 @@ impl EditorSettings {
             split_ratio: 0.5,
             writing_goal: WritingGoal::default(),
             lint: LintSettings::all_enabled(),
+            max_open_documents: MAX_OPEN_DOCUMENTS_DEFAULT,
         }
     }
 
@@ -174,6 +227,7 @@ impl EditorSettings {
         split_ratio: f32,
         writing_goal: WritingGoal,
         lint: LintSettings,
+        max_open_documents: u32,
     ) -> Self {
         Self {
             tab_size,
@@ -185,6 +239,9 @@ impl EditorSettings {
             split_ratio,
             writing_goal,
             lint,
+            // 原样存入：0 由 `is_valid` 拒绝（显式构造是编程错误，该响铃），
+            // 而两条**外部**入口（serde 反序列化、DTO `to_editor`）各自收敛。
+            max_open_documents,
         }
     }
 
@@ -246,9 +303,27 @@ impl EditorSettings {
         Self { lint, ..self }
     }
 
-    /// 校验取值是否合法（自动保存间隔不得为 0——会导致忙循环）。
+    /// 打开文档数量上限（问题 038；恒 ≥ 1，构造时已把 0 收敛掉）。
+    pub const fn max_open_documents(&self) -> u32 {
+        self.max_open_documents
+    }
+
+    /// 设置打开文档数量上限，返回新的设置（值对象不可变）。
+    ///
+    /// 原样存入（0 由 [`Self::is_valid`] 拒绝）：收敛发生在两条外部入口
+    /// ——serde 反序列化与 DTO [`crate::application::preferences`] 的
+    /// `to_editor`，那里才是「不可信输入」进入领域的位置。
+    pub const fn with_max_open_documents(self, max: u32) -> Self {
+        Self {
+            max_open_documents: max,
+            ..self
+        }
+    }
+
+    /// 校验取值是否合法（自动保存间隔不得为 0——会导致忙循环；
+    /// 打开文档上限不得为 0——会导致一个文档都打不开）。
     pub const fn is_valid(&self) -> bool {
-        !matches!(self.auto_save_interval, Some(0))
+        !matches!(self.auto_save_interval, Some(0)) && self.max_open_documents >= 1
     }
 }
 

@@ -254,7 +254,91 @@ impl EditorApp {
     }
 
     /// 打开工作区里的某个文件（文件树点击 / 搜索跳转都走这里）。
+    ///
+    /// # 可打开的格式白名单（问题 045）
+    ///
+    /// 只有 [`crate::shared::text_format::TextFormats`] 放行的扩展名
+    /// （内置：`md` / `markdown` / `mdown` / `mkd` / `txt` / `text` / `csv`，
+    /// 大小写不敏感）能被打开；图片与二进制一律拒绝并提示。守卫放在
+    /// 本方法开头，故**五条入口**（文件树 / 搜索跳转 / 最近文件 /
+    /// 快速打开 / 拖放）一次性全覆盖，各调用方不必各自判一遍。
+    ///
+    /// # 同一路径只保留一个标签（问题 037）
+    ///
+    /// 旧实现每次调用都 `documents.open` 建一份新聚合——同一个文件
+    /// 点十次就是十个标签，标题栏一字排开完全认不出谁是谁。现在先查
+    /// 已打开列表：**路径已在某个标签里就直接切过去**（激活既有页），
+    /// 不再新建。这条校验放在这里而不是各调用方：文件树、搜索跳转、
+    /// 最近文件、快速打开、拖放五条入口都汇聚到本方法，只此一处
+    /// 即可覆盖全部打开路径（与「失败自己报状态栏」同款的按构造保证）。
+    ///
+    /// # 打开文档数量上限（问题 038）
+    ///
+    /// 达上限后拒绝**新的**打开并提示，已打开的文档不受影响。限额检查
+    /// 刻意放在去重**之后**：已打开的文档走的是「切换」，不占新名额——
+    /// 放在前面会挡住「切回那个已经开着的文档」这种最常见的操作。
     pub fn open_workspace_file(&mut self, path: &str) -> AppResult<()> {
+        // # 格式白名单守卫（问题 045）
+        //
+        // 放在**最前**——先于去重与限额。理由有二：
+        // 1. 这是**内容安全**判定，不是资源策略：图片 / 二进制一旦进了
+        //    编辑缓冲，屏幕上就是一屏乱码，用户还可能顺手 `Ctrl+S` 把它
+        //    写回去。任何「先让它进来、之后再拦」的顺序都留了这个窗口。
+        // 2. 白名单收窄后，上一版放行的文件可能**已经开着标签**；
+        //    「切回那个标签」若不拦，就成了绕过守卫的后门。
+        //
+        // 提示语用 `notice`（中性）而非 `error`（红色）：用户点了一个
+        // 图片文件不是异常，是「这个格式我们不支持」——红色错误框会让人
+        // 以为程序坏了。文案与文件树置灰行的悬停说明**同源**
+        // （[`Self::unsupported_format_notice`]）。
+        if !self.can_open_as_text(path) {
+            let notice = Self::unsupported_format_notice(path);
+            self.set_status_notice(notice);
+            return Ok(());
+        }
+        // 去重前先把请求路径归一化：库里存的是 `FilePath` 归一化形式
+        // （统一 `/` 分隔），而调用方给的可能是 OS 原生形态——Windows 的
+        // 拖放 / 原生对话框给的是 `\`。直接比字符串的话，同一文件从
+        // 「文件树」与「拖放」两条入口打开会被判成两个文档，重复标签
+        // （037 的去重被分隔符差异绕过；038 的限额测试以反斜杠路径
+        // 复现：去重不命中 → 落到限额拒绝 → 「切回已打开文档」被挡）。
+        let wanted = FilePath::new(path).ok();
+        let already_open = self.open_document_list().into_iter().find(|doc| {
+            doc.path.as_ref().is_some_and(|p| {
+                let stored = p.as_str();
+                stored.eq_ignore_ascii_case(path)
+                    || wanted.as_ref().is_some_and(|w| w.as_str() == stored)
+            })
+        });
+        if let Some(doc) = already_open {
+            // 切到既有标签：光标 / 滚动 / 查找状态一并复位（与手动切标签一致）。
+            self.switch_document(doc.id);
+            self.sidebar.selected_path = Some(path.to_string());
+            // 展开文件所在的全部祖先目录，否则文件树里看不到刚打开的文件。
+            // 用归一化路径：`expand_ancestors` 按 `/` 切段，OS 原生
+            // 反斜杠路径下它一段都切不出来。
+            if let Some(fp) = &wanted {
+                self.expand_ancestors(fp.as_str());
+            }
+            // 记录到最近文件：这条数据同时喂给欢迎页与导出默认目录。
+            // 即使文件早已打开，「再次打开」也该刷新它的最近次序。
+            if let Ok(file_path) = FilePath::new(path) {
+                let _ = self
+                    .services
+                    .workspace
+                    .touch_recent(TouchRecentCommand { path: file_path });
+            }
+            return Ok(());
+        }
+        // 数量限额：满了就地拒绝（提示而非错误——这是策略拒绝，不是异常）。
+        // 提示语带上限值：用户看到「12」才知道要去设置里调，否则只会困惑。
+        let limit = self.settings().editor.max_open_documents;
+        if self.open_document_list().len() >= limit as usize {
+            self.set_status_notice(format!(
+                "已达打开文档上限（{limit} 个），可先关闭部分标签或在设置里调整上限"
+            ));
+            return Ok(());
+        }
         let file_path = FilePath::new(path).map_err(|e| AppError::domain(e.to_string()))?;
         let id = self.services.documents.open(OpenFileCommand {
             path: file_path.clone(),
@@ -267,7 +351,7 @@ impl EditorApp {
         self.refresh_text();
         self.sidebar.selected_path = Some(path.to_string());
         // 展开文件所在的全部祖先目录，否则文件树里看不到刚打开的文件。
-        self.expand_ancestors(path);
+        self.expand_ancestors(file_path.as_str());
         // 记录到最近文件：这条数据同时喂给欢迎页与导出默认目录。
         let _ = self
             .services

@@ -99,9 +99,9 @@ fn frame(app: &mut EditorApp, ctx: &egui::Context) -> usize {
         )),
         ..Default::default()
     };
-    let out = ctx.run(input, |ctx| {
-        rustmark::presentation::theme::mapper::apply(ctx, &app.ui.theme);
-        rustmark::presentation::views::main_view::show(app, ctx);
+    let out = crate::support::run_ui(ctx, input, |ui| {
+        rustmark::presentation::theme::mapper::apply(ui.ctx(), &app.ui.theme);
+        rustmark::presentation::views::main_view::show(app, ui);
     });
     // `shapes` 是所有 clip 后的绘制指令；文字已经光栅化成
     // `TextureManager` 里的字形图，但每个字形仍对应一条 shape。
@@ -455,6 +455,74 @@ fn quick_open_matches_out_of_order_characters() {
     assert_eq!(hits.len(), 1, "子串匹配下 'abc' 命中不了 'a-b-c-file'");
 }
 
+/// 快速打开里点中**白名单外**的文件：不打开、不关浮层，只说明原因（问题 045）。
+///
+/// 「不关浮层」是这条用例的重点：关掉浮层会让这次点击看起来**生效了**——
+/// 用户以为文件开了，回头看标签却没变。留在浮层上，他还能立刻改选别的文件。
+#[test]
+fn quick_open_refuses_non_text_candidates_without_closing() {
+    let ws = tempfile::tempdir().expect("工作区");
+    std::fs::write(ws.path().join("note.md"), "# note\n").expect("应可写");
+    std::fs::write(ws.path().join("shot.png"), b"\x89PNG\r\n\x1a\n").expect("应可写");
+    let (_cfg, _ws2, mut app) = app_with_workspace(ws.path());
+
+    let ctx = egui::Context::default();
+    app.execute(UiAction::OpenDocument);
+    assert!(app.dialog.is_open(Overlay::QuickOpen), "浮层应先打开");
+
+    // 选中「shot.png」。按**完整路径**定位下标，不假设顺序——
+    // 排序规则变了不该让这条用例变成在测排序。
+    let list = quick_open_view::candidates(&app);
+    let index = list
+        .iter()
+        .position(|item| item.path.ends_with("shot.png"))
+        .expect("候选里应有 shot.png");
+    app.quick_open_ui.selected = index;
+
+    // 走键盘 Enter 路径：它与鼠标点击共用 `apply_pick`，但不必依赖坐标
+    // （浮层尺寸 / 行高一变，任何推导出来的落点都会失效）。
+    let input = egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(
+            egui::pos2(0.0, 0.0),
+            egui::vec2(1000.0, 700.0),
+        )),
+        events: vec![egui::Event::Key {
+            key: egui::Key::Enter,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Default::default(),
+        }],
+        ..Default::default()
+    };
+    crate::support::run_ui(&ctx, input, |ui| {
+        rustmark::presentation::theme::mapper::apply(ui.ctx(), &app.ui.theme);
+        rustmark::presentation::views::main_view::show(&mut app, ui);
+    });
+
+    assert!(
+        app.dialog.is_open(Overlay::QuickOpen),
+        "选中一个打不开的文件不该把浮层关掉（那会让用户以为已经生效）"
+    );
+    assert!(
+        app.open_document_list().iter().all(|d| d
+            .path
+            .as_ref()
+            .is_none_or(|p| !p.as_str().ends_with("shot.png"))),
+        "白名单外的候选不得被打开"
+    );
+    let notice = app
+        .status_bar
+        .message
+        .as_ref()
+        .map(|m| m.text.clone())
+        .unwrap_or_default();
+    assert!(
+        notice.contains("暂不支持打开该格式"),
+        "应说明原因，实际状态栏 = {notice:?}"
+    );
+}
+
 // ============================================================================
 // 符号面板
 // ============================================================================
@@ -614,7 +682,7 @@ fn every_symbol_glyph_is_renderable_under_the_real_font_setup() {
     let ctx = egui::Context::default();
     ctx.set_fonts(setup.definitions);
     // 必须先跑一帧，`fonts` 才可用。
-    let _ = ctx.run(egui::RawInput::default(), |_| {});
+    crate::support::run_ui(&ctx, egui::RawInput::default(), |_| {});
 
     let font = egui::FontId::proportional(14.0);
     let mut missing = Vec::new();

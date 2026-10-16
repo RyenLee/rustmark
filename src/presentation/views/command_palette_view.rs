@@ -42,7 +42,7 @@ pub const COMMAND_PALETTE_INPUT_ID: &str = "rustmark.command_palette.search";
 pub fn show(app: &mut EditorApp, ctx: &Context) {
     let mut open = true;
     egui::Window::new(Overlay::CommandPalette.title())
-        .id(egui::Id::new("rustmark.overlay.command_palette"))
+        .id(egui::Id::unique("rustmark.overlay.command_palette"))
         .open(&mut open)
         .collapsible(false)
         .resizable(true)
@@ -55,7 +55,7 @@ pub fn show(app: &mut EditorApp, ctx: &Context) {
     // `Memory::has_focus` 认不到窗口（`Area`）的 id，于是每帧都抢焦点，
     // 用户没法把焦点移到面板里的别处。详见 `DialogUiState::take_open_focus`。
     if app.dialog.take_open_focus(Overlay::CommandPalette) {
-        ctx.memory_mut(|m| m.request_focus(egui::Id::new(COMMAND_PALETTE_INPUT_ID)));
+        ctx.memory_mut(|m| m.request_focus(egui::Id::unique(COMMAND_PALETTE_INPUT_ID)));
     }
     if !open {
         app.command_palette_ui.open();
@@ -171,8 +171,8 @@ fn search_box(app: &mut EditorApp, ui: &mut Ui) {
     let edit = ui.put(
         rect,
         egui::TextEdit::singleline(&mut query)
-            .id(egui::Id::new(COMMAND_PALETTE_INPUT_ID))
-            .frame(false)
+            .id(egui::Id::unique(COMMAND_PALETTE_INPUT_ID))
+            .frame(egui::Frame::NONE)
             .desired_width(rect.width() - 24.0)
             .text_color(app.theme().text_primary)
             .hint_text("输入命令，如「保存」「主题」「预览」…"),
@@ -181,7 +181,7 @@ fn search_box(app: &mut EditorApp, ui: &mut Ui) {
         app.command_palette_ui.set_query(&query);
     }
     if response.clicked() {
-        ui.memory_mut(|m| m.request_focus(egui::Id::new(COMMAND_PALETTE_INPUT_ID)));
+        ui.memory_mut(|m| m.request_focus(egui::Id::unique(COMMAND_PALETTE_INPUT_ID)));
     }
 }
 

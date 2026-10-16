@@ -27,8 +27,10 @@ mod stats;
 mod support;
 
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::atomic::AtomicU64;
+use std::sync::{Arc, Mutex, RwLock};
 
+use crate::application::dto::StatsView;
 use crate::domain::document::repository::DocumentRepository;
 use crate::domain::document::services::BufferFactory;
 use crate::shared::encoding::TextEncoding;
@@ -58,6 +60,18 @@ pub struct DocumentAppService {
     /// 新建未保存的文档**不进表**——它没有编码可言，查询返回 `None`，
     /// 状态栏据此显示「—」而不是撒谎说 UTF-8。
     encodings: HashMap<DocumentId, TextEncoding>,
+    /// 字数统计缓存：`(文档 ID, 版本, 统计结果)`——单槽，只缓存最近查询的那份。
+    ///
+    /// 为何需要（问题 043）：`get_stats` 每帧被状态栏调 **两次**
+    /// （写作目标进度 + 字数项），每次都是 rope 全文快照 + O(全文) 统计。
+    /// 而统计结果只随「文档版本」变化——键带上 `revision`，文本没变的帧
+    /// 直接命中，语义与重算完全一致，不存在「数字滞后」。
+    ///
+    /// 为何单槽够用：同一帧内两个调用方查的都是**同一份**活动文档；
+    /// 切文档后第一次查询必然未命中并回填，也只是付一次本就要付的钱。
+    stats_cache: Mutex<Option<(DocumentId, u64, StatsView)>>,
+    /// 统计缓存命中次数（调试 / 测试断言用）。
+    pub stats_cache_hits: AtomicU64,
 }
 
 impl DocumentAppService {
@@ -76,6 +90,8 @@ impl DocumentAppService {
             buffer_factory,
             clock,
             encodings: HashMap::new(),
+            stats_cache: Mutex::new(None),
+            stats_cache_hits: AtomicU64::new(0),
         }
     }
 

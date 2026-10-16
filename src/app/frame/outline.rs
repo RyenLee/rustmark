@@ -95,10 +95,28 @@ impl EditorApp {
     /// 代价是每帧可能全盘扫描，故视图只在「搜索标签可见」时调用。
     /// 真要优化应加在应用层（那里才知道文件有多大），而不是让表现层
     /// 偷偷少搜几次——那会让「搜到了」与「搜全了」不再等价。
+    ///
+    /// # 范围切换器
+    ///
+    /// 「当前文档」只搜活动文档；此时若**没有**活动文档，返回空结果而
+    /// **不是**退化成跨文档搜索——那会让界面声明的「当前文档」范围
+    /// 静默变成别的范围，结果与用户看到的范围标签互相矛盾。
+    /// （空状态的文案由视图负责，这里只保证「没有就没有」。）
+    ///
+    /// 「打开的文档」只搜**标签栏里已打开的文档**：既与用户的工作上下文
+    /// 一致，也避免一次搜索读遍整个工作区目录（未打开的文件成百上千时，
+    /// 全盘读盘会让界面卡住；要找未打开的文件应走「快速打开」浮层）。
     pub fn search_workspace(&self) -> Option<WorkspaceSearch> {
         if !self.sidebar.should_search() {
             return Some(WorkspaceSearch::default());
         }
+        let only_document = match self.sidebar.search_scope {
+            SearchScope::CurrentDocument => match self.active_doc {
+                None => return Some(WorkspaceSearch::default()),
+                Some(id) => Some(id),
+            },
+            SearchScope::OpenDocuments => None,
+        };
         let result = self
             .services
             .workspace
@@ -107,6 +125,8 @@ impl EditorApp {
                 regex: self.sidebar.search_options.regex,
                 case_sensitive: self.sidebar.search_options.case_sensitive,
                 whole_word: self.sidebar.search_options.whole_word,
+                only_document,
+                only_open_documents: self.sidebar.search_scope == SearchScope::OpenDocuments,
             })
             .ok()?;
         Some(WorkspaceSearch {

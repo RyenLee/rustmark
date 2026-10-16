@@ -246,7 +246,7 @@ fn metrics_match_prototype_grid() {
     assert_eq!(m.statusbar_height, 24.0, "--statusbar-h");
     assert_eq!(m.tabbar_height, 28.0, "--tabbar-h");
     assert_eq!(m.tabstrip_height, 32.0, "--tabstrip-h");
-    assert_eq!(m.sidebar_width, 240.0, "--sidebar-w");
+    assert_eq!(m.sidebar_width, 308.0, "--sidebar-w");
     assert_eq!(m.divider_width, 4.0, "--divider-w");
     assert_eq!(m.radius_button, 6.0, "--radius-btn");
     assert_eq!(m.radius_card, 8.0, "--radius-card");
@@ -666,14 +666,17 @@ fn apply_writes_theme_into_egui_context() {
 
     let dark = Theme::dark();
     apply(&ctx, &dark);
-    assert!(ctx.style().visuals.dark_mode, "深色主题应设置 dark_mode");
+    assert!(
+        ctx.style_of(ctx.theme()).visuals.dark_mode,
+        "深色主题应设置 dark_mode"
+    );
     assert_eq!(
-        ctx.style().visuals.panel_fill,
+        ctx.style_of(ctx.theme()).visuals.panel_fill,
         dark.bg_secondary,
         "面板底色应来自主题"
     );
     assert_eq!(
-        ctx.style().visuals.code_bg_color,
+        ctx.style_of(ctx.theme()).visuals.code_bg_color,
         dark.code_bg,
         "代码块底色应来自主题"
     );
@@ -681,11 +684,17 @@ fn apply_writes_theme_into_egui_context() {
     // 切到浅色，同一个 Context 必须立刻变——不重建窗口。
     let light = Theme::light();
     apply(&ctx, &light);
-    assert!(!ctx.style().visuals.dark_mode, "浅色主题应清除 dark_mode");
-    assert_eq!(ctx.style().visuals.panel_fill, light.bg_secondary);
+    assert!(
+        !ctx.style_of(ctx.theme()).visuals.dark_mode,
+        "浅色主题应清除 dark_mode"
+    );
+    assert_eq!(
+        ctx.style_of(ctx.theme()).visuals.panel_fill,
+        light.bg_secondary
+    );
 
     // 编辑区字号也应随之改变。
-    let size = ctx.style().text_styles[&egui::TextStyle::Monospace].size;
+    let size = ctx.style_of(ctx.theme()).text_styles[&egui::TextStyle::Monospace].size;
     assert!(
         (size - light.editor_font_size).abs() < 0.01,
         "编辑区字号应来自主题，实际 {size}"
@@ -706,7 +715,7 @@ fn apply_sets_readable_caret_and_selection_for_both_themes() {
 
     for theme in [Theme::dark(), Theme::light()] {
         apply(&ctx, &theme);
-        let visuals = ctx.style().visuals.clone();
+        let visuals = ctx.style_of(ctx.theme()).visuals.clone();
 
         assert_eq!(
             visuals.selection.stroke.color, theme.text_primary,
@@ -735,10 +744,10 @@ fn light_theme_does_not_inherit_egui_dark_cursor_default() {
 
     // 先应用深色，再切浅色：浅色必须把光标色重算一遍。
     apply(&ctx, &Theme::dark());
-    let dark_caret = ctx.style().visuals.text_cursor.stroke.color;
+    let dark_caret = ctx.style_of(ctx.theme()).visuals.text_cursor.stroke.color;
 
     apply(&ctx, &Theme::light());
-    let light_caret = ctx.style().visuals.text_cursor.stroke.color;
+    let light_caret = ctx.style_of(ctx.theme()).visuals.text_cursor.stroke.color;
 
     assert_ne!(
         light_caret,

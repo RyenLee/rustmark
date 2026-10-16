@@ -712,7 +712,8 @@ mod tests {
         // `set_fonts` 会引发字体解析；若字体格式不被支持（如彩色 emoji 字体），
         // 这一步就会 panic——而本项目是 `panic = "abort"`，故这条测试同时守护了那个风险。
         ctx.set_fonts(setup.definitions);
-        let _ = ctx.run(egui::RawInput::default(), |_| {});
+        ctx.run_ui(egui::RawInput::default(), |_| {})
+            .drop_without_applying_deltas();
 
         let font = egui::FontId::proportional(14.0);
         let chinese = "中文编辑器文档预览测试";
@@ -854,7 +855,8 @@ mod tests {
         let setup = font_definitions(Some(&source.key));
         let ctx = egui::Context::default();
         ctx.set_fonts(setup.definitions);
-        let _ = ctx.run(egui::RawInput::default(), |_| {});
+        ctx.run_ui(egui::RawInput::default(), |_| {})
+            .drop_without_applying_deltas();
         // 中文仍须有字形（选中字体多半没有中文字形，靠 CJK 兜底）。
         let mono = egui::FontId::monospace(14.0);
         let has = ctx.fonts_mut(|f| f.has_glyphs(&mono, "中文编辑器"));
@@ -963,7 +965,8 @@ mod tests {
         let setup = font_definitions(None);
         let ctx = egui::Context::default();
         ctx.set_fonts(setup.definitions);
-        let _ = ctx.run(egui::RawInput::default(), |_| {});
+        ctx.run_ui(egui::RawInput::default(), |_| {})
+            .drop_without_applying_deltas();
 
         let font = egui::FontId::proportional(16.0);
         // 挑几个西文与中文字体都没有、只有数学字体有的符号。
@@ -1057,7 +1060,8 @@ mod tests {
         extend_with_builtin_cjk(&mut defs);
         let ctx = egui::Context::default();
         ctx.set_fonts(defs);
-        let _ = ctx.run(egui::RawInput::default(), |_| {});
+        ctx.run_ui(egui::RawInput::default(), |_| {})
+            .drop_without_applying_deltas();
 
         // GB2312 常用汉字 + 中文标点（缺标点会让中文排版断在标点上）。
         let text = "中文编辑器文档预览测试，。、「」";

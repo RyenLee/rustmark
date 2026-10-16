@@ -65,9 +65,9 @@ fn frame(app: &mut EditorApp, ctx: &egui::Context) -> usize {
         )),
         ..Default::default()
     };
-    let out = ctx.run(input, |ctx| {
-        rustmark::presentation::theme::mapper::apply(ctx, &app.ui.theme);
-        rustmark::presentation::views::main_view::show(app, ctx);
+    let out = crate::support::run_ui(ctx, input, |ui| {
+        rustmark::presentation::theme::mapper::apply(ui.ctx(), &app.ui.theme);
+        rustmark::presentation::views::main_view::show(app, ui);
     });
     out.shapes.len()
 }
@@ -451,7 +451,7 @@ fn the_search_box_takes_focus_when_open() {
     app.execute(UiAction::CommandPalette);
     frames(&mut app, &ctx, 3);
     assert!(
-        ctx.memory(|m| m.has_focus(egui::Id::new(
+        ctx.memory(|m| m.has_focus(egui::Id::unique(
             command_palette_view::COMMAND_PALETTE_INPUT_ID
         ))),
         "面板打开后焦点应落在搜索框"

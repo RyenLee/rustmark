@@ -55,6 +55,9 @@ impl EditorApp {
     }
 
     /// 当前文档的面包屑路径；无活动文档或无路径时返回「未命名文档」。
+    ///
+    /// 走轻量摘要而非 `get_document`：面包屑每帧都取，后者要付一次
+    /// 全文快照只为拿一个路径（问题 043）。
     pub fn current_document_path(&self) -> String {
         let Some(id) = self.active_doc else {
             return "未命名文档".to_string();
@@ -62,7 +65,7 @@ impl EditorApp {
         match self
             .services
             .documents
-            .get_document(GetDocumentQuery { id })
+            .get_tab_summary(GetDocumentQuery { id })
         {
             Ok(view) => view
                 .path
@@ -161,7 +164,20 @@ impl EditorApp {
     ///
     /// 「切换」而不只是「创建」：用户在欢迎页点「新建文件」期待的是
     /// **立刻能打字**，若只是建了文档却仍停在旧标签，他会以为按钮坏了。
+    ///
+    /// # 打开文档数量上限（问题 038）
+    ///
+    /// 新建也是「多开一个标签」，与 [`Self::open_workspace_file`] 同一条
+    /// 限额规则。注意 [`Self::ensure_document`] 的兜底**不经这里**
+    /// （那时列表为空，永远够名额），不会把编辑区卡在「一页都没有」。
     pub fn new_document(&mut self) -> AppResult<()> {
+        let limit = self.settings().editor.max_open_documents;
+        if self.open_document_list().len() >= limit as usize {
+            self.set_status_notice(format!(
+                "已达打开文档上限（{limit} 个），可先关闭部分标签或在设置里调整上限"
+            ));
+            return Ok(());
+        }
         let id = self.services.documents.new_document(NewDocumentCommand)?;
         self.active_doc = Some(id);
         self.find.on_document_switched(id);
@@ -187,6 +203,84 @@ impl EditorApp {
         // 内容没变但「已保存」状态变了，仍要回读让脏标记与标签标题一致。
         self.refresh_text();
         Ok(())
+    }
+
+    /// 保存**全部**已修改文档（`Ctrl+Alt+S` / 「文件 → 保存全部」）。
+    ///
+    /// # 为什么不在 `execute` 里循环调 `save_document`
+    ///
+    /// `save_document` 存的是**活动**文档；这里要的是「所有脏文档」。
+    /// 且未命名文档没有路径，领域必然拒绝——若逐个调 `save_document`，
+    /// 得自己在调用处处理「哪个有路径、哪个没有」，那段逻辑放在视图或
+    /// 动作分支里都会与单文档保存的真实语义漂移。
+    ///
+    /// # 未命名文档：计数提示，不弹对话框
+    ///
+    /// 一次批量保存不可能连着弹 N 个系统对话框。未命名文档缺的是**路径**，
+    /// 用户自己知道要先「另存为」，故单独计数并在提示里说清，
+    /// 不让它们以「保存失败」的面貌出现。
+    ///
+    /// # 失败不中断
+    ///
+    /// 某个文档写盘失败（磁盘满 / 权限）不应让后面的脏文档一个都存不下来——
+    /// 逐个 `save` 各自捕获错误，最后汇总成一条状态栏提示。
+    pub(super) fn save_all_documents(&mut self) {
+        let dirty: Vec<TabSummary> = self
+            .open_document_list()
+            .into_iter()
+            .filter(|doc| doc.is_dirty)
+            .collect();
+        if dirty.is_empty() {
+            self.set_status_notice("没有未保存的文档");
+            return;
+        }
+        let mut saved = 0usize;
+        let mut unnamed = 0usize;
+        let mut failed: Vec<String> = Vec::new();
+        for doc in &dirty {
+            if doc.path.is_none() {
+                unnamed += 1;
+                continue;
+            }
+            match self.services.documents.save(SaveCommand {
+                id: doc.id,
+                save_as: false,
+            }) {
+                Ok(()) => {
+                    saved += 1;
+                    // 与单文档保存同一条后守：草稿失去意义，清掉以免
+                    // 下次启动误报「待恢复」。
+                    let _ = self
+                        .services
+                        .documents
+                        .clear_draft(&self.services.drafts_dir, doc.id);
+                }
+                Err(e) => {
+                    let name = doc
+                        .path
+                        .as_ref()
+                        .map(|p| Self::display_name(p.as_str()).to_string())
+                        .unwrap_or_else(|| doc.title.clone());
+                    failed.push(format!("{name}：{e}"));
+                }
+            }
+        }
+        // 脏标记与标签标题要回读：保存后 `is_dirty` 变了，
+        // 不回读会出现「内容已存盘但标签还显示脏点」。
+        self.refresh_text();
+        let mut message = format!("已保存 {saved} 个文档");
+        if unnamed > 0 {
+            message.push_str(&format!("；{unnamed} 个未命名文档需先另存为"));
+        }
+        if failed.is_empty() {
+            self.set_status_notice(message);
+        } else {
+            self.set_status_error(&format!(
+                "{message}；{} 个保存失败：{}",
+                failed.len(),
+                failed.join("；")
+            ));
+        }
     }
 
     /// 自动保存节拍（DEF-02 修复）。
@@ -229,7 +323,7 @@ impl EditorApp {
             .and_then(|id| {
                 self.services
                     .documents
-                    .get_document(GetDocumentQuery { id })
+                    .get_tab_summary(GetDocumentQuery { id })
                     .ok()
             })
             .is_some_and(|v| v.is_dirty)
@@ -239,30 +333,52 @@ impl EditorApp {
     ///
     /// 按**扩展名**判定而非写死「Markdown」：编辑器能打开 `.txt`，
     /// 状态栏却显示「Markdown」会让用户怀疑自己打开了错的文件。
+    /// 扩展名提取与展示名都取自 [`crate::shared::text_format`]（唯一出处）——
+    /// 在这里另写一张匹配表，就会出现「白名单加了一种格式、状态栏却仍然
+    /// 显示『纯文本』」的漂移。
     pub fn current_document_kind(&self) -> &'static str {
         let Some(id) = self.active_doc else {
-            return "纯文本";
+            return text_format::display_name("");
         };
         let ext = self
             .services
             .documents
-            .get_document(GetDocumentQuery { id })
+            .get_tab_summary(GetDocumentQuery { id })
             .ok()
             .and_then(|v| v.path)
-            .map(|p| {
-                let name = p.file_name();
-                name.rfind('.')
-                    .filter(|i| *i + 1 < name.len())
-                    .map(|i| name[i + 1..].to_ascii_lowercase())
-                    .unwrap_or_default()
-            })
-            .unwrap_or_default();
-        match ext.as_str() {
-            "md" | "markdown" | "mdown" | "mkd" => "Markdown",
-            "txt" | "text" => "纯文本",
-            "rst" => "reStructuredText",
-            _ => "Markdown",
+            // 走到这里路径已是 `FilePath`（归一化过），故用值对象自己的
+            // `extension()`；它与 `text_format::extension_of` 同源。
+            .and_then(|p| p.extension().map(str::to_string));
+        match ext {
+            Some(ext) => text_format::display_name(&ext),
+            None => text_format::display_name(""),
         }
+    }
+
+    /// 该路径能否**作为文本**打开（问题 045）。
+    ///
+    /// 文件树置灰、双击拦截、拖放分类、打开守卫共用这一条判据；
+    /// 实现体只查 [`TextFormats`]，不碰磁盘（扩展名判定零 IO，
+    /// 可以安全地放进每帧的渲染循环）。
+    pub fn can_open_as_text(&self, path: &str) -> bool {
+        self.text_formats.accepts(path)
+    }
+
+    /// 非白名单格式的拒绝提示文案（唯一出处）。
+    ///
+    /// 关联函数而非 `&self` 方法：表现层要在**置灰的行**上直接用同一句话
+    /// 做悬停说明，那时手边不一定有可变借用。
+    pub fn unsupported_format_notice(path: &str) -> String {
+        let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
+        format!("暂不支持打开该格式：{name}")
+    }
+
+    /// 把「该格式暂不支持」报到状态栏。
+    ///
+    /// 文件树双击非白名单文件时调用——那条路径**不**走打开管线
+    /// （入口已禁用），但仍要给用户一个原因，否则表现得像「点了没反应」。
+    pub fn report_unsupported_format(&mut self, path: &str) {
+        self.set_status_notice(Self::unsupported_format_notice(path));
     }
 
     /// 打开最近文件列表（按最近使用降序）。
@@ -298,7 +414,8 @@ impl EditorApp {
     /// 下一帧即清空，因此每帧读一次即可，无需手动消费或去重。
     ///
     /// 行为（推荐方案）：
-    /// - 按扩展名分类（`classify_dropped`）——`.md` / `.markdown` / `.txt` 视为可打开文本，
+    /// - 按扩展名分类（`classify_dropped`，判据是**全应用唯一**的格式白名单）——
+    ///   白名单内（内置：`md` / `markdown` / `mdown` / `mkd` / `txt` / `text` / `csv`）
     ///   逐个打开为标签；其余扩展名拒绝并在状态栏提示；
     /// - 拖入无本地路径的「虚拟文件」（如浏览器拖拽）忽略；
     /// - 一次拖入多个文件：全部可识别的都打开（批量），不截断到第一个；
@@ -306,11 +423,12 @@ impl EditorApp {
     ///   会被当作文本交给 `open_path`，最终以「无法读取文件」报错——
     ///   一次误拖换来一条误导性的红色错误。目录不是异常，提示语用「忽略」不用「拒绝」。
     pub(super) fn handle_dropped_files(&mut self, ctx: &egui::Context) {
+        // egui 0.37 起 `DroppedFile` 是 trait，`path()` 返回 `&Path`（必存在，不再是 `Option`）。
         let dropped: Vec<String> = ctx.input(|i| {
             i.raw
                 .dropped_files
                 .iter()
-                .filter_map(|f| f.path.as_ref().map(|p| p.to_string_lossy().to_string()))
+                .map(|f| f.path().to_string_lossy().to_string())
                 .collect()
         });
         if dropped.is_empty() {
@@ -325,15 +443,26 @@ impl EditorApp {
             .into_iter()
             .filter(|p| !std::path::Path::new(p.as_str()).is_dir())
             .collect();
-        let (open, reject) = classify_dropped(&files);
+        // 分类用**应用持有的那份**白名单（而非内置常量）：将来接设置页允许
+        // 用户追加扩展名时，拖放会跟着一起放行，不必再改这里。
+        let (open, reject) = classify_dropped(&self.text_formats, &files);
         for p in &open {
             let _ = self.open_path(p);
         }
         // 组装「打开了什么、忽略了什么」的提示：两类忽略原因分开说清，
         // 否则用户无法区分「格式不支持」与「拖了个文件夹」。
+        //
+        // 只拖入**一个**不支持的文件时走单句提示（与文件树双击、快速打开
+        // 同一句，见 [`Self::unsupported_format_notice`]）：套上
+        // 「已打开 0 个文件；1 个…已忽略」的汇总句式反而像模板消息，
+        // 用户看到的是「发生了点事」而不是「这个文件打不开」。
+        if open.is_empty() && dir_count == 0 && reject.len() == 1 {
+            self.set_status_notice(Self::unsupported_format_notice(&reject[0]));
+            return;
+        }
         let mut skipped: Vec<String> = Vec::new();
         if !reject.is_empty() {
-            skipped.push(format!("{} 个非 Markdown / 文本文件", reject.len()));
+            skipped.push(format!("{} 个暂不支持打开的格式", reject.len()));
         }
         if dir_count > 0 {
             skipped.push(format!("{dir_count} 个目录"));

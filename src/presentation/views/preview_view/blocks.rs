@@ -2,10 +2,149 @@
 
 use egui::Stroke;
 
+use crate::application::dto::{ImageSpecView, InlineImageView, RangeView, SpanView};
+
 use crate::presentation::theme::mapper::StyleMapper;
 
 use super::inline::{Typography, render_inline_text};
+use super::media::draw_image_spec;
 use super::*;
+
+/// 「文字流 + 行内图片」切分后的一个片段。
+enum FlowPart<'a> {
+    /// 一段文字（借用所属文本），带落在本段内的样式片段。
+    Text(&'a str, Vec<SpanView>),
+    /// 一张图片。
+    Image(&'a ImageSpecView),
+}
+
+/// 渲染「文字流 + 混排图片」：图片按它在文字里的位置插回文本流。
+///
+/// # 为什么要切段
+///
+/// 图片是行内元素，`前面 ![a](u.png) 后面` 的图文是**同一段文字**。
+/// 早期实现只要块里有图片就把整块换成图片块，于是图片前后的文字全部消失
+/// （问题 032）。现在块保持本来类型，图片挂在块上（`BlockView::images`），
+/// 这里按区间把文字切成若干段、在图片的位置插入图片，文字一张不丢。
+///
+/// # 图片为什么独占一行
+///
+/// 预览区的行内文本是**手工排版**（`render_inline_text` 自算 galley），
+/// 没有开放的「横向流式布局」可供插入任意高度的小部件；让图片与前后文字
+/// 同行需要重写整套排版。故图片按 `#pic_*` 的对齐方式单独占一行——
+/// 视觉上等价于 Typora 里「图片前后有文字」的常见观感，且实现可靠。
+#[allow(clippy::too_many_arguments)] // 与 `render_inline_text` 同族：在其九项上下文之上多一组「行内图片」，打包成 struct 会让每个调用方多一次所有权转换
+pub(super) fn draw_text_with_images(
+    app: &mut EditorApp,
+    ui: &mut Ui,
+    theme: &Theme,
+    content: &str,
+    spans: &[SpanView],
+    images: &[InlineImageView],
+    typo: Typography<'_>,
+    sense: egui::Sense,
+    max_w: f32,
+    internal_targets: &[(String, u64)],
+) -> egui::Response {
+    if images.is_empty() {
+        return render_inline_text(
+            ui,
+            app,
+            theme,
+            content,
+            spans,
+            typo,
+            sense,
+            max_w,
+            internal_targets,
+        );
+    }
+    let mut last = None;
+    for part in split_text_by_images(content, spans, images) {
+        match part {
+            FlowPart::Text(text, part_spans) => {
+                // 点击语义（标题跳转）取**最后一段**文字的响应：前几段文字
+                // 在图之前，用户点到图后面的字时同样期待跳转。
+                last = Some(render_inline_text(
+                    ui,
+                    app,
+                    theme,
+                    text,
+                    &part_spans,
+                    typo,
+                    sense,
+                    max_w,
+                    internal_targets,
+                ));
+            }
+            FlowPart::Image(spec) => draw_image_spec(app, ui, theme, spec),
+        }
+    }
+    // 整块只有图（文字全被图片占位吃掉）时没有文字响应，返回一个零尺寸
+    // 响应，调用方的 `resp.clicked()` 判定才不会拿到悬空值。
+    last.unwrap_or_else(|| {
+        let rect = ui.allocate_space(egui::vec2(0.0, 0.0)).1;
+        ui.interact(rect, ui.scope_id().with("flow_empty"), sense)
+    })
+}
+
+/// 按图片区间把文字切成「文字段 / 图片」序列。
+///
+/// 切点必须落在 UTF-8 字符边界上：图片区间来自解析期的 `content.len()`
+/// 快照（必然是边界），但**防御性地再对齐一次**——渲染层拿到的文本可能因
+/// 增量重渲染与图片区间短暂不一致，直接切片会 panic。
+fn split_text_by_images<'a>(
+    content: &'a str,
+    spans: &[SpanView],
+    images: &'a [InlineImageView],
+) -> Vec<FlowPart<'a>> {
+    let mut parts: Vec<FlowPart<'a>> = Vec::new();
+    let mut cursor = 0usize;
+    for inline in images {
+        let mut start = inline.range.start.min(content.len());
+        let mut end = inline.range.end.min(content.len());
+        while start > cursor && !content.is_char_boundary(start) {
+            start -= 1;
+        }
+        while end > start && !content.is_char_boundary(end) {
+            end -= 1;
+        }
+        if start > cursor {
+            parts.push(FlowPart::Text(
+                content.get(cursor..start).unwrap_or_default(),
+                spans_in_range(spans, cursor, start),
+            ));
+        }
+        parts.push(FlowPart::Image(&inline.image));
+        cursor = cursor.max(end);
+    }
+    if cursor < content.len() {
+        parts.push(FlowPart::Text(
+            content.get(cursor..).unwrap_or_default(),
+            spans_in_range(spans, cursor, content.len()),
+        ));
+    }
+    parts
+}
+
+/// 取落在 `[start, end)` 内的样式片段，并把区间平移到该段自己的坐标系。
+///
+/// 与解析期 `trim_spans` 同源的偏移修正：片段原本相对整块 `content`，
+/// 切段后若不减掉段起点，粗体 / 链接会整段偏到别的字上。
+fn spans_in_range(spans: &[SpanView], start: usize, end: usize) -> Vec<SpanView> {
+    spans
+        .iter()
+        .filter(|s| s.range.end > start && s.range.start < end)
+        .map(|s| SpanView {
+            range: RangeView::new(
+                s.range.start.saturating_sub(start),
+                s.range.end.min(end).saturating_sub(start),
+            ),
+            style: s.style.clone(),
+            url: s.url.clone(),
+        })
+        .collect()
+}
 
 /// 标题：级别决定字号与留白（h1 最大，逐级递减）。
 ///
@@ -41,12 +180,13 @@ pub(super) fn draw_heading(
     } else {
         f32::INFINITY
     };
-    let resp = render_inline_text(
-        ui,
+    let resp = draw_text_with_images(
         app,
+        ui,
         theme,
         &block.content,
         &block.spans,
+        &block.images,
         Typography {
             size,
             line_height: size * theme.metrics.preview_line_height,
@@ -88,12 +228,13 @@ pub(super) fn draw_paragraph(
     } else {
         f32::INFINITY
     };
-    render_inline_text(
-        ui,
+    draw_text_with_images(
         app,
+        ui,
         theme,
         &block.content,
         &block.spans,
+        &block.images,
         Typography {
             size,
             line_height: size * theme.metrics.preview_line_height,
@@ -141,12 +282,13 @@ pub(super) fn draw_quote(
                     } else {
                         f32::INFINITY
                     };
-                    render_inline_text(
-                        ui,
+                    draw_text_with_images(
                         app,
+                        ui,
                         theme,
                         &block.content,
                         &block.spans,
+                        &block.images,
                         Typography {
                             size: theme.metrics.preview_font_size,
                             line_height: theme.metrics.preview_font_size

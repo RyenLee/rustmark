@@ -38,7 +38,7 @@ pub const SYMBOL_INPUT_ID: &str = "rustmark.symbol.search";
 pub fn show(app: &mut EditorApp, ctx: &Context) {
     let mut open = true;
     egui::Window::new(Overlay::Symbol.title())
-        .id(egui::Id::new("rustmark.overlay.symbol"))
+        .id(egui::Id::unique("rustmark.overlay.symbol"))
         .open(&mut open)
         .collapsible(false)
         .resizable(true)
@@ -50,7 +50,7 @@ pub fn show(app: &mut EditorApp, ctx: &Context) {
     // 会每帧抢焦点、让用户没法把焦点移到面板里的别处。
     // 详见 `DialogUiState::take_open_focus`。
     if app.dialog.take_open_focus(Overlay::Symbol) {
-        ctx.memory_mut(|m| m.request_focus(egui::Id::new(SYMBOL_INPUT_ID)));
+        ctx.memory_mut(|m| m.request_focus(egui::Id::unique(SYMBOL_INPUT_ID)));
     }
     if !open {
         app.symbol_ui.open();
@@ -139,7 +139,7 @@ fn search_box(app: &mut EditorApp, ui: &mut Ui) {
         if ui
             .add(
                 egui::TextEdit::singleline(&mut query)
-                    .id(egui::Id::new(SYMBOL_INPUT_ID))
+                    .id(egui::Id::unique(SYMBOL_INPUT_ID))
                     .hint_text("按名称筛选，如「星」「列表」「代码块」")
                     .desired_width(ui.available_width() - 48.0),
             )

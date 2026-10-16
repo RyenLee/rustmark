@@ -107,6 +107,8 @@ pub struct Snapshot {
     pub show_line_numbers: bool,
     /// 格式检查规则开关（V11-08）。
     pub lint: LintRulesView,
+    /// 打开文档数量上限（问题 038）。
+    pub max_open_documents: u32,
 }
 
 impl Snapshot {
@@ -191,8 +193,9 @@ impl SettingsUiState {
 
     /// 当前标签是否支持「恢复本组默认」。
     ///
-    /// 「快捷键」返回 `false`：它有独立的「恢复默认快捷键」按钮
-    /// （走同一个领域能力，但文案与位置都不同）。
+    /// 「快捷键」返回 `false`：它的重置走页脚的「恢复默认快捷键」按钮
+    /// （问题 038 从分区列表底部移来），文案与分区都不同——
+    /// 「恢复本组默认」的文案对快捷键分区会显得不知所云。
     pub fn can_reset_section(&self) -> bool {
         matches!(
             self.section.resettable_section(),
@@ -284,6 +287,7 @@ mod tests {
             spell_check: false,
             show_line_numbers: false,
             lint: LintRulesView::default(),
+            max_open_documents: 12,
         }
     }
 

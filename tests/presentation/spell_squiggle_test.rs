@@ -9,7 +9,7 @@ use rustmark::presentation::theme::mapper::{SpellMark, highlight_layout, squiggl
 
 fn test_ctx() -> egui::Context {
     let ctx = egui::Context::default();
-    let _ = ctx.run(egui::RawInput::default(), |_| {});
+    crate::support::run_ui(&ctx, egui::RawInput::default(), |_| {});
     ctx
 }
 

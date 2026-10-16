@@ -95,7 +95,7 @@ pub(super) fn appearance(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
         if ui
             .add(
                 egui::TextEdit::singleline(&mut family)
-                    .id(egui::Id::new(FONT_INPUT_ID))
+                    .id(egui::Id::unique(FONT_INPUT_ID))
                     .desired_width(150.0)
                     .hint_text("自定义"),
             )

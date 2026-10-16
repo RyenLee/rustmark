@@ -49,8 +49,8 @@ use pulldown_cmark::{DefaultBrokenLinkCallback, Event, OffsetIter, Options, Pars
 use crate::domain::markdown::errors::ParseError;
 use crate::domain::markdown::services::MarkdownParser;
 use crate::domain::markdown::value_objects::{
-    BlockId, BlockKind, DefinitionBody, DefinitionEntry, InlineSpan, InlineStyle, ListItem,
-    RenderedBlock, TableData,
+    BlockId, BlockKind, DefinitionBody, DefinitionEntry, InlineImage, InlineSpan, InlineStyle,
+    ListItem, RenderedBlock, TableData,
 };
 use crate::shared::geometry::{ByteOffset, TextRange};
 
@@ -60,10 +60,11 @@ use event_map::{
     trim_spans,
 };
 use stack::{
-    OpenBlock, flush_inline_text, math_body_if_standalone, nearest_producer, push_content,
+    OpenBlock, PendingImage, flush_inline_text, has_text_outside_images, math_body_if_standalone,
+    nearest_producer, push_content, shifted_images,
 };
 
-pub use image_size::{SourceOffsets, desugar_image_sizes};
+pub use image_size::{SourceOffsets, desugar_image_sizes, image_display_at_source};
 
 /// 解析器使用的 pulldown-cmark 选项集（对应需求文档 §3.1 的 P0 特性）。
 ///

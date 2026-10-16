@@ -17,15 +17,36 @@ pub(super) fn handle_end(
     // 图片闭合：此刻方括号里的文本已并入父块 content，
     // 用 Start 时记下的长度把它截出来，覆盖掉占位用的 title。
     if matches!(tag_end, TagEnd::Image) {
-        if let Some(top) = state.stack.last_mut()
-            && let Some(mark) = top.image_mark.take()
-        {
-            let captured = top.content[mark..].trim().to_string();
-            if !captured.is_empty()
-                && let Some((alt, _)) = top.image.as_mut()
-            {
-                *alt = captured;
-            }
+        if let Some(top) = state.stack.last_mut() {
+            let Some(pending) = top.image_open.take() else {
+                return;
+            };
+            // 方括号里的文本已并入本帧 content，用 Start 时记下的起点把它截出来。
+            let end = top.content.len();
+            let captured = top
+                .content
+                .get(pending.start.min(end)..end)
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            let alt = if captured.is_empty() {
+                pending.title
+            } else {
+                captured
+            };
+            // 显示参数（`#pic_center` / ` =30x30`）已在脱糖时从**解析副本**
+            // 删掉，但原文（`text`）完好：`End(Image)` 区间终点紧跟本图 `)`，
+            // 在此精确取回（问题 3）。
+            let display = image_display_at_source(text, range.end);
+            top.images.push(InlineImage::new(
+                TextRange::new(
+                    ByteOffset::new(pending.start.min(end)),
+                    ByteOffset::new(end),
+                ),
+                alt,
+                pending.url,
+                display,
+            ));
         }
         return;
     }
@@ -142,9 +163,14 @@ pub(super) fn handle_end(
         let range = open.range(end, text);
         let (item_text, item_spans) =
             strip_task_marker(&open.content, std::mem::take(&mut open.spans));
+        // 图片区间跟着任务标记的裁剪一起左移（与 `item_spans` 同源的偏移修正）：
+        // `- [x] ![图标](u.png) 已核对` 砍掉 `[x] ` 后，图标区间必须同步前移。
+        let removed = open.content.len().saturating_sub(item_text.len());
+        let images = shifted_images(&open.images, i64::try_from(removed).map_or(0, |v| -v));
         let mut item = ListItem::new(item_text, open.item_checked, range)
             .with_depth(depth)
-            .with_spans(item_spans);
+            .with_spans(item_spans)
+            .with_images(images);
         if let Some(n) = ordinal {
             item = item.with_ordinal(n);
         }
@@ -180,6 +206,16 @@ pub(super) fn handle_end(
     if matches!(open.kind, Some(BlockKind::Paragraph))
         && let Some(owner) = absorbing_index(&state.stack)
     {
+        // 段落里的图片要跟着文字一起上行：引用 / 列表项的正文正是靠这条
+        // 路径回流的，图片区间若不带走，`> ![a](u.png)` 里的图就消失了。
+        // 基准取「owner 现有长度 - 本段长度」：本段文字是**整体拼在末尾**的
+        // （`pending_break` 补的换行也在这段之前，一并被减法吸收）。
+        let base = state.stack[owner]
+            .content
+            .len()
+            .saturating_sub(open.content.len());
+        let carried = shifted_images(&open.images, i64::try_from(base).unwrap_or(i64::MAX));
+        state.stack[owner].images.extend(carried);
         state.stack[owner].pending_break = true;
         return;
     }
@@ -212,6 +248,9 @@ pub(super) fn handle_end(
                 span.style(),
             ));
         }
+        // 内层引用的图片随文字一起搬给外层（同上：不带走就丢了）。
+        let carried = shifted_images(&open.images, i64::try_from(base).unwrap_or(i64::MAX));
+        state.stack[owner].images.extend(carried);
         return;
     }
 
@@ -230,15 +269,28 @@ pub(super) fn handle_end(
         return;
     }
 
-    // 图片：产出携带 `alt` / `url` 的独立块（供 S5-11 加载资源）。
-    if let Some((alt, url)) = open.image.take() {
-        state.blocks.push(RenderedBlock::new(
-            BlockId::from_u64(state.next_id),
-            BlockKind::Image { alt, url },
-            open.range(end, text),
-            open.content,
-        ));
-        state.next_id += 1;
+    // ---- 图片：整块文字**就是**图片时升级为图片块 ----
+    //
+    // 只有「除图片外没有别的文字」时替换才没有代价。图片是行内元素，
+    // 它前后还能写字（`前面 ![a](u.png) 后面`）；此时若把整块换成图片块，
+    // 那些字就随块一起消失——用户看到的就是「插入图片后前面的文案被吞了」
+    // （问题 032）。故混排场合保持块的本来类型，图片以**行内图片**挂在块上，
+    // 由渲染方插回文字流的对应位置。
+    if !open.images.is_empty() && !has_text_outside_images(&open.content, &open.images) {
+        let range = open.range(end, text);
+        for image in std::mem::take(&mut open.images) {
+            state.blocks.push(RenderedBlock::new(
+                BlockId::from_u64(state.next_id),
+                BlockKind::Image {
+                    alt: image.alt().to_string(),
+                    url: image.url().to_string(),
+                    display: image.display(),
+                },
+                range,
+                open.content.clone(),
+            ));
+            state.next_id += 1;
+        }
         return;
     }
 
@@ -306,10 +358,15 @@ pub(super) fn handle_end(
     // 先移走字段再借用会触发 E0382（部分移动后借用）。
     let range = open.range(end, text);
     let mut spans = std::mem::take(&mut open.spans);
+    // 混排图片：区间相对**本帧收集到的** `content`，故内容被整体换掉的块
+    // （公式本体 / 目录标题 / 列表与定义列表的重建扁平文本）必须一并丢弃——
+    // 留着会让渲染方拿着对不上的区间去切字符串。
+    let mut images = std::mem::take(&mut open.images);
     let content = match (&kind, promoted_math) {
         // 公式块的内容换成「公式本体」，区间不再对应 → 丢弃。
         (BlockKind::Math { .. }, Some(body)) => {
             spans.clear();
+            images.clear();
             body
         }
         // 目录块的内容就是**标题**。
@@ -324,6 +381,7 @@ pub(super) fn handle_end(
         // 顺带让大纲 / 搜索能看到目录标题。
         (BlockKind::Toc { title }, _) => {
             spans.clear();
+            images.clear();
             title.clone()
         }
         // 列表 / 定义列表的扁平内容按**源码顺序**重建
@@ -331,10 +389,12 @@ pub(super) fn handle_end(
         // 被替换掉的旧 `content`，一并清掉以免错位。
         (BlockKind::List { items, .. } | BlockKind::TaskList { items }, _) => {
             spans.clear();
+            images.clear();
             list_plain_text(items)
         }
         (BlockKind::DefinitionList { entries }, _) => {
             spans.clear();
+            images.clear();
             definition_list_plain_text(entries)
         }
         _ => open.content,
@@ -342,7 +402,8 @@ pub(super) fn handle_end(
 
     state.blocks.push(
         RenderedBlock::new(BlockId::from_u64(state.next_id), kind, range, content)
-            .with_spans(spans),
+            .with_spans(spans)
+            .with_images(images),
     );
     state.next_id += 1;
 }

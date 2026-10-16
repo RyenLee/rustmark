@@ -1,6 +1,6 @@
 //! 行内富文本：span → `TextFormat`、`LayoutJob` 排版与分隔符规范化。
 
-use egui::text::{CCursor, LayoutJob, TextFormat, TextWrapping};
+use egui::text::{CCursor, CharIndex, LayoutJob, TextFormat, TextWrapping};
 use egui::{Align2, FontId, Pos2, Rect, Stroke, Ui, Vec2};
 
 use crate::application::dto::{RangeView, SpanView};
@@ -184,7 +184,7 @@ pub(super) fn render_inline_text(
     // 且为「命中区 / 点击」等扩展留好位置（见图表链接的 `draw_diagram`）。
     //
     // 命中区 id 用调用方 ui 的 id + 固定盐 `"rinline"`：**要求每个块子树
-    // 的 `ui.id()` 唯一**（`show()` 里已用 `block.id` 作 `id_salt`）。
+    // 的 `ui.scope_id()` 唯一**（`show()` 里已用 `block.id` 作 `id_salt`）。
     // 若同一父级下多次调用且 sense 可交互（如标题的 `Sense::click()`），
     // id 会相撞 —— egui 会画出红框与「Double use of widget ID」提示
     // （2026-10-10 曾因此让预览标题被套红框，改 `show()` 的 `id_salt` 修复）。
@@ -199,7 +199,7 @@ pub(super) fn render_inline_text(
         let screen = local.translate(rect.min.to_vec2());
         let resp = ui.interact(
             screen,
-            ui.id().with(("rinline_hit", idx)),
+            ui.scope_id().with(("rinline_hit", idx)),
             egui::Sense::click(),
         );
         let sv = &spans[idx];
@@ -213,7 +213,7 @@ pub(super) fn render_inline_text(
     if link_hovered {
         ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::PointingHand);
     }
-    ui.interact(rect, ui.id().with("rinline"), sense)
+    ui.interact(rect, ui.scope_id().with("rinline"), sense)
 }
 
 /// 某行内片段在排版后文本里的字符区间（用于点击命中）。
@@ -237,7 +237,7 @@ fn span_rects(galley: &egui::Galley, hits: &[SpanHit]) -> Vec<(usize, Rect)> {
     let mut running = 0usize;
     for row in galley.rows.iter() {
         let row_start = running;
-        let row_end = running + row.char_count_including_newline();
+        let row_end = running + row.char_count_including_newline().0;
         running = row_end;
         let row_rect = row.rect();
         for hit in hits {
@@ -247,11 +247,11 @@ fn span_rects(galley: &egui::Galley, hits: &[SpanHit]) -> Vec<(usize, Rect)> {
                 continue;
             }
             let a = galley.pos_from_cursor(CCursor {
-                index: lo,
+                index: CharIndex(lo),
                 prefer_next_row: false,
             });
             let b = galley.pos_from_cursor(CCursor {
-                index: hi,
+                index: CharIndex(hi),
                 prefer_next_row: false,
             });
             let piece = Rect::from_min_max(
@@ -668,7 +668,7 @@ fn render_with_math(
             }
         }
     }
-    ui.interact(rect, ui.id().with("rinline"), sense)
+    ui.interact(rect, ui.scope_id().with("rinline"), sense)
 }
 
 /// 给一个行内格式叠上「已完成」装饰（次级色 + 删除线）。

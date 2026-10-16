@@ -400,22 +400,22 @@ fn opening_export_actually_renders_it_in_a_real_frame() {
     let ctx = egui::Context::default();
 
     for _ in 0..2 {
-        let _ = ctx.run(frame_input(), |ctx| {
-            rustmark::presentation::theme::mapper::apply(ctx, &app.ui.theme);
-            main_view::show(&mut app, ctx);
+        crate::support::run_ui(&ctx, frame_input(), |ui| {
+            rustmark::presentation::theme::mapper::apply(ui.ctx(), &app.ui.theme);
+            main_view::show(&mut app, ui);
         });
     }
     app.execute(UiAction::Export);
     assert!(app.dialog.is_open(Overlay::Export));
     for _ in 0..2 {
-        let _ = ctx.run(frame_input(), |ctx| {
-            rustmark::presentation::theme::mapper::apply(ctx, &app.ui.theme);
-            main_view::show(&mut app, ctx);
+        crate::support::run_ui(&ctx, frame_input(), |ui| {
+            rustmark::presentation::theme::mapper::apply(ui.ctx(), &app.ui.theme);
+            main_view::show(&mut app, ui);
         });
     }
 
     assert!(
-        ctx.memory(|m| m.has_focus(egui::Id::new(OUTPUT_DIR_INPUT_ID))),
+        ctx.memory(|m| m.has_focus(egui::Id::unique(OUTPUT_DIR_INPUT_ID))),
         "导出面板未渲染：输出路径输入框拿不到焦点"
     );
 }
@@ -580,9 +580,9 @@ fn long_capture_rejects_oversized_result_height() {
 
 /// 端到端：注入截图回传事件驱动真实帧循环，验证多段滚动 + 拼接落盘。
 ///
-/// 无头环境没有 GPU，但 `Event::Screenshot` 的**消费侧**逻辑
+/// 无头环境没有 GPU，但截图回传的**消费侧**逻辑
 /// （两拍状态机、裁剪、末段重叠丢弃、拼接、写盘）全部在应用层 /
-/// 基础设施层，可以用注入的假像素完整驱动。
+/// 基础设施层，可以用帧末兑现的假像素完整驱动。
 ///
 /// 几何设定：预览区 100×300 逻辑点（ppp=1 → 截图 100×300px），
 /// 内容高 800 → 段偏移 [0, 300, 500]，末段重叠 = 300+300-500 = 100 行。
@@ -604,22 +604,33 @@ fn long_capture_e2e_stitches_segments_into_one_png() {
         .expect("受理长图任务");
 
     let ctx = egui::Context::default();
-    // 每帧注入一张 100×300 的截图回传。3 段 × 每段最多 3 帧
-    // （预备拍 / 发令拍 / 回传拍）+ 余量。
+    // egui 0.37 起截图不再经 `Event::Screenshot` 注入，而是应用在帧内调用
+    // `Context::request_screenshot(cb)` 登记回调，帧末以 `ViewportCommand::Screenshot`
+    // 交回集成；集成回读像素后调用回调。无头环境没有 GPU，故本用例在每帧结束后
+    // **取出该回调并补上一张 100×300 的假像素**，等价于后端完成一次回读。
+    //
+    // 时序仍是两拍：应用在发令拍登记回调 → 本用例帧末兑现 → 下一帧 `pump_capture`
+    // 从收件箱取回。3 段 × 每段两拍 + 余量。
+    let pixels = vec![egui::Color32::from_rgb(120, 40, 40); 100 * 300];
     let mut delivered = false;
     for _ in 0..40 {
-        let mut input = frame_input();
-        let pixels = vec![egui::Color32::from_rgb(120, 40, 40); 100 * 300];
-        input.events.push(egui::Event::Screenshot {
-            viewport_id: egui::ViewportId::ROOT,
-            user_data: egui::UserData::default(),
-            image: std::sync::Arc::new(egui::ColorImage::new([100, 300], pixels)),
+        let out = crate::support::run_ui(&ctx, frame_input(), |ui| {
+            rustmark::presentation::theme::mapper::apply(ui.ctx(), &app.ui.theme);
+            main_view::show(&mut app, ui);
+            app.pump_capture(ui.ctx());
         });
-        let _ = ctx.run(input, |ctx| {
-            rustmark::presentation::theme::mapper::apply(ctx, &app.ui.theme);
-            main_view::show(&mut app, ctx);
-            app.pump_capture(ctx);
-        });
+        // 兑现本帧排队的所有截图请求（长图会多段重发，一次性全部满足）。
+        if let Some(vp) = out.viewport_output.get(&egui::ViewportId::ROOT) {
+            for cmd in &vp.commands {
+                if let egui::ViewportCommand::Screenshot(cb) = cmd {
+                    cb.clone()
+                        .complete(std::sync::Arc::new(egui::ColorImage::new(
+                            [100, 300],
+                            pixels.clone(),
+                        )));
+                }
+            }
+        }
         if target.exists() {
             delivered = true;
             break;
@@ -671,9 +682,9 @@ fn long_capture_e2e_stitches_segments_into_one_png() {
 fn run_frame(ctx: &egui::Context, app: &mut EditorApp, events: Vec<egui::Event>) {
     let mut input = frame_input();
     input.events = events;
-    let _ = ctx.run(input, |ctx| {
-        rustmark::presentation::theme::mapper::apply(ctx, &app.ui.theme);
-        main_view::show(app, ctx);
+    crate::support::run_ui(ctx, input, |ui| {
+        rustmark::presentation::theme::mapper::apply(ui.ctx(), &app.ui.theme);
+        main_view::show(app, ui);
     });
 }
 
@@ -717,16 +728,16 @@ fn export_dialog_does_not_steal_focus_back_from_the_file_name_box() {
 
     open_export(&ctx, &mut app);
     assert!(
-        ctx.memory(|m| m.has_focus(egui::Id::new(OUTPUT_DIR_INPUT_ID))),
+        ctx.memory(|m| m.has_focus(egui::Id::unique(OUTPUT_DIR_INPUT_ID))),
         "打开后焦点应先落在输出路径框"
     );
 
     // 用户把光标移进「文件名」框（等价于点中了它）。
-    ctx.memory_mut(|m| m.request_focus(egui::Id::new(FILE_STEM_INPUT_ID)));
+    ctx.memory_mut(|m| m.request_focus(egui::Id::unique(FILE_STEM_INPUT_ID)));
     run_frame(&ctx, &mut app, Vec::new());
 
     assert!(
-        ctx.memory(|m| m.has_focus(egui::Id::new(FILE_STEM_INPUT_ID))),
+        ctx.memory(|m| m.has_focus(egui::Id::unique(FILE_STEM_INPUT_ID))),
         "焦点被拽回了输出路径框：用户在「文件名」框里一个字也打不进去"
     );
 }
@@ -741,7 +752,7 @@ fn export_dialog_file_name_box_can_actually_be_selected() {
 
     open_export(&ctx, &mut app);
     let rect = ctx
-        .read_response(egui::Id::new(FILE_STEM_INPUT_ID))
+        .read_response(egui::Id::unique(FILE_STEM_INPUT_ID))
         .expect("文件名输入框应已被布局")
         .rect;
     let pos = rect.center();
@@ -757,14 +768,14 @@ fn export_dialog_file_name_box_can_actually_be_selected() {
         vec![egui::Event::PointerMoved(pos), release_at(pos)],
     );
     assert!(
-        ctx.memory(|m| m.has_focus(egui::Id::new(FILE_STEM_INPUT_ID))),
+        ctx.memory(|m| m.has_focus(egui::Id::unique(FILE_STEM_INPUT_ID))),
         "点中「文件名」框后焦点应落在那里"
     );
 
     // 再跑一帧：确认不是「只在这一帧侥幸成立」，而是真的稳住了。
     run_frame(&ctx, &mut app, Vec::new());
     assert!(
-        ctx.memory(|m| m.has_focus(egui::Id::new(FILE_STEM_INPUT_ID))),
+        ctx.memory(|m| m.has_focus(egui::Id::unique(FILE_STEM_INPUT_ID))),
         "下一帧焦点又被抢走：用户无法在「文件名」框里连续输入"
     );
 }
@@ -784,7 +795,7 @@ fn typing_into_the_file_name_box_actually_edits_the_file_name() {
     open_export(&ctx, &mut app);
     let before = app.export_ui.file_stem.clone();
     let rect = ctx
-        .read_response(egui::Id::new(FILE_STEM_INPUT_ID))
+        .read_response(egui::Id::unique(FILE_STEM_INPUT_ID))
         .expect("文件名输入框应已被布局")
         .rect;
     let pos = rect.center();

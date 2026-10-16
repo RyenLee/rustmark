@@ -150,42 +150,40 @@ fn toggle_outline_switches_sidebar_tab() {
 }
 
 #[test]
-fn theme_cycles_light_dark_system_and_persists() {
+fn theme_toggle_swaps_dark_and_light_directly() {
     let (_dir, mut app) = app();
-    // 首次跟随系统；本例 system_dark=false → 解析为浅色。
+    // 首次跟随系统；本例 system_dark=false → 解析为浅色（生效态 = 浅色）。
     assert_eq!(app.theme().kind, BuiltinTheme::Light);
     assert_eq!(app.settings().theme.kind, "system");
 
-    // 原型序列：system → dark → light → system。
+    // 一键切换 = 直接深浅互换，两向都只要一次点击（#039：原来浅色点回深色要点两次）。
+    // 从「生效浅色」点一下 → 深色。
     app.execute(UiAction::ToggleTheme);
     assert_eq!(app.settings().theme.kind, "dark");
     assert_eq!(app.theme().kind, BuiltinTheme::Dark);
 
+    // 再点一下 → 浅色（不再是回到 system）。
     app.execute(UiAction::ToggleTheme);
     assert_eq!(app.settings().theme.kind, "light");
     assert_eq!(app.theme().kind, BuiltinTheme::Light);
 
+    // 再点一下 → 深色，循环就是纯粹的 dark↔light。
     app.execute(UiAction::ToggleTheme);
-    assert_eq!(
-        app.settings().theme.kind,
-        "system",
-        "第三态必须回到跟随系统，否则该状态一旦切走就再也回不来"
-    );
-    // 回到跟随系统时，实际生效的那套由系统偏好决定。
-    assert_eq!(app.theme().kind, BuiltinTheme::Light);
+    assert_eq!(app.settings().theme.kind, "dark");
+    assert_eq!(app.theme().kind, BuiltinTheme::Dark);
 }
 
 #[test]
-fn theme_cycle_is_a_fixed_sequence_not_derived_from_current_value() {
-    // 回归测试：从「跟随系统」出发，第一下必须是**深色**。
-    // 若把序列写成按当前值推导（system→light、dark→system），这条会失败。
+fn theme_toggle_from_system_resolves_by_effective_mode() {
+    // 从「跟随系统」出发、系统偏好为浅色时，第一下切换得到深色：
+    // 取反的是「当前生效的明暗」，而非切换到某个固定序列的下一态。
     let (_dir, mut app) = app();
     assert_eq!(app.settings().theme.kind, "system");
     app.execute(UiAction::ToggleTheme);
     assert_eq!(
         app.settings().theme.kind,
         "dark",
-        "从跟随系统点一下应得到深色（对齐原型 THEME_CYCLE = [dark, light, system]）"
+        "跟随系统解析为浅色时，点一下应得到深色"
     );
 }
 

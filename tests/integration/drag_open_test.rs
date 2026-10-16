@@ -5,7 +5,7 @@
 //! 归一为 `RawInput.dropped_files`，我们只需在该字段填上路径即可模拟，
 //! 与 `crash_recovery_test.rs` 用 `Frame::_new_kittest()` 驱动真实 `update` 同源。
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use rustmark::app::bootstrap::{ConfigPaths, Services};
 use rustmark::app::frame::EditorApp;
@@ -18,6 +18,22 @@ use std::sync::Arc;
 
 use tempfile::tempdir;
 
+/// egui 0.37 起 `DroppedFile` 是 trait，测试需提供一个实现来模拟拖放结果。
+#[derive(Debug)]
+struct TestDroppedFile {
+    path: PathBuf,
+}
+
+impl egui::DroppedFile for TestDroppedFile {
+    fn path(&self) -> &Path {
+        &self.path
+    }
+
+    fn bytes(&self) -> Result<Vec<u8>, String> {
+        std::fs::read(&self.path).map_err(|e| e.to_string())
+    }
+}
+
 fn frame_input_with_drop(paths: &[PathBuf]) -> egui::RawInput {
     egui::RawInput {
         screen_rect: Some(egui::Rect::from_min_size(
@@ -26,10 +42,7 @@ fn frame_input_with_drop(paths: &[PathBuf]) -> egui::RawInput {
         )),
         dropped_files: paths
             .iter()
-            .map(|p| egui::DroppedFile {
-                path: Some(p.clone()),
-                ..Default::default()
-            })
+            .map(|p| -> egui::DroppedFileHandle { Arc::new(TestDroppedFile { path: p.clone() }) })
             .collect(),
         ..Default::default()
     }
@@ -52,8 +65,8 @@ fn drag_drop_markdown_opens_document() {
     let ctx = egui::Context::default();
     let mut frame = eframe::Frame::_new_kittest();
     let paths = vec![md.clone()];
-    let _ = ctx.run(frame_input_with_drop(&paths), |ctx| {
-        app.update(ctx, &mut frame);
+    crate::support::run_ui(&ctx, frame_input_with_drop(&paths), |ui| {
+        app.ui(ui, &mut frame);
     });
 
     // 活动文档路径应等于拖入文件（取文件名比对，路径分隔符跨平台一致）。
@@ -85,24 +98,38 @@ fn drag_drop_non_text_is_rejected() {
     let ctx = egui::Context::default();
     let mut frame = eframe::Frame::_new_kittest();
     let paths = vec![png.clone()];
-    let _ = ctx.run(frame_input_with_drop(&paths), |ctx| {
-        app.update(ctx, &mut frame);
+    crate::support::run_ui(&ctx, frame_input_with_drop(&paths), |ui| {
+        app.ui(ui, &mut frame);
     });
 
     // 没有任何文档被打开（本就从空工作区启动，只有未命名文档的概念）。
     assert!(app.open_document_list().is_empty(), "非文本文件不应被打开");
+    // 且必须说明原因：静默忽略会让用户以为「拖放功能坏了」。
+    // 文案与文件树置灰行的悬停说明同源（问题 045）。
+    let notice = app
+        .status_bar
+        .message
+        .as_ref()
+        .map(|m| m.text.clone())
+        .unwrap_or_default();
+    assert!(
+        notice.contains("暂不支持打开该格式"),
+        "拖入图片应给出一条提示，实际状态栏 = {notice:?}"
+    );
 }
 
-/// 一次拖入多个文件：可识别的 .md 全部打开，非文本被忽略。
+/// 一次拖入多个文件：可识别的（md / txt / csv）全部打开，非文本被忽略。
 #[test]
 fn drag_drop_mixed_batch_opens_only_text() {
     let dir = tempdir().expect("临时目录应创建成功");
     let a = dir.path().join("a.md");
     let b = dir.path().join("b.txt");
     let c = dir.path().join("c.pdf");
+    let d = dir.path().join("d.csv");
     std::fs::write(&a, "# A").expect("写 a");
     std::fs::write(&b, "plain").expect("写 b");
     std::fs::write(&c, b"%PDF-1.4 junk").expect("写 c");
+    std::fs::write(&d, "x,y\n1,2\n").expect("写 d");
 
     let services = Services::assemble_with_dialogs(
         ConfigPaths::in_dir(dir.path()),
@@ -113,16 +140,17 @@ fn drag_drop_mixed_batch_opens_only_text() {
 
     let ctx = egui::Context::default();
     let mut frame = eframe::Frame::_new_kittest();
-    let paths = vec![a.clone(), b.clone(), c.clone()];
-    let _ = ctx.run(frame_input_with_drop(&paths), |ctx| {
-        app.update(ctx, &mut frame);
+    let paths = vec![a.clone(), b.clone(), c.clone(), d.clone()];
+    crate::support::run_ui(&ctx, frame_input_with_drop(&paths), |ui| {
+        app.ui(ui, &mut frame);
     });
 
-    // .md 与 .txt 都应打开 → 2 个标签；.pdf 被忽略。
+    // .md / .txt / .csv 都应打开 → 3 个标签；.pdf 被忽略。
+    // `.csv` 是问题 045 的回归点：它进了白名单，拖放与文件树必须同时放行。
     assert_eq!(
         app.open_document_list().len(),
-        2,
-        "批量拖入应打开 .md 与 .txt，忽略 .pdf"
+        3,
+        "批量拖入应打开 .md / .txt / .csv，忽略 .pdf"
     );
 }
 
@@ -148,8 +176,8 @@ fn drag_drop_directory_is_ignored_without_error() {
     let ctx = egui::Context::default();
     let mut frame = eframe::Frame::_new_kittest();
     let paths = vec![notes_dir.clone(), md.clone()];
-    let _ = ctx.run(frame_input_with_drop(&paths), |ctx| {
-        app.update(ctx, &mut frame);
+    crate::support::run_ui(&ctx, frame_input_with_drop(&paths), |ui| {
+        app.ui(ui, &mut frame);
     });
 
     // 只有那个真 .md 被打开；目录既不进标签页，也不产生红色错误。

@@ -266,9 +266,24 @@ impl WorkspaceAppService {
         Ok(entries.len())
     }
 
-    /// 跨文件搜索：覆盖磁盘文件与未保存草稿，命中受上限保护。
+    /// 跨文件搜索：覆盖已打开文档与磁盘文件，命中受上限保护。
+    ///
+    /// `cmd.only_document` 为 `Some` 时只搜那一个文档（范围切换器的
+    /// 「当前文档」）。过滤放在**候选收集之后、读盘之前**：候选里未打开的
+    /// 文件此刻还只是路径，读完内容再丢等于白读——「当前文档」范围下
+    /// 逐个读全工作区文件是最贵的路径，必须在这里就砍掉。
+    ///
+    /// `cmd.only_open_documents` 为 `true` 时只搜**已打开的文档**
+    /// （范围切换器的「打开的文档」）：连磁盘条目的循环都不进，
+    /// 读盘量随标签数而不是工作区大小增长。
     pub fn search(&self, cmd: SearchQuery) -> AppResult<SearchResultView> {
-        let candidates = self.gather_candidates()?;
+        // `include_disk = false` 时候选收集就连未打开文件的读盘都跳过——
+        // 那才是最贵的一步（按工作区大小线性读盘），放在过滤之后做
+        // 等于「读完了再丢」。
+        let mut candidates = self.gather_candidates(!cmd.only_open_documents)?;
+        if let Some(id) = cmd.only_document {
+            candidates.retain(|(doc_id, _, _)| *doc_id == id);
+        }
         let mut hits: Vec<SearchHitView> = Vec::with_capacity(MAX_TOTAL_HITS);
         let mut truncated = false;
 
@@ -342,11 +357,15 @@ impl WorkspaceAppService {
             .publish(crate::shared::event::DomainEvent::WorkspaceChanged(self.id));
     }
 
-    fn gather_candidates(&self) -> AppResult<Vec<(DocumentId, FilePath, String)>> {
-        let entries = {
-            let ws = self.lock_read()?;
-            ws.entries().to_vec()
-        };
+    /// 收集搜索候选：**已打开文档**（内存内容，含未落盘草稿）+ 磁盘文件。
+    ///
+    /// `include_disk = false` 时只收已打开文档——「打开的文档」范围
+    /// 专用：读盘是这里最贵的一步（按工作区大小线性），不读未打开的
+    /// 文件既是性能也是语义（用户要的就是手头开着的那几份）。
+    fn gather_candidates(
+        &self,
+        include_disk: bool,
+    ) -> AppResult<Vec<(DocumentId, FilePath, String)>> {
         let drafts = self.provider.open_documents();
         let open_paths: HashMap<FilePath, DocumentId> = drafts
             .iter()
@@ -367,6 +386,13 @@ impl WorkspaceAppService {
             };
             out.push((id, fp, content));
         }
+        if !include_disk {
+            return Ok(out);
+        }
+        let entries = {
+            let ws = self.lock_read()?;
+            ws.entries().to_vec()
+        };
         for entry in entries {
             if entry.kind() == EntryKind::Directory {
                 continue;
@@ -459,12 +485,22 @@ fn search_text(
         let line_start = text[..start_off].rfind('\n').map(|x| x + 1).unwrap_or(0);
         let col = start_off - line_start;
 
-        let snippet_start = line_start.max(start_off.saturating_sub(24));
-        let snippet_end = (text[end_off..]
-            .find('\n')
-            .map(|x| end_off + x)
-            .unwrap_or(text.len()))
-        .min(end_off + 24);
+        // 摘要窗口按**字节**取（前后各 24 字节），而 `±24` 后的落点完全
+        // 可能停在多字节 UTF-8 字符中间：中文 3 字节、emoji 4 字节，混合
+        // 排版时 24 的偏移几乎必然切进字符内部，直接切片会 panic
+        // （崩溃记录 docs/logs/crash-20261014135941-29300.txt：
+        // `end byte index 305 is not a char boundary; it is inside '行'`）。
+        // 切片前把两端都向下对齐到字符边界：最多少取半个字符，
+        // 摘要语义不受影响；`find('\n')` 那条路径本就是边界，对齐是恒等的。
+        let snippet_start = floor_char_boundary(text, line_start.max(start_off.saturating_sub(24)));
+        let snippet_end = floor_char_boundary(
+            text,
+            (text[end_off..]
+                .find('\n')
+                .map(|x| end_off + x)
+                .unwrap_or(text.len()))
+            .min(end_off + 24),
+        );
         let snippet = text[snippet_start..snippet_end].to_string();
 
         hits.push(RawHit {
@@ -479,6 +515,21 @@ fn search_text(
         }
     }
     hits
+}
+
+/// 把字节索引向下对齐到最近的字符边界（不超过原索引）。
+///
+/// `idx` 不小于文本长度时返回文本长度；UTF-8 最长字符 4 字节，故对齐
+/// 最多回退 3 字节。函数单调不减：`a <= b` 时 `floor(a) <= floor(b)`，
+/// 调用方据此保证切片区间 `start <= end` 仍然成立。
+fn floor_char_boundary(text: &str, mut idx: usize) -> usize {
+    if idx >= text.len() {
+        return text.len();
+    }
+    while !text.is_char_boundary(idx) {
+        idx -= 1;
+    }
+    idx
 }
 
 /// 编译期断言：`WorkspaceAppService` 可跨线程共享。

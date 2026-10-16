@@ -123,8 +123,12 @@ impl FsWorkspaceRepository {
 
     /// 递归收集目录条目。
     ///
-    /// 产出顺序：**目录在前、同层按名称排序**——与原型文件树的展示顺序一致，
-    /// 也让「重命名后位置不动」这类预期成立（顺序确定而非依赖文件系统返回序）。
+    /// 产出顺序：**目录在前、同层按名称**，且是**深度优先前序**——目录条目
+    /// 之后立即递归展开它的子项，再继续下一个兄弟。这是文件树折行
+    /// （`sidebar_ui_state::tree::tree_rows`）的输入契约：它逐项顺序渲染，
+    /// 「子项紧跟父目录」才画得出树形。旧实现先推完本层全部条目、末尾再
+    /// 统一递归，展开目录后子项全被拼到列表尾部（问题 040 截图实证）。
+    /// 顺序确定（不依赖文件系统返回序）也让「重命名后位置不动」这类预期成立。
     fn collect(&self, root: &Path, max_depth: usize, out: &mut Vec<WorkspaceEntry>) -> bool {
         // 返回 false 表示已达到条目上限，调用方应立即停止递归。
         if out.len() >= self.rules.max_entries {
@@ -166,6 +170,9 @@ impl FsWorkspaceRepository {
         // 二者曾共用 `EntryKind::File`，导致 `is_directory` 恒为 `false`，
         // 文件树无法建出层级——表现层只能把整个目录平铺成文件列表。
         // 探针实测：含 1 个子目录的工作区扫描出 0 个目录。
+        //
+        // 前序 DFS：推入目录条目后**立即**递归进它（`max_depth` 为 0 时只列
+        // 本层不递归；1 表示含一层子目录），再继续兄弟条目——见函数头文档。
         for (is_dir, path) in dirs
             .iter()
             .map(|(_, path)| (true, path))
@@ -182,14 +189,7 @@ impl FsWorkspaceRepository {
                 };
                 out.push(WorkspaceEntry::new(fp, kind));
             }
-        }
-
-        // `max_depth` 为 0 时只列出本层（不递归）；1 表示含一层子目录。
-        if max_depth == 0 {
-            return true;
-        }
-        for (_, path) in dirs {
-            if !self.collect(&path, max_depth.saturating_sub(1), out) {
+            if is_dir && max_depth > 0 && !self.collect(path, max_depth - 1, out) {
                 return false;
             }
         }

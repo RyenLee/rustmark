@@ -22,11 +22,11 @@ mod preferences;
 mod workspace;
 
 pub use document::{
-    DocumentView, OutlineItemView, OutlineView, RangeView, SearchHitView, StatsView,
+    DocumentView, OutlineItemView, OutlineView, RangeView, SearchHitView, StatsView, TabSummary,
 };
 pub use markdown::{
-    BlockView, CellAlignView, DefinitionBodyView, DefinitionEntryView, ListItemView, RenderedView,
-    SpanView, TableView,
+    BlockView, CellAlignView, DefinitionBodyView, DefinitionEntryView, ImageSpecView,
+    InlineImageView, ListItemView, RenderedView, SpanView, TableView,
 };
 pub use preferences::{
     CustomThemePaletteView, EditorSettingsView, GoalProgressView, LintIssueView, LintRulesView,

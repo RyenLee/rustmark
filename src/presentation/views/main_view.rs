@@ -41,28 +41,44 @@ use crate::presentation::theme::builtin::Metrics;
 /// 用户抱怨「分割条拖不动」十有八九是这个原因，而不是逻辑坏了。
 const DIVIDER_HIT_SCALE: f32 = 1.5;
 
-/// 主视图入口：由 `eframe::App::update` 每帧调用一次。
-pub fn show(app: &mut EditorApp, ctx: &egui::Context) {
+/// 主视图入口：由 `eframe::App::ui` 每帧调用一次。
+///
+/// 入参是 eframe 0.37 传入的根 `Ui`（覆盖整个窗口、无默认边距与底色），
+/// 所有 `Panel` 都从这里就地切分。
+pub fn show(app: &mut EditorApp, ui: &mut Ui) {
     let metrics = app.theme().metrics;
 
+    // 防御性底色：先把整块可用区域铺成面板底色（`bg_secondary`），画在最底层。
+    //
+    // 相邻 `Panel` 在分数缩放（如 125% DPI）下会因像素取整在边界留下亚像素
+    // 缝隙，缝隙里没有任何面板绘制，露出交换链清屏色（黑）。浅色主题下边界两侧都是
+    // 浅灰面板，黑缝格外显眼；深色主题下缝隙同为黑、与深色面板浑然一体，故只在浅色
+    // 模式被察觉（#039）。这里铺一层面板底色，任何亚像素缝隙都会落回浅灰而非黑，
+    // 黑线即消失。后续所有面板都画在这层之上，不会造成重影。
+    ui.layer_painter(egui::LayerId::background()).rect_filled(
+        ui.available_rect_before_wrap(),
+        egui::CornerRadius::ZERO,
+        app.theme().bg_secondary,
+    );
+
     // —— 顶部：菜单栏 + 标签条 ——
-    crate::presentation::views::toolbar_view::show(app, ctx);
+    crate::presentation::views::toolbar_view::show(app, ui);
 
     // —— 底部：状态栏（可独立开关）——
     if app.ui.status_bar_visible {
-        crate::presentation::views::status_bar_view::show(app, ctx);
+        crate::presentation::views::status_bar_view::show(app, ui);
     }
 
     // —— 左侧：侧栏（专注模式下整体隐藏）——
     let sidebar_on = app.ui.sidebar_visible && !app.ui.focus_mode;
     if sidebar_on {
-        crate::presentation::views::sidebar_view::show(app, ctx);
+        crate::presentation::views::sidebar_view::show(app, ui);
     }
 
     // —— 主体：编辑区 + 分割条 + 预览 ——
-    // 此处 `available_rect` 已经扣掉上面所有 Panel，**不要再减侧栏宽度**——
-    // 侧栏自己开了 SidePanel，再减一次会让编辑区凭空窄 240px。
-    let body_width = ctx.available_rect().width();
+    // 此处 `available_rect_before_wrap` 已经扣掉上面所有 Panel，**不要再减侧栏宽度**——
+    // 侧栏自己开了 Panel，再减一次会让编辑区凭空窄 240px。
+    let body_width = ui.available_rect_before_wrap().width();
     if body_width <= 0.0 {
         // 首帧布局未完成时宽度为 0。此时直接跳过：强行用 0 宽做除法
         // 会让分割比例变成 NaN，且 NaN 一旦写进 `split_ratio` 就再也回不来
@@ -74,14 +90,14 @@ pub fn show(app: &mut EditorApp, ctx: &egui::Context) {
     // 欢迎页占**整个主体区**（侧栏之外）：它是「还没有任何文档」时的
     // 整屏入口，左边挂一个空文件树只会让人以为该点点看。
     if app.should_show_welcome() {
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             crate::presentation::views::welcome_view::show(app, ui);
         });
         // 浮层仍要画：用户在欢迎页上按 `Ctrl+,` 打开设置是合理的。
-        crate::presentation::views::overlays::show(app, ctx);
+        crate::presentation::views::overlays::show(app, ui);
         return;
     }
-    render_split(app, ctx, metrics, body_width, preview_on);
+    render_split(app, ui, metrics, body_width, preview_on);
 
     // —— 浮层 ——
     // 必须**最后**画：浮层是 `Window`，需要在所有 Panel 之后、
@@ -89,18 +105,35 @@ pub fn show(app: &mut EditorApp, ctx: &egui::Context) {
     //
     // 放在 `render_split` 之后还有第二个原因：`scroll_sync::apply` 要在
     // 编辑区与预览区都画完后才跑，浮层若夹在中间会打乱那个顺序。
-    crate::presentation::views::overlays::show(app, ctx);
+    crate::presentation::views::overlays::show(app, ui);
 }
 
 /// 渲染编辑区 + 分割条 + 预览区。
 fn render_split(
     app: &mut EditorApp,
-    ctx: &egui::Context,
+    ui: &mut Ui,
     metrics: Metrics,
     body_width: f32,
     with_preview: bool,
 ) {
     let ratio = app.ui.editor_ratio();
+
+    // 防御性底色：先把整块主体区铺成面板底色（`bg_secondary`）。
+    //
+    // 相邻 `SidePanel` 在分数缩放（如 125% DPI）下会因像素取整在边界留下
+    // 亚像素缝隙，缝隙里没有任何面板绘制，露出交换链清屏色（黑）。
+    // 浅色主题下边界两侧都是浅灰面板，黑缝因此格外显眼；深色主题下缝隙同样是黑、
+    // 与深色面板浑然一体，故只在浅色模式被察觉（#039）。
+    //
+    // 这里铺一层面板底色，任何亚像素缝隙都会落回浅灰而非黑，黑线即消失。
+    // 作用域仅主体区：侧栏 / 顶栏 / 状态栏 / 预览各自有填充，且本绘制在最底层，
+    // 后续面板会盖在上面，不会造成重影。
+    ui.layer_painter(egui::LayerId::background()).rect_filled(
+        ui.available_rect_before_wrap(),
+        egui::CornerRadius::ZERO,
+        app.theme().bg_secondary,
+    );
+
     let divider_w = metrics.divider_width;
     let editor_w = if with_preview {
         // 夹紧上界为 `body_width - divider`：否则编辑区 + 分割条会超出可用宽度，
@@ -110,11 +143,11 @@ fn render_split(
         body_width
     };
 
-    egui::SidePanel::left("rustmark.editor")
-        .exact_width(editor_w)
+    egui::Panel::left("rustmark.editor")
+        .exact_size(editor_w)
         .resizable(false)
         .show_separator_line(false)
-        .show(ctx, |ui| {
+        .show(ui, |ui| {
             crate::presentation::views::editor_view::show(app, ui)
         });
 
@@ -129,8 +162,8 @@ fn render_split(
     // 拖拽结束的跳变检测：上一帧还在拖、这一帧松手 → 落盘一次分割比例。
     // 每帧都写配置文件太频繁，只在「松手」那一刻写。
     let was_dragging = app.ui.split_dragging;
-    egui::SidePanel::left("rustmark.divider")
-        .exact_width(divider_w)
+    egui::Panel::left("rustmark.divider")
+        .exact_size(divider_w)
         .resizable(false)
         .show_separator_line(false)
         // 边距必须**归零**：egui 的默认面板 frame（`Frame::side_top_panel`）
@@ -142,14 +175,14 @@ fn render_split(
         // `ui.max_rect()` 会被边距挤成负宽，`paint_divider` 退化成零宽
         // 矩形、什么都画不出来（无头取证实测 `Rect [x..x]`）。
         .frame(egui::Frame::new().inner_margin(0))
-        .show(ctx, |ui| {
+        .show(ui, |ui| {
             paint_divider(ui, metrics);
             let rect = ui.max_rect();
             let hit = egui::Rect::from_center_size(
                 rect.center(),
                 egui::vec2(divider_w * DIVIDER_HIT_SCALE, rect.height()),
             );
-            let grab = ui.interact(hit, ui.id().with("grab"), egui::Sense::drag());
+            let grab = ui.interact(hit, ui.scope_id().with("grab"), egui::Sense::drag());
             app.ui.split_dragging = grab.dragged();
             if grab.dragged() {
                 // 每帧只累加本帧位移：`ratio` 是**上一帧写回后**的值，
@@ -168,7 +201,7 @@ fn render_split(
 
     // 剩下的全部宽度归预览区。
     //
-    // 边距必须与 `SidePanel` **一致**：编辑区 / 分割条 / 侧栏是 `SidePanel`
+    // 边距必须与 `Panel` **一致**：编辑区 / 分割条 / 侧栏是 `Panel`
     // （默认竖向内边距 2pt），`CentralPanel::default()` 却自带一圈更大的
     // 内边距（实测 6pt）——预览区整体会比编辑区低 4pt、矮 8pt，两栏的
     // 顶栏（工具栏 ↔ 标题栏）从此错位，内容区也不再从同一条水平线开始
@@ -186,7 +219,7 @@ fn render_split(
                 .inner_margin(egui::Margin::symmetric(0, 2))
                 .fill(app.theme().bg_primary),
         )
-        .show(ctx, |ui| {
+        .show(ui, |ui| {
             crate::presentation::views::preview_view::show(app, ui);
             // 记录本帧预览区矩形，供图片导出裁剪用（P2）。
             //

@@ -4,7 +4,8 @@ use egui::{Align, RichText};
 
 use crate::application::dto::ListItemView;
 
-use super::inline::{Typography, render_inline_text};
+use super::blocks::draw_text_with_images;
+use super::inline::Typography;
 use super::*;
 
 /// 列表每加深一级增加的缩进（点）。
@@ -142,12 +143,15 @@ fn draw_item_text(
     } else {
         f32::INFINITY
     };
-    render_inline_text(
-        ui,
+    // 项文本里可能混着图片（`- ![图标](u.png) 说明`）：列表项是文本容器，
+    // 图片只能插在文本流里（见 `draw_text_with_images`）。
+    draw_text_with_images(
         app,
+        ui,
         theme,
         &item.text,
         &item.spans,
+        &item.images,
         Typography {
             size,
             line_height: size * theme.metrics.preview_line_height,

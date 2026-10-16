@@ -27,7 +27,7 @@ use rustmark::app::frame::EditorApp;
 use rustmark::application::workspace::commands::MoveEntryCommand;
 use rustmark::presentation::shortcuts::registry::UiAction;
 use rustmark::presentation::state::app_ui_state::SidebarTab;
-use rustmark::presentation::state::sidebar_ui_state::{NameEdit, tree_rows};
+use rustmark::presentation::state::sidebar_ui_state::{NameEdit, SearchScope, tree_rows};
 use rustmark::presentation::views::main_view;
 use rustmark::presentation::views::sidebar_view::SEARCH_INPUT_ID;
 use rustmark::shared::path::FilePath;
@@ -108,20 +108,21 @@ fn tree_projection_builds_hierarchical_rows() {
 
     let rows = tree_rows(&app.workspace_entries.items, &root, &|_| true);
     let names: Vec<&str> = rows.iter().map(|r| r.name.as_str()).collect();
-    // 顺序由仓储的深度优先遍历决定（**不是**「把所有目录排在一起」）：
-    // 本层目录 → 本层文件 → 逐个递归子目录，故 `readme.md` 夹在
-    // `docs` 和它的子项之间。`tree_rows` 刻意不重排——重排会让
-    // 「重命名后条目位置不动」这个预期失效。
+    // 顺序是仓储的**深度优先前序**：目录条目之后立即是它的子项，再继续
+    // 兄弟条目。旧实现先推完本层全部条目、末尾再统一递归，展开目录后
+    // 子项全被拼到整棵树尾部（问题 040 截图实证）；`tree_rows` 按列表
+    // 顺序渲染，全靠输入顺序画对层级——重排会让「重命名后条目位置
+    // 不动」这个预期失效，故契约钉在仓储侧。
     assert_eq!(
         names,
-        vec!["docs", "readme.md", "img", "guide.md"],
-        "树的顺序应沿用仓储的深度优先遍历顺序"
+        vec!["docs", "img", "guide.md", "readme.md"],
+        "子项必须紧跟父目录（前序 DFS），实际：{names:?}"
     );
     let depths: Vec<usize> = rows.iter().map(|r| r.depth).collect();
     assert_eq!(
         depths,
-        vec![0, 0, 1, 1],
-        "img 与 guide.md 在 docs 之下，docs 与 readme.md 在根"
+        vec![0, 1, 1, 0],
+        "img 与 guide.md 在 docs 之下，readme.md 在根"
     );
 
     // 收起 docs 后它的子项应消失，而 docs 自身仍在。
@@ -543,19 +544,25 @@ fn search_results_are_grouped_by_file() {
     let ws = workspace();
     let root = ws.path().to_path_buf();
     let (_cfg, mut app) = app_with_workspace(&root);
+    // 「打开的文档」范围只搜标签栏里开着的文件：先把两个文件都打开。
+    app.open_workspace_file(&joined(&root, "docs/guide.md"))
+        .unwrap();
+    app.open_workspace_file(&joined(&root, "readme.md"))
+        .unwrap();
     app.sidebar.search_query = "needle".into();
+    // 本条测的是**跨文档**分组语义：显式声明范围，不依赖默认值
+    // （默认是「当前文档」，V11-28）。
+    app.sidebar.search_scope = SearchScope::OpenDocuments;
 
     let result = app.search_workspace().expect("搜索应成功");
 
     assert_eq!(result.groups.len(), 2, "两个文件各一组");
-    // 分组顺序 = 候选顺序：先「已打开的文档」（含启动时的空白未命名文档，
-    // 它不含 needle 故不产生组），再按扫描顺序的条目。故 `readme.md`
-    // 在根、排在 `docs/guide.md` 之前——**不是**「目录优先」。
+    // 分组顺序 = 标签栏顺序（打开顺序）：先 guide.md 后 readme.md。
     let names: Vec<&str> = result.groups.iter().map(|g| g.file_name.as_str()).collect();
     assert_eq!(
         names,
-        vec!["readme.md", "guide.md"],
-        "分组应按候选顺序（已打开文档 → 扫描顺序）"
+        vec!["guide.md", "readme.md"],
+        "分组应按标签栏（打开）顺序"
     );
     // `file_name` 是**末段**（用于表头显示），完整路径在 `path`。
     let guide = result
@@ -577,6 +584,32 @@ fn search_results_are_grouped_by_file() {
     assert!(!result.truncated, "4 条远未到 300 上限");
 }
 
+/// 「打开的文档」范围**不**搜侧栏文件夹下未打开的文件（问题 037）。
+///
+/// 旧语义是「整个工作区」= 读遍目录下所有文件；那既慢又不是用户要的。
+/// 现在只有真正开成标签的文档才参与检索——未打开的文件一条都不该出现。
+#[test]
+fn open_documents_scope_skips_files_that_are_not_open() {
+    let ws = workspace();
+    let root = ws.path().to_path_buf();
+    let (_cfg, mut app) = app_with_workspace(&root);
+    // 只打开 guide.md；readme.md 虽在磁盘上、含 needle，但没开成标签。
+    app.open_workspace_file(&joined(&root, "docs/guide.md"))
+        .unwrap();
+    app.sidebar.search_query = "needle".into();
+    app.sidebar.search_scope = SearchScope::OpenDocuments;
+
+    let result = app.search_workspace().expect("搜索应成功");
+
+    assert_eq!(result.groups.len(), 1, "只应搜到已打开的 guide.md");
+    assert_eq!(result.groups[0].file_name, "guide.md");
+    assert_eq!(result.total(), 3, "guide.md 内三处 needle");
+    assert!(
+        !result.groups.iter().any(|g| g.file_name == "readme.md"),
+        "未打开成标签的文件不得出现在结果里"
+    );
+}
+
 /// 每条命中都要能定位到片段里的高亮区间（字符坐标，不是字节）。
 ///
 /// 片段要交给 egui 排版；按字节切中文会切在字符中间，
@@ -586,7 +619,15 @@ fn every_hit_carries_a_highlight_range_in_character_coordinates() {
     let ws = workspace();
     let root = ws.path().to_path_buf();
     let (_cfg, mut app) = app_with_workspace(&root);
+    // 跨文档范围才有多个分组可遍历；先把两个文件都开成标签。
+    app.open_workspace_file(&joined(&root, "docs/guide.md"))
+        .unwrap();
+    app.open_workspace_file(&joined(&root, "readme.md"))
+        .unwrap();
     app.sidebar.search_query = "needle".into();
+    // 跨文件范围才有多个分组可遍历；默认「当前文档」下这里会一条都不剩，
+    // 循环空跑等于没测（V11-28）。
+    app.sidebar.search_scope = SearchScope::OpenDocuments;
 
     let result = app.search_workspace().unwrap();
     for group in &result.groups {
@@ -610,7 +651,11 @@ fn clicking_a_search_hit_opens_the_file_and_lands_on_that_line() {
     let ws = workspace();
     let root = ws.path().to_path_buf();
     let (_cfg, mut app) = app_with_workspace(&root);
+    // 先打开 guide.md，搜索范围才有对象可搜（「打开的文档」只搜已开标签）。
+    app.open_workspace_file(&joined(&root, "docs/guide.md"))
+        .unwrap();
     app.sidebar.search_query = "第二节".into();
+    app.sidebar.search_scope = SearchScope::OpenDocuments;
     let result = app.search_workspace().unwrap();
     let group = result
         .groups
@@ -619,6 +664,7 @@ fn clicking_a_search_hit_opens_the_file_and_lands_on_that_line() {
         .expect("应有 guide.md 这一组");
     let hit = group.hits[0].clone();
 
+    // 同一路径只会有一个标签：这里再「打开」一次只是切回既有页。
     app.open_workspace_file(&group.path).unwrap();
     let starts = rustmark::presentation::views::scroll_sync::line_start_offsets(
         &app.current_content().unwrap(),
@@ -646,8 +692,17 @@ fn search_options_actually_change_the_results() {
     fs::write(root.join("Case.md"), "Needle needle needles\n").unwrap();
     app.scan_workspace(&root.to_string_lossy().replace('\\', "/"))
         .unwrap();
+    // 「打开的文档」范围只搜已开成标签的文件：三个文件都打开。
+    app.open_workspace_file(&joined(&root, "docs/guide.md"))
+        .unwrap();
+    app.open_workspace_file(&joined(&root, "readme.md"))
+        .unwrap();
+    app.open_workspace_file(&joined(&root, "Case.md")).unwrap();
 
     app.sidebar.search_query = "needle".into();
+    // 开关的语义与范围无关，但**计数**有关：默认「当前文档」下没有活动
+    // 文档，三种开关会同样得到 0，开关就成了摆设而测试依然绿（V11-28）。
+    app.sidebar.search_scope = SearchScope::OpenDocuments;
     let insensitive = app.search_workspace().unwrap().total();
     assert_eq!(
         insensitive, 7,
@@ -694,6 +749,140 @@ fn empty_query_does_not_trigger_a_search() {
 
     assert!(result.is_empty(), "空查询不应有结果");
     assert!(!result.truncated);
+}
+
+/// 范围切换器：「当前文档」只出活动文档的命中（V11-28）。
+///
+/// 三条断言各钉一个面，缺一条这个功能就可能「看起来实现了」：
+/// 1. **默认范围是「当前文档」**，且没打开任何文件时结果必须为空——
+///    绝不能悄悄退化成跨文档搜索，那与面板上声明的范围自相矛盾
+///    （`search_workspace` 里专门有一条 early return 守这件事）；
+/// 2. 打开 guide.md 后只剩它一组——文档一切换，文档级结果立刻跟着变；
+/// 3. 切到「打开的文档」才跨文档——且只覆盖**开成标签的**文件，
+///    侧栏目录下没打开的文件不参与（问题 037）。
+#[test]
+fn search_scope_current_document_only_searches_the_open_file() {
+    let ws = workspace();
+    let root = ws.path().to_path_buf();
+    let (_cfg, mut app) = app_with_workspace(&root);
+    app.sidebar.search_query = "needle".into();
+
+    // 1. 默认范围 + 未打开任何文档：空。
+    assert_eq!(
+        app.sidebar.search_scope,
+        SearchScope::CurrentDocument,
+        "默认范围应为「当前文档」"
+    );
+    let scoped = app.search_workspace().expect("搜索应成功");
+    assert!(
+        scoped.is_empty(),
+        "无活动文档时「当前文档」范围必须为空，实际搜到：{:?}",
+        scoped
+            .groups
+            .iter()
+            .map(|g| &g.file_name)
+            .collect::<Vec<_>>()
+    );
+
+    // 2. 打开 guide.md：只有它一组、三条命中（readme.md 的那条不出现）。
+    app.open_workspace_file(&joined(&root, "docs/guide.md"))
+        .unwrap();
+    let scoped = app.search_workspace().unwrap();
+    assert_eq!(scoped.groups.len(), 1, "「当前文档」范围只应有一个分组");
+    assert_eq!(scoped.groups[0].file_name, "guide.md");
+    assert_eq!(scoped.total(), 3, "guide.md 内共三处 needle");
+
+    // 3. 切到「打开的文档」：已开标签的两个文件都出现（共四条）。
+    app.open_workspace_file(&joined(&root, "readme.md"))
+        .unwrap();
+    app.sidebar.search_scope = SearchScope::OpenDocuments;
+    let wide = app.search_workspace().unwrap();
+    assert_eq!(wide.groups.len(), 2, "跨文档范围应覆盖全部已打开文档");
+    assert_eq!(wide.total(), 4);
+}
+
+/// 范围切换器在真实帧里可见、可点（V11-28）。
+///
+/// 点击落点取本帧形状里「打开的文档」的**实际字形中心**，不写死坐标：
+/// 切换器宽度由字体决定，写死坐标等于把测试绑死在某台机器的字体上。
+#[test]
+fn clicking_the_scope_switcher_changes_the_search_scope() {
+    let ws = workspace();
+    let root = ws.path().to_path_buf();
+    let (_cfg, mut app) = app_with_workspace(&root);
+    let ctx = egui::Context::default();
+    // 「打开的文档」只搜已开标签的文件：先开两个，切换后才有结果可验。
+    app.open_workspace_file(&joined(&root, "docs/guide.md"))
+        .unwrap();
+    app.open_workspace_file(&joined(&root, "readme.md"))
+        .unwrap();
+    app.ui.sidebar_tab = SidebarTab::Search;
+    app.ui.sidebar_visible = true;
+    app.sidebar.search_query = "needle".into();
+
+    // 先渲染两帧让布局稳定，再从形状里取切换器的位置。
+    let mut shapes = Vec::new();
+    for _ in 0..2 {
+        let out = crate::support::run_ui(&ctx, frame_input(), |ui| {
+            rustmark::presentation::theme::mapper::apply(ui.ctx(), &app.ui.theme);
+            main_view::show(&mut app, ui);
+        });
+        shapes = out.shapes;
+    }
+    let target = text_center(&shapes, "打开的文档").expect("切换器应渲染出「打开的文档」");
+    assert!(
+        text_center(&shapes, "当前文档").is_some(),
+        "切换器应同时渲染出「当前文档」"
+    );
+
+    click_at(&ctx, &mut app, target);
+
+    assert_eq!(
+        app.sidebar.search_scope,
+        SearchScope::OpenDocuments,
+        "点击「打开的文档」应把范围切过去"
+    );
+    // 切过去必须立刻见效：同一查询从「只有活动文档」变成跨文档两组。
+    let result = app.search_workspace().unwrap();
+    assert_eq!(result.groups.len(), 2, "切换范围后结果应立即刷新");
+}
+
+/// 在形状里找某段文字的中心点（点击落点）。
+fn text_center(shapes: &[egui::epaint::ClippedShape], needle: &str) -> Option<egui::Pos2> {
+    let mut found = None;
+    for cs in shapes {
+        walk_texts(&cs.shape, &mut |t: &egui::epaint::TextShape| {
+            // 整段相等而非包含：空状态文案里也提到「打开的文档」，
+            // 用包含会点到提示文字上去。
+            if found.is_none() && t.galley.text() == needle {
+                let size = t.galley.size();
+                found = Some(egui::pos2(t.pos.x + size.x / 2.0, t.pos.y + size.y / 2.0));
+            }
+        });
+    }
+    found
+}
+
+/// 在形状里找**侧栏区域内**某段文字的中心点（点击落点）。
+///
+/// 与 `text_center` 的区别：只接受裁剪矩形落在侧栏内的形状
+/// （左缘贴窗左、宽度不超过面板宽），从而排除编辑区里同名的正文
+/// （如大纲条目「第二节」与编辑区正文「第二节」重名，写死坐标会点错）。
+fn sidebar_text_center(shapes: &[egui::epaint::ClippedShape], needle: &str) -> Option<egui::Pos2> {
+    let mut found = None;
+    for cs in shapes {
+        let clip = cs.clip_rect;
+        if clip.left() > 1.0 || clip.width() > 320.0 {
+            continue;
+        }
+        walk_texts(&cs.shape, &mut |t: &egui::epaint::TextShape| {
+            if found.is_none() && t.galley.text() == needle {
+                let size = t.galley.size();
+                found = Some(egui::pos2(t.pos.x + size.x / 2.0, t.pos.y + size.y / 2.0));
+            }
+        });
+    }
+    found
 }
 
 // ===========================================================================
@@ -747,14 +936,14 @@ fn all_sidebar_tabs_render_in_a_real_frame() {
         app.ui.sidebar_tab = *tab;
         app.ui.sidebar_visible = true;
         for _ in 0..2 {
-            let _ = ctx.run(frame_input(), |ctx| {
-                rustmark::presentation::theme::mapper::apply(ctx, &app.ui.theme);
-                main_view::show(&mut app, ctx);
+            crate::support::run_ui(&ctx, frame_input(), |ui| {
+                rustmark::presentation::theme::mapper::apply(ui.ctx(), &app.ui.theme);
+                main_view::show(&mut app, ui);
             });
         }
         if *tab == SidebarTab::Search {
             assert!(
-                ctx.memory(|m| m.has_focus(egui::Id::new(SEARCH_INPUT_ID))),
+                ctx.memory(|m| m.has_focus(egui::Id::unique(SEARCH_INPUT_ID))),
                 "搜索标签未渲染：搜索框拿不到焦点"
             );
         }
@@ -799,4 +988,560 @@ fn display_name_takes_the_last_segment() {
 
 fn display(path: &str) -> String {
     path.rsplit('/').next().unwrap_or(path).to_string()
+}
+
+// ===========================================================================
+// 问题 1 回归：侧边栏顶部标签点击切换
+// ===========================================================================
+
+/// 在 `pos` 上模拟一次完整点击（移动 → 按下 → 释放在同一点）。
+///
+/// egui 的 `clicked()` 判定「按下与释落在同一控件」，只发 pressed 不触发；
+/// 而交互判定依赖**上一帧**已建立的布局，故每帧都要重跑 `main_view::show`。
+fn click_at(ctx: &egui::Context, app: &mut EditorApp, pos: egui::Pos2) {
+    for pressed in [true, false] {
+        let mut input = frame_input();
+        input.events.push(egui::Event::PointerMoved(pos));
+        input.events.push(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        });
+        crate::support::run_ui(ctx, input, |ui| {
+            rustmark::presentation::theme::mapper::apply(ui.ctx(), &app.ui.theme);
+            main_view::show(app, ui);
+        });
+    }
+}
+
+/// 在 `pos` 上模拟一次完整**右键**点击（移动 → 按下 → 释放在同一点）。
+fn right_click_at(ctx: &egui::Context, app: &mut EditorApp, pos: egui::Pos2) {
+    for pressed in [true, false] {
+        let mut input = frame_input();
+        input.events.push(egui::Event::PointerMoved(pos));
+        input.events.push(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Secondary,
+            pressed,
+            modifiers: Default::default(),
+        });
+        crate::support::run_ui(ctx, input, |ui| {
+            rustmark::presentation::theme::mapper::apply(ui.ctx(), &app.ui.theme);
+            main_view::show(app, ui);
+        });
+    }
+}
+
+/// 右键菜单必须能被**左键点击其他地方**关闭（问题 040 截图实证）。
+///
+/// 修复前菜单只在「点树底部空白」时收起：点别的行走的是选中 / 展开分支，
+/// 菜单原样挂着；点编辑区更没人管它。原型语义是
+/// `window click → closeMenu`——任意左键都该收菜单。
+#[test]
+fn the_context_menu_closes_on_left_clicks_elsewhere() {
+    let ws = workspace();
+    let root = ws.path().to_path_buf();
+    let (_cfg, mut app) = app_with_workspace(&root);
+    let ctx = egui::Context::default();
+    app.ui.sidebar_tab = SidebarTab::Files;
+    app.ui.sidebar_visible = true;
+
+    // 渲染两帧让布局稳定，再从真实形状里取行中心——写死坐标会绑死旧布局。
+    let mut shapes = Vec::new();
+    for _ in 0..2 {
+        let out = crate::support::run_ui(&ctx, frame_input(), |ui| {
+            rustmark::presentation::theme::mapper::apply(ui.ctx(), &app.ui.theme);
+            main_view::show(&mut app, ui);
+        });
+        shapes = out.shapes;
+    }
+    let target = sidebar_text_center(&shapes, "readme.md").expect("应渲染出 readme.md 行");
+    let other_row = sidebar_text_center(&shapes, "docs").expect("应渲染出 docs 行");
+
+    // 右键 readme.md → 菜单打开。
+    right_click_at(&ctx, &mut app, target);
+    assert!(
+        app.sidebar.context_menu_path.is_some(),
+        "右键行应打开菜单，实际 {:?}",
+        app.sidebar.context_menu_path
+    );
+
+    // 左键点别的行（docs）→ 菜单关闭（docs 同时被展开，但这不豁免关菜单）。
+    click_at(&ctx, &mut app, other_row);
+    assert!(
+        app.sidebar.context_menu_path.is_none(),
+        "左键点其他行应关闭菜单，实际 {:?}",
+        app.sidebar.context_menu_path
+    );
+
+    // 再开一次，左键点树外（编辑区，x=900 远超侧栏宽）→ 同样关闭。
+    right_click_at(&ctx, &mut app, target);
+    assert!(app.sidebar.context_menu_path.is_some());
+    click_at(&ctx, &mut app, egui::pos2(900.0, 400.0));
+    assert!(
+        app.sidebar.context_menu_path.is_none(),
+        "左键点树外（编辑区）应关闭菜单，实际 {:?}",
+        app.sidebar.context_menu_path
+    );
+}
+
+/// 侧边栏顶部「大纲」标签点击后必须切换标签页。
+///
+/// 走**真实指针事件**而不是直接调 `toggle_sidebar_tab`：后者绕开了
+/// 「事件绑定」这一环，而用户报的恰恰是「点了没反应」。
+/// 标签精确宽度由主题 Metrics 与字体决定，测试不复算——在标签行上
+/// 横扫若干 x，任一点命中「大纲」即通过，全都没中才失败。
+#[test]
+fn clicking_sidebar_tab_switches_to_outline() {
+    let ws = workspace();
+    let root = ws.path().to_path_buf();
+    let (_cfg, mut app) = app_with_workspace(&root);
+    let ctx = egui::Context::default();
+    app.ui.sidebar_tab = SidebarTab::Files;
+    app.ui.sidebar_visible = true;
+
+    // 渲染两帧让布局稳定，再从真实形状里取「大纲」的字形中心点击——
+    // 活动栏重构后标签不在顶部平铺栏里，写死坐标等于把测试绑死在旧布局。
+    let mut shapes = Vec::new();
+    for _ in 0..2 {
+        let out = crate::support::run_ui(&ctx, frame_input(), |ui| {
+            rustmark::presentation::theme::mapper::apply(ui.ctx(), &app.ui.theme);
+            main_view::show(&mut app, ui);
+        });
+        shapes = out.shapes;
+    }
+    let target = sidebar_text_center(&shapes, "大纲").expect("活动栏应渲染出「大纲」导航项");
+
+    click_at(&ctx, &mut app, target);
+
+    assert_eq!(
+        app.ui.sidebar_tab,
+        SidebarTab::Outline,
+        "点击活动栏「大纲」项无响应：sidebar_tab 仍为 {:?}",
+        app.ui.sidebar_tab
+    );
+    assert!(app.ui.sidebar_visible, "切换到非当前标签不应把侧边栏收起来");
+}
+
+/// 侧边栏「大纲」条目点击后光标必须跳到对应行（锚点跳转）。
+///
+/// 可观察量取 `pending_cursor`：`goto_byte_offset`（大纲 / 搜索 / lint
+/// 三条跳转的共同终点）会写入它，不依赖 egui 的文本回读接口。
+#[test]
+fn clicking_outline_item_jumps_cursor() {
+    let ws = workspace();
+    let root = ws.path().to_path_buf();
+    let (_cfg, mut app) = app_with_workspace(&root);
+    let ctx = egui::Context::default();
+    app.ui.sidebar_tab = SidebarTab::Outline;
+    app.ui.sidebar_visible = true;
+    // 打开含多个标题的文档（guide.md：# 指南 / ## 第二节）。
+    app.open_workspace_file(&joined(&root, "docs/guide.md"))
+        .expect("打开文档应成功");
+    assert!(
+        !app.current_outline().is_empty(),
+        "前提：guide.md 应解析出标题"
+    );
+
+    // 渲染两帧让布局稳定，再从真实形状里取「第二节」的字形中心点击——
+    // 活动栏重构后大纲面板不再从固定 y 开始，写死坐标等于把测试绑死在旧布局；
+    // 字形中心由本帧形状现取，布局怎么变都能点到正确的条目。
+    let mut shapes = Vec::new();
+    for _ in 0..2 {
+        let out = crate::support::run_ui(&ctx, frame_input(), |ui| {
+            rustmark::presentation::theme::mapper::apply(ui.ctx(), &app.ui.theme);
+            main_view::show(&mut app, ui);
+        });
+        shapes = out.shapes;
+    }
+    assert!(
+        !app.current_outline().is_empty(),
+        "渲染后大纲应为非空（active_doc 应在渲染后保留）：len={}",
+        app.current_outline().len()
+    );
+
+    // 跳到「第二节」（第 4 行）而非首行：首行 offset 为 0，跳转后
+    // selection 仍可能塌成 None，判不出「到底跳没跳」；点第二行能验证
+    // 偏移换算真的指向正确行，而不是「界面跳了但跳错地方」。
+    let target = sidebar_text_center(&shapes, "第二节").expect("大纲应渲染出「第二节」条目");
+    click_at(&ctx, &mut app, target);
+
+    // 跳转判据：光标应落到「第二节」所在行（第 4 行）。
+    let starts = rustmark::presentation::views::scroll_sync::line_start_offsets(
+        &app.current_content().unwrap(),
+    );
+    assert_eq!(
+        app.editor.cursor, starts[4],
+        "点击大纲条目应把光标跳到「第二节」（第 4 行）"
+    );
+    let content = app.current_content().unwrap();
+    let line_text = content[app.editor.cursor..].split('\n').next().unwrap();
+    assert!(
+        line_text.contains("第二节"),
+        "落点行应是「第二节」，实际：{line_text:?}"
+    );
+}
+
+// ===========================================================================
+// 问题 036 回归：`ui.horizontal` 把侧栏内容压进 18pt → 面板半屏就断
+// ===========================================================================
+
+/// 侧栏内容（活动栏 + 内容面板）必须撑满面板**全高**。
+///
+/// egui 0.33 的 `Ui::horizontal` 把子 Ui 初始高定为
+/// `style.spacing.interact_size.y`（18pt）、交叉轴居中（文档原话）。
+/// 活动栏重构成「水平一行」后，活动栏与内容面板被整体压进这 18pt：
+/// 底色条到半屏就断掉、大纲提示溢出面板背景之外浮在编辑区上。
+/// 修复改用 `horizontal_top`（初始高取 `available_size_before_wrap()`，
+/// 即面板全高）。本用例从真实形状钉住两条不变量：
+///
+/// 1. 大纲提示文字可见且在列表上方——它若放在撑满剩余高的滚动区之后
+///    会被推出面板底缘，压扁缺陷下又浮在半屏，两种坏形态一并钉住；
+/// 2. 活动栏底色矩形纵向贯穿面板（高度超过面板高的一半）。
+#[test]
+fn sidebar_content_fills_the_panel_height() {
+    let ws = workspace();
+    let root = ws.path().to_path_buf();
+    let (_cfg, mut app) = app_with_workspace(&root);
+    app.open_workspace_file(&joined(&root, "docs/guide.md"))
+        .expect("打开应成功");
+    app.ui.sidebar_tab = SidebarTab::Outline;
+    app.ui.sidebar_visible = true;
+
+    let shapes = frames(&mut app, None);
+    // 侧栏判据：clip 右界不越过面板（面板宽 308 + frame 边距，编辑区从
+    // ~308 起）。不能用「左界贴 0」——面板 frame 自带 8pt 内边距，
+    // 面板内容形状的 clip 左界是 8 而不是 0。
+    let in_sidebar = |r: egui::Rect| r.right() <= 320.0;
+
+    // 不变量 1：提示文字必须**可见且在列表上方**。它若放在撑满剩余高的
+    // 滚动区之后会被推出面板底缘（036 修复时发现），必须在列表之前绘制；
+    // 压扁缺陷下它则浮在半屏——两种坏形态都可用「存在 + 早于列表」钉住。
+    let mut hint_top = f32::MAX;
+    let mut entry_top = f32::MAX;
+    for cs in &shapes {
+        if !in_sidebar(cs.clip_rect) {
+            continue;
+        }
+        walk_texts(&cs.shape, &mut |t| {
+            if t.galley.text().contains("点击标题可跳转") {
+                hint_top = hint_top.min(t.pos.y);
+            }
+            // 大纲条目行：标题 galley 恰是条目文本（层级号「#」另起一段）。
+            if t.galley.text() == "第二节" {
+                entry_top = entry_top.min(t.pos.y);
+            }
+        });
+    }
+    assert!(
+        hint_top < f32::MAX,
+        "大纲提示必须可见（被撑满的滚动区推出面板即回归）"
+    );
+    assert!(
+        hint_top < entry_top,
+        "大纲提示应在列表上方：hint_top={hint_top}, entry_top={entry_top}"
+    );
+
+    // 不变量 2：活动栏底色矩形必须纵向贯穿面板。压扁时它只有 18pt 高。
+    let activity_h = shapes
+        .iter()
+        .filter(|cs| in_sidebar(cs.clip_rect))
+        .flat_map(|cs| {
+            let mut rects = Vec::new();
+            walk_rects(&cs.shape, &mut |r| rects.push(r.rect));
+            rects
+        })
+        .filter(|r| r.width() <= 60.0 && r.right() <= 320.0)
+        .fold(0.0_f32, |acc, r| acc.max(r.height()));
+    assert!(
+        activity_h > 300.0,
+        "活动栏底色应贯穿面板全高，实测最高 {activity_h}pt（18pt 即 `ui.horizontal` 压扁回归）"
+    );
+}
+
+// ===========================================================================
+// 问题 033 回归：搜索命中行把侧栏撑出面板 → 侧栏右侧一条竖向黑框
+// ===========================================================================
+
+/// 造一个命中行前后都有足够上下文的工作区。
+///
+/// 摘要窗口是「命中词前后各 24 字节」（`workspace/service.rs`），中文 3 字节
+/// 一个，即前后各 8 字：片段形如 `甲甲甲甲甲甲甲甲甲 ++ 图片 ++ 乙乙乙乙乙乙乙乙乙`。
+/// 这正好复现缺陷类 033 的触发条件——前缀占掉大部分可用宽，第三段只剩几个点。
+fn overflow_workspace() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().expect("应可创建临时目录");
+    let root = dir.path();
+    fs::create_dir_all(root.join("docs")).unwrap();
+    let line = format!("{} ++ 图片 ++ {}", "甲".repeat(8), "乙".repeat(40));
+    fs::write(root.join("docs/long.md"), format!("# t\n\n{line}\n")).unwrap();
+    dir
+}
+
+/// 跑若干帧真实布局，取最后一帧的全部形状。
+fn frames(app: &mut EditorApp, fonts: Option<&str>) -> Vec<egui::epaint::ClippedShape> {
+    let ctx = egui::Context::default();
+    if let Some(family) = fonts {
+        let setup = rustmark::infrastructure::fonts::font_definitions(Some(family));
+        ctx.set_fonts(setup.definitions);
+    }
+    let mut shapes = Vec::new();
+    for _ in 0..3 {
+        let out = crate::support::run_ui(&ctx, frame_input(), |ui| {
+            rustmark::presentation::theme::mapper::apply(ui.ctx(), &app.ui.theme);
+            main_view::show(app, ui);
+        });
+        shapes = out.shapes;
+    }
+    shapes
+}
+
+fn walk_rects(shape: &egui::epaint::Shape, f: &mut impl FnMut(&egui::epaint::RectShape)) {
+    match shape {
+        egui::epaint::Shape::Rect(r) => f(r),
+        egui::epaint::Shape::Vec(v) => v.iter().for_each(|s| walk_rects(s, f)),
+        _ => {}
+    }
+}
+
+fn walk_texts(shape: &egui::epaint::Shape, f: &mut impl FnMut(&egui::epaint::TextShape)) {
+    match shape {
+        egui::epaint::Shape::Text(t) => f(t),
+        egui::epaint::Shape::Vec(v) => v.iter().for_each(|s| walk_texts(s, f)),
+        _ => {}
+    }
+}
+
+/// 搜索命中行不得把侧栏撑宽，且片段必须是**一个** galley。
+///
+/// 缺陷类 033 的两条判据，缺一不可：
+///
+/// 1. **布局不变量**：侧栏内任何形状的右界都不得超过面板宽（240pt）。旧实现
+///    里「前 / 命中 / 后」三段各自 `truncate()`，第三段的可用宽只剩几个点，
+///    而 epaint 的截断保证「行不为空」——装不下任何字形时仍排出一个字形，
+///    于是本行 `min_rect` 冲出面板，`SidePanel` 据此把编辑区整体推右，
+///    [240, 推右后的左界] 之间没有任何面板绘制，露出交换链清屏色（黑）。
+/// 2. **结构断言**（与字体无关）：命中词不得单独成段。片段 galley 必须同时
+///    含命中词前后的上下文（`甲` 与 `乙`），否则说明又被拆回了三段。
+#[test]
+fn search_hit_row_never_widens_the_sidebar_panel() {
+    let ws = overflow_workspace();
+    let root = ws.path().to_path_buf();
+    let (_cfg, mut app) = app_with_workspace(&root);
+    app.open_workspace_file(&joined(&root, "docs/long.md"))
+        .expect("打开应成功");
+    app.sidebar.search_query = "图片".into();
+    app.ui.sidebar_tab = SidebarTab::Search;
+    app.ui.sidebar_visible = true;
+
+    // 前提：真的搜到了，且摘要里前后文都在（否则下面的结构断言是空转）。
+    let result = app.search_workspace().expect("搜索应成功");
+    let snippet = result
+        .groups
+        .iter()
+        .flat_map(|g| &g.hits)
+        .next()
+        .expect("应至少一条命中")
+        .snippet
+        .clone();
+    assert!(
+        snippet.contains('甲') && snippet.contains("图片") && snippet.contains('乙'),
+        "摘要应同时含前后文，实际：{snippet:?}"
+    );
+
+    // 用户真实字体配置（Consolas + 中文字体回退）与默认字体各跑一遍：
+    // 溢出只在特定字形宽度下发生，两套字体都要守住同一条不变量。
+    for fonts in [Some("user:Consolas"), None] {
+        let shapes = frames(&mut app, fonts);
+        let panel_w = app.theme().metrics.sidebar_width;
+        let mut sidebar_right = 0.0_f32;
+        let mut editor_left = f32::MAX;
+        let mut span_galleys: Vec<String> = Vec::new();
+        for cs in &shapes {
+            // 裁剪矩形即「区域归属」：侧栏 [0,100]-[240,776]、编辑区 [240,…]、
+            // 顶栏 / 状态栏横跨整窗。按区域分别统计，才不会把顶栏面包屑、
+            // 状态栏字数这些**本来就该通栏**的形状误判成侧栏溢出。
+            let clip = cs.clip_rect;
+            let in_sidebar = clip.left() <= 0.5 && clip.width() <= panel_w + 0.5;
+            let in_editor = clip.left() >= panel_w - 0.5 && clip.width() > 200.0;
+            walk_rects(&cs.shape, &mut |r: &egui::epaint::RectShape| {
+                let rect = r.rect;
+                if rect.width() < 8.0 || rect.height() < 8.0 {
+                    return;
+                }
+                if in_sidebar && rect.right() > sidebar_right {
+                    sidebar_right = rect.right();
+                }
+                if in_editor && rect.left() < editor_left {
+                    editor_left = rect.left();
+                }
+            });
+            walk_texts(&cs.shape, &mut |t: &egui::epaint::TextShape| {
+                let text = t.galley.text();
+                if in_sidebar && text.contains("图片") && text.contains('甲') && text.contains('乙')
+                {
+                    span_galleys.push(text.to_string());
+                }
+            });
+        }
+        assert!(
+            sidebar_right <= panel_w + 0.01,
+            "fonts={fonts:?}：侧栏内容右界 {sidebar_right} 超出面板宽 {panel_w}"
+        );
+        assert!(
+            editor_left >= panel_w - 0.01,
+            "fonts={fonts:?}：编辑区左界 {editor_left} 被侧栏推右（面板宽 {panel_w}）"
+        );
+        assert_eq!(
+            span_galleys.len(),
+            1,
+            "fonts={fonts:?}：命中片段应只有一个 galley，实际 {:?}",
+            span_galleys
+        );
+    }
+}
+
+// ===========================================================================
+// 可打开格式白名单（问题 045）
+// ===========================================================================
+
+/// 在 `pos` 上模拟一次**双击**（两轮 press + release）。
+///
+/// egui 把它判成双击的条件是「两次点击的间隔小于 `max_double_click_delay`
+/// （0.3s）」，而无头驱动的帧墙钟间隔是微秒级，天然落在窗口内——
+/// 不必伪造 `RawInput::time` 去赶动画（那是 041 的教训：时间相关行为
+/// 在测试帧节奏下容易被掩盖，但这里要的正是「快得能被判成双击」）。
+fn double_click_at(ctx: &egui::Context, app: &mut EditorApp, pos: egui::Pos2) {
+    for pressed in [true, false, true, false] {
+        let mut input = frame_input();
+        input.events.push(egui::Event::PointerMoved(pos));
+        input.events.push(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        });
+        crate::support::run_ui(ctx, input, |ui| {
+            rustmark::presentation::theme::mapper::apply(ui.ctx(), &app.ui.theme);
+            main_view::show(app, ui);
+        });
+    }
+}
+
+/// 侧栏区域里某段文字的**绘制颜色**（取首个样式段的颜色）。
+///
+/// 置灰 / 不置灰这类「表达」只能从颜色上读——文字内容本身两行一样。
+fn sidebar_text_color(
+    shapes: &[egui::epaint::ClippedShape],
+    needle: &str,
+) -> Option<egui::Color32> {
+    let mut found = None;
+    for cs in shapes {
+        // 与 `sidebar_text_center` 同一条侧栏判据（靠左、不宽于面板）。
+        if cs.clip_rect.left() > 1.0 || cs.clip_rect.width() > 320.0 {
+            continue;
+        }
+        walk_texts(&cs.shape, &mut |t: &egui::epaint::TextShape| {
+            if found.is_none() && t.galley.text() == needle {
+                found = t.galley.job.sections.first().map(|s| s.format.color);
+            }
+        });
+    }
+    found
+}
+
+/// 渲染两帧并返回形状（第二帧的布局已稳定）。
+fn settled_shapes(ctx: &egui::Context, app: &mut EditorApp) -> Vec<egui::epaint::ClippedShape> {
+    let mut shapes = Vec::new();
+    for _ in 0..2 {
+        shapes = crate::support::run_ui(ctx, frame_input(), |ui| {
+            rustmark::presentation::theme::mapper::apply(ui.ctx(), &app.ui.theme);
+            main_view::show(app, ui);
+        })
+        .shapes;
+    }
+    shapes
+}
+
+/// 「文件」标签页里：白名单内的文件双击能打开（新分支的正向一半）。
+#[test]
+fn double_clicking_a_text_file_in_the_tree_opens_it() {
+    let ws = workspace();
+    let root = ws.path().to_path_buf();
+    let (_cfg, mut app) = app_with_workspace(&root);
+    let ctx = egui::Context::default();
+    app.ui.sidebar_tab = SidebarTab::Files;
+    app.ui.sidebar_visible = true;
+
+    let shapes = settled_shapes(&ctx, &mut app);
+    let target = sidebar_text_center(&shapes, "readme.md").expect("文件树应渲染出 readme.md 行");
+    double_click_at(&ctx, &mut app, target);
+
+    let opened = app.current_document_path();
+    assert!(
+        opened.contains("readme.md"),
+        "双击 .md 应打开它，实际活动文档 = {opened:?}"
+    );
+}
+
+/// 白名单**外**的文件：行置灰、双击打不开、且给出「暂不支持」的提示。
+///
+/// 三件事一起钉，是因为缺任何一件这个特性都是残的：
+/// - 只置灰不拦 → 用户双击还是能打开一屏乱码；
+/// - 只拦不置灰 → 用户不知道哪些能点，只能在「点了没反应」里试错；
+/// - 拦了不提示 → 同上，且看起来像软件卡了。
+#[test]
+fn non_text_file_in_the_tree_is_dimmed_and_refuses_to_open() {
+    let ws = workspace();
+    let root = ws.path().to_path_buf();
+    let (_cfg, mut app) = app_with_workspace(&root);
+    // 文档目录里放一张配图——这是工作区里最常见的非文本文件。
+    fs::write(root.join("photo.png"), b"\x89PNG\r\n\x1a\n\x00\x00").unwrap();
+    // 再放一份表格：白名单内，用来对照「不是所有非 md 都置灰」。
+    fs::write(root.join("table.csv"), "a,b\n1,2\n").unwrap();
+    app.refresh_workspace();
+
+    let ctx = egui::Context::default();
+    app.ui.sidebar_tab = SidebarTab::Files;
+    app.ui.sidebar_visible = true;
+    let theme = app.ui.theme.clone();
+
+    let shapes = settled_shapes(&ctx, &mut app);
+    // ① 置灰：图片用次要色，md / csv 用正文色。
+    let png_color = sidebar_text_color(&shapes, "photo.png").expect("文件树应渲染出 photo.png 行");
+    assert_eq!(
+        png_color, theme.text_secondary,
+        "白名单外的文件必须置灰：可用性不能只靠「点了才知道」"
+    );
+    assert_eq!(
+        sidebar_text_color(&shapes, "readme.md"),
+        Some(theme.text_primary),
+        ".md 应保持正文色（置灰是给不能打开的文件用的信号）"
+    );
+    assert_eq!(
+        sidebar_text_color(&shapes, "table.csv"),
+        Some(theme.text_primary),
+        ".csv 在白名单内，同样不该置灰"
+    );
+
+    // ② 双击不打开，③ 且说明原因。
+    let before = app.open_document_list().len();
+    let target = sidebar_text_center(&shapes, "photo.png").expect("应能定位 photo.png 行");
+    double_click_at(&ctx, &mut app, target);
+
+    assert_eq!(
+        app.open_document_list().len(),
+        before,
+        "双击图片不得打开任何文档（否则编辑区是一屏乱码）"
+    );
+    let notice = app
+        .status_bar
+        .message
+        .as_ref()
+        .map(|m| m.text.clone())
+        .unwrap_or_default();
+    assert!(
+        notice.contains("暂不支持打开该格式"),
+        "双击图片应说明原因而不是静默无反应，实际状态栏 = {notice:?}"
+    );
 }

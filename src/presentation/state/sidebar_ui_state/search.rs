@@ -59,6 +59,67 @@ pub const SEARCH_TOGGLES: [SearchToggle; 3] = [
     SearchToggle::Regex,
 ];
 
+/// 搜索范围（侧栏「搜索」标签的范围切换器）。
+///
+/// 两个选项不是两种算法，而是两种**作用域**：
+/// - [`Self::CurrentDocument`] 与大纲 / 检查同属**文档级**，跟随活动文档，
+///   文档一切换结果立刻变；
+/// - [`Self::OpenDocuments`] 覆盖**多文档标签栏里所有打开的文档**——
+///   含未保存的草稿，但不含侧栏文件夹下尚未打开的文件。
+///
+/// 默认「当前文档」：侧栏按作用域分组后，「搜索」归入文档级面板，
+/// 打开文档才是主路径；跨文档查找作为可切换的次要形态保留，
+/// 而不是反过来把文档级能力默认关掉。
+///
+/// # 为什么「打开的文档」而不是「整个工作区」
+///
+/// 旧语义是「搜工作区目录下的所有文件」——那会把用户**没打开**的
+/// 成百上千个文件拖进检索，一次搜索读遍全盘；而用户想跨文件查找时，
+/// 找的其实正是自己手头开着的那几份。范围改为「标签栏里所有打开的
+/// 文档」后：结果集与用户的工作上下文一致，读盘量也从全盘降到几份。
+/// （真需要按文件名找未打开的文件，走「快速打开」浮层。）
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum SearchScope {
+    /// 只搜当前打开的文档（含未保存的修改）。
+    #[default]
+    CurrentDocument,
+    /// 搜标签栏里所有打开的文档（含未保存的草稿）。
+    OpenDocuments,
+}
+
+impl SearchScope {
+    /// 切换器上的短标签（面板只有 260pt 宽，用词必须短）。
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::CurrentDocument => "当前文档",
+            Self::OpenDocuments => "打开的文档",
+        }
+    }
+
+    /// 悬浮提示（说清这个范围到底覆盖谁——符号与短词都不自解释）。
+    pub const fn hint(self) -> &'static str {
+        match self {
+            Self::CurrentDocument => "只搜索当前打开的文档（含未保存的修改）",
+            Self::OpenDocuments => "搜索标签栏中所有打开的文档（含未保存的草稿）",
+        }
+    }
+
+    /// 搜索框占位提示。
+    ///
+    /// 随范围变化：用户还没打字就知道这一框会搜到哪里，
+    /// 不必等出一屏结果才发现搜错了对象。
+    pub const fn placeholder(self) -> &'static str {
+        match self {
+            Self::CurrentDocument => "在当前文档中搜索",
+            Self::OpenDocuments => "在所有打开的文档中搜索",
+        }
+    }
+}
+
+/// 切换器的展示顺序（文档级在前：它是默认项，也对应侧栏的分组主旨）。
+pub const SEARCH_SCOPES: [SearchScope; 2] =
+    [SearchScope::CurrentDocument, SearchScope::OpenDocuments];
+
 impl SearchToggle {
     /// 按钮上的短标签（宽度有限，用符号而非文字）。
     pub const fn badge(self) -> &'static str {

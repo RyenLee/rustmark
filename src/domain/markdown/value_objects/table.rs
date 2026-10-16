@@ -6,6 +6,7 @@
 
 use crate::shared::geometry::TextRange;
 
+use super::block::InlineImage;
 use super::inline::InlineSpan;
 
 /// 表格单元格的水平对齐方式（GFM 分隔行 `:` 决定）。
@@ -54,6 +55,12 @@ pub struct ListItem {
     ordinal: Option<u64>,
     /// 该项文本内的行内样式片段（相对 `text` 的字节区间）。
     spans: Vec<InlineSpan>,
+    /// 该项文本里混排的图片（区间相对 `text`；见 [`InlineImage`]）。
+    ///
+    /// 列表项是**文本容器**而非块：它里面的图片没法像段落那样升级成独立的
+    /// 图片块（列表整体才是一个块），只能挂在这里由渲染方插回项文本里；
+    /// 不挂的话 `- ![图标](u.png) 说明` 里的图标会凭空消失。
+    images: Vec<InlineImage>,
 }
 
 impl ListItem {
@@ -66,6 +73,7 @@ impl ListItem {
             depth: 0,
             ordinal: None,
             spans: Vec::new(),
+            images: Vec::new(),
         }
     }
 
@@ -84,6 +92,12 @@ impl ListItem {
     /// 设置行内样式片段。
     pub fn with_spans(mut self, spans: Vec<InlineSpan>) -> Self {
         self.spans = spans;
+        self
+    }
+
+    /// 设置项文本里混排的图片。
+    pub fn with_images(mut self, images: Vec<InlineImage>) -> Self {
+        self.images = images;
         self
     }
 
@@ -115,6 +129,11 @@ impl ListItem {
     /// 行内样式片段。
     pub fn spans(&self) -> &[InlineSpan] {
         &self.spans
+    }
+
+    /// 项文本里混排的图片。
+    pub fn images(&self) -> &[InlineImage] {
+        &self.images
     }
 }
 

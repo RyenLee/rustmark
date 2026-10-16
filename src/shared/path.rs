@@ -99,13 +99,14 @@ impl FilePath {
     /// 扩展名（不含点号）；无扩展名或文件名以点开头且无后续内容时为 `None`。
     ///
     /// 例：`a.md` → `Some("md")`；`Makefile` → `None`；`.gitignore` → `None`。
+    ///
+    /// 判定规则与 [`crate::shared::text_format::extension_of`] **同源**
+    /// （共用 `extension_index`）——那是「可打开格式白名单」的依据，
+    /// 两者若各写一份，白名单与实际扩展名识别迟早会给出不同答案。
     pub fn extension(&self) -> Option<&str> {
         let name = self.file_name();
-        let dot = name.rfind('.')?;
-        if dot == 0 || dot + 1 == name.len() {
-            return None;
-        }
-        Some(&name[dot + 1..])
+        let start = crate::shared::text_format::extension_index(name)?;
+        Some(&name[start..])
     }
 
     /// 替换扩展名，返回新路径。

@@ -38,7 +38,7 @@ pub fn spell_menu_for(
 ) -> Option<SpellSuggestMenu> {
     let relative = pointer - galley_pos;
     let char_index = galley.cursor_from_pos(relative).index;
-    let byte = editor_ops::char_to_byte(&app.editor_text, char_index);
+    let byte = editor_ops::char_to_byte(&app.editor_text, char_index.0);
     let (start, end) = word_bounds_at(&app.editor_text, byte)?;
     // 只给**已标红**的词提建议：没有被判错的词弹出替换菜单，
     // 会让用户以为程序认为他写错了。
@@ -104,7 +104,7 @@ pub(super) fn draw_spell_menu(app: &mut EditorApp, ctx: &Context, theme: &Theme)
     }
 
     let mut picked: Option<String> = None;
-    egui::Area::new(egui::Id::new("rustmark.spell.menu"))
+    egui::Area::new(egui::Id::unique("rustmark.spell.menu"))
         .fixed_pos(menu.screen_pos())
         .order(egui::Order::Foreground)
         .movable(false)

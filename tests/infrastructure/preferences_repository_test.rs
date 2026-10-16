@@ -68,6 +68,7 @@ fn customized() -> Preferences {
         0.5,
         WritingGoal::new(1200),
         rustmark::domain::preferences::value_objects::LintSettings::all_enabled(),
+        9,
     );
     Preferences::new(theme, editor, Default::default()).expect("构造合法偏好设置应成功")
 }
@@ -248,6 +249,7 @@ fn concurrent_style_repeated_saves_keep_file_valid() {
             0.5,
             WritingGoal::new(0),
             rustmark::domain::preferences::value_objects::LintSettings::all_enabled(),
+            7,
         ));
         repo.save(&prefs).expect("反复保存应始终成功");
     }
@@ -283,6 +285,7 @@ fn lint_rule_choices_survive_a_toml_round_trip() {
             trailing_whitespace: false,
             unclosed_fence: true,
         },
+        5,
     );
     let prefs = Preferences::new(theme, editor, Default::default()).expect("构造合法偏好");
 
@@ -352,6 +355,7 @@ fn prefs_with_custom_syntax(syn_heading: Option<&str>) -> Preferences {
         0.5,
         WritingGoal::new(0),
         rustmark::domain::preferences::value_objects::LintSettings::all_enabled(),
+        3,
     );
     Preferences::new(theme, editor, Default::default()).expect("构造合法偏好")
 }
@@ -401,4 +405,60 @@ fn an_old_custom_theme_without_syntax_fields_loads_as_following_theme() {
         "缺省语法色应读作 None（跟随主题）"
     );
     assert_eq!(palette.syn_table, None);
+}
+
+// ============================================================================
+// 问题 038 · 打开文档上限的持久化
+// ============================================================================
+
+/// 手改配置写成 0 时，**收敛到 1** 而不是让整个配置作废。
+///
+/// `load()` 对校验失败的处理是「备份 + 整体回退默认」——为单个字段的 0
+/// 丢掉用户全部设置是不可接受的，故收敛必须发生在 serde 入口。本用例
+/// 同时验证：没有产生备份、其余字段原样保留。
+#[test]
+fn a_hand_edited_zero_max_open_documents_is_clamped_on_load() {
+    let dir = TempDir::new("open-limit-zero");
+    let repo = repo_in(&dir);
+    repo.save(&customized()).expect("先写一份合法配置");
+
+    let raw = fs::read_to_string(repo.path()).expect("应能读回");
+    let hand_edited = raw.replace("max_open_documents = 9", "max_open_documents = 0");
+    assert_ne!(hand_edited, raw, "替换应真的发生（夹具里的上限是 9）");
+    fs::write(repo.path(), hand_edited).expect("写回手改后的配置");
+
+    let loaded = repo.load().expect("手改 0 不得导致加载失败");
+    assert_eq!(
+        loaded.editor().max_open_documents(),
+        1,
+        "手改的 0 应收敛到 1"
+    );
+    assert_eq!(loaded.theme().font_size(), 16.0, "其余字段必须原样保留");
+    assert_eq!(loaded.editor().auto_save_interval(), Some(60));
+    assert!(dir.backups().is_empty(), "0 已收敛，不应触发备份+回退默认");
+}
+
+/// 旧配置缺 `max_open_documents` 字段时按默认值读出（不报错、不备份）。
+#[test]
+fn an_old_config_without_max_open_documents_uses_the_default() {
+    let dir = TempDir::new("open-limit-missing");
+    let repo = repo_in(&dir);
+    repo.save(&customized()).expect("先写一份合法配置");
+
+    let raw = fs::read_to_string(repo.path()).expect("应能读回");
+    let stripped: String = raw
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("max_open_documents"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    fs::write(repo.path(), stripped).expect("写回旧格式配置");
+
+    let loaded = repo.load().expect("旧配置必须能加载");
+    assert_eq!(
+        loaded.editor().max_open_documents(),
+        12,
+        "缺字段必须按默认值 12 读出"
+    );
+    assert_eq!(loaded.theme().font_size(), 16.0, "其余字段应照常读出");
+    assert!(dir.backups().is_empty(), "缺字段不构成损坏，不应产生备份");
 }

@@ -58,6 +58,15 @@ const LINE_HEIGHTS: &[f32] = &[1.4, 1.5, 1.6, 1.7, 1.8, 2.0];
 /// 可选缩进宽度。
 const TAB_SIZES: &[u8] = &[2, 4, 8];
 
+/// 打开文档数量上限的可选范围（问题 038）。
+///
+/// 下限 1 = 「一次只看一份」也是合法用法；上限 30 与领域默认值同源的理由：
+/// 再大没有意义，且 30 个标签早已超出任何常见窗口一屏放得下的宽度。
+/// 范围端点写在表现层而不引用领域常量——check-arch 的依赖禁令
+/// （表现层不得依赖 `domain`）；领域侧的默认值由 DTO 的 serde 缺省
+/// 单独持有，两端各自有用例钉住。
+const MAX_OPEN_DOCUMENTS_RANGE: std::ops::RangeInclusive<u32> = 1..=30;
+
 /// 应用版本号（「关于」分区显示）。
 const VERSION: &str = "0.1.0";
 
@@ -75,7 +84,7 @@ pub const FONT_INPUT_ID: &str = "rustmark.settings.font";
 pub fn show(app: &mut EditorApp, ctx: &Context) {
     let mut open = true;
     egui::Window::new(Overlay::Settings.title())
-        .id(egui::Id::new("rustmark.overlay.settings"))
+        .id(egui::Id::unique("rustmark.overlay.settings"))
         .open(&mut open)
         .collapsible(false)
         .resizable(true)
@@ -92,7 +101,7 @@ pub fn show(app: &mut EditorApp, ctx: &Context) {
     if app.settings_ui.section == SettingsTab::Appearance
         && app.dialog.take_open_focus(Overlay::Settings)
     {
-        ctx.memory_mut(|m| m.request_focus(egui::Id::new(FONT_INPUT_ID)));
+        ctx.memory_mut(|m| m.request_focus(egui::Id::unique(FONT_INPUT_ID)));
     }
     if !open {
         // 点标题栏的 × 与点「取消」语义**一致**（都回滚）：
@@ -196,10 +205,19 @@ fn content(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
     });
 }
 
-/// 页脚：恢复本组默认 / 取消 / 保存。
+/// 页脚：恢复本组默认 / 恢复默认快捷键 / 取消 / 保存。
 fn footer(app: &mut EditorApp, ui: &mut Ui) {
     ui.horizontal(|ui| {
-        if app.settings_ui.can_reset_section() && ui.button("恢复本组默认").clicked() {
+        // 「恢复默认快捷键」在**父级页面**（对话框页脚），不在快捷键分区的
+        // 滚动列表里（问题 038）：它是分区级动作，而 60 个条目的列表要滑到
+        // 最底部才看得见——「重置整个分区」不该藏得比任何单条键位都深。
+        // 页脚不随分区内容滚动，与「恢复本组默认」同级、同位，
+        // 两个重置入口从此只有一处。
+        if app.settings_ui.section == SettingsTab::Shortcuts {
+            if ui.button("恢复默认快捷键").clicked() {
+                app.reset_all_shortcuts();
+            }
+        } else if app.settings_ui.can_reset_section() && ui.button("恢复本组默认").clicked() {
             app.reset_current_settings_section();
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {

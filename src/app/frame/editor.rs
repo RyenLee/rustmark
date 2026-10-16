@@ -69,7 +69,7 @@ impl EditorApp {
 
     /// 文档行数（状态栏右端「N 行」用）。
     pub fn current_line_count(&self) -> usize {
-        self.editor_text.split('\n').count().max(1)
+        crate::shared::text::line_count(&self.editor_text)
     }
 
     /// 当前文档统计（状态栏字数、统计浮层共用）。
@@ -347,7 +347,7 @@ impl EditorApp {
 
     /// 编辑区 `TextEdit` 的固定 `Id`（用于读写 egui 内部光标 / 撤销栈状态）。
     pub fn editor_id() -> egui::Id {
-        egui::Id::new("rustmark.editor.text")
+        egui::Id::unique("rustmark.editor.text")
     }
 
     /// 从领域回读当前文档内容到 `editor_text`，并夹紧光标/选区、失效高亮缓存。

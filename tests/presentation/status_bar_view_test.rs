@@ -89,9 +89,9 @@ fn frame_input() -> egui::RawInput {
 /// 跑一帧（真实 egui 上下文）。
 fn run_frame(app: &mut EditorApp) {
     let ctx = egui::Context::default();
-    let _ = ctx.run(frame_input(), |ctx| {
-        rustmark::presentation::theme::mapper::apply(ctx, &app.ui.theme);
-        main_view::show(app, ctx);
+    crate::support::run_ui(&ctx, frame_input(), |ui| {
+        rustmark::presentation::theme::mapper::apply(ui.ctx(), &app.ui.theme);
+        main_view::show(app, ui);
     });
 }
 
@@ -406,49 +406,27 @@ fn toggles_flip_the_editor_state() {
 
 /// 主题项显示当前状态；提示必须说明**点击后会发生什么**（V11-17）。
 ///
-/// 轮换是三态序列 `深色 → 浅色 → 跟随系统 → 深色`：
-/// 用户在浅色点一下，下一态是「跟随系统」，而系统当前可能解析为深色，
-/// 界面就变深了——早期提示只写「点击切换主题」，
-/// 「点浅色变深色」由此被判为 bug。现在每一态都预告下一态。
+/// 状态栏右下角的切换是**二态直接互换**：深色 ↔ 浅色（按当前生效明暗取反），
+/// 不再经「跟随系统」中转——早期三态轮换让「浅色点一下变深色」被误判为 bug。
+/// 现在每一态都直接预告下一态，且文案与 `frame::settings::cycle_theme` 的语义一致。
 #[test]
 fn theme_label_includes_the_resolved_side() {
     use rustmark::presentation::theme::builtin::BuiltinTheme;
     let (_cfg, mut app) = app();
 
-    // 深色：提示明确说出下一态是浅色主题。
+    // 深色：提示明确说出下一态是浅色主题（一步直达，不绕系统）。
     app.ui.theme.kind = BuiltinTheme::Dark;
     let dark = status_bar_view::build_model(&app);
     assert_eq!(dark.theme_label, "深色主题");
     assert_eq!(dark.theme_hint, "点击切换为浅色主题");
 
-    // 浅色：下一态是「跟随系统」，并带上系统当前解析出的深浅。
+    // 浅色：下一态直接是深色主题（不再跳「跟随系统」）。
     app.ui.theme.kind = BuiltinTheme::Light;
     let light = status_bar_view::build_model(&app);
     assert_eq!(light.theme_label, "浅色主题");
-    let system_cn = if app.system_prefers_dark() {
-        "深"
-    } else {
-        "浅"
-    };
     assert_eq!(
-        light.theme_hint,
-        format!("点击切换为跟随系统（当前解析为{system_cn}色）"),
-        "浅色态的提示必须预告下一态是跟随系统及其解析结果"
-    );
-
-    // 切到「跟随系统」。
-    app.ui.theme.kind = BuiltinTheme::System;
-    let sys = status_bar_view::build_model(&app);
-    assert!(
-        sys.theme_label.starts_with("跟随系统（"),
-        "跟随系统时必须显示解析出的深/浅，否则用户看不出选项是否生效：{}",
-        sys.theme_label
-    );
-    assert!(sys.theme_label.ends_with('）'));
-    assert_eq!(
-        sys.theme_hint,
-        format!("当前跟随操作系统外观（{system_cn}色），点击切换为深色主题"),
-        "跟随系统态的提示必须说明当前解析结果与下一态"
+        light.theme_hint, "点击切换为深色主题",
+        "浅色态的提示必须直接预告下一态是深色主题"
     );
 }
 
@@ -517,6 +495,7 @@ fn set_writing_goal(app: &mut EditorApp, goal: u32) {
                 split_ratio: view.split_ratio,
                 writing_goal: goal,
                 lint: view.lint,
+                max_open_documents: view.max_open_documents,
             },
         })
         .expect("设置写作目标应成功");

@@ -41,45 +41,22 @@
 //!    `repeat: true`，恰逢 `ime_enabled` 期被剔除。应用既已判定「无组合
 //!    在进行」，就应放行。见 `enter_press_without_release_still_inserts_under_ime_enabled`。
 
+use crate::support::clock::TestClock;
 use crate::support::fake_dialog::FakeDialog;
 use eframe::App as _;
 use rustmark::app::bootstrap::{ConfigPaths, Services};
 use rustmark::app::frame::EditorApp;
-use rustmark::shared::time::{Clock, Timestamp};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+
+/// egui 0.37 起 `ImeEvent::Enabled` 已废弃、egui 不再消费（IME 开关由 egui 自管）。
+/// 保留该构造器仅为**复现真实输入法发来的事件序列**以驱动旧 IME 守卫逻辑回归；
+/// 用 `#[allow(deprecated)]` 压制告警。
+#[allow(deprecated)]
+fn ime_enabled_event() -> egui::Event {
+    egui::Event::Ime(egui::ImeEvent::Enabled)
+}
 
 const SCREEN: egui::Vec2 = egui::vec2(1280.0, 800.0);
-
-// ============================================================================
-// 可控时钟
-// ============================================================================
-
-/// 测试时钟：毫秒数由用例显式推进。
-///
-/// 初值取一个**非零**的 UNIX 纪元量级——与生产 `SystemClock` 同量级，
-/// 免得「时间从 0 开始」这种现实中不存在的状态影响被测逻辑
-/// （如滚动同步的抑制窗口、撤销合并窗口等都以绝对毫秒做差）。
-#[derive(Debug)]
-struct TestClock(AtomicU64);
-
-impl Default for TestClock {
-    fn default() -> Self {
-        TestClock(AtomicU64::new(1_700_000_000_000))
-    }
-}
-
-impl TestClock {
-    fn advance(&self, ms: u64) {
-        self.0.fetch_add(ms, Ordering::SeqCst);
-    }
-}
-
-impl Clock for TestClock {
-    fn now(&self) -> Timestamp {
-        Timestamp::from_millis(self.0.load(Ordering::SeqCst))
-    }
-}
 
 // ============================================================================
 // 夹具
@@ -111,7 +88,7 @@ fn fixture_with(initial: &str) -> Fixture {
     app.open_path(&file.to_string_lossy()).expect("打开应成功");
 
     let ctx = egui::Context::default();
-    let _ = ctx.run(egui::RawInput::default(), |_| {}); // 装载字库
+    crate::support::run_ui(&ctx, egui::RawInput::default(), |_| {}); // 装载字库
     Fixture {
         _dir: dir,
         app,
@@ -129,8 +106,8 @@ impl Fixture {
             events,
             ..Default::default()
         };
-        let out = self.ctx.run(input, |ctx| {
-            self.app.update(ctx, &mut self.frame);
+        let out = crate::support::run_ui(&self.ctx, input, |ui| {
+            self.app.ui(ui, &mut self.frame);
         });
         self.painted = out
             .shapes
@@ -235,7 +212,7 @@ fn repeated_enter_works_after_ime_enabled_without_disabled() {
 
     // 真实 Windows 输入法在编辑区获得焦点时发一次 `Enabled`，
     // 此后若用户没再输入中文（或候选窗被直接关掉），`Disabled` 不会来。
-    f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Enabled)]);
+    f.frame_with(vec![ime_enabled_event()]);
     f.frame_with(vec![]);
 
     // `Enabled` 之后保护窗开始计时。真实用户不会在**同一毫秒**里连按 4 次
@@ -261,9 +238,10 @@ fn preedit_keeps_guard_alive_across_windows() {
     // `Preedit` 续命，守卫就应始终有效（这里验证的是不崩、不吞字）。
     for word in ["ni", "nihao", "nihaojie"] {
         f.clock.advance(400);
-        f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Preedit(
-            word.to_owned(),
-        ))]);
+        f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Preedit {
+            text: word.to_owned(),
+            active_range_chars: None,
+        })]);
         f.frame_with(vec![]);
     }
     f.clock.advance(400);
@@ -282,12 +260,13 @@ fn commit_after_preedit_is_not_swallowed() {
     let mut f = fixture_with("");
     f.focus_at_end();
 
-    f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Enabled)]);
+    f.frame_with(vec![ime_enabled_event()]);
     f.frame_with(vec![]);
     for pre in ["s", "sa", "sad", "sadaf"] {
-        f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Preedit(
-            pre.to_owned(),
-        ))]);
+        f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Preedit {
+            text: pre.to_owned(),
+            active_range_chars: None,
+        })]);
         f.frame_with(vec![]);
     }
     f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Commit(
@@ -317,12 +296,13 @@ fn enter_after_ime_commit_and_char_keeps_up() {
     let mut f = fixture_with("");
     f.focus_at_end();
 
-    f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Enabled)]);
+    f.frame_with(vec![ime_enabled_event()]);
     f.frame_with(vec![]);
     for pre in ["a", "ai", "aidi"] {
-        f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Preedit(
-            pre.to_owned(),
-        ))]);
+        f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Preedit {
+            text: pre.to_owned(),
+            active_range_chars: None,
+        })]);
         f.frame_with(vec![]);
     }
     f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Commit(
@@ -347,7 +327,7 @@ fn list_continuation_enter_unaffected_by_ime() {
     let mut f = fixture_with("1. first");
     f.focus_at_end();
 
-    f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Enabled)]);
+    f.frame_with(vec![ime_enabled_event()]);
     f.frame_with(vec![]);
 
     // 用 `enter_after(100)`：推进时间让 armed 窗口出窗（与真实人手节奏一致），
@@ -366,7 +346,7 @@ fn list_continuation_enter_unaffected_by_ime() {
 fn bound_text_never_drifts_from_domain() {
     let mut f = fixture_with("hello");
     f.focus_at_end();
-    f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Enabled)]);
+    f.frame_with(vec![ime_enabled_event()]);
     f.frame_with(vec![]);
 
     for i in 0..4 {
@@ -419,13 +399,14 @@ fn guard_releases_on_timeout_without_commit() {
     f.focus_at_end();
 
     // 有 Preedit → 进入守卫（ime_composing = true）。
-    f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Enabled)]);
+    f.frame_with(vec![ime_enabled_event()]);
     f.frame_with(vec![]);
     for pre in ["s", "sa"] {
         f.clock.advance(100);
-        f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Preedit(
-            pre.to_owned(),
-        ))]);
+        f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Preedit {
+            text: pre.to_owned(),
+            active_range_chars: None,
+        })]);
         f.frame_with(vec![]);
     }
     assert!(
@@ -477,7 +458,7 @@ fn enter_after_typing_without_ime() {
 fn enter_after_typing_with_ime_enabled_only() {
     let mut f = fixture_with("");
     f.focus_at_end();
-    f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Enabled)]);
+    f.frame_with(vec![ime_enabled_event()]);
     f.frame_with(vec![]);
     f.frame_with(vec![egui::Event::Text("2112".to_owned())]);
     f.frame_with(vec![]);
@@ -511,7 +492,7 @@ fn realistic_ms_pinyin_stream_enter_stays_visible() {
     f.focus_at_end();
 
     // 真实流程：编辑区获得焦点 → IME Enabled。
-    f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Enabled)]);
+    f.frame_with(vec![ime_enabled_event()]);
     f.frame_with(vec![]);
 
     // 数字直接上屏。
@@ -527,18 +508,20 @@ fn realistic_ms_pinyin_stream_enter_stays_visible() {
 
     // 中文组合：Preedit 逐字母 → Commit → **winit 还会发一条空 Preedit 清候选窗**。
     for pre in ["s", "sd", "sdf"] {
-        f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Preedit(
-            pre.to_owned(),
-        ))]);
+        f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Preedit {
+            text: pre.to_owned(),
+            active_range_chars: None,
+        })]);
         f.frame_with(vec![]);
     }
     f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Commit(
         "撒打发第三方".to_owned(),
     ))]);
     f.frame_with(vec![]);
-    f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Preedit(
-        String::new(),
-    ))]);
+    f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Preedit {
+        text: String::new(),
+        active_range_chars: None,
+    })]);
     f.frame_with(vec![]);
     assert_eq!(f.content(), "1\n2112\n撒打发第三方");
 
@@ -578,12 +561,13 @@ fn list_enter_right_after_commit_does_not_pile_markers() {
     f.focus_at_end();
 
     // 一次完整的中文组合：Enabled → Preedit 逐字母 → Commit。
-    f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Enabled)]);
+    f.frame_with(vec![ime_enabled_event()]);
     f.frame_with(vec![]);
     for pre in ["y", "yw"] {
-        f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Preedit(
-            pre.to_owned(),
-        ))]);
+        f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Preedit {
+            text: pre.to_owned(),
+            active_range_chars: None,
+        })]);
         f.frame_with(vec![]);
     }
     f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Commit(
@@ -618,7 +602,7 @@ fn enter_press_without_release_still_inserts_under_ime_enabled() {
     let mut f = fixture_with("hello");
     f.focus_at_end();
 
-    f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Enabled)]);
+    f.frame_with(vec![ime_enabled_event()]);
     f.frame_with(vec![]);
 
     // 第 1 次按下：正常插入。release **丢失**（不发 released）。
@@ -660,7 +644,7 @@ fn repeat_enter_on_armed_expiry_frame_still_inserts() {
     let mut f = fixture_with("hello");
     f.focus_at_end();
 
-    f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Enabled)]);
+    f.frame_with(vec![ime_enabled_event()]);
     f.frame_with(vec![]);
 
     // 第 1 次：正常按下，release **丢失**（Windows 上候选窗/其他窗口抢焦点
@@ -706,13 +690,14 @@ fn preedit_then_enter_keeps_preedit_as_text() {
     let mut f = fixture_with("hello");
     f.focus_at_end();
 
-    f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Enabled)]);
+    f.frame_with(vec![ime_enabled_event()]);
     f.frame_with(vec![]);
     for pre in ["n", "ni"] {
         f.clock.advance(100);
-        f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Preedit(
-            pre.to_owned(),
-        ))]);
+        f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Preedit {
+            text: pre.to_owned(),
+            active_range_chars: None,
+        })]);
         f.frame_with(vec![]);
     }
     assert_eq!(f.content(), "helloni", "预编辑串应经 diff 路径落进领域");
@@ -736,13 +721,14 @@ fn preedit_then_typing_keeps_preedit_as_text() {
     let mut f = fixture_with("hello");
     f.focus_at_end();
 
-    f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Enabled)]);
+    f.frame_with(vec![ime_enabled_event()]);
     f.frame_with(vec![]);
     for pre in ["n", "ni"] {
         f.clock.advance(100);
-        f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Preedit(
-            pre.to_owned(),
-        ))]);
+        f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Preedit {
+            text: pre.to_owned(),
+            active_range_chars: None,
+        })]);
         f.frame_with(vec![]);
     }
 
@@ -778,11 +764,12 @@ fn preedit_then_enter_on_guard_expiry_frame_keeps_text() {
     let mut f = fixture_with("基线");
     f.focus_at_end();
 
-    f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Enabled)]);
+    f.frame_with(vec![ime_enabled_event()]);
     f.frame_with(vec![]);
-    f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Preedit(
-        "sheng".to_owned(),
-    ))]);
+    f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Preedit {
+        text: "sheng".to_owned(),
+        active_range_chars: None,
+    })]);
     f.frame_with(vec![]);
     assert_eq!(f.content(), "基线sheng", "预编辑串应落进领域");
 
@@ -814,11 +801,12 @@ fn preedit_survives_enter_across_all_timing_boundaries() {
     ] {
         let mut f = fixture_with("基线");
         f.focus_at_end();
-        f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Enabled)]);
+        f.frame_with(vec![ime_enabled_event()]);
         f.frame_with(vec![]);
-        f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Preedit(
-            "sheng".to_owned(),
-        ))]);
+        f.frame_with(vec![egui::Event::Ime(egui::ImeEvent::Preedit {
+            text: "sheng".to_owned(),
+            active_range_chars: None,
+        })]);
         f.frame_with(vec![]);
 
         let before = f.content();

@@ -98,6 +98,21 @@ pub struct AppUiState {
     pub active_tab: usize,
     /// 打开的标签页数量。
     pub tab_count: usize,
+    /// 标签条的横向滚动偏移（**会话级，不落盘**；单位 pt）。
+    ///
+    /// 为什么必须由我们自己持有，而不直接读 `ScrollArea` 的内部状态
+    /// （问题 042 的根因之一）：egui 的滚动增量 `pass_state.scroll_delta`
+    /// 是**全局**的、不分滚动区——任何视图调 `ui.scroll_to_rect` 都会写进去，
+    /// 由**下一个 begin 的 ScrollArea** 消费。标签条在顶栏、总是最先执行，
+    /// 于是把编辑区 / 预览区的滚动请求整个抢走，表现为标签条 offset
+    /// 随机漂移、导航箭头「点了没反应」。把偏移提升为应用状态后，
+    /// 每帧末尾无条件写回权威值，外部污染即被纠正。
+    pub tabstrip_scroll_x: f32,
+    /// 上一帧的活动文档 id，用于判定「活动标签是否刚变化」（会话级，不落盘）。
+    ///
+    /// 见 `draw_tab_strip` 里 `changed` 的注释：这个量**不能**放 egui temp
+    /// memory，否则每帧都判成「变化」，reveal 会把用户的手动滚动逐帧撤销。
+    pub tabstrip_last_active: Option<u64>,
     /// 当前主题。
     pub theme: Theme,
     /// 快捷键分发器（含唯一动作表）。
@@ -128,6 +143,8 @@ impl AppUiState {
             focus_mode: false,
             active_tab: 0,
             tab_count: 0,
+            tabstrip_scroll_x: 0.0,
+            tabstrip_last_active: None,
             theme,
             dispatcher: ShortcutDispatcher::default(),
             sync: ScrollSync::new(),

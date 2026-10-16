@@ -180,7 +180,7 @@ impl UiAction {
             UiAction::OpenSettings => "设置",
             UiAction::ShortcutOverview => "快捷键一览",
             UiAction::About => "关于",
-            UiAction::ToggleTheme => "切换主题（深 / 浅 / 跟随系统）",
+            UiAction::ToggleTheme => "切换主题（深 / 浅）",
         }
     }
 

@@ -25,7 +25,9 @@ mod shortcut_table;
 mod theme;
 
 pub use action::ActionId;
-pub use editor::{EditorSettings, TabSize, WritingGoal};
+pub use editor::{
+    EditorSettings, MAX_OPEN_DOCUMENTS_DEFAULT, MAX_OPEN_DOCUMENTS_MAX, TabSize, WritingGoal,
+};
 pub use keys::{Key, KeyCombo, Modifiers, NamedKey};
 pub use shortcut_table::{Conflict, ConflictKind, RESERVED_COMBOS, ShortcutBinding, ShortcutTable};
 pub use theme::{

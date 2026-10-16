@@ -82,7 +82,7 @@ impl Default for Metrics {
             statusbar_height: 24.0,
             tabbar_height: 28.0,
             tabstrip_height: 32.0,
-            sidebar_width: 240.0,
+            sidebar_width: 308.0,
             divider_width: 4.0,
             radius_button: 6.0,
             radius_card: 8.0,

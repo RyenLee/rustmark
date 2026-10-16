@@ -150,9 +150,10 @@ impl EditorApp {
     ///
     /// 那条路是「拿到源文本 → 同步写盘 → 返回字节数」。图片没有源文本可写——
     /// 像素来自GPU 对**当前帧**的回读，而 egui 的
-    /// [`egui::ViewportCommand::Screenshot`] 要到下一帧才通过
-    /// `egui::Event::Screenshot`] 交回来。于是这里只做「登记 + 发命令」，
-    /// 真正的裁剪与落盘由 [`Self::deliver_capture`] 在下一帧完成。
+    /// [`egui::ViewportCommand::Screenshot`] 以回调方式交付像素，后端在
+    /// 下一帧开始时把渲染结果经 `ctx.request_screenshot` 的回调写入共享收件箱。
+    /// 于是这里只做「登记 + 发命令」，真正的裁剪与落盘由
+    /// [`Self::deliver_capture`] 在下一帧完成。
     ///
     /// # 为什么必须要求预览区可见
     ///
@@ -291,7 +292,7 @@ impl EditorApp {
 
     /// 兑现一次截图：裁剪 →（长图：继续下一段或拼接落盘）→ 推进领域任务状态。
     ///
-    /// 由 [`Self::pump_capture`] 在收到 [`egui::Event::Screenshot`] 时调用。
+    /// 由 [`Self::pump_capture`] 在收件箱 `screenshot_sink` 拿到回传像素时调用。
     pub(super) fn deliver_capture(
         &mut self,
         mut pending: PendingCapture,
@@ -398,25 +399,37 @@ impl EditorApp {
     /// # 为什么必须跨两帧
     ///
     /// egui 在**帧末**才把 `ViewportCommand::Screenshot` 交给后端，
-    /// 后端捕获的是**那一帧**的渲染结果，并在下一帧开头以
-    /// `Event::Screenshot` 送回。所以「发」与「收」天然分处两帧，
-    /// 同一帧内无法闭环——这不是实现取巧，是 API 的时序。
+    /// 后端捕获的是**那一帧**的渲染结果，并在下一帧开始时经
+    /// `request_screenshot` 的回调把像素写入共享收件箱。所以「发」与「收」
+    /// 天然分处两帧，同一帧内无法闭环——这不是实现取巧，是 API 的时序。
     ///
     /// `requested` 标志保证**只发一次**：否则本帧登记的任务会在之后
     /// 每帧都触发一次全帧 GPU 回读。
     pub fn pump_capture(&mut self, ctx: &egui::Context) {
-        // 1) 先收：本帧事件里可能带着上一帧命令的回传结果。
+        // 1) 先收：上一帧发出的截图命令，其像素已由后端经回调写入 `screenshot_sink`。
         //
         // 只认 `requested == true` 的任务。否则用户在命令发出前就关掉了对话框、
         // 又恰好收到别的截图回传时，会把像素写到一个已作废的路径上。
-        if self.pending_capture.as_ref().is_some_and(|p| p.requested)
-            && let Some(frame) = take_screenshot_event(ctx)
-            && let Some(pending) = self.pending_capture.take()
-        {
+        //
+        // egui 0.37 起 `request_screenshot` 以回调交付像素（不再是 `Event::Screenshot`），
+        // 回调在 `self` 之外触发，故落到共享的 `screenshot_sink` 里，这里每帧取回。
+        // 锁中毒（poison）只在持有锁的线程 panic 时发生；恢复时直接取内层值，
+        // 用 `unwrap_or_else(|e| e.into_inner())` 而非 `unwrap`，以满足 clippy
+        // `unwrap_used` 门禁。
+        let frame = {
+            let mut guard = self
+                .screenshot_sink
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            guard.take()
+        };
+        let deliverable =
+            frame.is_some() && self.pending_capture.as_ref().is_some_and(|p| p.requested);
+        if deliverable && let (Some(frame), Some(pending)) = (frame, self.pending_capture.take()) {
             self.deliver_capture(pending, &frame, ctx);
         }
 
-        // 2) 再发：把尚未发过命令的任务登记下去（结果留给下一帧的步骤 1）。
+        // 2) 再发：把尚未发过命令的任务登记下去（结果通过回调落入下一帧的 `screenshot_sink`）。
         //
         //    长图多一拍「预备」：命令捕获的是**发命令那一帧**的画面，
         //    所以要先设好滚动偏移、等预览以该偏移绘制一帧，下一帧才发命令。
@@ -424,18 +437,28 @@ impl EditorApp {
             && !pending.requested
         {
             let mut scroll_to: Option<f32> = None;
+            // `request_screenshot` 的回调在 `self` 之外触发，故用共享收件箱传递像素。
+            let make_sink = || self.screenshot_sink.clone();
             match pending.long.as_mut() {
                 None => {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::new(
-                        pending.job_id.to_string(),
-                    )));
+                    let sink = make_sink();
+                    ctx.request_screenshot(
+                        move |image: std::sync::Arc<egui::epaint::ColorImage>| {
+                            let mut guard = sink.lock().unwrap_or_else(|e| e.into_inner());
+                            *guard = Some(image);
+                        },
+                    );
                     pending.requested = true;
                 }
                 Some(long) => {
                     if long.armed && long.next < long.offsets.len() {
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(
-                            egui::UserData::new(pending.job_id.to_string()),
-                        ));
+                        let sink = make_sink();
+                        ctx.request_screenshot(
+                            move |image: std::sync::Arc<egui::epaint::ColorImage>| {
+                                let mut guard = sink.lock().unwrap_or_else(|e| e.into_inner());
+                                *guard = Some(image);
+                            },
+                        );
                         pending.requested = true;
                     } else if long.next < long.offsets.len() {
                         // 预备拍：把预览滚到本段位置。`preview_view` 每帧以
@@ -450,20 +473,4 @@ impl EditorApp {
             }
         }
     }
-}
-
-/// 从本帧事件里取出**第一张**回传的截图。
-///
-/// 取第一个而非按`user_data` 精确匹配：应用只有一个视口、一个在等的任务，
-/// egui 也只会为我们的那一条命令回传一次。为一个不存在的并发场景
-/// 引入匹配逻辑，只会在 `user_data` 序列化失败时静默丢图。
-pub(super) fn take_screenshot_event(
-    ctx: &egui::Context,
-) -> Option<std::sync::Arc<egui::epaint::ColorImage>> {
-    ctx.input(|i| {
-        i.events.iter().find_map(|e| match e {
-            egui::Event::Screenshot { image, .. } => Some(image.clone()),
-            _ => None,
-        })
-    })
 }

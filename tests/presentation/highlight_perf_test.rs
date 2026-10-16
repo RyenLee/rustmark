@@ -8,8 +8,11 @@
 //!
 //! # 测量口径
 //!
-//! - **必须 release 下跑**：`cargo test --release --test presentation -- --nocapture measure`。
-//!   本机 debug 吞吐约低 40%，debug 数字会把达标项误判为不达标。
+//! - **指标数字必须 release 下取**：`cargo test --release --test presentation -- --nocapture measure`。
+//!   本机同一段排版的 debug / release 差约**一个数量级**（2026-10-16 实测超长单行
+//!   p95 650.5ms vs 77.5ms，≈8.4×），debug 数字会把达标项误判为不达标。日常门禁
+//!   `cargo test --all-targets` 跑 debug，故「不卡死」这类底线阈值按编译档位分别给
+//!   （见 `measure_very_long_single_line_is_bounded`）。
 //! - 每个用例先 `clear_highlight_caches()` 再预热一次，把「首次分配 / 字体装载」的
 //!   开销排除在样本之外（那是一次性成本，不是稳态帧成本）。
 //! - 样本取 p50 / p95：p50 代表典型体验，p95 用于钉住抖动。
@@ -34,7 +37,7 @@ use rustmark::presentation::theme::mapper::{
 /// 可用于排版的 `Context`（字体需先跑一帧才装载）。
 fn test_ctx() -> egui::Context {
     let ctx = egui::Context::default();
-    let _ = ctx.run(egui::RawInput::default(), |_| {});
+    crate::support::run_ui(&ctx, egui::RawInput::default(), |_| {});
     ctx
 }
 
@@ -313,9 +316,23 @@ fn measure_very_long_single_line_is_bounded() {
         stats.total_lines, 4,
         "无换行的超长行仍应算作 1 行（共 4 行：首行 + 超长行 + 尾行 + 末尾空行）"
     );
-    // 先钉住「不卡死」这一底线；是否需要行级截断由实测数字决定（见 optimization-log）。
+    // 「不卡死」的底线阈值按**编译档位**给。
+    //
+    // 本文件顶部规定数字必须在 release 下取（`cargo test --release …`），但日常
+    // 门禁 `cargo test --all-targets` 跑的是 debug——同一段排版在两个档位差约
+    // 一个数量级（2026-10-16 实测：release p95 77.5ms ／ debug p95 650.5ms，≈8.4×）。
+    // 沿用 release 阈值会让门禁**稳定误报**，而这条断言的使命只是「钉住不卡死」
+    // 这一底线（是否需要行级截断由 release 实测数字裁定，见 `docs/metrics.md`
+    // §3.2：27 万字节超长单行 p95 77.5ms，无须行级保护）。
+    // 故 debug 放到 1500ms：仍能拦住秒级→十秒级的真卡死，又不把正常的
+    // debug 开销判成缺陷。**达标结论一律以 release 数字为准。**
+    let limit_ms = if cfg!(debug_assertions) {
+        1500.0
+    } else {
+        500.0
+    };
     assert!(
-        p95 <= 500.0,
-        "超长单行改一字符 p95 {p95:.2}ms，已属卡死量级（需行级保护）"
+        p95 <= limit_ms,
+        "超长单行改一字符 p95 {p95:.2}ms（阈 {limit_ms:.0}ms），已属卡死量级（需行级保护）"
     );
 }

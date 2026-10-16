@@ -106,7 +106,7 @@ pub fn block_at_offset(rects: &[BlockRect], offset: f32) -> Option<u64> {
 ///
 /// 三行文档算出「第 4 行」，跳转与滚动同步都会落到不存在的行上。
 pub fn line_start_offsets(text: &str) -> Vec<usize> {
-    let mut starts = Vec::with_capacity(text.split('\n').count() + 1);
+    let mut starts = Vec::with_capacity(crate::shared::text::line_count(text) + 1);
     let mut cursor = 0usize;
     for line in text.split('\n') {
         starts.push(cursor);

@@ -61,6 +61,12 @@ pub struct ListItemView {
     pub ordinal: Option<u64>,
     /// 该项文本的行内样式片段（区间相对 [`Self::text`]）。
     pub spans: Vec<SpanView>,
+    /// 该项文本里混排的图片（区间相对 [`Self::text`]）。
+    ///
+    /// 列表项是文本容器而非块，它里面的图片无法升级成独立图片块，
+    /// 只能挂在这里由渲染方插回项文本里（否则 `- ![图标](u.png) 说明`
+    /// 的图标会整张消失）。
+    pub images: Vec<InlineImageView>,
 }
 
 /// 定义列表的**单条定义正文**视图。
@@ -81,6 +87,38 @@ pub struct DefinitionEntryView {
     pub term_spans: Vec<SpanView>,
     /// 该术语下的各条定义（`: 定义` 行，可多条）。
     pub definitions: Vec<DefinitionBodyView>,
+}
+
+/// 一张图片的显示参数（图片块与行内图片共用）。
+///
+/// 字段与 [`BlockView`] 的图片字段同形：图片块（`kind == "image"`）与
+/// **混排在文字里的图片**（`前面 ![a](u.png) 后面`，见 [`InlineImageView`]）
+/// 走的是同一套尺寸 / 对齐参数，只是后者还要带上它在文字里的位置。
+#[derive(Clone, Debug, Serialize)]
+pub struct ImageSpecView {
+    /// 图片地址（本地路径 / 远程 URL / data URI）。
+    pub url: String,
+    /// 替代文本。
+    pub alt: String,
+    /// 声明宽度（像素；源码写了 `=30x30` 时有值）。
+    pub width: Option<u32>,
+    /// 声明高度（像素）。
+    pub height: Option<u32>,
+    /// 对齐：`center` / `left` / `right`（未写标记为 `left`）。
+    pub align: String,
+}
+
+/// 混排在文字里的图片（区间相对所属文本）。
+///
+/// 图片是**行内**元素：它可以出现在段落 / 标题 / 引用 / 列表项的文字中间。
+/// 这类图片不能再升级成独立图片块（那样图片前后的文字会整段消失），
+/// 故以本结构挂在文本上，渲染方按 `range` 把图片插回文字流的对应位置。
+#[derive(Clone, Debug, Serialize)]
+pub struct InlineImageView {
+    /// 图片在所属文本里的字节区间（区间内的文字就是 alt，渲染时被图片取代）。
+    pub range: RangeView,
+    /// 图片本身。
+    pub image: ImageSpecView,
 }
 
 /// 渲染块视图（预览区的单个块）。
@@ -113,6 +151,19 @@ pub struct BlockView {
     pub alt: Option<String>,
     /// 图片地址（本地路径 / 远程 URL / data URI；`kind == "image"` 时有值）。
     pub url: Option<String>,
+    /// 图片声明宽度（像素；`kind == "image"` 且源码写了 `=30x30` 时有值）。
+    ///
+    /// Typora / CSDN 私有扩展（问题 3）：渲染层据此区分每张图的展示尺寸，
+    /// 而不是所有图片都按纹理实际尺寸渲染。
+    pub image_width: Option<u32>,
+    /// 图片声明高度（像素；`kind == "image"` 且源码写了 `=30x30` 时有值）。
+    pub image_height: Option<u32>,
+    /// 图片对齐（`center` / `left` / `right`；`kind == "image"` 时有值）。
+    ///
+    /// 来自源码里的 `#pic_center` / `#pic_left` / `#pic_right` 标记；
+    /// 未写标记时为 `left`——CSDN / Typora 的无标记图片即左对齐
+    /// （效果截图里「带尺寸的图片」贴在左缘），要居中得显式写标记。
+    pub image_align: Option<String>,
     /// 未支持扩展块的标记（`kind` 形如 `raw:html`）。
     pub marker: Option<String>,
     /// 是否块级公式（`kind == "math"` 时有值；`true` 为 `$$...$$`，`false` 为 `$...$`）。
@@ -132,6 +183,11 @@ pub struct BlockView {
     /// 复用 [`SpanView`] 的形状（区间 + 样式字符串）：它与编辑区高亮的
     /// 数据结构同形，表现层只需一套「按区间切段渲染」的代码。
     pub spans: Vec<SpanView>,
+    /// 混排在文字里的图片（区间相对 `content`；无图片时为空）。
+    ///
+    /// 只在「块里除图片外还写着别的字」时才有值（问题 032）：整块就一张图时
+    /// 块本身已是 `kind == "image"`，走 [`BlockView::url`] 那套字段。
+    pub images: Vec<InlineImageView>,
 }
 
 /// 渲染结果视图（预览区整体）。

@@ -7,6 +7,7 @@
 #[path = "../support/mod.rs"]
 mod support;
 
+mod editor_frame_geometry_test;
 mod editor_view_test;
 mod enter_ime_test;
 mod export_view_test;
@@ -24,10 +25,13 @@ mod s6_12_test;
 mod scroll_sync_test;
 mod settings_view_test;
 mod shortcut_registry_test;
+mod sidebar_boundary_test;
 mod sidebar_view_test;
 mod spell_menu_test;
 mod spell_squiggle_test;
 mod status_bar_view_test;
+mod tab_strip_test;
+mod textedit_frame_perf_test;
 mod theme_mapper_test;
 mod toolbar_test;
 mod toolbar_visual_test;

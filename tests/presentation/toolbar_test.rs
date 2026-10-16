@@ -404,7 +404,7 @@ fn toolbar_menu_and_palette_render_the_same_action_for_each_button() {
     .expect("装配应成功");
     let mut app = EditorApp::new(services, false);
     let ctx = egui::Context::default();
-    let _ = ctx.run(egui::RawInput::default(), |_| {}); // 装载字库
+    crate::support::run_ui(&ctx, egui::RawInput::default(), |_| {}); // 装载字库
 
     // 跑一帧，工具栏 / 菜单 / 面板都会被渲染。
     let input = egui::RawInput {
@@ -414,9 +414,9 @@ fn toolbar_menu_and_palette_render_the_same_action_for_each_button() {
         )),
         ..Default::default()
     };
-    let _ = ctx.run(input, |ctx| {
-        rustmark::presentation::theme::mapper::apply(ctx, &app.ui.theme);
-        rustmark::presentation::views::main_view::show(&mut app, ctx);
+    crate::support::run_ui(&ctx, input, |ui| {
+        rustmark::presentation::theme::mapper::apply(ui.ctx(), &app.ui.theme);
+        rustmark::presentation::views::main_view::show(&mut app, ui);
     });
 
     // 面板与菜单的条目都来自同一张 `ActionTable`——

@@ -4,7 +4,7 @@ use crate::domain::document::aggregate::Document;
 use crate::shared::geometry::{ByteOffset, TextRange};
 use crate::shared::path::FilePath;
 
-use crate::application::dto::{DocumentView, RangeView};
+use crate::application::dto::{DocumentView, RangeView, TabSummary};
 
 /// 把一次编辑施加到文本上，返回新文本。
 ///
@@ -62,7 +62,18 @@ pub fn to_document_view(doc: &Document) -> DocumentView {
             .cursor()
             .selection()
             .map(|r| RangeView::new(r.start().value(), r.end().value())),
-        line_count: text.split('\n').count().max(1),
+        line_count: crate::shared::text::line_count(&text),
+        byte_len: doc.len_bytes(),
+    }
+}
+
+/// 轻量摘要投影：**不做全文快照**（见 [`TabSummary`] 的文档）。
+pub fn to_tab_summary(doc: &Document) -> TabSummary {
+    TabSummary {
+        id: doc.id(),
+        title: doc.meta().title().to_string(),
+        path: doc.path().cloned(),
+        is_dirty: doc.is_dirty(),
         byte_len: doc.len_bytes(),
     }
 }

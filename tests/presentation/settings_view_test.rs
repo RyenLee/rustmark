@@ -385,6 +385,115 @@ fn opening_records_a_snapshot_and_closing_discards_it() {
     assert!(app.settings_ui.snapshot.is_none());
 }
 
+/// 「恢复默认快捷键」在**页脚**（父级页面），打开分区即可见，
+/// 且不随快捷键列表滚动（问题 038）。
+///
+/// 修复前它在滚动列表的**最底部**：60 个条目要滑很久才能看到，
+/// 而它是「重置整个分区」的分区级动作，不该藏得比任何单条键位都深。
+/// 判据有两条：① 与页脚兄弟按钮（保存 / 取消）同行；② 列表滚到底之后
+/// 位置不变（在列表里的按钮会随滚动偏移甚至被剪掉）。
+#[test]
+fn restore_default_shortcuts_button_lives_in_the_footer() {
+    let (_dir, mut app) = app();
+    app.execute(UiAction::OpenSettings);
+    app.settings_ui.section = SettingsTab::Shortcuts;
+
+    let ctx = egui::Context::default();
+    let input = egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(
+            egui::pos2(0.0, 0.0),
+            egui::vec2(1280.0, 900.0),
+        )),
+        ..Default::default()
+    };
+    crate::support::run_ui(&ctx, input.clone(), |_| {}); // 装载字库
+    let painted = |app: &mut EditorApp, ctx: &egui::Context, events: Vec<egui::Event>| {
+        let mut raw = input.clone();
+        raw.events = events;
+        let out = crate::support::run_ui(ctx, raw, |ui| {
+            rustmark::presentation::theme::mapper::apply(ui.ctx(), &app.ui.theme);
+            main_view::show(app, ui);
+        });
+        let mut texts = Vec::new();
+        for clipped in &out.shapes {
+            collect_visible(&clipped.shape, clipped.clip_rect, &mut texts);
+        }
+        texts
+    };
+
+    // 先跑两帧再取画面：egui 的 `Window` 首帧是测量 pass，对话框内容
+    // （含页脚）从第二帧起才进入绘制指令——只跑一帧会一条都取不到。
+    // （`settings_window_height_does_not_grow_every_frame` 同样跳过首帧。）
+    painted(&mut app, &ctx, Vec::new());
+    let first = painted(&mut app, &ctx, Vec::new());
+    let button = find_text(&first, "恢复默认快捷键")
+        .unwrap_or_else(|| panic!("快捷键分区应画出「恢复默认快捷键」（在页脚）"));
+    // 用「取消」当页脚锚而不是「保存」：快捷键列表里也有「保存」这一条
+    // 动作名，取它会命中列表条目而不是页脚按钮。
+    let cancel = find_text(&first, "取消").expect("页脚应有「取消」按钮");
+    assert!(
+        (button.center().y - cancel.center().y).abs() < 8.0,
+        "「恢复默认快捷键」应与页脚按钮同行（按钮 y={:.0}，取消 y={:.0}）",
+        button.center().y,
+        cancel.center().y
+    );
+
+    // 把快捷键列表滚到底：按钮必须原地不动。
+    let over_list = egui::pos2(button.center().x, cancel.center().y - 200.0);
+    for _ in 0..12 {
+        painted(
+            &mut app,
+            &ctx,
+            vec![
+                egui::Event::PointerMoved(over_list),
+                egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    delta: egui::vec2(0.0, -240.0),
+                    phase: egui::TouchPhase::Move,
+                    source: egui::MouseWheelSource::Unknown,
+                    modifiers: egui::Modifiers::default(),
+                },
+            ],
+        );
+    }
+    let after = painted(&mut app, &ctx, Vec::new());
+    let button_after = find_text(&after, "恢复默认快捷键")
+        .unwrap_or_else(|| panic!("滚动后「恢复默认快捷键」仍应可见"));
+    assert!(
+        (button_after.center().y - button.center().y).abs() < 1.0,
+        "按钮不随列表滚动（前 y={:.0}，后 y={:.0}）",
+        button.center().y,
+        button_after.center().y
+    );
+}
+
+/// 收集**可见**的文字（中心须落在剪裁区内）。
+fn collect_visible(
+    shape: &egui::epaint::Shape,
+    clip: egui::Rect,
+    out: &mut Vec<(egui::Rect, String)>,
+) {
+    match shape {
+        egui::epaint::Shape::Text(t) => {
+            let rect = egui::Rect::from_min_size(t.pos, t.galley.size());
+            if clip.contains(rect.center()) {
+                out.push((rect, t.galley.text().to_owned()));
+            }
+        }
+        egui::epaint::Shape::Vec(inner) => {
+            for s in inner {
+                collect_visible(s, clip, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// 取某段文字的矩形（第一个完全匹配的）。
+fn find_text(texts: &[(egui::Rect, String)], text: &str) -> Option<egui::Rect> {
+    texts.iter().find(|(_, t)| t == text).map(|(r, _)| *r)
+}
+
 /// 设置浮层真的被渲染（真实帧）。
 ///
 /// 钉的是 S6-07 / S6-08 那类**静默失效**：动作能打开浮层、浮层在栈里、
@@ -398,9 +507,9 @@ fn frame(app: &mut EditorApp, ctx: &egui::Context) {
         )),
         ..Default::default()
     };
-    let _ = ctx.run(input, |ctx| {
-        rustmark::presentation::theme::mapper::apply(ctx, &app.ui.theme);
-        main_view::show(app, ctx);
+    crate::support::run_ui(ctx, input, |ui| {
+        rustmark::presentation::theme::mapper::apply(ui.ctx(), &app.ui.theme);
+        main_view::show(app, ui);
     });
 }
 
@@ -430,7 +539,7 @@ fn opening_settings_actually_renders_it_in_a_real_frame() {
     frames(&mut app, &ctx, 2);
 
     assert!(
-        ctx.memory(|m| m.has_focus(egui::Id::new(FONT_INPUT_ID))),
+        ctx.memory(|m| m.has_focus(egui::Id::unique(FONT_INPUT_ID))),
         "设置面板未渲染：字体族输入框拿不到焦点（`overlays::show` 可能没接上设置分支）"
     );
 }
@@ -557,7 +666,7 @@ fn settings_window_height_does_not_grow_every_frame() {
     app.settings_ui.section = SettingsTab::Appearance;
     app.dialog.open(Overlay::Settings);
 
-    let id = egui::Id::new("rustmark.overlay.settings");
+    let id = egui::Id::unique("rustmark.overlay.settings");
     let ctx = egui::Context::default();
     let input = egui::RawInput {
         screen_rect: Some(egui::Rect::from_min_size(
@@ -566,13 +675,13 @@ fn settings_window_height_does_not_grow_every_frame() {
         )),
         ..Default::default()
     };
-    let _ = ctx.run(input.clone(), |_| {}); // 装载字库
+    crate::support::run_ui(&ctx, input.clone(), |_| {}); // 装载字库
 
     let mut heights = Vec::new();
     for _ in 0..8 {
-        let _ = ctx.run(input.clone(), |ctx| {
-            rustmark::presentation::theme::mapper::apply(ctx, &app.ui.theme);
-            main_view::show(&mut app, ctx);
+        crate::support::run_ui(&ctx, input.clone(), |ui| {
+            rustmark::presentation::theme::mapper::apply(ui.ctx(), &app.ui.theme);
+            main_view::show(&mut app, ui);
         });
         heights.push(
             ctx.memory(|m| m.area_rect(id))

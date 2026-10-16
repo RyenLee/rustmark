@@ -59,9 +59,9 @@ fn render_lint_tab(app: &mut EditorApp) -> usize {
     };
     let mut shapes = 0;
     for _ in 0..2 {
-        let out = ctx.run(input.clone(), |ctx| {
-            rustmark::presentation::theme::mapper::apply(ctx, &app.ui.theme);
-            main_view::show(app, ctx);
+        let out = crate::support::run_ui(&ctx, input.clone(), |ui| {
+            rustmark::presentation::theme::mapper::apply(ui.ctx(), &app.ui.theme);
+            main_view::show(app, ui);
         });
         shapes = out.shapes.len();
     }
@@ -172,9 +172,9 @@ fn lint_tab_does_not_push_the_editor_right() {
     let sidebar_right = app.theme().metrics.sidebar_width;
     let mut editor_bg_left: Option<f32> = None;
     for _ in 0..2 {
-        let out = ctx.run(input.clone(), |ctx| {
-            rustmark::presentation::theme::mapper::apply(ctx, &app.ui.theme);
-            main_view::show(&mut app, ctx);
+        let out = crate::support::run_ui(&ctx, input.clone(), |ui| {
+            rustmark::presentation::theme::mapper::apply(ui.ctx(), &app.ui.theme);
+            main_view::show(&mut app, ui);
         });
         for clipped in &out.shapes {
             if let egui::Shape::Rect(r) = &clipped.shape {

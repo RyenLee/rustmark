@@ -15,7 +15,7 @@
 //!
 //! 与 S6-07 的做法同源——**不靠「记得写」，靠「漏了就红」**。
 
-use egui::Context;
+use egui::Ui;
 
 use crate::app::frame::EditorApp;
 use crate::presentation::state::dialog_ui_state::Overlay;
@@ -27,23 +27,28 @@ use crate::presentation::state::dialog_ui_state::Overlay;
 ///
 /// 刻意不在这里画「遮罩」：查找面板是**非模态工具面板**（原型里它浮在
 /// 编辑区右上角，编辑区仍可编辑），画遮罩会直接违反原型行为。
-pub fn show(app: &mut EditorApp, ctx: &Context) {
+pub fn show(app: &mut EditorApp, ui: &mut Ui) {
+    // 子浮层视图仍以 `&Context` 为入口（`Window::show` 在 0.37 仍收 `ctx`），
+    // 这里从根 `Ui` 取出 `ctx` 后透传，避免改动十来个浮层签名。
+    let ctx = ui.ctx().clone();
     let Some(overlay) = app.dialog.top() else {
         return;
     };
     match overlay {
-        Overlay::Find => crate::presentation::views::find_replace_view::show(app, ctx),
-        Overlay::Settings => crate::presentation::views::settings_view::show(app, ctx),
-        Overlay::Export => crate::presentation::views::export_view::show(app, ctx),
-        Overlay::QuickOpen => crate::presentation::views::quick_open_view::show(app, ctx),
+        Overlay::Find => crate::presentation::views::find_replace_view::show(app, &ctx),
+        Overlay::Settings => crate::presentation::views::settings_view::show(app, &ctx),
+        Overlay::Export => crate::presentation::views::export_view::show(app, &ctx),
+        Overlay::QuickOpen => crate::presentation::views::quick_open_view::show(app, &ctx),
         Overlay::ShortcutOverview => {
-            crate::presentation::views::shortcut_overview_view::show(app, ctx)
+            crate::presentation::views::shortcut_overview_view::show(app, &ctx)
         }
-        Overlay::About => crate::presentation::views::about_view::show(app, ctx),
-        Overlay::Stats => crate::presentation::views::stats_view::show(app, ctx),
-        Overlay::Symbol => crate::presentation::views::symbol_view::show(app, ctx),
-        Overlay::Diff => crate::presentation::views::diff_view::show(app, ctx),
-        Overlay::CommandPalette => crate::presentation::views::command_palette_view::show(app, ctx),
+        Overlay::About => crate::presentation::views::about_view::show(app, &ctx),
+        Overlay::Stats => crate::presentation::views::stats_view::show(app, &ctx),
+        Overlay::Symbol => crate::presentation::views::symbol_view::show(app, &ctx),
+        Overlay::Diff => crate::presentation::views::diff_view::show(app, &ctx),
+        Overlay::CommandPalette => {
+            crate::presentation::views::command_palette_view::show(app, &ctx)
+        }
     }
 }
 

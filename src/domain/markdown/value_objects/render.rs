@@ -6,7 +6,7 @@
 use crate::shared::geometry::TextRange;
 
 use super::{
-    block::{BlockId, BlockKind},
+    block::{BlockId, BlockKind, InlineImage},
     inline::InlineSpan,
 };
 
@@ -26,6 +26,11 @@ pub struct RenderedBlock {
     /// 其上的「哪一段是什么样式」。渲染方按区间切片即可，
     /// 不必再解析一遍 Markdown。
     spans: Vec<InlineSpan>,
+    /// 混排在文字里的图片（区间相对 `content`；见 [`InlineImage`]）。
+    ///
+    /// 只在「块里除图片外还有别的文字」时才有值——整块就一张图时块本身
+    /// 已升级为 [`BlockKind::Image`]，不需要再挂行内图片。
+    images: Vec<InlineImage>,
 }
 
 impl RenderedBlock {
@@ -42,6 +47,7 @@ impl RenderedBlock {
             source_range,
             content: content.into(),
             spans: Vec::new(),
+            images: Vec::new(),
         }
     }
 
@@ -51,9 +57,20 @@ impl RenderedBlock {
         self
     }
 
+    /// 附带混排在文字里的图片（构造链）。
+    pub fn with_images(mut self, images: Vec<InlineImage>) -> Self {
+        self.images = images;
+        self
+    }
+
     /// 行内样式片段。
     pub fn spans(&self) -> &[InlineSpan] {
         &self.spans
+    }
+
+    /// 混排在文字里的图片。
+    pub fn images(&self) -> &[InlineImage] {
+        &self.images
     }
 
     /// 块 ID。

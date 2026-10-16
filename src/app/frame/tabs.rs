@@ -5,10 +5,15 @@ impl EditorApp {
     /// 当前打开的文档列表（按领域内部顺序）。
     ///
     /// 领域按 `DocumentId` 各存各的内容；UI 的「标签」只是这些文档的视图。
-    pub fn open_document_list(&self) -> Vec<DocumentView> {
+    ///
+    /// 返回**轻量摘要**而非完整 `DocumentView`：后者要为每个文档做一次
+    /// rope 全文快照（填预览与行数），而调用方只用标题 / 脏标记 / 路径 / ID。
+    /// 标签条每帧都取这份列表，多文档时那就是每帧 N 次 O(全文) 克隆
+    /// ——问题 043「打开多个文档后明显卡顿」的主因，故在此收口。
+    pub fn open_document_list(&self) -> Vec<TabSummary> {
         self.services
             .documents
-            .list_open(ListOpenDocumentsQuery)
+            .list_open_tabs(ListOpenDocumentsQuery)
             .unwrap_or_default()
     }
 

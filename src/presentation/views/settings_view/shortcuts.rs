@@ -1,4 +1,9 @@
-//! 「快捷键」分区：改键、冲突提示与恢复默认。
+//! 「快捷键」分区：改键与冲突提示。
+//!
+//! 「恢复默认快捷键」按钮**不在本分区**：它在对话框页脚（父级页面，
+//! 问题 038）。它是分区级动作，而本分区的主体是一整屏可滚动的键位列表——
+//! 放在列表底部要滑很久才能看到，放在页脚则与「恢复本组默认」同级、
+//! 不随内容滚动。
 
 use egui::{Align, Layout, Ui};
 
@@ -7,7 +12,7 @@ use crate::presentation::theme::builtin::Theme;
 
 use super::*;
 
-/// 「快捷键」分区：改键 + 冲突提示 + 恢复默认。
+/// 「快捷键」分区：改键 + 冲突提示。
 pub(super) fn shortcuts(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
     // 先取快照再进闭包：闭包里要 `&mut app`，而 `entries` 借用了 `app` 的返回值。
     let entries: Vec<(String, String, String)> = app
@@ -26,7 +31,6 @@ pub(super) fn shortcuts(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
     ui.separator();
 
     let mut clear_conflict = false;
-    let mut reset_all = false;
     egui::ScrollArea::vertical()
         .id_salt("rustmark.settings.shortcuts")
         .max_height(HEIGHT - 190.0)
@@ -58,10 +62,6 @@ pub(super) fn shortcuts(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
                         }
                     });
                 });
-            }
-            ui.add_space(theme.metrics.space_md);
-            if ui.button("恢复默认快捷键").clicked() {
-                reset_all = true;
             }
         });
 
@@ -97,8 +97,5 @@ pub(super) fn shortcuts(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
         app.settings_ui
             .remember_shortcut(action, conflict.with_combo.clone());
         app.rebind_shortcut(action, "");
-    }
-    if reset_all {
-        app.reset_all_shortcuts();
     }
 }

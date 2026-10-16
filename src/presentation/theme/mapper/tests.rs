@@ -7,13 +7,16 @@ use egui::text::{LayoutJob, LayoutSection};
 /// 可用于排版的 `Context`（先跑空帧装好字库，否则 `fonts_mut` 会 panic）。
 fn test_ctx() -> egui::Context {
     let ctx = egui::Context::default();
-    let _ = ctx.run(egui::RawInput::default(), |_| {});
+    ctx.run_ui(egui::RawInput::default(), |_| {})
+        .drop_without_applying_deltas();
     ctx
 }
 
-/// 取某段覆盖的文本（egui 0.33 的 `LayoutSection` 用 `byte_range` 索引 `job.text`）。
+/// 取某段覆盖的文本（egui 0.37 的 `LayoutSection` 用 `byte_range: Range<ByteIndex>` 索引 `job.text`）。
 fn section_text<'a>(job: &'a LayoutJob, s: &LayoutSection) -> &'a str {
-    job.text.get(s.byte_range.clone()).unwrap_or("")
+    job.text
+        .get(s.byte_range.start.0..s.byte_range.end.0)
+        .unwrap_or("")
 }
 
 /// 查找命中段必须叠加背景，非命中段保持透明。
@@ -316,9 +319,11 @@ fn theme_switch_keeps_cached_galley_uvs_valid() {
     // 2) 与真实帧序一致的主题切换：apply 发生在帧内（begin_pass 之后），
     //    故每次 apply 后再跑一帧，让 begin_pass 读到新样式。
     apply(&ctx, &Theme::dark());
-    let _ = ctx.run(egui::RawInput::default(), |_| {});
+    ctx.run_ui(egui::RawInput::default(), |_| {})
+        .drop_without_applying_deltas();
     apply(&ctx, &Theme::light());
-    let _ = ctx.run(egui::RawInput::default(), |_| {});
+    ctx.run_ui(egui::RawInput::default(), |_| {})
+        .drop_without_applying_deltas();
 
     // 3) 切换后别的 UI 先排版（图集前段被抢占），再重排同一份作业。
     let _ = ctx.fonts_mut(|f| f.layout_job(mono_job("侧栏与预览先排版 other ui")));

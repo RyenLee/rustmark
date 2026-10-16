@@ -44,22 +44,26 @@ fn accent_rect() -> Rect {
 fn real_frame() -> (Vec<egui::ClippedPrimitive>, [usize; 2], f32) {
     let ctx = egui::Context::default();
     // 第一帧只用于让字库完成一次布局（否则图集为空，文字无处可取）。
-    let _ = ctx.run(egui::RawInput::default(), |_| {});
+    // egui 0.37 的 `FullOutput` 携带未应用的 `TexturesDelta`，直接丢弃会 panic，
+    // 故用 `drop_without_applying_deltas()` 显式清空（本用例不需要纹理上传）。
+    crate::support::run_ui(&ctx, egui::RawInput::default(), |_| {});
 
     let screen = Rect::from_min_max(Pos2::ZERO, Pos2::new(80.0, 60.0));
-    let output = ctx.run(
+    let mut output = crate::support::run_ui(
+        &ctx,
         egui::RawInput {
             screen_rect: Some(screen),
             ..Default::default()
         },
-        |ctx| {
-            egui::CentralPanel::default().show(ctx, |ui| {
+        |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
                 ui.painter().rect_filled(screen, 0.0, BASE);
                 ui.painter().rect_filled(accent_rect(), 0.0, ACCENT);
                 ui.label("hello");
             });
         },
     );
+    output.textures_delta.clear();
     let ppp = ctx.input(|i| i.pixels_per_point);
     let prims = ctx.tessellate(output.shapes, ppp);
     let size = [

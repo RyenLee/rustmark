@@ -86,7 +86,7 @@ pub fn items(app: &EditorApp) -> Vec<AboutItem> {
 pub fn show(app: &mut EditorApp, ctx: &Context) {
     let mut open = true;
     egui::Window::new(Overlay::About.title())
-        .id(egui::Id::new("rustmark.overlay.about"))
+        .id(egui::Id::unique("rustmark.overlay.about"))
         .open(&mut open)
         .collapsible(false)
         .resizable(true)

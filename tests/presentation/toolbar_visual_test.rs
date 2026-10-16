@@ -58,7 +58,7 @@ fn ctx_with_app_fonts() -> egui::Context {
     ctx.set_fonts(setup.definitions);
     // 首个 `run` 会解析字体（`panic = "abort"` 下字体解析失败会直接终止，
     // 故这一步同时守护了「字体文件不被支持」这个风险）。
-    let _ = ctx.run(raw_input(Vec::new()), |_| {});
+    crate::support::run_ui(&ctx, raw_input(Vec::new()), |_| {});
     ctx
 }
 
@@ -80,9 +80,9 @@ fn render(
     let mut rects = Vec::new();
     let mut texts = Vec::new();
     for _ in 0..3 {
-        let out = ctx.run(raw_input(Vec::new()), |ctx| {
-            rustmark::presentation::theme::mapper::apply(ctx, &app.ui.theme);
-            rustmark::presentation::views::main_view::show(app, ctx);
+        let out = crate::support::run_ui(ctx, raw_input(Vec::new()), |ui| {
+            rustmark::presentation::theme::mapper::apply(ui.ctx(), &app.ui.theme);
+            rustmark::presentation::views::main_view::show(app, ui);
         });
         rects.clear();
         texts.clear();

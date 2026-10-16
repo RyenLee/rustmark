@@ -10,18 +10,17 @@
 //! # 为什么必须 headless 驱动真实帧
 //!
 //! eframe 为 kittest 提供了 `Frame::_new_kittest()`（无窗口、无 GPU 的空 `Frame`），
-//! 而 `EditorApp::update` 的 `frame` 形参本就是 `_frame`（未使用），
-//! 故可直接 `ctx.run(input, |ctx| eframe::App::update(app, ctx, frame))` 驱动。
-//! 复用 S7-06 `crash_recovery_test` 已验证的做法，不引入任何新依赖。
-
-use std::sync::Arc;
-use std::time::Duration;
-
+//! 而 `EditorApp::ui` 的 `frame` 形参本就是 `_frame`（未使用），
+//! 故可直接 `ctx.run_ui(input, |ui| { app.ui(ui, frame) })` 驱动真实帧循环。
+use eframe::App;
 use rustmark::app::bootstrap::{ConfigPaths, Services};
 use rustmark::app::frame::EditorApp;
 use rustmark::presentation::state::preview_ui_state::PREVIEW_DEBOUNCE_MS;
 
 use crate::support::fake_dialog::FakeDialog;
+
+use std::sync::Arc;
+use std::time::Duration;
 
 /// 有明确尺寸的 `RawInput`：`screen_rect` 为 `None` 时 egui 会退回默认巨幅布局。
 fn frame_input() -> egui::RawInput {
@@ -36,8 +35,8 @@ fn frame_input() -> egui::RawInput {
 
 /// 驱动**一帧**真实 `update`。
 fn drive(app: &mut EditorApp, ctx: &egui::Context, frame: &mut eframe::Frame) {
-    let _ = ctx.run(frame_input(), |ctx| {
-        eframe::App::update(app, ctx, frame);
+    crate::support::run_ui(ctx, frame_input(), |ui| {
+        app.ui(ui, frame);
     });
 }
 

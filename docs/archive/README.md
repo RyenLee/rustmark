@@ -16,10 +16,13 @@
 **读归档文档前先知道**：归档文档中的「当前 / 待办 / 未修复」表述只在其**写作日期**成立。
 后续演进以现行文档（`docs/README.md` 列出的各篇）与 `docs/logs/问题记录1.txt` 为准。
 
-## stage-reports/ · 阶段报告与方案（10 篇）
+## stage-reports/ · 阶段报告与方案（12 篇）
 
-| 文档 | 原路径 | 写作日期 | 内容 | 现状（2026-10-14） |
+| 文档 | 原路径 | 写作日期 | 内容 | 现状（2026-10-16） |
 |---|---|---|---|---|
+| [textedit-lag-audit.md](./stage-reports/textedit-lag-audit.md) | 本处新建 | 2026-10-16 | `docs/logs/T.txt`（egui `TextEdit` 卡顿通用分析）逐条审计：三条成因 / 三条方案 / 诊断建议在本项目的实际状态，以及本项目真正的每帧浪费与修复 | **审计已闭合**（问题 046）；数字进 `metrics.md` §3.2.2、行数规则进 `shared::text`；方案①在本期不可用（0.37 `TextEdit` 无虚拟化 API） |
+| [egui-0.37-upgrade.md](./stage-reports/egui-0.37-upgrade.md) | 本处新建 | 2026-10-16 | egui/eframe/epaint/wgpu 升级评估：版本与兼容性、API 变更清单及代码位置、TextEdit 卡顿成因与 0.37 针对性改进、后续排查方向 | **升级已完成并交付**（四道门禁全绿）；版本事实已进 `dependencies.md` §1、数字已进 `metrics.md` §3.2.0 |
+
 | [prototype-contract.md](./stage-reports/prototype-contract.md) | `docs/prototype-contract.md` | 2026-10-07 | 原型行为契约 A 29 条 + 缺陷免疫清单 B 17 项（S1-06） | B 清单 17 项已全部验证免疫，见 regression-checklist |
 | [prototype-alignment.md](./stage-reports/prototype-alignment.md) | `docs/prototype-alignment.md` | 2026-10-07 | 原型 ↔ Rust 行为对齐矩阵 45 行（S7-02） | 差异项均已处置；渲染/语法差异的裁决原则仍适用 |
 | [e2e-cases.md](./stage-reports/e2e-cases.md) | `docs/e2e-cases.md` | 2026-10-07 | 端到端用例集 32 条 + 覆盖矩阵（S7-01） | 自动化部分在 `tests/e2e/`，本文是用例目录存档 |
@@ -42,5 +45,5 @@
 
 - 体积数字的现行口径：`docs/metrics.md`（§2.4 / §2.5 为 v1.1 最新实测）；
 - 依赖清单与复查结论：`docs/dependencies.md`（§6 为 2026-10-14 复查报告）；
-- 缺陷修复的流水记录：`docs/logs/问题记录1.txt`（001~027，倒序）；
+- 缺陷修复的流水记录：`docs/logs/问题记录1.txt`（001~046，倒序）；
 - 调试方法论沉淀：`docs/debug-guide.md` §7（源自本归档区各篇的实战教训）。

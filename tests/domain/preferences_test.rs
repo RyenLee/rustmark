@@ -199,6 +199,7 @@ fn preferences_rejects_invalid_editor_settings() {
         0.5,
         WritingGoal::new(0),
         LintSettings::all_enabled(),
+        12,
     );
     assert!(matches!(
         preferences.set_editor(invalid),
@@ -232,6 +233,7 @@ fn preferences_indent_unit_derives_from_tab_size() {
             0.5,
             WritingGoal::new(0),
             LintSettings::all_enabled(),
+            12,
         ))
         .unwrap();
     assert_eq!(preferences.indent_unit(), "        ");
@@ -314,8 +316,46 @@ fn editor_settings_round_trip_through_toml_persists_writing_goal() {
             0.5,
             WritingGoal::new(1500),
             LintSettings::all_enabled(),
+            12,
         ))
         .unwrap();
     // 目标值经由 `EditorSettings` 携带，落到 `Preferences` 里。
     assert_eq!(preferences.editor().writing_goal().words(), 1500);
+}
+
+/// 打开文档上限默认 12（问题 038）：低于常见「同时对照几份文档」的
+/// 工作量会碍事，高于此值后标签条本就靠横向滚动，再大只是更难认。
+#[test]
+fn max_open_documents_defaults_to_twelve() {
+    assert_eq!(
+        EditorSettings::default_settings().max_open_documents(),
+        12,
+        "默认上限应为 12"
+    );
+}
+
+/// 上限 0 是非法值（一个文档都打不开 = 应用不可用），必须被拒绝。
+#[test]
+fn max_open_documents_zero_is_invalid() {
+    let zero = EditorSettings::new(
+        TabSize::Four,
+        true,
+        None,
+        false,
+        false,
+        400,
+        0.5,
+        WritingGoal::new(0),
+        LintSettings::all_enabled(),
+        0,
+    );
+    assert!(
+        !zero.is_valid(),
+        "上限 0 必须判非法——否则「一个文档都打不开」会被当成合法配置"
+    );
+    let mut preferences = Preferences::default_preferences();
+    assert!(
+        preferences.set_editor(zero).is_err(),
+        "非法的上限不得写进偏好"
+    );
 }

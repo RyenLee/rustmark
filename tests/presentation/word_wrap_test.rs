@@ -33,7 +33,7 @@ fn app_fixture() -> (tempfile::TempDir, EditorApp) {
 /// 在指定窗口宽下跑一帧，返回全部绘制指令。
 fn render_at(app: &mut EditorApp, w: f32) -> Vec<ClippedShape> {
     let ctx = egui::Context::default();
-    let _ = ctx.run(egui::RawInput::default(), |_| {}); // 装载字库
+    crate::support::run_ui(&ctx, egui::RawInput::default(), |_| {}); // 装载字库
     app.ui.set_theme(Theme::dark());
     app.ui.preview_visible = false;
     app.ui.sidebar_visible = false;
@@ -44,9 +44,9 @@ fn render_at(app: &mut EditorApp, w: f32) -> Vec<ClippedShape> {
         )),
         ..Default::default()
     };
-    let out = ctx.run(input, |ctx| {
-        rustmark::presentation::theme::mapper::apply(ctx, &app.ui.theme);
-        main_view::show(app, ctx);
+    let out = crate::support::run_ui(&ctx, input, |ui| {
+        rustmark::presentation::theme::mapper::apply(ui.ctx(), &app.ui.theme);
+        main_view::show(app, ui);
     });
     out.shapes
 }

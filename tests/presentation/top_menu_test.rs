@@ -24,6 +24,13 @@ use rustmark::presentation::views::toolbar_view::{
 };
 use std::sync::Arc;
 
+/// `ImeEvent::Enabled` 在 egui 0.37 已废弃（egui 自管 IME 开关），但用例仍要
+/// 表达「用户开启输入法」的意图，故用一个带 `#[allow(deprecated)]` 的助手包住。
+#[allow(deprecated)]
+fn ime_enabled_event() -> egui::Event {
+    egui::Event::Ime(egui::ImeEvent::Enabled)
+}
+
 /// 验收窗口尺寸（与 `theme_mapper_test` 的两档一致）。
 const SCREEN: egui::Vec2 = egui::vec2(1280.0, 800.0);
 
@@ -70,7 +77,7 @@ fn app_with_open_document() -> (tempfile::TempDir, EditorApp) {
 fn fresh_ctx() -> egui::Context {
     rustmark::presentation::theme::mapper::clear_highlight_caches();
     let ctx = egui::Context::default();
-    let _ = ctx.run(egui::RawInput::default(), |_| {}); // 装载字库
+    crate::support::run_ui(&ctx, egui::RawInput::default(), |_| {}); // 装载字库
     ctx
 }
 
@@ -116,9 +123,9 @@ fn run_frame(
     app: &mut EditorApp,
     events: Vec<egui::Event>,
 ) -> Vec<(egui::Rect, String)> {
-    let out = ctx.run(raw_input(events), |ctx| {
-        rustmark::presentation::theme::mapper::apply(ctx, &app.ui.theme);
-        rustmark::presentation::views::main_view::show(app, ctx);
+    let out = crate::support::run_ui(ctx, raw_input(events), |ui| {
+        rustmark::presentation::theme::mapper::apply(ui.ctx(), &app.ui.theme);
+        rustmark::presentation::views::main_view::show(app, ui);
     });
     painted_texts(&out.shapes)
 }
@@ -537,8 +544,8 @@ fn menu_row_width_fits_the_widest_item_of_every_group() {
     let ctx = fresh_ctx();
     let font = egui::FontId::proportional(app.theme().metrics.ui_font_size);
 
-    let _ = ctx.run(raw_input(Vec::new()), |ctx| {
-        egui::CentralPanel::default().show(ctx, |ui| {
+    crate::support::run_ui(&ctx, raw_input(Vec::new()), |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             for group in MenuGroup::ALL {
                 let actions: Vec<UiAction> = UiAction::ALL
                     .iter()
@@ -804,10 +811,13 @@ fn three_pane_top_bars_align() {
     std::fs::write(&file, "# 标题\n\n正文一行。\n").expect("写文件应成功");
     app.open_path(&file.to_string_lossy()).expect("打开应成功");
     let ctx = fresh_ctx();
+    // egui 首帧是测量 pass：控件尺寸与稳定帧差 1pt（菜单栏 43 vs 44），
+    // 而本用例断言「三条顶栏文字中心相差 <1pt」——直接取首帧会稳定误报。
+    crate::support::settle(&ctx, &mut app, SCREEN);
 
-    let out = ctx.run(raw_input(vec![]), |ctx| {
-        rustmark::presentation::theme::mapper::apply(ctx, &app.ui.theme);
-        rustmark::presentation::views::main_view::show(&mut app, ctx);
+    let out = crate::support::run_ui(&ctx, raw_input(vec![]), |ui| {
+        rustmark::presentation::theme::mapper::apply(ui.ctx(), &app.ui.theme);
+        rustmark::presentation::views::main_view::show(&mut app, ui);
     });
     let mut texts: Vec<(egui::Rect, String)> = Vec::new();
     let mut fills: Vec<(egui::Rect, egui::Color32)> = Vec::new();
@@ -838,10 +848,16 @@ fn three_pane_top_bars_align() {
     // ---- ① 三条顶栏的文字中心同一水平线 ----
     // （文字矩形中心比控件矩形更稳：按钮 / 标签 / 纯文字三种控件的外框
     // 各不相同，但同一行里**文字**必须居中在同一高度。）
+    //
+    // ⚠ 必须限定 `left() > 60`：「文件」在侧栏出现**两次**——活动栏的导航项
+    // （035 起新增，x 落在 48pt 宽的活动栏内）与内容面板的作用域标题。
+    // 本用例要的三条**顶栏**是「侧栏内容面板标题行 / 编辑区工具栏 / 预览标题栏」；
+    // 活动栏是纵向导航列、不是顶栏，它的首项与工具栏并不要求同高。不加这个
+    // 限定，`find` 会取到活动栏那个（绘制序在前），量到的是另一个控件。
     let center_of = |needle: &str| -> f32 {
         texts
             .iter()
-            .find(|(r, t)| t == needle && r.top() > 95.0 && r.top() < 160.0)
+            .find(|(r, t)| t == needle && r.top() > 95.0 && r.top() < 160.0 && r.left() > 60.0)
             .map(|(r, _)| r.center().y)
             .unwrap_or_else(|| panic!("顶栏应有「{needle}」且在顶栏行内"))
     };
@@ -1045,17 +1061,16 @@ fn ime_preedit_commit_and_enter_keeps_text_intact() {
 
     // ① 组合：预编辑逐帧演进（真实节奏：每个字母一帧，帧间留空帧），
     //    候选确认后中文必须**替换**预编辑串，拼音不得残留。
-    run_frame(
-        &ctx,
-        &mut app,
-        vec![egui::Event::Ime(egui::ImeEvent::Enabled)],
-    );
+    run_frame(&ctx, &mut app, vec![ime_enabled_event()]);
     run_frame(&ctx, &mut app, vec![]);
     for pre in ["s", "sa", "sad", "sadaf"] {
         run_frame(
             &ctx,
             &mut app,
-            vec![egui::Event::Ime(egui::ImeEvent::Preedit(pre.to_owned()))],
+            vec![egui::Event::Ime(egui::ImeEvent::Preedit {
+                text: pre.to_owned(),
+                active_range_chars: None,
+            })],
         );
         run_frame(&ctx, &mut app, vec![]);
     }
@@ -1089,7 +1104,10 @@ fn ime_preedit_commit_and_enter_keeps_text_intact() {
         run_frame(
             &ctx,
             &mut app,
-            vec![egui::Event::Ime(egui::ImeEvent::Preedit(pre.to_owned()))],
+            vec![egui::Event::Ime(egui::ImeEvent::Preedit {
+                text: pre.to_owned(),
+                active_range_chars: None,
+            })],
         );
         run_frame(&ctx, &mut app, vec![]);
     }

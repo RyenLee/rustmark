@@ -15,7 +15,7 @@
 [#BlockId(13)] kind=Heading { level: 2 } range=828..843 | "中文表格"
 [#BlockId(14)] kind=Table { data: TableData { header: ["名称", "类型", "说明"], rows: [["文档", "聚合", "编辑器状态"], ["偏好", "聚合", "用户设置"]], aligns: [None, None, None], header_spans: [[], [], []], rows_spans: [[[], [], []], [[], [], []]] } } range=845..969 | "名称类型说明文档聚合编辑器状态偏好聚合用户设置"
 [#BlockId(15)] kind=Heading { level: 2 } range=971..992 | "中文任务列表"
-[#BlockId(16)] kind=TaskList { items: [ListItem { text: "已完成：解析器实现", checked: Some(true), source_range: TextRange { start: ByteOffset(994), end: ByteOffset(1027) }, depth: 0, ordinal: None, spans: [] }, ListItem { text: "未完成：表现层接线", checked: Some(false), source_range: TextRange { start: ByteOffset(1028), end: ByteOffset(1061) }, depth: 0, ordinal: None, spans: [] }] } range=994..1061 | "[x] 已完成：解析器实现 [ ] 未完成：表现层接线"
+[#BlockId(16)] kind=TaskList { items: [ListItem { text: "已完成：解析器实现", checked: Some(true), source_range: TextRange { start: ByteOffset(994), end: ByteOffset(1027) }, depth: 0, ordinal: None, spans: [], images: [] }, ListItem { text: "未完成：表现层接线", checked: Some(false), source_range: TextRange { start: ByteOffset(1028), end: ByteOffset(1061) }, depth: 0, ordinal: None, spans: [], images: [] }] } range=994..1061 | "[x] 已完成：解析器实现 [ ] 未完成：表现层接线"
 [#BlockId(17)] kind=Heading { level: 2 } range=1063..1096 | "边界：中文后的插入点"
 [#BlockId(18)] kind=Paragraph range=1098..1119 | "中文段落末尾。"
 [#BlockId(19)] kind=Paragraph range=1121..1244 | "这一行用于验证：中文（3 字节）与 ASCII（1 字节）混合时，\nByteOf"

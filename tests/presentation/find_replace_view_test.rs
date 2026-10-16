@@ -663,7 +663,7 @@ fn global_shortcuts_yield_while_the_find_input_has_focus() {
 
     // 面板的输入框应真的拿到了焦点（否则下面这条断言是空转）。
     assert!(
-        ctx.memory(|m| m.has_focus(egui::Id::new(FIND_INPUT_ID))),
+        ctx.memory(|m| m.has_focus(egui::Id::unique(FIND_INPUT_ID))),
         "打开面板后查找框应获得焦点"
     );
 
@@ -695,9 +695,9 @@ fn frame(app: &mut EditorApp, ctx: &egui::Context) {
         )),
         ..Default::default()
     };
-    let _ = ctx.run(input, |ctx| {
-        rustmark::presentation::theme::mapper::apply(ctx, &app.ui.theme);
-        rustmark::presentation::views::main_view::show(app, ctx);
+    crate::support::run_ui(ctx, input, |ui| {
+        rustmark::presentation::theme::mapper::apply(ui.ctx(), &app.ui.theme);
+        rustmark::presentation::views::main_view::show(app, ui);
     });
 }
 
@@ -748,7 +748,7 @@ fn opening_the_panel_actually_renders_it_in_a_real_frame() {
     // 面板真的被画了：焦点落到了查找输入框上。
     // 若 `overlays::show` 缺失，控件从未被布局，焦点请求也就无人响应。
     assert!(
-        ctx.memory(|m| m.has_focus(egui::Id::new(FIND_INPUT_ID))),
+        ctx.memory(|m| m.has_focus(egui::Id::unique(FIND_INPUT_ID))),
         "面板未渲染：查找框拿不到焦点（`overlays::show` 可能没接上）"
     );
 }

@@ -3,6 +3,8 @@
 //! [`BlockKind`] 覆盖 Markdown 全部块级语义；列表 / 表格 / 定义列表的结构化载荷
 //! 定义在 `table.rs`，由本枚举持有。
 
+use crate::shared::geometry::TextRange;
+
 use super::table::{DefinitionEntry, ListItem, TableData};
 
 /// 渲染块的稳定标识（单次解析结果内唯一）。
@@ -24,6 +26,115 @@ impl BlockId {
 impl std::fmt::Display for BlockId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "block#{}", self.0)
+    }
+}
+
+/// 图片的对齐方式。
+///
+/// 来自 Typora / CSDN 私有扩展语法的 `#pic_*` 标记（`![alt](url#pic_center)`）。
+/// 这些标记不是 Markdown，脱糖阶段会先把它们从解析副本里剥掉，
+/// 但语义必须随块上行——否则「居中的图片」与「左对齐的图片」无从区分。
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum ImageAlign {
+    /// 左对齐（`#pic_left`）。
+    ///
+    /// **未写标记时的默认**：CSDN / Typora 里无标记图片就是左对齐
+    /// （效果截图：`![Alt](url =30x30)` 的小图贴在左缘）。标记的存在
+    /// 意义正是把默认的左对齐改掉——要居中必须显式写 `#pic_center`。
+    #[default]
+    Left,
+    /// 居中（`#pic_center`）。
+    Center,
+    /// 右对齐（`#pic_right`）。
+    Right,
+}
+
+/// 图片的显示参数：源码里 `![alt](url#pic_center =30x30)` 携带的
+/// Typora / CSDN 私有扩展。
+///
+/// # 为什么尺寸是 `u32`
+///
+/// 源码语法只接受整数像素（`=30x30`），而 `BlockKind` 派生 `Eq`——
+/// 浮点没有全序，用 `f32` 会破坏枚举的 `Eq`。URL 查询参数（OSS 的
+/// `w_50` 等）同为整数像素，在渲染层统一换算。
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct ImageDisplay {
+    /// 声明宽度（像素；`=30x30` 的 30）。
+    pub width: Option<u32>,
+    /// 声明高度（像素；`=30x30` 的后一个 30）。
+    pub height: Option<u32>,
+    /// 对齐方式（`#pic_center` / `#pic_left` / `#pic_right`；未写为居中）。
+    pub align: ImageAlign,
+}
+
+/// 混排在文字里的**行内图片**：`前面 ![alt](url) 后面`。
+///
+/// # 为什么必须单独建模（而不是把整块替成图片块）
+///
+/// 图片在 CommonMark 里是**行内**元素，它可以出现在段落 / 引用 / 标题 / 列表项
+/// 的文字中间。早期实现只要块里出现过图片，就把整个块替换成 `BlockKind::Image`，
+/// 于是「图片前后的文字」随块一起消失——用户看到的就是「插入图片后，前面的文案
+/// 被吞了」（问题 032）。故只有当**整块文字就是一张图片**时（此时替换没有代价）
+/// 才升级为图片块；其余场合块保持本来类型，图片以本结构挂在块上。
+///
+/// `range` 指出它在所属文本里占的位置（区间内的文字就是 alt），
+/// 渲染方据此把图片插回文本流的对应处（见表现层的 `draw_text_with_images`）。
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct InlineImage {
+    /// 在所属文本（`RenderedBlock::content` / `ListItem::text`）里的字节区间。
+    range: TextRange,
+    /// 替代文本（`![这里](url)`）。
+    alt: String,
+    /// 图片地址（本地路径 / 远程 URL / data URI）。
+    url: String,
+    /// 显示参数（`#pic_center` / ` =30x30`）。
+    display: ImageDisplay,
+}
+
+impl InlineImage {
+    /// 构造行内图片。
+    pub fn new(
+        range: TextRange,
+        alt: impl Into<String>,
+        url: impl Into<String>,
+        display: ImageDisplay,
+    ) -> Self {
+        Self {
+            range,
+            alt: alt.into(),
+            url: url.into(),
+            display,
+        }
+    }
+
+    /// 在所属文本里的字节区间（区间内的文字就是 alt）。
+    pub const fn range(&self) -> TextRange {
+        self.range
+    }
+
+    /// 区间起点（字节）。
+    pub fn start(&self) -> usize {
+        self.range.start().value()
+    }
+
+    /// 区间终点（字节，不含）。
+    pub fn end(&self) -> usize {
+        self.range.end().value()
+    }
+
+    /// 替代文本。
+    pub fn alt(&self) -> &str {
+        &self.alt
+    }
+
+    /// 图片地址。
+    pub fn url(&self) -> &str {
+        &self.url
+    }
+
+    /// 显示参数。
+    pub const fn display(&self) -> ImageDisplay {
+        self.display
     }
 }
 
@@ -63,7 +174,14 @@ pub enum BlockKind {
     /// 引用块。
     Quote,
     /// 图片（本地 / 远程 / data URI）。
-    Image { alt: String, url: String },
+    ///
+    /// `display` 是源码私有扩展（`#pic_center` / ` =30x30`）解析出的显示参数；
+    /// 未写扩展时为 [`ImageDisplay::default`]（按纹理实际尺寸、居中）。
+    Image {
+        alt: String,
+        url: String,
+        display: ImageDisplay,
+    },
     /// 分割线。
     Rule,
     /// 脚注定义。

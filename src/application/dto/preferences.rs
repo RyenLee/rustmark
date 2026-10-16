@@ -158,6 +158,13 @@ fn default_show_line_numbers() -> bool {
     true
 }
 
+/// `EditorSettingsView::max_open_documents` 的 serde 缺省值（与领域默认一致）。
+///
+/// 旧配置文件没有这个字段时按默认上限读出，而不是让配置加载失败。
+fn default_max_open_documents() -> u32 {
+    crate::domain::preferences::value_objects::MAX_OPEN_DOCUMENTS_DEFAULT
+}
+
 /// 编辑器设置视图（与领域 `EditorSettings` 对应）。
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EditorSettingsView {
@@ -181,6 +188,9 @@ pub struct EditorSettingsView {
     /// 格式检查（lint）的规则开关（V11-08）。旧配置缺省按**全部启用**处理。
     #[serde(default)]
     pub lint: LintRulesView,
+    /// 打开文档数量上限（问题 038；恒 ≥ 1）。旧配置缺省按默认上限处理。
+    #[serde(default = "default_max_open_documents")]
+    pub max_open_documents: u32,
 }
 
 /// 格式检查规则开关视图（V11-08）。
@@ -314,6 +324,7 @@ impl SettingsView {
                 split_ratio: 0.5,
                 writing_goal: 0,
                 lint: LintRulesView::default(),
+                max_open_documents: default_max_open_documents(),
             },
             shortcuts: Vec::new(),
         }

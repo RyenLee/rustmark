@@ -18,6 +18,27 @@ pub trait DocumentContentProvider: Send + Sync {
     /// 返回文档内容与版本号；文档未打开时返回 `None`。
     fn content_and_revision(&self, id: DocumentId) -> Option<(String, u64)>;
 
+    /// 只取「版本号 + 字节长度」，**不做全文快照**（问题 046）。
+    ///
+    /// # 为什么必须有这个方法（而不是继续用 `content_and_revision`）
+    ///
+    /// 编辑区每帧都要问这两个数，判断的全是**廉价决策**：
+    /// 「是不是超过大文件阈值」（只看长度）、「文档静止够久了吗」（只看版本号）、
+    /// 「缓存命不命中」（键里只有版本号，不含文本）。而 `content_and_revision`
+    /// 为了回答它们要把整篇文本从 rope 快照成一个新 `String`——
+    /// 1MB 文档就是每帧一次 MB 级分配 + 拷贝，纯属为两个整数付 O(全文)。
+    ///
+    /// 与问题 043（预览区只取版本号）同一个根因，只是当时的修法只覆盖了预览。
+    ///
+    /// # 默认实现
+    ///
+    /// 退回 [`Self::content_and_revision`] 再取长度：语义等价但**是慢路径**。
+    /// 生产实现（[`DocumentRegistry`]）必须覆写为 O(1)。
+    fn revision_and_len(&self, id: DocumentId) -> Option<(u64, usize)> {
+        self.content_and_revision(id)
+            .map(|(text, revision)| (revision, text.len()))
+    }
+
     /// 返回文档保存路径；未保存过或文档未打开时返回 `None`。
     fn path_of(&self, id: DocumentId) -> Option<FilePath>;
 
@@ -107,6 +128,15 @@ impl DocumentRegistry {
         self.docs.len()
     }
 
+    /// 只取文档版本号，**不做全文快照**（问题 043）。
+    ///
+    /// 预览区每帧要拿版本号构建缓存键，此前走 `content_and_revision`——
+    /// 为了一个 `u64` 把整篇文本从 rope 快照出来。版本号本身是聚合上的
+    /// 计数器，读取 O(1)。
+    pub fn revision_of(&self, id: DocumentId) -> Option<u64> {
+        self.docs.get(&id).map(|doc| doc.revision())
+    }
+
     /// 是否为空。
     pub fn is_empty(&self) -> bool {
         self.docs.is_empty()
@@ -118,14 +148,30 @@ impl DocumentContentProvider for DocumentRegistry {
         self.docs.get(&id).map(|doc| (doc.text(), doc.revision()))
     }
 
+    /// O(1)：版本号是聚合上的计数器，字节长度由 rope 直接给出，都不触发快照。
+    ///
+    /// 覆写默认实现的原因见 trait 上的文档（每帧路径不得快照全文）。
+    fn revision_and_len(&self, id: DocumentId) -> Option<(u64, usize)> {
+        self.docs
+            .get(&id)
+            .map(|doc| (doc.revision(), doc.len_bytes()))
+    }
+
     fn path_of(&self, id: DocumentId) -> Option<FilePath> {
         self.docs.get(&id).and_then(|doc| doc.path().cloned())
     }
 
     fn open_documents(&self) -> Vec<(DocumentId, Option<FilePath>, String)> {
-        self.docs
-            .values()
-            .map(|doc| (doc.id(), doc.path().cloned(), doc.text()))
+        // 按**插入顺序**（= 标签栏顺序）而不是 `HashMap` 迭代序：
+        // 搜索结果的分组顺序直接由这里决定，随机序会让「同一个查询
+        // 两次搜索结果分组顺序不同」，也让学生以为分组逻辑坏了。
+        self.ids()
+            .into_iter()
+            .filter_map(|id| {
+                self.docs
+                    .get(&id)
+                    .map(|doc| (doc.id(), doc.path().cloned(), doc.text()))
+            })
             .collect()
     }
 }
@@ -158,6 +204,17 @@ impl DocumentContentProvider for RegistryProvider {
             poisoned.into_inner()
         });
         guard.content_and_revision(id)
+    }
+
+    /// O(1)：只借注册表的读锁取两个整数，不做快照（理由见 trait 文档）。
+    fn revision_and_len(&self, id: DocumentId) -> Option<(u64, usize)> {
+        let guard = self.registry.read().unwrap_or_else(|poisoned| {
+            log::warn!(
+                "RegistryProvider::revision_and_len: registry RwLock poisoned; recovering guard"
+            );
+            poisoned.into_inner()
+        });
+        guard.revision_and_len(id)
     }
 
     fn path_of(&self, id: DocumentId) -> Option<FilePath> {

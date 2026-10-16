@@ -194,6 +194,8 @@ fn search_finds_disk_content() {
             regex: false,
             case_sensitive: false,
             whole_word: false,
+            only_document: None,
+            only_open_documents: false,
         })
         .unwrap();
     assert_eq!(result.hits.len(), 1);
@@ -234,6 +236,8 @@ fn search_covers_unsaved_draft_over_disk() {
             regex: false,
             case_sensitive: false,
             whole_word: false,
+            only_document: None,
+            only_open_documents: false,
         })
         .unwrap();
     assert_eq!(result.hits.len(), 2, "草稿与另一磁盘文件都应命中");
@@ -258,6 +262,8 @@ fn search_caps_hits_per_file() {
             regex: false,
             case_sensitive: false,
             whole_word: false,
+            only_document: None,
+            only_open_documents: false,
         })
         .unwrap();
     assert_eq!(
@@ -287,8 +293,104 @@ fn search_caps_total_hits() {
             regex: false,
             case_sensitive: false,
             whole_word: false,
+            only_document: None,
+            only_open_documents: false,
         })
         .unwrap();
     assert_eq!(result.hits.len(), MAX_TOTAL_HITS, "总命中不得超过 300");
     assert!(result.truncated, "超过总上限必须标记截断");
+}
+
+#[test]
+fn search_snippet_never_splits_utf8_chars() {
+    let f = build();
+    // 崩溃回归（docs/logs/crash-20261014135941-29300.txt）：摘要窗口按前后
+    // 各 24 **字节**截取，混合字节宽度的上下文使窗口落点必然切进多字节
+    // 字符中间，直接切片曾令搜索功能 panic。注意单一宽度序列测不出来——
+    // 24 能被 3 和 4 整除，落点恰好都是边界，必须混合宽度才覆盖得到。
+    let content = format!("{}needle{}", "🎉中文测试".repeat(8), "🎉中文测试".repeat(8),);
+    seed_files(&f, &["/d/mixed.md"], &content);
+
+    let result = f
+        .service
+        .search(SearchQuery {
+            pattern: "needle".to_string(),
+            regex: false,
+            case_sensitive: false,
+            whole_word: false,
+            only_document: None,
+            only_open_documents: false,
+        })
+        .unwrap();
+    assert_eq!(result.hits.len(), 1);
+    let hit = &result.hits[0];
+    assert!(
+        hit.snippet.contains("needle"),
+        "摘要窗口应完整覆盖命中：{:?}",
+        hit.snippet
+    );
+    // 边界对齐只影响窗口两端的半个字符，行列坐标不受影响。
+    assert_eq!(hit.line, 0);
+    assert_eq!(hit.col, 128);
+}
+
+/// 范围切换器：「当前文档」只搜那一个文档（V11-28）。
+///
+/// 限定目标用**未落盘草稿**：它的 ID 由调用方给出，而磁盘文件的 ID 是
+/// `gather_candidates` 现场合成的、外部拿不到。这也正是线上最常见的形态——
+/// 用户正在改、还没保存的那一篇。
+#[test]
+fn search_can_be_limited_to_one_document() {
+    let f = build();
+    let draft_id = DocumentId::new();
+    f.provider.insert(
+        draft_id,
+        "needle in the draft copy",
+        1,
+        Some(fp("/d/draft.md")),
+    );
+    f.repo
+        .seed_entry(WorkspaceEntry::new(fp("/d/draft.md"), EntryKind::File));
+    f.repo
+        .seed_file(fp("/d/draft.md"), "no needle on the stale disk copy");
+    f.repo
+        .seed_entry(WorkspaceEntry::new(fp("/d/other.md"), EntryKind::File));
+    f.repo
+        .seed_file(fp("/d/other.md"), "needle also appears on disk");
+    f.service
+        .scan_tree(ScanTreeCommand {
+            root: fp("/d"),
+            max_depth: 4,
+        })
+        .unwrap();
+
+    let query = |only: Option<DocumentId>| SearchQuery {
+        pattern: "needle".to_string(),
+        regex: false,
+        case_sensitive: false,
+        whole_word: false,
+        only_document: only,
+        only_open_documents: false,
+    };
+
+    // 不限范围：草稿（内存内容）+ 另一磁盘文件，两条都命中。
+    let all = f.service.search(query(None)).unwrap();
+    assert_eq!(all.hits.len(), 2);
+
+    // 限定到草稿：只剩它一条，且取的是**内存草稿**而不是磁盘旧内容。
+    let only = f.service.search(query(Some(draft_id))).unwrap();
+    assert_eq!(only.hits.len(), 1, "限定后只应剩目标文档的命中");
+    assert!(
+        only.hits[0].snippet.contains("draft"),
+        "应命中草稿内容而非磁盘旧副本：{:?}",
+        only.hits[0].snippet
+    );
+    assert_eq!(only.hits[0].path, fp("/d/draft.md"));
+
+    // 限定到不存在的 ID（文档已关掉）：空结果而非报错。
+    // 上层 `search_workspace` 用「返回空结果」表达无范围可搜，
+    // 这里必须同样是空结果，那条约定才立得住。
+    let gone = f.service.search(query(Some(DocumentId::new()))).unwrap();
+    assert!(gone.hits.is_empty(), "限定到不存在的文档应无命中");
+    assert!(!gone.truncated);
 }

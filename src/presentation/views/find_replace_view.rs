@@ -61,7 +61,7 @@ pub fn show(app: &mut EditorApp, ctx: &Context) {
     }
     let mut open = true;
     egui::Window::new(Overlay::Find.title())
-        .id(egui::Id::new("rustmark.find_panel"))
+        .id(egui::Id::unique("rustmark.find_panel"))
         .open(&mut open)
         .collapsible(false)
         .resizable(false)
@@ -97,7 +97,7 @@ fn draw_find_row(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
         let response = ui
             .add(
                 egui::TextEdit::singleline(&mut app.find.find_text)
-                    .id(egui::Id::new(FIND_INPUT_ID))
+                    .id(egui::Id::unique(FIND_INPUT_ID))
                     .hint_text("查找")
                     .desired_width(f32::INFINITY),
             )
@@ -208,7 +208,7 @@ fn draw_replace_row(app: &mut EditorApp, ui: &mut Ui) {
         let response = ui
             .add(
                 egui::TextEdit::singleline(&mut app.find.replace_text)
-                    .id(egui::Id::new(REPLACE_INPUT_ID))
+                    .id(egui::Id::unique(REPLACE_INPUT_ID))
                     .hint_text("替换")
                     .desired_width(f32::INFINITY),
             )

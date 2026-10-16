@@ -70,9 +70,9 @@ fn run_frame(ctx: &egui::Context, app: &mut EditorApp, dark: bool) -> String {
         rustmark::presentation::theme::builtin::Theme::light()
     };
     app.ui.set_theme(theme);
-    let out = ctx.run(input(), |ctx| {
-        rustmark::presentation::theme::mapper::apply(ctx, &app.ui.theme);
-        rustmark::presentation::views::main_view::show(app, ctx);
+    let out = crate::support::run_ui(ctx, input(), |ui| {
+        rustmark::presentation::theme::mapper::apply(ui.ctx(), &app.ui.theme);
+        rustmark::presentation::views::main_view::show(app, ui);
     });
     painted_text(&out.shapes)
 }
@@ -91,7 +91,7 @@ fn preview_text(app: &EditorApp) -> String {
 fn fresh_ctx() -> egui::Context {
     rustmark::presentation::theme::mapper::clear_highlight_caches();
     let ctx = egui::Context::default();
-    let _ = ctx.run(egui::RawInput::default(), |_| {}); // 装载字库
+    crate::support::run_ui(&ctx, egui::RawInput::default(), |_| {}); // 装载字库
     ctx
 }
 

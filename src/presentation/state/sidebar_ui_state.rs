@@ -31,6 +31,12 @@ pub struct SidebarUiState {
     pub search_query: String,
     /// 搜索选项。
     pub search_options: SearchOptions,
+    /// 搜索范围（「当前文档」/「整个工作区」，见 [`SearchScope`]）。
+    ///
+    /// 与 `search_options` 一样只活在会话里，不落偏好：范围是**这一轮
+    /// 查找**的临时决定，不是用户的长期设置；重启后回到默认值
+    /// （当前文档）比恢复一个可能已不合时宜的范围更可预期。
+    pub search_scope: SearchScope,
     /// 大纲当前展开到第几级（1–6）。
     pub outline_max_level: u8,
     /// 大纲当前选中的标题文本（用于高亮定位）。
@@ -257,6 +263,32 @@ mod tests {
         assert!(!after.case_sensitive && !after.whole_word);
         assert_eq!(base.active_count(), 0);
         assert_eq!(after.active_count(), 1);
+    }
+
+    /// 范围切换器的两个选项都带得出去的标签与提示，且默认是「当前文档」。
+    ///
+    /// 「默认当前文档」是被设计固定下来的语义（侧栏按作用域分组后
+    /// 「搜索」属文档级），写成断言防止后人随手改默认值——
+    /// 那一改会让所有既有用户第一次打开就看到跨文件结果，
+    /// 与面板标题声明的作用域不符。
+    #[test]
+    fn every_scope_has_a_label_and_a_hint_and_defaults_to_current_document() {
+        for scope in SEARCH_SCOPES {
+            assert!(!scope.label().is_empty());
+            assert!(!scope.hint().is_empty());
+            assert!(!scope.placeholder().is_empty());
+        }
+        assert_eq!(SEARCH_SCOPES[0], SearchScope::CurrentDocument);
+        assert_eq!(SearchScope::default(), SearchScope::CurrentDocument);
+        assert_eq!(
+            SidebarUiState::new().search_scope,
+            SearchScope::CurrentDocument
+        );
+        // 占位提示必须随范围变化，否则切换器成了摆设。
+        assert_ne!(
+            SearchScope::CurrentDocument.placeholder(),
+            SearchScope::OpenDocuments.placeholder()
+        );
     }
 
     /// 树行折叠：收起目录后子项不出现，但目录自身仍在。

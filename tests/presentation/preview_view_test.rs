@@ -351,9 +351,9 @@ fn app_with(content: &str) -> (tempfile::TempDir, EditorApp) {
 fn render(app: &mut EditorApp, ctx: &egui::Context, n: usize) -> usize {
     let mut last = 0;
     for _ in 0..n.max(2) {
-        let out = ctx.run(egui::RawInput::default(), |ctx| {
-            rustmark::presentation::theme::mapper::apply(ctx, &app.ui.theme);
-            rustmark::presentation::views::main_view::show(app, ctx);
+        let out = crate::support::run_ui(ctx, egui::RawInput::default(), |ui| {
+            rustmark::presentation::theme::mapper::apply(ui.ctx(), &app.ui.theme);
+            rustmark::presentation::views::main_view::show(app, ui);
         });
         last = out.shapes.len();
     }
@@ -378,12 +378,17 @@ fn sample_document_reaches_preview_blocks_with_its_inline_styles() {
         .expect("应产出目录块");
     assert_eq!(toc.content, "欢迎", "目录标题应取自 `@[TOC](欢迎)` 的括号");
 
-    // 带尺寸的图片要真的成为图片块，且地址里不能混进 `=30x30`。
+    // 带尺寸的图片：源码写作「带尺寸的图片: ![Alt](images/a.png =30x30)」，
+    // 图片**前还写着文案**，故块保持段落、图片挂在块上（问题 032——
+    // 换成图片块的话那段前缀就被吞了）。地址里不能混进 `=30x30`。
     let image = blocks
         .iter()
-        .find(|b| b.kind == "image")
-        .expect("带尺寸后缀的图片也应成为图片块");
-    assert_eq!(image.url.as_deref(), Some("images/a.png"));
+        .flat_map(|b| b.images.iter())
+        .next()
+        .expect("混排图片应挂在块上");
+    assert_eq!(image.image.url, "images/a.png", "尺寸后缀不应混进地址");
+    assert_eq!(image.image.width, Some(30));
+    assert_eq!(image.image.height, Some(30));
 
     // 每一类行内样式都要在某个块的 spans 里出现过。
     let styles: Vec<&str> = blocks
@@ -704,12 +709,12 @@ fn preview_frame_texts(app: &mut EditorApp, ctx: &egui::Context) -> Vec<String> 
         )),
         ..Default::default()
     };
-    let _ = ctx.run(input.clone(), |_| {}); // 装载字库
+    crate::support::run_ui(ctx, input.clone(), |_| {}); // 装载字库
     let mut texts = Vec::new();
     for _ in 0..3 {
-        let out = ctx.run(input.clone(), |ctx| {
-            rustmark::presentation::theme::mapper::apply(ctx, &app.ui.theme);
-            egui::CentralPanel::default().show(ctx, |ui| {
+        let out = crate::support::run_ui(ctx, input.clone(), |ui| {
+            rustmark::presentation::theme::mapper::apply(ui.ctx(), &app.ui.theme);
+            egui::CentralPanel::default().show(ui, |ui| {
                 rustmark::presentation::views::preview_view::show(app, ui);
             });
         });
@@ -942,9 +947,9 @@ fn preview_scrolls_with_the_wheel_over_its_content() {
             events,
             ..Default::default()
         };
-        let _ = ctx.run(input, |ctx| {
-            rustmark::presentation::theme::mapper::apply(ctx, &app.ui.theme);
-            rustmark::presentation::views::main_view::show(app, ctx);
+        crate::support::run_ui(&ctx, input, |ui| {
+            rustmark::presentation::theme::mapper::apply(ui.ctx(), &app.ui.theme);
+            rustmark::presentation::views::main_view::show(app, ui);
         });
     };
 
@@ -974,6 +979,8 @@ fn preview_scrolls_with_the_wheel_over_its_content() {
                 egui::Event::MouseWheel {
                     unit: egui::MouseWheelUnit::Point,
                     delta: egui::vec2(0.0, -120.0),
+                    phase: egui::TouchPhase::Move,
+                    source: egui::MouseWheelSource::Unknown,
                     modifiers: egui::Modifiers::default(),
                 },
             ],
@@ -998,9 +1005,9 @@ fn wheel_outside_the_preview_pane_does_not_scroll_it() {
             events,
             ..Default::default()
         };
-        let _ = ctx.run(input, |ctx| {
-            rustmark::presentation::theme::mapper::apply(ctx, &app.ui.theme);
-            rustmark::presentation::views::main_view::show(app, ctx);
+        crate::support::run_ui(&ctx, input, |ui| {
+            rustmark::presentation::theme::mapper::apply(ui.ctx(), &app.ui.theme);
+            rustmark::presentation::views::main_view::show(app, ui);
         });
     };
     run(&mut app, Vec::new());
@@ -1013,6 +1020,8 @@ fn wheel_outside_the_preview_pane_does_not_scroll_it() {
                 egui::Event::MouseWheel {
                     unit: egui::MouseWheelUnit::Point,
                     delta: egui::vec2(0.0, -120.0),
+                    phase: egui::TouchPhase::Move,
+                    source: egui::MouseWheelSource::Unknown,
                     modifiers: egui::Modifiers::default(),
                 },
             ],
@@ -1078,13 +1087,13 @@ fn render_and_scan(app: &mut EditorApp, ctx: &egui::Context) -> (usize, Vec<Stri
         )),
         ..Default::default()
     };
-    let _ = ctx.run(input.clone(), |_| {}); // 装载字库
+    crate::support::run_ui(ctx, input.clone(), |_| {}); // 装载字库
     let mut last = (0usize, Vec::new());
     // 多跑几帧：窗口/滚动区首帧会走 sizing pass。
     for _ in 0..3 {
-        let out = ctx.run(input.clone(), |ctx| {
-            rustmark::presentation::theme::mapper::apply(ctx, &app.ui.theme);
-            rustmark::presentation::views::main_view::show(app, ctx);
+        let out = crate::support::run_ui(ctx, input.clone(), |ui| {
+            rustmark::presentation::theme::mapper::apply(ui.ctx(), &app.ui.theme);
+            rustmark::presentation::views::main_view::show(app, ui);
         });
         last = id_clash_evidence(&out.shapes);
     }
@@ -1134,13 +1143,13 @@ fn quote_body_paints_inside_the_quote_frame() {
         )),
         ..Default::default()
     };
-    let _ = ctx.run(input.clone(), |_| {}); // 装载字库
+    crate::support::run_ui(&ctx, input.clone(), |_| {}); // 装载字库
     let mut texts: Vec<(egui::Rect, String)> = Vec::new();
     let mut fills: Vec<(egui::Rect, egui::Color32)> = Vec::new();
     for _ in 0..3 {
-        let out = ctx.run(input.clone(), |ctx| {
-            rustmark::presentation::theme::mapper::apply(ctx, &app.ui.theme);
-            egui::CentralPanel::default().show(ctx, |ui| {
+        let out = crate::support::run_ui(&ctx, input.clone(), |ui| {
+            rustmark::presentation::theme::mapper::apply(ui.ctx(), &app.ui.theme);
+            egui::CentralPanel::default().show(ui, |ui| {
                 rustmark::presentation::views::preview_view::show(&mut app, ui);
             });
         });
@@ -1254,9 +1263,9 @@ fn footnote_definitions_render_in_a_section_exactly_once() {
         )),
         ..Default::default()
     };
-    let output = ctx.run(input, |ctx| {
-        rustmark::presentation::theme::mapper::apply(ctx, &app.ui.theme);
-        rustmark::presentation::views::main_view::show(&mut app, ctx);
+    let output = crate::support::run_ui(&ctx, input, |ui| {
+        rustmark::presentation::theme::mapper::apply(ui.ctx(), &app.ui.theme);
+        rustmark::presentation::views::main_view::show(&mut app, ui);
     });
     let painted = footnote_test_painted(&output.shapes);
 
@@ -1328,9 +1337,9 @@ fn painted_text_shapes(
         )),
         ..Default::default()
     };
-    let output = ctx.run(input, |ctx| {
-        rustmark::presentation::theme::mapper::apply(ctx, &app.ui.theme);
-        rustmark::presentation::views::main_view::show(app, ctx);
+    let output = crate::support::run_ui(ctx, input, |ui| {
+        rustmark::presentation::theme::mapper::apply(ui.ctx(), &app.ui.theme);
+        rustmark::presentation::views::main_view::show(app, ui);
     });
     collect_text_shapes(&output.shapes)
 }
@@ -1459,5 +1468,63 @@ fn unsupported_inline_math_falls_back_to_text() {
     assert_eq!(
         hits, 2,
         "不支持的公式应退化为源码文本：编辑区一次 + 预览一次，实际 {hits}"
+    );
+}
+
+// ============================================================================
+// 行内图片：图片与文字混排（问题 032：图片前的文案被吞）
+// ============================================================================
+
+/// 图片前后的文案必须画进预览。
+///
+/// # 根因
+///
+/// 图片是行内元素，但解析器只要看到块里有图就把整块换成图片块，
+/// 于是 `图片: ![Alt](u.png)` 里的「图片: 」随块一起消失——
+/// 预览只剩一张图，看起来就是「插入图片后前面的文案被吞了」。
+///
+/// # 修复
+///
+/// 整块只有图才升级为图片块；混排时块保持本来类型、图片挂在块上，
+/// 渲染层按图片在文字里的区间把图插回文本流（见 `draw_text_with_images`）。
+#[test]
+fn text_around_inline_image_is_rendered_in_preview() {
+    let (_dir, mut app) = app_with("前面的文案 ![Alt](images/a.png) 后面的文案\n");
+    let ctx = egui::Context::default();
+    // 只渲染预览区：编辑区的**源码**里本来就有这些字，混进来会让断言永远通过。
+    let painted = preview_frame_texts(&mut app, &ctx).concat();
+    assert!(
+        painted.contains("前面的文案"),
+        "图片前的文案被吞了：{painted:?}"
+    );
+    assert!(
+        painted.contains("后面的文案"),
+        "图片后的文案被吞了：{painted:?}"
+    );
+    // 图片本身也要画出来：测试环境加载不到 `images/a.png`，
+    // 走的是占位分支，占位上写着地址 / alt。
+    assert!(
+        painted.contains("a.png"),
+        "图片（或它的占位）没有画进预览：{painted:?}"
+    );
+}
+
+/// 列表项里的图片：项是文本容器，图插在项文本里，项文字同样不能丢。
+#[test]
+fn inline_image_in_list_item_is_rendered_in_preview() {
+    let (_dir, mut app) = app_with("- 项前 ![图标](images/i.png) 项后\n");
+    let ctx = egui::Context::default();
+    let painted = preview_frame_texts(&mut app, &ctx).concat();
+    assert!(
+        painted.contains("项前"),
+        "列表项前的文字被吞了：{painted:?}"
+    );
+    assert!(
+        painted.contains("项后"),
+        "列表项后的文字被吞了：{painted:?}"
+    );
+    assert!(
+        painted.contains("i.png"),
+        "列表项里的图片没有画出来：{painted:?}"
     );
 }

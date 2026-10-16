@@ -223,8 +223,12 @@ pub(super) fn build_line_job(
 ) -> egui::text::LayoutJob {
     let mapper = StyleMapper::new(theme);
     let base = mapper.format("plain");
+    // `text` 必须留空：下面所有文本都经 `LayoutJob::append` 写入，而 `append`
+    // 会把它推进 `text` 并据此计算 `byte_range`。egui 0.37 起 `Fonts::layout_job`
+    // 会做 `debug_sanity_check`——要求各 `section` 从字节 0 起、无缝隙地铺满
+    // `job.text`；若这里预填 `line`，首个 section 会从 `line.len()` 开始，
+    // 断言即失败（0.33 无此断言，故旧代码侥幸可用）。
     let mut job = egui::text::LayoutJob {
-        text: line.to_string(),
         wrap: TextWrapping {
             max_width: if wrap_width > 0.0 {
                 wrap_width

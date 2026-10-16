@@ -17,7 +17,7 @@
 //! 字数忽然从第三格跳到第一格会让眼睛找不到。消息占用左端的空白处，
 //! 出现时把固定项整体右推，消失后复位。
 
-use egui::{Align, Context, CornerRadius, Layout, Rect, Response, Sense, Ui, Vec2};
+use egui::{Align, CornerRadius, Layout, Rect, Response, Sense, Ui, Vec2};
 
 use crate::app::frame::EditorApp;
 use crate::application::dto::GoalProgressView;
@@ -57,7 +57,7 @@ fn sync_goal(app: &mut EditorApp) {
     app.status_bar.note_goal(progress, doc, now_ms);
 }
 
-pub fn show(app: &mut EditorApp, ctx: &Context) {
+pub fn show(app: &mut EditorApp, ui: &mut Ui) {
     sync_encoding(app);
     sync_goal(app);
     let height = app.theme().metrics.statusbar_height;
@@ -65,9 +65,9 @@ pub fn show(app: &mut EditorApp, ctx: &Context) {
     // 否则一条 3 天前就该消失的错误会一直画着。
     let now_ms = app.services.markdown.now().millis();
     let message = app.status_bar.take_message(now_ms);
-    egui::TopBottomPanel::bottom("rustmark.statusbar")
-        .exact_height(height)
-        .show(ctx, |ui| draw(app, ui, message));
+    egui::Panel::bottom("rustmark.statusbar")
+        .exact_size(height)
+        .show(ui, |ui| draw(app, ui, message));
 }
 
 /// 状态栏要显示的**全部**信息，一次算清。
@@ -159,37 +159,16 @@ pub fn build_model(app: &EditorApp) -> StatusBarModel {
     }
 }
 
-/// 主题显示名与提示（对齐原型 `StatusBar.vue` 的三态文案）。
+/// 主题显示名与提示（对齐原型 `StatusBar.vue`）。
 ///
-/// # 提示为什么必须写「下一态是谁」
-///
-/// 轮换是**三态**序列 `深色 → 浅色 → 跟随系统 → 深色`
-/// （原型 `THEME_CYCLE`，见 `EditorApp::cycle_theme`）。早期提示只写
-/// 「点击切换主题（深色 / 浅色 / 跟随系统）」——用户当前在浅色，
-/// 点一下却因为「跟随系统」解析出深色而看到界面变深，
-/// 「点浅色变深色」由此被判为 bug（V11-17 反馈）。
-/// 把下一态（含「跟随系统」当前解析出的深浅）写进提示，
-/// 每次点击的结果就都是可预期的。
+/// 状态栏的「一键切换」现在是**深↔浅直接互换**（见 `EditorApp::cycle_theme`）：
+/// 当前显示深色就提示「点一下变浅色」、反之变深色。这是可预期的一元动作，
+/// 不再有三态轮换带来的「浅色点回深色要点两次」困惑（#039）。
 fn theme_label(app: &EditorApp) -> (String, String) {
-    use crate::presentation::theme::builtin::BuiltinTheme;
-    let system_cn = if app.system_prefers_dark() {
-        "深"
+    if app.ui.theme.is_dark() {
+        ("深色主题".to_string(), "点击切换为浅色主题".to_string())
     } else {
-        "浅"
-    };
-    match app.ui.theme.kind {
-        BuiltinTheme::Dark => ("深色主题".to_string(), "点击切换为浅色主题".to_string()),
-        BuiltinTheme::Light => (
-            "浅色主题".to_string(),
-            format!("点击切换为跟随系统（当前解析为{system_cn}色）"),
-        ),
-        // 「跟随系统」必须带上**当前解析出来的**深/浅，
-        // 否则用户设了「跟随系统」却看不出系统现在是深是浅，
-        // 会以为这个选项没生效。
-        BuiltinTheme::System => (
-            format!("跟随系统（{system_cn}）"),
-            format!("当前跟随操作系统外观（{system_cn}色），点击切换为深色主题"),
-        ),
+        ("浅色主题".to_string(), "点击切换为深色主题".to_string())
     }
 }
 

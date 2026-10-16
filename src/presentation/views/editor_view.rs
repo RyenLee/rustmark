@@ -21,6 +21,18 @@
 //! IME 的「组合期不产生撤销快照」由 egui 天然满足：组合中的预编辑文本不进入
 //! `&mut String`，`text_changed` 只在提交时触发，故每个汉字只产生**一次**领域命令。
 //!
+//! # 编辑区几何：框必须撑满面板（问题 047）
+//!
+//! `TextEdit` 自带的 frame 就是用户看到的那个圆角框，尺寸等于控件尺寸。
+//! 若任由 egui 默认（`ScrollArea::auto_shrink` 为 `TRUE`、`TextEdit` 高度只由
+//! `desired_rows` 决定），框就只包住文本——短文档下框底到状态栏之间是一大片
+//! 裸底色，横滚动条也贴在框底而非面板底。故这里显式
+//! `auto_shrink([false, false])` + `TextEdit::min_size` 给满视口高，
+//! 让框始终等于编辑区的可视范围。两个易错点：高度必须取 `ui.clip_rect()`
+//! （视口，不随滚动变化）而不是 `ui.available_height()`（其顶端是
+//! `inner_rect.min - offset`，滚动后越撑越长）；宽度一个点都不能给
+//! （`min_size.x` 会顶掉 `available_width`，把正文撑出视口、凭空生出横滚动条）。
+//!
 //! # 模块结构
 //!
 //! facade 保留编辑区入口 `show`（324 行函数体整体不拆：函数体内部提取 helper
@@ -66,7 +78,7 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
     });
     ui.separator();
 
-    let line_count = app.editor_text.split('\n').count().max(1);
+    let line_count = crate::shared::text::line_count(&app.editor_text);
     let font_size = theme.editor_font_size;
     // 行号栏：宽度按**最大行号的位数实测**（等宽字体），而不是写死 44pt——
     // 写死会在万行文档里挤掉最后一位、在十行文档里留一片空白。
@@ -93,7 +105,11 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
     let content_pad = theme.metrics.space_sm;
 
     // 当前光标所在行（用于高亮当前行号）。
-    let cursor_line = gutter::current_line_index(&app.editor_text, app.editor.cursor);
+    //
+    // **只在显示行号栏时才算**（问题 046）：它是一次 O(光标位置) 的前缀扫描，
+    // 而行号栏默认关闭——关着的时候每帧白扫一遍纯属浪费。
+    let cursor_line =
+        show_gutter.then(|| gutter::current_line_index(&app.editor_text, app.editor.cursor));
 
     // 自动换行开关（设置 / 状态栏可切换）。egui 0.33 的 `TextEdit` **没有**
     // `.wrap(bool)` 方法，换行与否完全由 `desired_width` + 自定义 layouter 决定。
@@ -179,7 +195,9 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
             ui.ctx(),
             &theme_for_layout,
             txt,
-            spans.as_deref(),
+            // 服务层返回共享快照（`Arc<Vec<SpanView>>`，问题 046），
+            // 这里只借切片——排版层只读，不需要所有权。
+            spans.as_ref().map(|v| v.as_slice()),
             effective_wrap,
             find_ref,
         );
@@ -217,8 +235,26 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
     };
     let out = scroll_area
         .id_salt("editor-scroll")
+        // 视口撑满面板（问题 047）：`auto_shrink` 默认取 `Vec2b::TRUE`，语义是
+        // 「内容多高，滚动区就多高」。短文档下滚动区收缩到文本高度，于是
+        // `TextEdit` 自带的 frame 只包住那几行——框底到状态栏之间留下大片
+        // 裸底色（044 像素取证实测差约 220 逻辑像素），横滚动条也贴在
+        // 「收缩后的框底」而非面板底。置 `[false, false]` 后 `inner_rect`
+        // 保持满高：框撑满、滚动条归位，`ui.clip_rect()` 才等于真实视口高。
+        //
+        // ⚠ 撑满剩余高的滚动区会把**其后**在同层 Ui 绘制的元素推出面板底缘
+        // （见 `MEMORY.md` 的硬规则）。本面板内滚动区之后只有 `ctx` 绘制的
+        // 浮层菜单（`draw_spell_menu`），不参与同层布局，故安全；后续若要在
+        // 编辑区底部加常驻提示，必须放在滚动区**之前**。
+        .auto_shrink([false, false])
         .vertical_scroll_offset(start_y)
         .show(ui, |ui| {
+            // 视口高（已扣掉滚动条占位）= 文本区 frame 要撑到的高度。
+            //
+            // 这里刻意**不用** `ui.available_height()`：`content_max_rect` 的顶端
+            // 是 `inner_rect.min - offset`，一旦滚动，它反而随 `offset` 变大，
+            // 把 frame 越撑越长。`clip_rect()` 是滚动不动的视口，用它才对。
+            let viewport_h = ui.clip_rect().height();
             ui.horizontal(|ui| {
                 // 内容左缘内边距：正文不贴着面板边线（与预览区同级留白）。
                 ui.add_space(content_pad);
@@ -254,6 +290,13 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
                     } else {
                         f32::INFINITY
                     })
+                    // 框（`TextEdit` 自带 frame）撑到整个视口高（问题 047）。
+                    //
+                    // 只给高度、**不给**宽度：egui 算宽度是
+                    // `allocate_width = desired_width.at_most(available_width).at_least(min_size.x)`，
+                    // 即 `min_size.x` 会**顶掉** `available_width`——传了宽度，正文区
+                    // 就会横向溢出视口，凭空多出一条横滚动条。
+                    .min_size(egui::vec2(0.0, viewport_h))
                     .code_editor() // 等宽字体 + lock_focus(true)：Tab 不丢焦点
                     .layouter(&mut layouter)
                     .show(ui);
@@ -268,15 +311,15 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
                         gutter_rect,
                         editor.galley_pos,
                         &app.editor_text,
-                        cursor_line,
+                        cursor_line.unwrap_or(0),
                         font_size,
                     );
                 }
 
                 // 4) 光标 / 选区同步（egui 给的是字符索引，存成字节偏移）。
                 if let Some(range) = editor.cursor_range {
-                    let c = editor_ops::char_to_byte(&app.editor_text, range.primary.index);
-                    let a = editor_ops::char_to_byte(&app.editor_text, range.secondary.index);
+                    let c = editor_ops::char_to_byte(&app.editor_text, range.primary.index.0);
+                    let a = editor_ops::char_to_byte(&app.editor_text, range.secondary.index.0);
                     app.editor.cursor = c;
                     app.editor.anchor = Some(a);
                 }
@@ -345,7 +388,7 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
         spell::draw_spell_menu(app, &ctx, &theme);
     }
 
-    app.editor.scroll_y = out.state.offset.y;
+    app.editor.scroll_y = out.state.clamped_offset().y;
     app.ui
         .sync
         .set_geometry(Side::Editor, out.content_size.y, out.inner_rect.height());

@@ -9,8 +9,8 @@
 
 | 类别 | crate | 锁定版本 | 仓库最新 | 用途 | 体积预算 | 备注 |
 |---|---|---|---|---|---|---|
-| UI | `egui` | **0.33.3** | 0.36.2 | 立即模式 GUI | 3–4 MB（含 eframe） | 需求 §5.1 锁定；§10 以其 API 不稳定为由锁定，升级需单独评估 |
-| UI | `eframe` | **0.33.3** | 0.36.2 | 应用框架与窗口 | 同上 | 随 egui 联动 |
+| UI | `egui` | **0.37.0** | 0.37.0 | 立即模式 GUI | 3–4 MB（含 eframe） | 2026-10-16 由 0.33.3 升级（评估报告见 `archive/stage-reports/egui-0.37-upgrade.md`）；**必须并开 `monochrome_emoji_fonts`**（0.37 起 emoji 字体从 `default_fonts` 拆出，否则符号面板 / 工具栏图标变豆腐块） |
+| UI | `eframe` | **0.37.0** | 0.37.0 | 应用框架与窗口 | 同上 | 随 egui 联动；渲染后端特性 `wgpu` → **`wgpu_no_default_features`**（见下方注） |
 | 解析 | `pulldown-cmark` | **0.13**（`0.13.4`） | 0.13.4 | Markdown 解析 | ≤ 0.5 MB | `default-features = false` + `["html","simd"]`；**GFM 为运行期 Options，非 feature** |
 | 高亮 | `syntect` | **5.3.0** | 5.3.0 | 代码语法高亮 | ≤ 1.5 MB | `default-fancy`（纯 Rust，无 onig）；语法集方案见 ADR-002 §2.1 |
 | 文本缓冲 | `ropey` | **1.6.1** | 1.6.1（2.0.0-beta 存在） | Rope 文本结构 | ≤ 0.2 MB | 不用 beta |
@@ -24,10 +24,20 @@
 | 缓存 | `ahash` | **0.8**（`default-features=false` + `["std","no-rng"]`） | 0.8.12 | 预览 / 高亮 / 拼写缓存 Map 的哈希器 | 极小 | 缓存键均为内部 `DocumentId`(u64)，关 `runtime-rng` 以免引入 `getrandom`；与 eframe / egui 对 ahash 的用法一致（§6） |
 | 测试 | `tempfile` | **3** | 3.27 | 仅 dev-dependency（原子保存、仓储测试） | 不进 release | 阶段 05 起使用 |
 
-> **eframe 渲染后端（实测）**：`eframe 0.33.3` 的 `default` 后端是 **`glow`（OpenGL）而非 wgpu**。
-> 需求 §5.1 要求 wgpu，故 `Cargo.toml` 中关闭 `default-features` 并显式启用
-> `["default_fonts", "wgpu", "x11", "wayland"]`，同时避免把两个渲染后端都编译进产物。
-> 该组合已通过 `cargo check` 验证（`egui-wgpu 0.33.3` 正常参与编译）。
+> **eframe 渲染后端（实测）**：`eframe` 的 `default` 后端是 **`glow`（OpenGL）而非 wgpu**。
+> 需求 §5.1 要求 wgpu，故 `Cargo.toml` 中关闭 `default-features` 并显式启用后端特性，
+> 同时避免把两个渲染后端都编译进产物。该组合已通过 `cargo check` 验证。
+>
+> **2026-10-16（egui 0.33.3 → 0.37.0）后端特性改名**：0.37 起 `eframe` 的 `"wgpu"` 特性会
+> **连带**打开 `egui-wgpu/default` → `wgpu/default`（等于各平台后端全开，体积回到 DEF-03 之前的
+> 水平）。故改启用 **`wgpu_no_default_features`**：只引入 `dep:wgpu` + `dep:egui-wgpu` 而不带默认
+> 特性，后端仍由各平台下直接声明的 `wgpu` 按平台各开一个（`dx12` / `metal` / vulkan）。
+> 当前 `wgpu` 锁 **30.0.1**（由 27.0.1 升级），`winit` 未变（0.30.13）。
+>
+> **文本栈换代（0.34 起）**：`epaint` 0.33.3 依赖 **`ab_glyph`**；0.37.0 改为
+> **`harfrust` 0.12 + `skrifa` 0.44 + `vello_cpu` 0.2**（整形 / 字形解析 / CPU 光栅化）。
+> 字形整形更准（支持 hinting 与字距连字）但**更贵**：实测「27 万字节超长单行」排版由 13.5 ms
+> 退到 69.1 ms（约 5×），而常规文档与滚动帧持平或更优——详见评估报告 §3.3。
 >
 > **2026-10-14 复查移除 `accesskit`**：accesskit 仅用于向屏幕阅读器暴露语义树，
 > 本应用代码零引用，键盘导航 / IME / 焦点链路全部走 egui 自身实现，禁用不影响任何交互；

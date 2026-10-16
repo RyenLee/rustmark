@@ -253,7 +253,16 @@ impl<'a> StyleMapper<'a> {
 /// 改为按明暗模式取基线后，两个方向都不会再互相污染，可读性也不再依赖
 /// 「记得把每个字段都覆盖一遍」这种易碎前提。
 pub fn apply(ctx: &egui::Context, theme: &Theme) {
-    let mut style = (*ctx.style()).clone();
+    // egui 0.37 起样式是**按明暗模式分开存**的：`ctx.style_of(theme)` /
+    // `ctx.set_style_of(theme, …)`。切换 `Context::theme` 时 egui 取的是另一份，
+    // 故这里按本应用当前的明暗模式取、也按同一模式写回——与上面「按明暗取基线」
+    // 的思路一致，避免深浅两份样式互相污染。
+    let egui_theme = if theme.is_dark() {
+        egui::Theme::Dark
+    } else {
+        egui::Theme::Light
+    };
+    let mut style = (*ctx.style_of(egui_theme)).clone();
 
     let mut visuals = if theme.is_dark() {
         egui::Visuals::dark()
@@ -262,12 +271,13 @@ pub fn apply(ctx: &egui::Context, theme: &Theme) {
     };
 
     visuals.dark_mode = theme.is_dark();
-    // `text_alpha_from_coverage` 必须**钉死**，不能随明暗模式取 egui 的默认值。
+    // `text_options.color_transfer_function` 必须**钉死**，不能随明暗模式取
+    // egui 的默认值。
     //
     // 这是 V11-17「切换主题后编辑区乱码」的真正根因：egui 每帧 `begin_pass`
-    // 都会拿 `visuals.text_alpha_from_coverage` 与上一帧比对，**一旦变化就
-    // 整体重建 `Fonts`（连字体图集一起）**（egui `Context::begin_pass` →
-    // `Fonts::begin_pass`）。而 `Visuals::dark()` 的默认值是
+    // 都会把字体选项与上一帧比对，**一旦变化就整体重建 `Fonts`（连字体图集
+    // 一起）**（`epaint::text::Fonts::begin_pass`：`options != 上次` →
+    // `galley_caches.clear()`）。而 `Visuals::dark()` 的默认值是
     // `TwoCoverageMinusCoverageSq`、`Visuals::light()` 的是 `Linear`——
     // 深浅主题一切换这个值就变，下一帧图集即被重建。
     //
@@ -283,7 +293,13 @@ pub fn apply(ctx: &egui::Context, theme: &Theme) {
     // `begin_pass` 永远不会因它重建 Fonts。
     // （图集填充率 >80% 导致的重建由 `highlight_cache::atlas_token`
     // 纳入缓存键兜底，见那儿的长注释。）
-    visuals.text_alpha_from_coverage = egui::epaint::AlphaFromCoverage::TwoCoverageMinusCoverageSq;
+    //
+    // 0.37 起该字段从 `Visuals::text_alpha_from_coverage` 迁到了
+    // `Visuals::text_options.color_transfer_function`（类型也由
+    // `epaint::AlphaFromCoverage` 改名为 `FontColorTransferFunction`）——
+    // **明暗两份默认值的差异依旧存在**，这条钉死不能随升级一起删掉。
+    visuals.text_options.color_transfer_function =
+        egui::epaint::image::FontColorTransferFunction::TwoCoverageMinusCoverageSq;
     visuals.panel_fill = theme.bg_secondary;
     visuals.window_fill = theme.bg_secondary;
     visuals.extreme_bg_color = theme.bg_primary;
@@ -375,7 +391,12 @@ pub fn apply(ctx: &egui::Context, theme: &Theme) {
         style.text_styles.insert(font, font_id);
     }
 
-    ctx.set_style(style);
+    // egui 0.37 把样式按明暗分存：`set_style_of(theme, style)` 只影响该主题；
+    // 同时必须把**当前活动主题**设成本应用正在套用的明暗，否则 egui 会用
+    // `Context::theme_preference` 解析出的那一版样式，而非我们这里算好的。
+    // `set_theme` 只是写入选项、幂等、不触发图集重建，每帧调用安全。
+    ctx.set_theme(egui_theme);
+    ctx.set_style_of(egui_theme, style);
 }
 
 /// 1px 实线描边（发丝线）。

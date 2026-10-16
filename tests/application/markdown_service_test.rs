@@ -5,16 +5,16 @@
 
 use std::sync::{Arc, Mutex};
 
-use rustmark::application::dto::{
-    LintIssueView, LintRulesView, OutlineView, RenderedView, SpanView,
-};
+use rustmark::application::dto::{LintIssueView, LintRulesView, OutlineView, RenderedView};
 use rustmark::application::markdown::commands::ClearCacheCommand;
 use rustmark::application::markdown::queries::*;
 use rustmark::application::markdown::service::{
     DEFAULT_RENDER_CACHE_CAPACITY, DebouncePolicy, MarkdownAppService, RenderCache,
     TRUNCATE_THRESHOLD_BYTES,
 };
-use rustmark::domain::markdown::value_objects::{BlockKind, Misspelling, SpanStyle};
+use rustmark::domain::markdown::value_objects::{
+    BlockKind, ImageAlign, ImageDisplay, InlineImage, Misspelling, SpanStyle,
+};
 use rustmark::shared::geometry::{ByteOffset, TextRange};
 use rustmark::shared::ids::DocumentId;
 use rustmark::shared::path::FilePath;
@@ -149,7 +149,8 @@ fn highlight_returns_spans() {
     f.provider
         .insert(doc_id, "hello world", 0, Some(fp("/d/a.md")));
 
-    let out: Vec<SpanView> = f
+    // 服务层返回共享快照（`Arc<Vec<SpanView>>`），只读使用。
+    let out = f
         .service
         .highlight(HighlightQuery {
             doc_id,
@@ -355,6 +356,7 @@ fn image_alt_and_url_reach_the_view() {
             BlockKind::Image {
                 alt: "替代".into(),
                 url: "img/a.png".into(),
+                display: ImageDisplay::default(),
             },
             0,
             10,
@@ -368,6 +370,105 @@ fn image_alt_and_url_reach_the_view() {
         view.blocks[0].url.as_deref(),
         Some("img/a.png"),
         "URL 丢失会让预览无从加载图片"
+    );
+    // 无扩展语法时不声明尺寸；对齐取默认左对齐（效果截图：CSDN 的
+    // 无标记图片贴在左缘，要居中必须显式写 `#pic_center`）。
+    assert_eq!(view.blocks[0].image_width, None);
+    assert_eq!(view.blocks[0].image_height, None);
+    assert_eq!(view.blocks[0].image_align.as_deref(), Some("left"));
+}
+
+/// 问题 3：`#pic_center =30x30` 解析出的显示参数必须到达 DTO——
+/// 渲染层只认 `BlockView`，领域字段若在映射处被丢掉，
+/// Parser 做得再对也反映不到视图上。
+#[test]
+fn image_display_params_reach_the_view() {
+    let view = render_one(
+        block(
+            1,
+            BlockKind::Image {
+                alt: "图".into(),
+                url: "https://imgconvert.csdnimg.cn/aHR0cHM".into(),
+                display: ImageDisplay {
+                    width: Some(30),
+                    height: Some(30),
+                    align: ImageAlign::Left,
+                },
+            },
+            0,
+            10,
+            "图",
+        ),
+        "![图](https://imgconvert.csdnimg.cn/aHR0cHM#pic_left =30x30)",
+    );
+    assert_eq!(view.blocks[0].image_width, Some(30));
+    assert_eq!(view.blocks[0].image_height, Some(30));
+    assert_eq!(view.blocks[0].image_align.as_deref(), Some("left"));
+}
+
+/// 问题 032：混排在文字里的图片必须到达 DTO。
+///
+/// 图片与文字共存时块**不是** `image`（否则文字被吞），若映射只认
+/// `BlockKind::Image`，预览就只剩文字、图片整张消失。
+#[test]
+fn inline_image_reaches_the_view() {
+    let view = render_one(
+        block(1, BlockKind::Paragraph, 0, 20, "前面的文案 Alt 后面的文案").with_images(vec![
+            InlineImage::new(
+                range(16, 19),
+                "Alt",
+                "a.png",
+                ImageDisplay {
+                    width: Some(30),
+                    height: Some(30),
+                    align: ImageAlign::Center,
+                },
+            ),
+        ]),
+        "前面的文案 ![Alt](a.png#pic_center =30x30) 后面的文案",
+    );
+    assert_eq!(view.blocks[0].kind, "paragraph", "混排时块仍是段落");
+    let images = &view.blocks[0].images;
+    assert_eq!(images.len(), 1, "行内图片应到达视图");
+    // 区间是渲染层「把图片插回文字流第几刀」的依据，错一格就切到别的字上。
+    assert_eq!((images[0].range.start, images[0].range.end), (16, 19));
+    assert_eq!(images[0].image.url, "a.png");
+    assert_eq!(images[0].image.alt, "Alt");
+    // 私有扩展参数同样要走行内图片这条路（问题 3 的参数区分不能在这里断掉）。
+    assert_eq!(images[0].image.width, Some(30));
+    assert_eq!(images[0].image.height, Some(30));
+    assert_eq!(images[0].image.align, "center");
+}
+
+/// 列表项里的图片挂在**项**上（项是文本容器，无法升级成图片块）。
+#[test]
+fn inline_image_in_list_item_reaches_the_view() {
+    let item =
+        ListItem::new("图标 已核对", None, range(0, 12)).with_images(vec![InlineImage::new(
+            range(0, 6),
+            "图标",
+            "i.png",
+            ImageDisplay::default(),
+        )]);
+    let view = render_one(
+        block(
+            1,
+            BlockKind::List {
+                ordered: false,
+                items: vec![item],
+            },
+            0,
+            12,
+            "图标 已核对",
+        ),
+        "- ![图标](i.png) 已核对",
+    );
+    let item = &view.blocks[0].items[0];
+    assert_eq!(item.images.len(), 1, "列表项图片应到达视图");
+    assert_eq!(item.images[0].image.url, "i.png");
+    assert_eq!(
+        (item.images[0].range.start, item.images[0].range.end),
+        (0, 6)
     );
 }
 
@@ -510,6 +611,79 @@ fn highlight_reuses_cache_when_document_unchanged() {
     );
     let (hits, misses) = f.service.highlight_cache_stats();
     assert_eq!((hits, misses), (1, 1));
+}
+
+/// 编辑区每帧的廉价决策**不得**把全文从 rope 快照出来（问题 046）。
+///
+/// 三条路径都只需要「版本号 + 字节长度」：
+/// - **缓存命中**：键里只有版本号，文本根本没参与；
+/// - **防抖期**：只比时间戳；
+/// - **大文件降级**：只看长度。
+///
+/// 此前实现一律先 `fetch` 全文，于是 1MB 文档**每一帧**都要付一次 MB 级
+/// 分配 + 拷贝。断言手段是 fake 提供者的调用计数——快照次数一涨就说明
+/// 有人又把全文拖回了帧路径。
+#[test]
+fn highlight_frame_path_never_snapshots_the_whole_document() {
+    let f = build(vec![], vec![span(0, 2, SpanStyle::Keyword)]);
+    let doc_id = DocumentId::new();
+    f.provider.insert(doc_id, "fn a", 0, Some(fp("/d/a.md")));
+
+    let q = || HighlightQuery {
+        doc_id,
+        range: TextRange::new(ByteOffset::new(0), ByteOffset::new(4)),
+        lang: Some("markdown".to_string()),
+    };
+    // 首次必须真的取一次全文——那时确实要解析（这时取文本是正当成本）。
+    let _ = f.service.highlight(q()).expect("高亮应成功");
+    assert_eq!(f.provider.snapshot_calls(), 1, "首次解析应取一次全文");
+
+    // 稳态：时钟推进表示「已静止」，此后每帧都走缓存命中。
+    f.clock.set(200);
+    for _ in 0..5 {
+        let _ = f.service.highlight(q()).expect("高亮应成功");
+    }
+    assert_eq!(
+        f.provider.snapshot_calls(),
+        1,
+        "缓存命中的帧不得再快照全文（实测差值 {} 次）",
+        f.provider.snapshot_calls() - 1
+    );
+    assert!(
+        f.provider.revision_len_calls() >= 5,
+        "命中判定应走 O(1) 元数据接口（实测 {} 次）",
+        f.provider.revision_len_calls()
+    );
+}
+
+/// 大文件降级只看长度：**一次都不该快照全文**，也不该进高亮器。
+#[test]
+fn oversized_document_is_rejected_without_snapshotting() {
+    let f = build(vec![], vec![span(0, 2, SpanStyle::Keyword)]);
+    let doc_id = DocumentId::new();
+    f.provider.insert(
+        doc_id,
+        &"x".repeat(TRUNCATE_THRESHOLD_BYTES + 1),
+        0,
+        Some(fp("/d/big.md")),
+    );
+
+    let out = f
+        .service
+        .highlight(HighlightQuery {
+            doc_id,
+            range: TextRange::new(ByteOffset::new(0), ByteOffset::new(4)),
+            lang: Some("markdown".to_string()),
+        })
+        .expect("高亮不应报错");
+
+    assert!(out.is_empty(), "超阈值文档应降级为空片段");
+    assert_eq!(
+        f.provider.snapshot_calls(),
+        0,
+        "降级判断只需要长度，不得为此快照全文"
+    );
+    assert_eq!(f.highlighter.call_count(), 0, "降级路径不得进高亮器");
 }
 
 /// 文档改了（版本变化）→ 缓存失效，必须重算。
@@ -805,6 +979,51 @@ fn spell_check_reuses_cache_when_document_unchanged() {
     assert_eq!(spell.call_count(), 1, "未变的重复查询必须命中缓存");
 }
 
+/// 拼写检查的缓存命中帧同样不得快照全文（问题 046）。
+///
+/// 开着拼写检查时编辑区每帧都要问一次错词集合，而「命中缓存」与
+/// 「超阈值降级」都只需要版本号与长度。
+#[test]
+fn spell_check_frame_path_never_snapshots_the_whole_document() {
+    let spell = Arc::new(FakeSpellChecker::new(vec![miss(0, 3)]));
+    let f = build_with_spell(spell.clone());
+    let doc_id = DocumentId::new();
+    f.provider
+        .insert(doc_id, "teh recieve", 0, Some(fp("/d/a.md")));
+
+    let q = || SpellCheckQuery {
+        doc_id,
+        enabled: true,
+    };
+    let _ = f.service.spell_check(q());
+    assert_eq!(f.provider.snapshot_calls(), 1, "首次检查应取一次全文");
+
+    for _ in 0..5 {
+        let _ = f.service.spell_check(q());
+    }
+    assert_eq!(f.provider.snapshot_calls(), 1, "缓存命中的帧不得再快照全文");
+
+    // 大文件：只看长度，连全文都不该取。
+    let big = DocumentId::new();
+    f.provider.insert(
+        big,
+        &"x".repeat(TRUNCATE_THRESHOLD_BYTES + 1),
+        0,
+        Some(fp("/d/big.md")),
+    );
+    let hits = f.service.spell_check(SpellCheckQuery {
+        doc_id: big,
+        enabled: true,
+    });
+    assert!(hits.is_empty(), "超阈值文档应降级为空集");
+    assert_eq!(
+        f.provider.snapshot_calls(),
+        1,
+        "降级判断只需要长度，不得为此快照全文"
+    );
+    assert_eq!(spell.call_count(), 1, "降级路径不得调用检查器");
+}
+
 #[test]
 fn spell_check_degrades_to_empty_when_checker_fails() {
     //关键取舍：检查失败**不报错**，返回空集。
@@ -971,4 +1190,64 @@ fn lint_issue_view_carries_renderable_fields() {
     assert_eq!(issue.rule_label, "标题层级跳跃", "规则名应是中文显示名");
     assert_eq!(issue.line, 4, "问题在第五行（0-based = 4）");
     assert!(!issue.message.is_empty(), "说明文案不得为空：{:?}", issue);
+}
+
+/// 高亮缓存按**访问序**驱逐（问题 043）。
+///
+/// 原实现用 `HashMap` 的任意迭代序挑驱逐对象，可能正好驱逐下一次就要
+/// 命中的文档：容量小于打开文档数时，切一轮标签就是一次 56ms 级的
+/// syntect 重算尖峰。这条测试把「命中即触碰、驱逐最旧」钉死。
+#[test]
+fn highlight_cache_evicts_the_least_recently_used_entry() {
+    use rustmark::application::markdown::service::HighlightCache;
+
+    let mut cache = HighlightCache::new(2);
+    let (a, b, c) = (DocumentId::new(), DocumentId::new(), DocumentId::new());
+    // 高亮缓存存的是**共享快照**（`Arc<Vec<SpanView>>`，问题 046）。
+    let span = |n: usize| {
+        std::sync::Arc::new(vec![rustmark::application::dto::SpanView {
+            range: rustmark::application::dto::RangeView::new(0, n),
+            style: "text".to_string(),
+            url: None,
+        }])
+    };
+
+    cache.insert(a, 0, None, (0, 1), span(1));
+    cache.insert(b, 0, None, (0, 1), span(2));
+    // 访问 a：a 成为最新，b 变成最旧。
+    assert!(cache.get(a, 0, None, (0, 1)).is_some(), "a 应命中");
+
+    // 插入 c 触发驱逐：必须驱逐 b（最旧），而不是 a（刚用过）。
+    cache.insert(c, 0, None, (0, 1), span(3));
+    assert!(
+        cache.get(a, 0, None, (0, 1)).is_some(),
+        "刚访问过的 a 不该被驱逐"
+    );
+    assert!(
+        !cache.get(b, 0, None, (0, 1)).is_some(),
+        "最旧的 b 应被驱逐"
+    );
+    assert!(cache.get(c, 0, None, (0, 1)).is_some());
+}
+
+/// 高亮缓存容量对齐打开文档上限（问题 043）。
+///
+/// 打开上限默认 12（`max_open_documents`），缓存若只有 8，开满标签后
+/// 来回切换必然互相驱逐。容量常量虽是私有，但其值经由服务的构造暴露：
+/// 这条测试通过「12 份文档互不驱逐」在行为层钉住容量 ≥ 12。
+#[test]
+fn highlight_cache_holds_at_least_the_max_open_documents() {
+    use rustmark::application::markdown::service::HighlightCache;
+
+    let mut cache = HighlightCache::new(12);
+    let ids: Vec<_> = (0..12).map(|_| DocumentId::new()).collect();
+    for id in &ids {
+        cache.insert(*id, 0, None, (0, 1), std::sync::Arc::new(Vec::new()));
+    }
+    for id in &ids {
+        assert!(
+            cache.get(*id, 0, None, (0, 1)).is_some(),
+            "容量应容得下 12 个打开文档：{id:?} 被提前驱逐了"
+        );
+    }
 }

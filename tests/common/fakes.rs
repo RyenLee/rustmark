@@ -12,6 +12,7 @@
 
 use std::collections::HashMap;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use rustmark::domain::document::repository::{DocumentRepository, DocumentSnapshot};
 use rustmark::domain::document::services::BufferFactory;
@@ -578,6 +579,13 @@ impl EventBus for InMemoryEventBus {
 /// 假只读内容提供者：为 Markdown / 导出等服务的单元测试提供确定性的文档内容。
 pub struct FakeDocumentContentProvider {
     docs: Mutex<HashMap<DocumentId, (String, u64, Option<FilePath>)>>,
+    /// `content_and_revision`（= 全文快照）被调用的次数。
+    ///
+    /// 用于钉死「编辑区的每帧路径不得快照全文」（问题 046）：缓存命中、
+    /// 防抖期、大文件降级三条路径都只需要版本号与字节长度。
+    snapshots: AtomicUsize,
+    /// `revision_and_len`（= O(1) 元数据）被调用的次数。
+    revision_queries: AtomicUsize,
 }
 
 impl FakeDocumentContentProvider {
@@ -585,7 +593,19 @@ impl FakeDocumentContentProvider {
     pub fn new() -> Self {
         Self {
             docs: Mutex::new(HashMap::new()),
+            snapshots: AtomicUsize::new(0),
+            revision_queries: AtomicUsize::new(0),
         }
+    }
+
+    /// `content_and_revision`（全文快照）累计调用次数。
+    pub fn snapshot_calls(&self) -> usize {
+        self.snapshots.load(Ordering::Relaxed)
+    }
+
+    /// `revision_and_len`（O(1) 元数据）累计调用次数。
+    pub fn revision_len_calls(&self) -> usize {
+        self.revision_queries.load(Ordering::Relaxed)
     }
 
     /// 插入（或替换）一个文档的内容、版本与路径。
@@ -615,11 +635,24 @@ impl Default for FakeDocumentContentProvider {
 
 impl rustmark::application::document::DocumentContentProvider for FakeDocumentContentProvider {
     fn content_and_revision(&self, id: DocumentId) -> Option<(String, u64)> {
+        self.snapshots.fetch_add(1, Ordering::Relaxed);
         self.docs
             .lock()
             .unwrap()
             .get(&id)
             .map(|(content, revision, _)| (content.clone(), *revision))
+    }
+
+    /// 覆写为 O(1) 路径：只读元数据，**不克隆内容**，也不计入 [`Self::snapshot_calls`]。
+    ///
+    /// 语义与生产实现（`DocumentRegistry`）一致：长度取自存储的文本字节数。
+    fn revision_and_len(&self, id: DocumentId) -> Option<(u64, usize)> {
+        self.revision_queries.fetch_add(1, Ordering::Relaxed);
+        self.docs
+            .lock()
+            .unwrap()
+            .get(&id)
+            .map(|(content, revision, _)| (*revision, content.len()))
     }
 
     fn path_of(&self, id: DocumentId) -> Option<FilePath> {
