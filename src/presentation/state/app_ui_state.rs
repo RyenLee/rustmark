@@ -211,13 +211,6 @@ impl AppUiState {
         1.0 - self.split_ratio
     }
 
-    /// 是否处于「编辑区独占」状态（预览关闭）。
-    ///
-    /// 专注模式下仍保留编辑区与预览区，只隐藏**外围** UI（原型 A-27）。
-    pub fn is_editor_only(&self) -> bool {
-        !self.preview_visible
-    }
-
     /// 切换标签页（`next_tab` / `prev_tab`）。
     ///
     /// 返回是否真的切换了——在只有一个标签时返回 `false`，

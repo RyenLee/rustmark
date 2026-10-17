@@ -111,13 +111,6 @@ pub struct Snapshot {
     pub max_open_documents: u32,
 }
 
-impl Snapshot {
-    /// 两个快照是否一致（用于「无改动」提示，避免无意义的写盘）。
-    pub fn equals(&self, other: &Snapshot) -> bool {
-        self == other
-    }
-}
-
 /// 待确认的快捷键冲突。
 #[derive(Clone, Debug, PartialEq)]
 pub struct PendingConflict {
@@ -205,11 +198,6 @@ impl SettingsUiState {
         )
     }
 
-    /// 是否正在录制快捷键（此时全局快捷键应让位）。
-    pub fn is_recording(&self) -> bool {
-        self.recording.is_some()
-    }
-
     /// 开始录制某个动作的快捷键。
     pub fn start_recording(&mut self, action: UiAction) {
         self.recording = Some(action);
@@ -220,19 +208,6 @@ impl SettingsUiState {
     /// 取消录制。
     pub fn stop_recording(&mut self) {
         self.recording = None;
-    }
-
-    /// 记录一次待确认冲突（等用户选「仍然使用」或「取消」）。
-    pub fn set_pending_conflict(&mut self, conflict: PendingConflict) {
-        self.pending_conflict = Some(conflict);
-        // 录制态**保持**：原型在冲突时保留录制态等用户决定，
-        // 直接退出录制会让「用户还没决定就被弹回列表」。
-        self.recording = None;
-    }
-
-    /// 待确认冲突存在时是否应显示冲突条。
-    pub fn conflict_visible(&self) -> bool {
-        self.pending_conflict.is_some()
     }
 
     /// 记录一个错误提示。

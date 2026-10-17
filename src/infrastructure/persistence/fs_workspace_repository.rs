@@ -97,11 +97,6 @@ impl FsWorkspaceRepository {
         self
     }
 
-    /// 最近文件存储（供组合根单独管理最近文件的写时机）。
-    pub fn recent_store(&self) -> &RecentFilesStore {
-        &self.recent
-    }
-
     /// `FilePath` → `PathBuf`（内部统一用 `/` 分隔，Windows 上 `fs` 也能吃）。
     fn to_path(path: &FilePath) -> PathBuf {
         Self::canonicalize_or_clean(PathBuf::from(path.as_str()))

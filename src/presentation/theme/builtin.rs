@@ -329,9 +329,6 @@ impl Theme {
 /// 阶段 08 再评估嵌入 `Noto Sans Mono` 子集——**必须**评估体积后再定。
 pub const MONO_FAMILY: &str = "monospace";
 
-/// 编辑区正文字体族（与原型 `--font-ui` 对应）。
-pub const UI_FAMILY: &str = "ProggyClean";
-
 /// 不透明色。
 fn rgb(r: u8, g: u8, b: u8) -> Color32 {
     Color32::from_rgb(r, g, b)

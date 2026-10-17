@@ -209,10 +209,5 @@ fn utf8_multibyte_counts(bytes: &[u8]) -> (usize, usize) {
     (two, three_plus)
 }
 
-/// 仅解码、不关心编码种类时的便捷入口。
-pub fn decode_to_string(bytes: &[u8]) -> String {
-    decode(bytes).0
-}
-
 #[cfg(test)]
 mod tests;

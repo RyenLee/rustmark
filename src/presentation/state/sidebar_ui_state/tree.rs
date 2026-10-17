@@ -57,13 +57,6 @@ impl NameEdit {
         }
     }
 
-    /// 提交的名字（可写，用于「输入框绑定」场景）。
-    pub fn name_mut(&mut self) -> &mut String {
-        match self {
-            Self::Create { name, .. } | Self::Rename { name, .. } => name,
-        }
-    }
-
     /// 名字是否可用（非空且非纯空白）。
     pub fn has_usable_name(&self) -> bool {
         !self.name().trim().is_empty()

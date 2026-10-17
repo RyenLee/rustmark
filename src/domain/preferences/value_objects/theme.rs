@@ -183,16 +183,6 @@ impl LintSettings {
     pub fn all_enabled() -> Self {
         Self::default()
     }
-
-    /// 全部关闭。
-    pub fn all_disabled() -> Self {
-        Self {
-            heading_jump: false,
-            list_marker_mix: false,
-            trailing_whitespace: false,
-            unclosed_fence: false,
-        }
-    }
 }
 
 /// 主题设置。

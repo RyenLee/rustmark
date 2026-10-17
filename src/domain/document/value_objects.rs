@@ -97,13 +97,6 @@ impl Cursor {
     pub fn with_position(self, position: ByteOffset) -> Self {
         Self::new(position)
     }
-
-    /// 返回拖选到 `position` 后的新光标（原值不变）。
-    pub fn with_selection_to(self, position: ByteOffset) -> Self {
-        let mut next = self;
-        next.select_to(position);
-        next
-    }
 }
 
 /// 一次文本修改的类型。

@@ -37,7 +37,7 @@
 //!   的换行风格还原。只做「读时归一 + 写时还原」而不改内容，用户看不出差别，
 //!   但 Windows 用户的文件不会因为我们保存一次就全变成 LF（那是 git diff噪声）。
 
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -395,12 +395,4 @@ impl DocumentRepository for FsDocumentRepository {
 fn parse_draft_id(stem: &str) -> Option<DocumentId> {
     let inner = stem.strip_prefix("DocumentId(")?.strip_suffix(")")?;
     inner.parse::<u64>().ok().map(DocumentId::from_u64)
-}
-
-/// 便捷函数：写一个文本文件（测试与配置初始化用）。
-pub fn write_text_file(path: &Path, content: &str) -> Result<(), AppError> {
-    let mut file = File::create(path)
-        .map_err(|e| AppError::io(format!("无法创建 {}：{e}", path.display())))?;
-    file.write_all(content.as_bytes())
-        .map_err(|e| AppError::io(format!("无法写入 {}：{e}", path.display())))
 }

@@ -25,7 +25,7 @@ use crate::domain::export::errors::ExportError;
 use crate::domain::export::services::Exporter;
 use crate::domain::export::value_objects::ExportFormat;
 use crate::infrastructure::export::pulldown_html_exporter::PulldownHtmlExporter;
-use crate::infrastructure::export::system_pdf_exporter::{PrintDispatcher, SystemPdfExporter};
+use crate::infrastructure::export::system_pdf_exporter::SystemPdfExporter;
 
 /// 按格式路由到具体导出器的组合器。
 ///
@@ -44,14 +44,6 @@ impl RoutingExporter {
         Self {
             html: PulldownHtmlExporter,
             pdf: SystemPdfExporter::new(),
-        }
-    }
-
-    /// 构造路由器并指定 PDF 的打印调度（测试用，避免真的弹打印对话框）。
-    pub fn with_pdf_dispatcher(dispatcher: std::sync::Arc<dyn PrintDispatcher>) -> Self {
-        Self {
-            html: PulldownHtmlExporter,
-            pdf: SystemPdfExporter::with_dispatcher(dispatcher),
         }
     }
 }

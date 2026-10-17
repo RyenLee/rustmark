@@ -3,7 +3,6 @@
 use serde::{Deserialize, Serialize};
 
 use crate::shared::ids::DocumentId;
-use crate::shared::path::FilePath;
 
 /// 导出格式。
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default, Debug, Serialize, Deserialize)]
@@ -245,9 +244,6 @@ impl ExportSource {
         self.document_id
     }
 }
-
-/// 目标路径（复用共享内核的 `FilePath`，避免领域层依赖 `std::path`）。
-pub type ExportDestination = FilePath;
 
 /// 需要 HTML 转义的字符集合（[`TocEntry::needs_escape`] 的判定依据）。
 ///
