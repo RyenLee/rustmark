@@ -237,21 +237,6 @@ impl ShortcutTable {
         }
     }
 
-    /// 恢复某动作为默认绑定（用户自定义后想还原时使用）。
-    pub fn reset_action(
-        &mut self,
-        action: ActionId,
-    ) -> Result<(), crate::domain::preferences::errors::PreferencesError> {
-        let defaults = Self::default_bindings()?;
-        match defaults.binding_for(action) {
-            Some(combo) => {
-                self.rebind(action, combo);
-                Ok(())
-            }
-            None => Ok(()),
-        }
-    }
-
     /// 检测全部冲突。
     ///
     /// 判定规则：

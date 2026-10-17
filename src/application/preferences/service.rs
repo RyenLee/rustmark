@@ -107,6 +107,21 @@ impl PreferencesAppService {
             .unwrap_or(false)
     }
 
+    /// 撤销策略（合并窗口 + 栈深度，由编辑器设置推导，F-1）。
+    ///
+    /// 供组合根在装配 [`DocumentAppService`] 时快照注入：修复
+    /// 「撤销合并窗口」设置在领域层有值、文档构造却走默认策略的断线。
+    /// 读锁失败按默认策略返回（与 [`Self::goal_progress`] 同一理由：
+    /// 排障信息不值得让启动失败）。
+    ///
+    /// [`DocumentAppService`]: crate::application::document::service::DocumentAppService
+    pub fn undo_policy(&self) -> crate::domain::document::undo::UndoPolicy {
+        self.prefs
+            .read()
+            .map(|prefs| prefs.undo_policy())
+            .unwrap_or_default()
+    }
+
     /// 读取当前快捷键冲突列表。
     pub fn get_conflicts(&self, _cmd: GetConflictsQuery) -> AppResult<Vec<ConflictView>> {
         let prefs = self.lock_read()?;

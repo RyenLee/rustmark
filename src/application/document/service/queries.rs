@@ -66,6 +66,7 @@ impl DocumentAppService {
                 return Ok(stats.clone());
             }
         }
+        self.stats_cache_misses.fetch_add(1, Ordering::Relaxed);
         let stats = compute_stats(doc.text().as_str(), doc.meta().title());
         *self.stats_cache.lock().unwrap_or_else(|p| p.into_inner()) =
             Some((cmd.id, revision, stats.clone()));

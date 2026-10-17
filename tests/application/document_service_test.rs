@@ -659,3 +659,72 @@ fn get_stats_is_cached_until_the_document_changes() {
         "版本变了不该命中旧缓存"
     );
 }
+
+#[test]
+fn undo_merge_window_from_preferences_reaches_documents() {
+    // F-1 守卫：偏好设置的「撤销合并窗口」必须到达文档的撤销栈。
+    //
+    // 接线前 `new_document` 走 `Document::new_untitled`（默认 400ms），
+    // 领域里持久化的 `undo_merge_window_ms` 从未被任何文档读到——
+    // 用户改这个设置没有任何效果。本用例把窗口压到 50ms 后断言：
+    // 间隔 100ms 的两次插入**不**合并（默认策略下会合并成 ""）。
+    use rustmark::domain::document::undo::UndoPolicy;
+
+    let repo = Arc::new(InMemoryDocumentRepository::new());
+    let registry = Arc::new(RwLock::new(DocumentRegistry::new()));
+    let bus: Arc<dyn rustmark::shared::event::EventBus> = Arc::new(InMemoryEventBus::new());
+    let buffer_factory: Arc<dyn rustmark::domain::document::services::BufferFactory> =
+        Arc::new(FakeBufferFactory);
+    let clock = Arc::new(FakeClock::new(0));
+    let mut svc = DocumentAppService::new(registry, repo, bus, buffer_factory, clock.clone())
+        .with_undo_policy(UndoPolicy::new(50, 200));
+
+    let id = svc.new_document(NewDocumentCommand).unwrap();
+    // 窗口外（间隔 100ms > 50ms）：两次插入是两个撤销点。
+    svc.insert_text(InsertTextCommand {
+        id,
+        offset: 0,
+        text: "a".to_string(),
+    })
+    .unwrap();
+    clock.set(100);
+    svc.insert_text(InsertTextCommand {
+        id,
+        offset: 1,
+        text: "b".to_string(),
+    })
+    .unwrap();
+    svc.undo(UndoCommand { id }).unwrap();
+    assert_eq!(
+        svc.get_content(GetContentQuery { id, range: None })
+            .unwrap(),
+        "a",
+        "超出合并窗口的两次编辑必须是两个撤销点（设置未接线的表现是合并成空串）"
+    );
+
+    // 窗口内（间隔 10ms < 50ms）：仍按一个撤销点处理（防「永不合合并」矫枉过正）。
+    let id2 = svc.new_document(NewDocumentCommand).unwrap();
+    svc.insert_text(InsertTextCommand {
+        id: id2,
+        offset: 0,
+        text: "x".to_string(),
+    })
+    .unwrap();
+    clock.set(110);
+    svc.insert_text(InsertTextCommand {
+        id: id2,
+        offset: 1,
+        text: "y".to_string(),
+    })
+    .unwrap();
+    svc.undo(UndoCommand { id: id2 }).unwrap();
+    assert_eq!(
+        svc.get_content(GetContentQuery {
+            id: id2,
+            range: None
+        })
+        .unwrap(),
+        "",
+        "窗口内的连续插入应合并为一个撤销点"
+    );
+}

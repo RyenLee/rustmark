@@ -33,6 +33,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use crate::application::dto::StatsView;
 use crate::domain::document::repository::DocumentRepository;
 use crate::domain::document::services::BufferFactory;
+use crate::domain::document::undo::UndoPolicy;
 use crate::shared::encoding::TextEncoding;
 use crate::shared::event::EventBus;
 use crate::shared::ids::DocumentId;
@@ -72,6 +73,14 @@ pub struct DocumentAppService {
     stats_cache: Mutex<Option<(DocumentId, u64, StatsView)>>,
     /// 统计缓存命中次数（调试 / 测试断言用）。
     pub stats_cache_hits: AtomicU64,
+    /// 统计缓存未命中次数（缺陷 G6：原仅有命中计数，补未命中以算命中率）。
+    pub stats_cache_misses: AtomicU64,
+    /// 新建文档使用的撤销策略（由偏好设置的「撤销合并窗口」推导，F-1 接线）。
+    ///
+    /// 装配时从 [`crate::application::preferences::service::PreferencesAppService`]
+    /// 快照一份：该设置**没有设置 UI**，运行期唯一变更途径是手改配置后重启，
+    /// 故「构造时定档」与「每次新建时重读」在真实路径上等价。
+    undo_policy: UndoPolicy,
 }
 
 impl DocumentAppService {
@@ -92,7 +101,18 @@ impl DocumentAppService {
             encodings: HashMap::new(),
             stats_cache: Mutex::new(None),
             stats_cache_hits: AtomicU64::new(0),
+            stats_cache_misses: AtomicU64::new(0),
+            undo_policy: UndoPolicy::default_policy(),
         }
+    }
+
+    /// 覆盖新建文档的撤销策略（组合根注入偏好设置；默认策略为 400ms / 深度 200）。
+    ///
+    /// 与 [`crate::application::markdown::service::MarkdownAppService::with_spell_checker`]
+    /// 同一范式：用 builder 注入而不是改 `new` 签名，既有调用点（含测试）不动。
+    pub fn with_undo_policy(mut self, policy: UndoPolicy) -> Self {
+        self.undo_policy = policy;
+        self
     }
 
     /// 取出只读内容提供者（供 Markdown 预览 / 导出服务注入，复用同一份注册表状态）。

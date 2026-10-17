@@ -20,7 +20,8 @@
 | 错误 | `thiserror` | **2** | 2.0.21 | 领域/应用层错误枚举 | 极小 | 领域层专用 |
 | 错误 | `anyhow` | **1** | 1.x | 仅 `app.rs` / `main.rs` | 极小 | **禁止进入领域层**（`CONSTR-10`） |
 | 网络 | `ureq` | **3.4.2**（`default-features=false` + `["rustls"]`） | 3.4.2 | 远程图片下载（http/https，缺陷 025） | 见 metrics §2.4 实测 | rustls 纯 Rust TLS、无系统依赖；取代 S5-11 的手写 `TcpStream` 下载（该方案 https 全部失败） |
-| 日志 | `log` | **0.4** | 0.4.x | 基础设施层越界告警 | 极小 | 未列入需求 §5.1，为 S5-01「不 panic、用 `log::warn!`」所必需，在此登记 |
+| 日志 | `log` | **0.4** | 0.4.x | 基础设施层越界告警 | 极小 | 未列入需求 §5.1，为 S5-01「不 panic、用 `log::warn!`」所必需，在此登记；后端见下一行 |
+| 日志 | `env_logger` | **0.11**（`default-features=false` + `["humantime"]`） | 0.11.x | `log` 的 stderr 后端（F-2 前无后端，12 个告警调用点全部静默丢弃） | 极小 | **不启 `regex`**：依赖树此前无 `regex`（仅 fancy-regex → regex-automata），模块级过滤不依赖正则；不启 `termcolor`：着色交给终端。默认级别 warn，`RUST_LOG` 可调 |
 | 缓存 | `ahash` | **0.8**（`default-features=false` + `["std","no-rng"]`） | 0.8.12 | 预览 / 高亮 / 拼写缓存 Map 的哈希器 | 极小 | 缓存键均为内部 `DocumentId`(u64)，关 `runtime-rng` 以免引入 `getrandom`；与 eframe / egui 对 ahash 的用法一致（§6） |
 | 测试 | `tempfile` | **3** | 3.27 | 仅 dev-dependency（原子保存、仓储测试） | 不进 release | 阶段 05 起使用 |
 

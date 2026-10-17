@@ -103,6 +103,24 @@ impl Document {
         }
     }
 
+    /// 用自定义撤销策略打开已有文件（供偏好设置注入，F-1 接线）。
+    ///
+    /// 与 [`Self::open`] 的差别只有撤销栈的策略：合并窗口是**编辑时**的行为，
+    /// 打开的文件同样要被编辑，故设置对打开路径也必须生效——
+    /// 否则「改了合并窗口，只有新建文档听他的」会是第二个静默无效的设置。
+    pub fn open_with_policy(
+        id: DocumentId,
+        path: FilePath,
+        buffer: BufferHandle,
+        saved_at: Option<Timestamp>,
+        now: Timestamp,
+        policy: UndoPolicy,
+    ) -> Self {
+        let mut document = Self::open(id, path, buffer, saved_at, now);
+        document.undo = UndoStack::new(policy);
+        document
+    }
+
     /// 用自定义撤销策略新建空白文档（供偏好设置注入，S3-12 → S8）。
     pub fn new_untitled_with_policy(
         buffer: BufferHandle,

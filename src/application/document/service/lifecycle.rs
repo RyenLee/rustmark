@@ -23,12 +23,13 @@ impl DocumentAppService {
         let now = self.clock.now();
         let snapshot = self.repository.load(&cmd.path)?;
         let buffer = self.buffer_factory.create(&snapshot.content);
-        let document = Document::open(
+        let document = Document::open_with_policy(
             snapshot.id,
             snapshot.path.clone(),
             buffer,
             snapshot.saved_at,
             now,
+            self.undo_policy,
         );
         let id = document.id();
         // 记下读入时识别到的编码，供状态栏显示真实编码（V11-03 / DEF-05）。
@@ -67,7 +68,7 @@ impl DocumentAppService {
     pub fn new_document(&mut self, _cmd: NewDocumentCommand) -> AppResult<DocumentId> {
         let now = self.clock.now();
         let buffer = self.buffer_factory.create("");
-        let document = Document::new_untitled(buffer, now);
+        let document = Document::new_untitled_with_policy(buffer, self.undo_policy, now);
         let id = document.id();
         {
             let mut reg = self.lock_write()?;
@@ -234,7 +235,7 @@ impl DocumentAppService {
     pub fn new_document_with_content(&mut self, content: &str) -> AppResult<DocumentId> {
         let now = self.clock.now();
         let buffer = self.buffer_factory.create(content);
-        let document = Document::new_untitled(buffer, now);
+        let document = Document::new_untitled_with_policy(buffer, self.undo_policy, now);
         let id = document.id();
         {
             let mut reg = self.lock_write()?;

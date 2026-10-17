@@ -107,6 +107,12 @@ ureq = { version = "3.4.2", default-features = false, features = ["rustls"] }
 
 # --- 日志（基础设施层越界告警用；未列入需求 §5.1，已在 docs/dependencies.md 登记）---
 log = "0.4"
+# 日志后端（F-2：此前 log 的 12 个告警调用点无后端接收，全部静默丢弃）。
+# 只开 `humantime`：默认特性的 `regex` 会链入整个 `regex` crate
+# （依赖树里此前只有 fancy-regex → regex-automata，没有 regex；体积红线
+# 10.93→13.46 MiB 正告急），而模块级过滤（RUST_LOG=rustmark::app=debug）
+# 不依赖正则即可工作。`termcolor` 同样不启：输出走 stderr，着色交给终端。
+env_logger = { version = "0.11", default-features = false, features = ["humantime"] }
 
 # --- 缓存哈希器 ---
 # 预览/高亮/拼写缓存的键都是 u64 新类型（DocumentId），ahash 的 AHasher
