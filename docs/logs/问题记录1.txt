@@ -1524,7 +1524,7 @@ cargo test --all-targets：12 个测试套件全部 ok、0 failed
 
 2026-10-14 028
 问题（用户报告）：
-搜索功能崩溃，附崩溃报告 docs/logs/crash-20261014135941-29300.txt：
+搜索功能崩溃，附崩溃报告 docs/archive/crash-reports/crash-20261014135941-29300.txt：
 panic at src\application\workspace\service.rs:468:27（main 线程），
 消息 "end byte index 305 is not a char boundary; it is inside '行'
 (bytes 304..307 of string)"。触发条件：命中行附近是混合字节宽度的上下文
