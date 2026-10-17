@@ -15,6 +15,7 @@
 //! - [`text`]：与层无关的分词工具（V11-07）
 //! - [`text_format`]：可打开的文本格式白名单（问题 045；三方共用的唯一出处）
 //! - [`system`]：外部打开器与链接安全校验（S6-05 超链接点击）
+//! - [`lru`]：有界 LRU 映射（D-4；高亮 / 拼写 / 渲染 / 图片四缓存共用）
 
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
@@ -25,6 +26,7 @@ pub mod event;
 pub mod fonts;
 pub mod geometry;
 pub mod ids;
+pub mod lru;
 pub mod path;
 pub mod result;
 pub mod system;

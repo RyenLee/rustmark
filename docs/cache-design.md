@@ -72,14 +72,14 @@ RustMark 的"缓存"不是一个独立中间件，而是一组**进程内、分�
 | 缓存 | 文件 | 类型 | 容量 | 键 | 值 | 失效 |
 |---|---|---|---|---|---|---|
 | HighlightCache | `application/markdown/service/highlight_cache.rs` | 真 LRU（`order: Vec`） | 32 | `(DocumentId, rev, lang, range)` | `Arc<Vec<SpanView>>` | `rev/lang/range` 任一不同；`invalidate` / `invalidate_all` |
-| SpellCache | `application/markdown/service/spell_cache.rs` | 近似 LRU（`keys().next()` 任意踢） | 32 | `(DocumentId, rev)` | `Vec<(usize,usize)>` 错词区间 | `rev` 不同；`clear` |
-| RenderCache | `application/markdown/service/render_cache.rs` | 近似 LRU | 32 | `(DocumentId, rev)` | `Vec<RenderedBlock>` | `rev` 不同；主题切换 `invalidate_all` |
+| SpellCache | `application/markdown/service/spell_cache.rs` | **真 LRU**（`order: Vec` 确定性驱逐，G1 已落地） | 32 | `(DocumentId, rev)` | `Vec<(usize,usize)>` 错词区间 | `rev` 不同；`invalidate` / `invalidate_all` |
+| RenderCache | `application/markdown/service/render_cache.rs` | **真 LRU**（G1 已落地） | 32 | `(DocumentId, rev)` | `Vec<RenderedBlock>` | `rev` 不同；主题切换 `invalidate_all`；关闭文档 `invalidate`（G2） |
 | HighlightPace | `highlight_cache.rs` | debounce 节拍表 | 32 | `DocumentId` | `(last_rev, seen_at)` | 容量满任意踢 |
 | stats_cache | `application/document/service.rs` | 单槽 | 1 | `(DocumentId, rev)` | `StatsView` | `rev` 不同（覆盖写） |
 | LineIndexCache | `app/frame.rs` | 单槽 `RefCell` | 1 | `(Option<Doc>, rev, text_len)` | `Rc<LineIndex>` | 键变化覆盖 |
 | WHOLE_CACHE | `presentation/theme/mapper/highlight_cache.rs` | 整文档 Galley 单槽（thread_local） | 1 | `(主题签名, 换行宽, Galley, 查找签名, 着色态, 度量签名, 图集令牌)` | `Arc<Galley>` | 键任一不同（含 `galley.text()==text` 文本比对） |
 | LINE_LAYOUT | 同上 | 逐行 Galley 增量（thread_local） | 1 文档全部行 | 同上 + 上一版行内容 | `Vec<Arc<Galley>>` + 签名 | 主题/度量/图集令牌变；文本变→前后缀 diff 定位变更行 |
-| IMAGE_CACHE | `presentation/views/preview_view.rs` | 图片纹理 HashMap（thread_local） | 无上限 | 图片引用字符串 | `ImageEntry{texture,size,error}` | 无淘汰（见 §7 G3） |
+| IMAGE_CACHE | `presentation/views/preview_view.rs` | 图片纹理 **LRU**（thread_local，`ImageCache`） | **64**（G3 已落地） | 图片引用字符串 | `ImageEntry{texture,size,error}` | 超容淘汰最旧者，纹理随 `ImageEntry` 析构自动释放（G3） |
 
 ---
 
@@ -147,9 +147,9 @@ TextEdit 的 layouter 每帧要整篇 Galley
 
 | 参数 | 值 | 位置 | 含义 / 调节影响 |
 |---|---|---|---|
-| `HIGHLIGHT_CACHE_CAPACITY` | `32` | `application/markdown/service.rs:66` | 高亮/拼写/高亮节拍器共用容量。多文档（上限 30）下留有余量。 |
-| `RENDER_CACHE_CAPACITY` | `32` | `app/bootstrap.rs:64` | 渲染缓存实际容量（装配处）。 |
-| `DEFAULT_RENDER_CACHE_CAPACITY` | `16` | `application/markdown/service.rs:57` | **同名默认常量，但与 bootstrap 的 32 不一致**——潜在隐患（见 §7 G4）。 |
+| `HIGHLIGHT_CACHE_CAPACITY` | `32` | `application/markdown/service.rs` | 高亮/拼写/高亮节拍器共用容量。多文档（上限 30）下留有余量。 |
+| `RENDER_CACHE_CAPACITY` | `32` | `application/markdown/service.rs`（**唯一事实来源**，装配处 `app/bootstrap.rs` 向下 `use`） | 渲染缓存实际容量。`DEFAULT_RENDER_CACHE_CAPACITY=16` 的冲突常量已在 G4 删除，全仓只此一处（G4 已落地）。 |
+| `IMAGE_CACHE_CAPACITY` | `64` | `presentation/views/preview_view.rs` | 图片纹理 LRU 容量上限（G3 已落地）；超出淘汰最旧者，纹理随析构释放。 |
 | `TRUNCATE_THRESHOLD_BYTES` | `500*1024` | `application/markdown/service.rs:54` | 大文件降级阈值：超此尺寸源不解析高亮/拼写/导航（FR-06）。 |
 | `LARGE_FILE_BYTES` | `500*1024` | `presentation/theme/mapper/highlight_cache.rs:66` | 表现层同样阈值：超此尺寸停止 span 着色，仅纯文本排版。 |
 | `STATS_DEBOUNCE_MS` | `150` | `app/frame.rs:144` | 状态栏统计防抖窗口。 |
@@ -165,12 +165,12 @@ TextEdit 的 layouter 每帧要整篇 Galley
 | 缓存 | 适用场景 | 不适用 / 注意 |
 |---|---|---|
 | HighlightCache | 编辑区每帧请求全文 span、文档未变的滚动/空闲/切面板帧 | 连续打字期被防抖跳过（短暂无色）；>500KiB 文档降级为空。 |
-| SpellCache | 编辑区每帧可能请求错词区间的 900KB 级文档 | 近似 LRU 在多文档下可能误踢（G1）。 |
-| RenderCache | 预览区 Markdown 渲染，文档未变时免重解析 | 主题切换整体失效（`invalidate_all`）。 |
+| SpellCache | 编辑区每帧可能请求错词区间的 900KB 级文档 | 真 LRU（G1 已落地），多文档切标签不再误踢；关闭文档统一失效（G2）。 |
+| RenderCache | 预览区 Markdown 渲染，文档未变时免重解析 | 主题切换整体失效（`invalidate_all`）；关闭文档统一失效（G2，G1 已落地真 LRU）。 |
 | stats_cache | 状态栏每帧两次统计查询 | 仅单槽，切文档必失效一次（已是最优，因同帧查同一活动文档）。 |
 | LineIndexCache | 一帧内状态栏/编辑区多次索取行号、行数 | 仅缓存当前活动文档，切文档重建（本就只该付一次）。 |
 | WHOLE_CACHE / LINE_LAYOUT | 编辑区排版，绝大多数帧文本/主题未变或仅局部变 | 仅保单文档上一版，多文档切换整篇重排（G5 探索）。 |
-| IMAGE_CACHE | 预览同一图片在多文档/多块复用 | 无上限，多图/大图持续占显存（G3）。 |
+| IMAGE_CACHE | 预览同一图片在多文档/多块复用 | 容量 64 + LRU（G3 已落地），显存/内存可预测；当前帧渲染的图每帧触碰，不会被误踢。 |
 
 ---
 
@@ -243,9 +243,30 @@ TextEdit 的 layouter 每帧要整篇 Galley
 5. **G3（图片 LRU）** → 评估显存基线后实施，注意纹理释放与防误踢。
 6. **G5（探索）** → 独立技术预研，不在本期主线。
 
----
+### 7.5 实施状态（代码已落地）
 
-## 8. 附录：相关文件索引
+以下优化项已在本仓库实现并通过 `cargo test` / `cargo clippy -D warnings` / `check-arch` 门禁：
+
+| 优化项 | 落地内容 | 关键改动 |
+|---|---|---|
+| **G1 真 LRU 统一** | `SpellCache`、`RenderCache` 各加 `order: Vec<DocumentId>`，`get` 命中 `touch`、超容从序头确定性驱逐；新增单元测试钉死「驱逐最久未用而非任意键」 | `spell_cache.rs`、`render_cache.rs` |
+| **G2 关闭失效** | `MarkdownAppService::clear_cache` 在单文档失效分支补 `spell_cache.invalidate`；`event_subscriptions` 的 `DocumentClosed` 处理器调用 `clear_cache(Some(id))` | `service.rs`、`event_subscriptions.rs` |
+| **G3 图片 LRU** | `IMAGE_CACHE` 由裸 `HashMap` 改为 `ImageCache`（容量 64 + 访问序），超容淘汰最旧者，纹理随 `ImageEntry` 析构自动释放 | `preview_view.rs` |
+| **G4 双常量消除** | 删除 `DEFAULT_RENDER_CACHE_CAPACITY`，`RENDER_CACHE_CAPACITY=32` 收为 `application` 层唯一常量，装配处向下 `use`；3 个测试 + `bootstrap_test` 同步更新 | `service.rs`、`bootstrap.rs`、测试文件 |
+| **G6 可观测** | 新增 `MarkdownAppService::cache_stats()`（汇总高亮/拼写/渲染命中与未命中 + `hit_rate()`）；`RenderCache` 补 `hits`/`misses`；`DocumentAppService` 补 `stats_cache_misses` | `service.rs`、`render_cache.rs`、`document/service.rs`、`queries.rs` |
+
+**G5（跨文档行布局复用）** 仍按 §7.4 第 6 条为独立技术预研，本期未实现（内存随文档数线性增长、整文档键不含 viewport，风险高）。
+
+> 实测收益对照基线见 `docs/metrics.md`；G6 的 `cache_stats()` 可在「优化前/后」各采一次快照做前后对照。
+
+#### 复审记录（2026-10-17，通用 `cache-audit` skill 复查）
+
+对源码做了一次**新鲜侦察**（非凭记忆），逐项核对现状：
+
+- 四类缓存（`HighlightCache`/`SpellCache`/`RenderCache`/`IMAGE_CACHE`）均已确认为**真 LRU + 访问序 + 守卫测试**，G1/G2/G3/G4/G6 落地状态与上表一致，无回退。
+- **修正两处文档漂移**：`render_cache.rs:1` 与 `highlight_cache.rs:1` 的模块头注释仍写「近似 LRU」，与各自结构体 doc（「真 LRU」）自相矛盾——已改为「真 LRU」。这正是「复审必须重新 grep、不可凭记忆」的价值。
+- **`HighlightPace::seen` 的任意淘汰（`keys().next()`）判定为刻意设计、非缺陷**：该表只存「版本 + 时刻」这类廉价 pacing 元数据，误淘汰代价至多是该文档下次编辑被当成「首次见到」而多上色一次（保守降级，非重算尖峰、非陈旧显示）。已在 `remember` 处补 doc 说明，防止未来被过度「修」成 LRU。
+- 门禁（复审后）：`cargo fmt --check` 干净、`cargo clippy --all-targets --all-features -- -D warnings` 通过（仅沙箱 `os error 5` 锁文件告警）、`cargo test` lib 369 / application 156 / integration 79 全绿。
 
 - 缓存实现：`src/application/markdown/service/{highlight_cache,render_cache,spell_cache,highlight}.rs`、`src/application/document/service.rs`、`src/app/frame.rs`、`src/presentation/theme/mapper/highlight_cache.rs`、`src/presentation/views/preview_view.rs`
 - 装配与参数：`src/app/bootstrap.rs`、`src/application/markdown/service.rs`

@@ -2,10 +2,11 @@
 
 use std::path::PathBuf;
 
-use rustmark::app::bootstrap::{ConfigPaths, PREVIEW_DEBOUNCE_MS, RENDER_CACHE_CAPACITY, Services};
+use rustmark::app::bootstrap::{ConfigPaths, PREVIEW_DEBOUNCE_MS, Services};
 use rustmark::application::document::commands::NewDocumentCommand;
 use rustmark::application::document::queries::GetContentQuery;
 use rustmark::application::markdown::queries::RenderPreviewQuery;
+use rustmark::application::markdown::service::RENDER_CACHE_CAPACITY;
 use rustmark::application::preferences::queries::GetSettingsQuery;
 use rustmark::application::workspace::commands::ScanTreeCommand;
 use rustmark::shared::path::FilePath;

@@ -115,16 +115,6 @@ impl EventSubscribers {
         }
     }
 
-    /// 取出自动保存计时器（供调用方在空闲 tick 时询问「应保存哪些文档」）。
-    pub fn tracker(&self) -> Arc<AutoSaveTracker> {
-        self.tracker.clone()
-    }
-
-    /// 返回应当自动保存的文档（调用方据此调用 `DocumentAppService::save`）。
-    pub fn auto_save_now(&self, now: Timestamp, interval_ms: u64) -> Vec<DocumentId> {
-        self.tracker.due(now, interval_ms)
-    }
-
     /// 注册全部跨上下文订阅者到事件总线。
     pub fn register(&self, bus: &dyn EventBus) {
         let tracker = self.tracker.clone();
@@ -168,9 +158,13 @@ impl EventSubscribers {
         bus.subscribe(handler_prefs);
 
         let tracker = self.tracker.clone();
+        let markdown = self.markdown.clone();
         let handler_closed = Arc::new(move |event: &DomainEvent| -> AppResult<()> {
             if let DomainEvent::DocumentClosed(id) = *event {
                 tracker.forget(id);
+                // 失效该文档在拼写 / 高亮 / 渲染三类缓存中的条目，
+                // 释放其内存（缺陷 G2：关闭文档后条目原本滞留）。
+                markdown.clear_cache(ClearCacheCommand { doc_id: Some(id) });
             }
             Ok(())
         });

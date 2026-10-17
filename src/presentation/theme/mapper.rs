@@ -38,7 +38,8 @@ mod squiggle;
 mod tests;
 
 pub use highlight_cache::{
-    HighlightStats, clear_highlight_caches, last_highlight_stats, line_cache_len, line_tops,
+    HighlightStats, atlas_token, clear_highlight_caches, last_highlight_stats, line_cache_len,
+    line_tops,
 };
 pub use highlight_layout::{highlight_layout, highlight_layout_with_find};
 pub use squiggle::{FindMark, SpellMark, Squiggle, paint_squiggles, squiggles_for};

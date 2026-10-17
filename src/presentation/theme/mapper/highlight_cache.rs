@@ -168,7 +168,7 @@ thread_local! {
 /// 必然已顶到 2048，重建后归 32 → 尺寸必然变化 → 缓存失效 → 整篇重排，
 /// 重新向 egui 取一遍字形坐标即恢复。日常编辑不引入新字形时尺寸不变，
 /// 增量命中不受影响（一生顶多多重排几次）。
-pub(super) fn atlas_token(ctx: &egui::Context) -> u64 {
+pub fn atlas_token(ctx: &egui::Context) -> u64 {
     let [w, h] = ctx.fonts(|f| f.font_image_size());
     ((w as u64) << 32) | (h as u64)
 }

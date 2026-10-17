@@ -612,7 +612,7 @@ fn measure_editor_frame_highlight_cost() {
 
     use rustmark::application::markdown::queries::HighlightQuery;
     use rustmark::application::markdown::service::{
-        DEFAULT_RENDER_CACHE_CAPACITY, DebouncePolicy, MarkdownAppService, RenderCache,
+        DebouncePolicy, MarkdownAppService, RENDER_CACHE_CAPACITY, RenderCache,
     };
     use rustmark::shared::geometry::{ByteOffset, TextRange};
 
@@ -633,7 +633,7 @@ fn measure_editor_frame_highlight_cost() {
         provider.clone(),
         clock.clone(),
         DebouncePolicy::new(150),
-        Arc::new(Mutex::new(RenderCache::new(DEFAULT_RENDER_CACHE_CAPACITY))),
+        Arc::new(Mutex::new(RenderCache::new(RENDER_CACHE_CAPACITY))),
     );
 
     let hq = |len: usize| HighlightQuery {

@@ -53,8 +53,13 @@ pub use spell_cache::SpellCache;
 /// 超过该字节数（500 KiB）的源文档标记为截断预览（FR-06 应用层判定）。
 pub const TRUNCATE_THRESHOLD_BYTES: usize = 500 * 1024;
 
-/// 默认渲染缓存容量（LRU 上限）。
-pub const DEFAULT_RENDER_CACHE_CAPACITY: usize = 16;
+/// 渲染缓存容量（LRU 上限）。
+///
+/// **单一事实来源**：生产装配（`app/bootstrap.rs`）与测试都引用本常量，避免
+/// 历史上「`DEFAULT_RENDER_CACHE_CAPACITY = 16` 与 `RENDER_CACHE_CAPACITY = 32`
+/// 并存」的数值漂移（缺陷 G4）。常量定义在本层（缓存类型的归属层），
+/// 由上层 `app::bootstrap` 向下 `use` 引用，符合分层依赖方向。
+pub const RENDER_CACHE_CAPACITY: usize = 32;
 
 /// 高亮缓存的容量（同时缓存多少个文档的高亮结果）。
 ///
@@ -159,21 +164,31 @@ impl MarkdownAppService {
         self.policy.should_render(last_edit, self.clock.now())
     }
 
-    /// 主动失效渲染缓存（`PreferencesChanged` 时调用）。
+    /// 主动失效渲染缓存（`PreferencesChanged` / `DocumentClosed` 时调用）。
     ///
-    /// 高亮缓存同步失效：虽然它的键带版本号（本不必手动失效），
-    /// 但显式清一次可以让「切主题 / 关文档」后立刻释放 span 占用的内存。
+    /// 高亮、拼写、渲染三类按文档键的缓存一并失效：
+    /// - **全量失效**（`doc_id = None`，主题切换）：三者全部 `invalidate_all`，
+    ///   因为主题会改变着色 / 渲染样式，所有文档的缓存结果都不再有效。
+    /// - **单文档失效**（`doc_id = Some`，文档关闭）：精确失效该文档在三类缓存中的条目，
+    ///   立刻释放其占用的内存（缺陷 G2：此前关闭文档后条目滞留，长会话内存单调增长）。
+    ///   绝不会波及活动文档——`invalidate` 只移除指定 ID。
+    ///
+    /// 高亮缓存虽键带版本号（本不必手动失效），但显式清一次可让「切主题 / 关文档」
+    /// 后立刻释放 span 占用的内存。
     pub fn clear_cache(&self, cmd: ClearCacheCommand) {
         let mut cache = lock_or_recover(&self.cache);
         let mut hl = lock_or_recover(&self.highlight_cache);
+        let mut spell = lock_or_recover(&self.spell_cache);
         match cmd.doc_id {
             Some(id) => {
                 cache.invalidate(id);
                 hl.invalidate(id);
+                spell.invalidate(id);
             }
             None => {
                 cache.invalidate_all();
                 hl.invalidate_all();
+                spell.invalidate_all();
             }
         }
     }

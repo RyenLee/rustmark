@@ -14,6 +14,8 @@
 //! ——用户记得的是「大概有个 sd 的文件」，而精确子串要求他记得顺序。
 //! 这里改用子序列，代价是命中略宽，收益是「记得几个字母就能找到」。
 
+use std::collections::HashSet;
+
 use crate::application::dto::RecentFileView;
 
 /// 候选上限。
@@ -135,6 +137,10 @@ pub fn fuzzy_match(text: &str, query: &str) -> Option<Vec<usize>> {
 ///
 /// 去重：工作区里已存在的文件不该在「最近使用」里再出现一次——
 /// 同一路径出现两次会让用户以为是两个不同的文件。
+///
+/// `seen` 用 `HashSet<&str>` 而不是 `Vec<String>`：候选量在「工作区
+/// 文件数」量级（几百到几千），线性 contains 每项还要 `.to_string()`
+/// 分配一次； borrowed 哈希集合零分配、O(1)（C-3）。
 pub fn candidates_from_workspace(
     root: &str,
     items: &[(String, bool)],
@@ -142,7 +148,7 @@ pub fn candidates_from_workspace(
     limit: usize,
 ) -> Vec<QuickOpenItem> {
     let mut out: Vec<QuickOpenItem> = Vec::with_capacity(limit.max(16));
-    let mut seen: Vec<String> = Vec::new();
+    let mut seen: HashSet<&str> = HashSet::new();
     for (path, is_dir) in items {
         if *is_dir {
             continue;
@@ -158,12 +164,12 @@ pub fn candidates_from_workspace(
             name,
             group: QuickOpenGroup::Workspace,
         });
-        seen.push(path.clone());
+        seen.insert(path.as_str());
     }
     // 工作区未加载时（`root` 为空）最近文件仍是唯一可用来源。
     if root.is_empty() {
         for item in recent {
-            if seen.contains(&item.path.as_str().to_string()) {
+            if seen.contains(item.path.as_str()) {
                 continue;
             }
             let name = item.path.file_name();
@@ -178,7 +184,7 @@ pub fn candidates_from_workspace(
                 },
                 group: QuickOpenGroup::Recent,
             });
-            seen.push(item.path.as_str().to_string());
+            seen.insert(item.path.as_str());
         }
     }
     out.truncate(limit);

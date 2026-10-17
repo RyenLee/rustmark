@@ -15,7 +15,7 @@ use rustmark::application::document::service::DocumentAppService;
 use rustmark::application::event_subscriptions::{AutoSaveTracker, EventSubscribers};
 use rustmark::application::markdown::queries::RenderPreviewQuery;
 use rustmark::application::markdown::service::{
-    DEFAULT_RENDER_CACHE_CAPACITY, DebouncePolicy, MarkdownAppService, RenderCache,
+    DebouncePolicy, MarkdownAppService, RENDER_CACHE_CAPACITY, RenderCache,
 };
 use rustmark::application::preferences::commands::*;
 use rustmark::application::preferences::service::PreferencesAppService;
@@ -71,7 +71,7 @@ fn wiring() -> Wiring {
         block(2, BlockKind::Paragraph, 10, 30, "body text here"),
     ]));
     let md_highlighter = Arc::new(FakeHighlighter::new(vec![span(0, 5, SpanStyle::Plain)]));
-    let md_cache = Arc::new(Mutex::new(RenderCache::new(DEFAULT_RENDER_CACHE_CAPACITY)));
+    let md_cache = Arc::new(Mutex::new(RenderCache::new(RENDER_CACHE_CAPACITY)));
     let md_service = Arc::new(MarkdownAppService::new(
         md_parser.clone(),
         md_highlighter.clone(),

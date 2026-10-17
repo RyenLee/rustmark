@@ -2,9 +2,11 @@
 
 use egui::{Align2, FontId};
 
+use crate::presentation::theme::mapper::atlas_token;
 use crate::presentation::views::{math, mermaid};
 
 use super::code::draw_highlighted_code;
+use super::embedded_cache;
 use super::*;
 
 /// 数学公式：**内置排版引擎**渲染（见 [`math`]）。
@@ -34,6 +36,10 @@ pub(super) fn draw_math(ui: &mut Ui, theme: &Theme, block: &BlockView, wrap: boo
     } else {
         m.preview_font_size
     };
+    // 排版结果按 (内容, 字号, 展示态, 图集令牌) 帧间记忆化（F-4）：
+    // 此前每帧全额重排，含公式的文档滚动时每帧都付「解析 + 逐标签度量」。
+    // 命中时下面的 `measure` 闭包根本不会被调用。
+    // 图集令牌随主题色之外的字体重建一起变（V11-17 的教训），必须进键。
     let layout = {
         let ui_ref: &Ui = ui;
         let measure = move |text: &str, size: f32| {
@@ -47,32 +53,36 @@ pub(super) fn draw_math(ui: &mut Ui, theme: &Theme, block: &BlockView, wrap: boo
                 .size()
                 .x
         };
-        math::layout(&block.content, size, display, &measure)
+        embedded_cache::math_layout(
+            &block.content,
+            size,
+            display,
+            atlas_token(ui.ctx()),
+            &measure,
+        )
     };
 
-    let Ok(math_layout) = layout else {
+    let Ok(math_layout) = layout.as_ref() else {
         // 子集外的写法：退回源码卡，并**说明为什么**没排版。
         // 只显示源码、不说原因，用户会以为是自己公式写错了。
-        draw_unrendered_source(
-            ui,
-            theme,
-            block,
-            "公式",
-            layout.as_ref().err().map(ToString::to_string),
-            wrap,
-        );
+        let reason = if let Err(e) = layout.as_ref() {
+            Some(e.to_string())
+        } else {
+            None
+        };
+        draw_unrendered_source(ui, theme, block, "公式", reason, wrap);
         return;
     };
 
     if !display {
         // 行内公式：跟随正文基线，不套框。
-        let h = math::fitted_height(&math_layout, ui.available_width());
+        let h = math::fitted_height(math_layout, ui.available_width());
         let (rect, _) =
             ui.allocate_exact_size(egui::vec2(ui.available_width(), h), egui::Sense::hover());
         math::paint(
             ui.painter(),
             rect,
-            &math_layout,
+            math_layout,
             theme.text_primary,
             Align2::LEFT_CENTER,
         );
@@ -99,13 +109,13 @@ pub(super) fn draw_math(ui: &mut Ui, theme: &Theme, block: &BlockView, wrap: boo
                     }
                 });
             });
-            let h = math::fitted_height(&math_layout, ui.available_width());
+            let h = math::fitted_height(math_layout, ui.available_width());
             let (rect, _) =
                 ui.allocate_exact_size(egui::vec2(ui.available_width(), h), egui::Sense::hover());
             math::paint(
                 ui.painter(),
                 rect,
-                &math_layout,
+                math_layout,
                 theme.text_primary,
                 Align2::CENTER_CENTER,
             );
@@ -124,6 +134,7 @@ pub(super) fn draw_math(ui: &mut Ui, theme: &Theme, block: &BlockView, wrap: boo
 pub(super) fn draw_diagram(ui: &mut Ui, theme: &Theme, block: &BlockView, wrap: bool) {
     let m = theme.metrics;
     let engine = block.diagram.as_deref().unwrap_or("diagram");
+    // 同 `draw_math`：图表几何按 (内容, 字号, 图集令牌) 帧间记忆化（F-4）。
     let layout = {
         let ui_ref: &Ui = ui;
         let measure = move |text: &str, size: f32| {
@@ -137,18 +148,21 @@ pub(super) fn draw_diagram(ui: &mut Ui, theme: &Theme, block: &BlockView, wrap: 
                 .size()
                 .x
         };
-        mermaid::layout(&block.content, m.preview_font_size, &measure)
+        embedded_cache::mermaid_layout(
+            &block.content,
+            m.preview_font_size,
+            atlas_token(ui.ctx()),
+            &measure,
+        )
     };
 
-    let Ok(graph) = layout else {
-        draw_unrendered_source(
-            ui,
-            theme,
-            block,
-            engine,
-            layout.as_ref().err().map(ToString::to_string),
-            wrap,
-        );
+    let Ok(graph) = layout.as_ref() else {
+        let reason = if let Err(e) = layout.as_ref() {
+            Some(e.to_string())
+        } else {
+            None
+        };
+        draw_unrendered_source(ui, theme, block, engine, reason, wrap);
         return;
     };
 
@@ -170,7 +184,7 @@ pub(super) fn draw_diagram(ui: &mut Ui, theme: &Theme, block: &BlockView, wrap: 
                 });
             });
             let max_w = ui.available_width();
-            let h = mermaid::fitted_height(&graph, max_w);
+            let h = mermaid::fitted_height(graph, max_w);
             let (rect, _) = ui.allocate_exact_size(egui::vec2(max_w, h), egui::Sense::hover());
             let style = mermaid::MermaidStyle {
                 node_fill: theme.bg_tertiary,
@@ -179,7 +193,7 @@ pub(super) fn draw_diagram(ui: &mut Ui, theme: &Theme, block: &BlockView, wrap: 
                 edge: theme.text_secondary,
                 label_bg: theme.code_bg,
             };
-            mermaid::paint(ui.painter(), rect, &graph, &style);
+            mermaid::paint(ui.painter(), rect, graph, &style);
 
             // 图表内超链接可点击：把 mermaid 返回的命中区（左上角原点、
             // 已归一化，与图元同一坐标系）按 `paint` 完全相同的缩放 + 平移

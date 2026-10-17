@@ -9,7 +9,7 @@ use rustmark::application::dto::{LintIssueView, LintRulesView, OutlineView, Rend
 use rustmark::application::markdown::commands::ClearCacheCommand;
 use rustmark::application::markdown::queries::*;
 use rustmark::application::markdown::service::{
-    DEFAULT_RENDER_CACHE_CAPACITY, DebouncePolicy, MarkdownAppService, RenderCache,
+    DebouncePolicy, MarkdownAppService, RENDER_CACHE_CAPACITY, RenderCache,
     TRUNCATE_THRESHOLD_BYTES,
 };
 use rustmark::domain::markdown::value_objects::{
@@ -47,7 +47,7 @@ fn build(
     let provider = Arc::new(FakeDocumentContentProvider::new());
     let clock = Arc::new(FakeClock::new(0));
     let policy = DebouncePolicy::new(150);
-    let cache = Arc::new(Mutex::new(RenderCache::new(DEFAULT_RENDER_CACHE_CAPACITY)));
+    let cache = Arc::new(Mutex::new(RenderCache::new(RENDER_CACHE_CAPACITY)));
     let service = MarkdownAppService::new(
         parser.clone(),
         highlighter.clone(),

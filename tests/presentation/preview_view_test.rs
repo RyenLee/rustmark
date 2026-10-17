@@ -1528,3 +1528,75 @@ fn inline_image_in_list_item_is_rendered_in_preview() {
         "列表项里的图片没有画出来：{painted:?}"
     );
 }
+
+// ============================================================================
+// 远程图片后台加载（F-3）
+// ============================================================================
+
+use rustmark::presentation::views::preview_view::{image_cache_state, is_remote_url};
+
+/// 远程 / 本地 / data URI 的分类。
+#[test]
+fn remote_url_classification() {
+    assert!(is_remote_url("https://example.com/a.png"));
+    assert!(is_remote_url("http://example.com/a.png"));
+    assert!(is_remote_url("  https://example.com/a.png  "));
+    assert!(!is_remote_url("images/local.png"));
+    assert!(!is_remote_url("/abs/path/a.png"));
+    assert!(!is_remote_url("data:image/png;base64,AAAA"));
+    assert!(!is_remote_url("ftp://example.com/a.png"));
+    assert!(!is_remote_url(""));
+}
+
+/// 首绘远程图片**不得**在绘制路径等网络（F-3）。
+///
+/// 用不可路由地址（`10.255.255.1`）：SYN 发出去不会有任何响应，
+/// 连接必然挂起到超时。若实现回退成「同步下载」，这两帧就会卡住
+/// 直到 5s 超时——用例直接以超时失败。通过时首绘只发「加载中」占位。
+#[test]
+fn remote_image_draw_path_never_waits_for_the_network() {
+    // 10.255.255.1 是保留段不可路由地址；挂起的连接正是本用例要的「慢网络」。
+    let url = "http://10.255.255.1:1/a.png";
+    let (_dir, mut app) = app_with(&format!("![远程图]({url})\n"));
+    let ctx = egui::Context::default();
+    // 两帧足够越过预览防抖并走到图片绘制路径（同 SAMPLE 用例的经验）。
+    render(&mut app, &ctx, 2);
+
+    let state = image_cache_state(url).expect("远程图应已登记（加载中占位）");
+    assert!(!state.has_texture, "首绘绝不该已经拿到纹理");
+    assert!(
+        state.loading || state.error.is_some(),
+        "远程图必须后台加载（loading）或落成错误占位；回退成同步会卡住绘制路径"
+    );
+}
+
+/// 后台失败必须落成错误占位，而不是永远转圈（F-3 的回执闭环）。
+///
+/// `127.0.0.1:1` 连接被拒是**即时**失败：后台线程几毫秒内就会把
+/// 失败回执塞进通道并 `request_repaint`。轮询有上界（约 2s），
+/// 超时即失败——「永远转圈」正是本用例要防的回归。
+#[test]
+fn remote_image_failure_settles_into_error_placeholder() {
+    let url = "http://127.0.0.1:1/a.png";
+    let (_dir, mut app) = app_with(&format!("![远程图]({url})\n"));
+    let ctx = egui::Context::default();
+    render(&mut app, &ctx, 2);
+
+    let mut settled = None;
+    for _ in 0..200 {
+        if let Some(s) = image_cache_state(url)
+            && !s.loading
+        {
+            settled = Some(s);
+            break;
+        }
+        render(&mut app, &ctx, 1);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let settled = settled.expect("后台失败回执应在约 2s 内到达（永远转圈即回归）");
+    assert!(!settled.has_texture, "连接被拒不应产出纹理");
+    assert!(
+        settled.error.is_some(),
+        "失败必须落成错误占位文案，而非无声消失"
+    );
+}

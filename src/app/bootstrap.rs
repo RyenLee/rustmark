@@ -27,7 +27,9 @@ use crate::application::document::registry::DocumentRegistry;
 use crate::application::document::service::DocumentAppService;
 use crate::application::event_subscriptions::{AutoSaveTracker, EventSubscribers};
 use crate::application::export::service::ExportAppService;
-use crate::application::markdown::service::{DebouncePolicy, MarkdownAppService, RenderCache};
+use crate::application::markdown::service::{
+    DebouncePolicy, MarkdownAppService, RENDER_CACHE_CAPACITY, RenderCache,
+};
 use crate::application::preferences::service::PreferencesAppService;
 use crate::application::workspace::service::WorkspaceAppService;
 use crate::domain::document::repository::DocumentRepository;
@@ -56,12 +58,11 @@ use crate::shared::time::{Clock, SystemClock};
 /// 预览防抖间隔（毫秒，FR-01）。
 pub const PREVIEW_DEBOUNCE_MS: u64 = 150;
 
-/// 渲染缓存容量。
-///
-/// 取 32 是权衡：每个条目存一份块序列，1MB 级文档的单份块序列可达数十 KB；
-/// 32 份约几 MB，换来「来回切标签页不重解析」。超过这个量级用户几乎不会用到，
-/// 而内存是实打实常驻的。
-pub const RENDER_CACHE_CAPACITY: usize = 32;
+// 渲染缓存容量（`RENDER_CACHE_CAPACITY`）的**单一事实来源**在
+// `application::markdown::service` 层定义，本文件通过上方 `use` 引入并在装配处使用。
+// 取 32 的权衡：每个条目存一份块序列，1MB 级文档的单份块序列可达数十 KB；
+// 32 份约几 MB，换来「来回切标签页不重解析」。超过这个量级用户几乎不会用到，
+// 而内存是实打实常驻的。
 
 /// 配置与最近文件的存放位置。
 #[derive(Clone, Debug)]
@@ -169,8 +170,6 @@ pub struct Services {
     pub assets: AssetLoader,
     /// 工作区 ID。
     pub workspace_id: WorkspaceId,
-    /// 事件订阅装配点（含自动保存计时器）：运行时自动保存与草稿恢复的接线点（DEF-02）。
-    pub event_subscribers: EventSubscribers,
     /// 自动保存计时器：由 `EditorApp::update` 每帧询问「哪些文档应自动保存」。
     pub auto_save_tracker: Arc<AutoSaveTracker>,
     /// 草稿目录（`.rustmark-draft/`），自动保存落盘与启动恢复都读/写这里。
@@ -259,7 +258,10 @@ impl Services {
             bus.clone(),
             buffers,
             clock.clone(),
-        );
+        )
+        // 撤销合并窗口来自偏好设置（F-1：此前 `new_untitled` 走默认策略，
+        // 领域里持久化的 `undo_merge_window_ms` 从未到达任何文档）。
+        .with_undo_policy(preferences.undo_policy());
         let provider = documents.provider();
 
         // —— 其余服务（共享同一份 provider，即同一份注册表状态）——
@@ -297,6 +299,11 @@ impl Services {
         // 此前 `EventSubscribers` 只定义未装配，导致 `AutoSaveTracker` 从未收到
         // `TextModified`、`DocumentSaved`/`DocumentClosed` 也从未触发计时清理，
         // 自动保存与最近文件、缓存失效全部不生效。这里统一注册。
+        //
+        // 注册后**不保留** `EventSubscribers` 本体：订阅者是注册进总线的 Arc
+        // 闭包，与结构体存活无关；运行期询问「该保存哪些文档」走
+        // `Services::auto_save_tracker`（同一份 Arc），结构体留着只会多一条
+        // 永远没人调的访问器（`auto_save_now` / `tracker`，2026-10-17 清理）。
         let tracker = Arc::new(AutoSaveTracker::new());
         let event_subscribers = EventSubscribers::new(
             provider,
@@ -321,7 +328,6 @@ impl Services {
             render_cache,
             assets: AssetLoader::default(),
             workspace_id,
-            event_subscribers,
             auto_save_tracker: tracker,
             drafts_dir,
         })

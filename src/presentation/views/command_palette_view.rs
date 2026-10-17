@@ -240,6 +240,32 @@ fn results(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, list: &[CommandRow])
     }
 }
 
+/// 把「命中下标集合」切成连续的 (起, 止, 是否命中) 段（C-2）。
+///
+/// 逐字符 `hits.contains(&idx)` 是 O(字符数 × 命中数)；这里先铺一张
+/// 布尔表（O(字符数 + 命中数)）再线性切段。语义与旧循环逐字符一致，
+/// 包括**越界下标被忽略**（`hits` 可能来自关键词匹配，超出标签长度；
+/// 越界切片会终止进程，故只表内下标算命中）。
+pub(super) fn hit_segments(text_len: usize, hits: &[usize]) -> Vec<(usize, usize, bool)> {
+    let mut hit_at = vec![false; text_len];
+    for &i in hits {
+        if i < text_len {
+            hit_at[i] = true;
+        }
+    }
+    let mut out = Vec::new();
+    let mut idx = 0usize;
+    while idx < text_len {
+        let hit = hit_at[idx];
+        let start = idx;
+        while idx < text_len && hit_at[idx] == hit {
+            idx += 1;
+        }
+        out.push((start, idx, hit));
+    }
+    out
+}
+
 /// 左侧标签：命中字符用强调色 + 加粗（对齐原型 `.label :deep(mark.hl)`）。
 ///
 /// 原型用 `<mark>` 包裹命中字符并染成 `accent` 且 `font-weight: 700`。
@@ -269,18 +295,12 @@ fn draw_label(ui: &mut Ui, theme: &Theme, row: &CommandRow, rect: egui::Rect, ac
         return;
     }
     // 有命中：命中段染强调色，其余用基色。
-    // 越界的下标直接跳过而不是 panic——`hits` 来自关键词匹配时
-    // 可能超出标签长度（`registry::search` 已把那种情况置空，
+    // 越界的下标在 `hit_segments` 里被忽略而不是 panic——`hits` 来自
+    // 关键词匹配时可能超出标签长度（`registry::search` 已把那种情况置空，
     // 这里再兜一层，因为越界切片会终止进程）。
     let mut cursor = x0;
-    let mut idx = 0usize;
-    while idx < text.len() {
-        let hit = row.hits.contains(&idx);
-        let start = idx;
-        while idx < text.len() && row.hits.contains(&idx) == hit {
-            idx += 1;
-        }
-        let segment: String = text[start..idx].iter().collect();
+    for (start, end, hit) in hit_segments(text.len(), &row.hits) {
+        let segment: String = text[start..end].iter().collect();
         let color = if hit { theme.accent } else { base };
         let galley = ui.painter().layout_no_wrap(
             segment,
@@ -375,23 +395,35 @@ mod tests {
 
     /// 高亮下标越界时必须**跳过**而不是切片 panic。
     ///
-    /// 这是纯函数的等价逻辑（`draw_label` 里的分段循环），
-    /// 在此把边界钉住：真实渲染里 `panic = "abort"` 会终止进程。
+    /// 走真实分段函数（旧版在此复读循环逻辑，那测的是副本不是产物）：
+    /// 真实渲染里 `panic = "abort"` 会终止进程。
     #[test]
     fn out_of_range_hits_are_skipped_rather_than_panicking() {
         let chars: Vec<char> = "加粗".chars().collect();
         // 模拟 `hits` 越界（长度 2 的标签却收到下标 0..4）。
         let hits = [0usize, 1, 2, 3];
-        let mut segments = 0usize;
-        let mut idx = 0usize;
-        while idx < chars.len() {
-            let hit = hits.contains(&idx);
-            while idx < chars.len() && hits.contains(&idx) == hit {
-                idx += 1;
-            }
-            segments += 1;
-        }
-        assert_eq!(segments, 1, "两个字符都是命中 → 合成一段");
-        assert_eq!(idx, chars.len(), "循环必须终止于标签末尾而非 hits 长度");
+        let segments = hit_segments(chars.len(), &hits);
+        assert_eq!(
+            segments,
+            vec![(0, 2, true)],
+            "两个字符都是命中 → 合成一段；越界下标被忽略"
+        );
+    }
+
+    /// 段切分覆盖「命中在中间 / 交替 / 全不命中」三种形态。
+    #[test]
+    fn hit_segments_covers_mixed_patterns() {
+        // 全不命中 → 一段。
+        assert_eq!(hit_segments(3, &[]), vec![(0, 3, false)]);
+        // 命中夹在中间 → 三段。
+        assert_eq!(
+            hit_segments(3, &[1]),
+            vec![(0, 1, false), (1, 2, true), (2, 3, false)]
+        );
+        // 交替 → 四段。
+        assert_eq!(
+            hit_segments(4, &[0, 2]),
+            vec![(0, 1, true), (1, 2, false), (2, 3, true), (3, 4, false)]
+        );
     }
 }

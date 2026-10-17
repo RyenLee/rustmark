@@ -190,6 +190,26 @@ pub(super) fn draw_image_spec(
                         .fit_to_exact_size(egui::vec2(dw, dh)),
                 );
             }
+            None if entry.loading => {
+                // 远程图片后台下载中（F-3）：占位高度与失败占位**一致**
+                // （滚动同步的块矩形不随加载状态跳变），只换文案。
+                let param_w = param
+                    .width
+                    .filter(|w| *w > 0.0)
+                    .map_or(max_w, |w| w.min(max_w));
+                let (rect, _) = ui.allocate_exact_size(
+                    egui::vec2(param_w, IMAGE_PLACEHOLDER_H),
+                    egui::Sense::hover(),
+                );
+                ui.painter()
+                    .rect_filled(rect, egui::CornerRadius::same(4), theme.bg_tertiary);
+                ui.scope_builder(
+                    egui::UiBuilder::new().max_rect(rect.shrink(theme.metrics.space_md)),
+                    |ui| {
+                        ui.weak(format!("图片加载中：{alt}"));
+                    },
+                );
+            }
             None => {
                 // 占位高度**固定**（见 [`IMAGE_PLACEHOLDER_H`]）：坏图与未就绪的图
                 // 都占同样的版面，滚动同步的块矩形才不会随加载结果跳变。

@@ -1,4 +1,4 @@
-//! 高亮缓存与高亮防抖计时表（版本 / 语言 / 区间为键，近似 LRU）。
+//! 高亮缓存与高亮防抖计时表（版本 / 语言 / 区间为键，真 LRU）。
 
 use std::sync::Arc;
 
@@ -6,6 +6,7 @@ use ahash::{HashMap, HashMapExt};
 
 use crate::application::dto::SpanView;
 use crate::shared::ids::DocumentId;
+use crate::shared::lru::LruMap;
 use crate::shared::time::Timestamp;
 
 /// 一份缓存的高亮结果。
@@ -43,17 +44,14 @@ pub(super) fn empty_spans() -> Arc<Vec<SpanView>> {
 ///
 /// 原实现用 `self.entries.keys().next()`（`HashMap` **任意**迭代序）挑驱逐对象，
 /// 可能正好驱逐下一次就要命中的文档：容量 8 小于打开文档数时，切一轮标签
-/// 就是一次 56ms 级的重算尖峰。现在用 `order: Vec` 维护访问序——`get` 命中
-/// 把键挪到尾部，`insert` 从头部驱逐最旧者，行为完全确定。
+/// 就是一次 56ms 级的重算尖峰。现在访问序由 [`LruMap`] 维护（D-4 收敛：
+/// 四处缓存共用一份实现）——`get` 命中把键挪到尾部，`insert` 从头部驱逐
+/// 最旧者，行为完全确定。
 ///
 /// 与 [`RenderCache`](super::RenderCache) 的区别：那份缓存的是解析产物（预览用），这份缓存的是
 /// 高亮产物（编辑区用）；两者的失效条件都是「文档版本变化」。
-#[derive(Default)]
 pub struct HighlightCache {
-    entries: HashMap<DocumentId, CachedHighlight>,
-    /// 访问序（LRU）：最旧在前。与 `entries` 的键集保持一致。
-    order: Vec<DocumentId>,
-    capacity: usize,
+    entries: LruMap<DocumentId, CachedHighlight>,
     /// 命中次数（调试 / 测试断言用）。
     pub hits: u64,
     /// 未命中次数。
@@ -64,9 +62,7 @@ impl HighlightCache {
     /// 构造缓存；容量至少为 1。
     pub fn new(capacity: usize) -> Self {
         Self {
-            entries: HashMap::new(),
-            order: Vec::new(),
-            capacity: capacity.max(1),
+            entries: LruMap::new(capacity),
             hits: 0,
             misses: 0,
         }
@@ -82,28 +78,18 @@ impl HighlightCache {
         lang: Option<&str>,
         range: (usize, usize),
     ) -> Option<Arc<Vec<SpanView>>> {
-        let matched = self.entries.get(&id).is_some_and(|e| {
+        let matched = self.entries.peek(&id).is_some_and(|e| {
             e.revision == revision && e.lang.as_deref() == lang && e.range == range
         });
         if matched {
             self.hits += 1;
-            // 触碰访问序：命中的键挪到尾部（最新）。
-            self.touch(&id);
+            // 条件命中才续命（版本 / 语言 / 区间全对才是这一次查询的命中）。
+            self.entries.touch(&id);
         } else {
             self.misses += 1;
-        }
-        if !matched {
             return None;
         }
-        self.entries.get(&id).map(|e| Arc::clone(&e.spans))
-    }
-
-    /// 把键挪到访问序尾部；键不在序中时补进去（防御：两表应同步）。
-    fn touch(&mut self, id: &DocumentId) {
-        if let Some(pos) = self.order.iter().position(|k| k == id) {
-            self.order.remove(pos);
-        }
-        self.order.push(*id);
+        self.entries.peek(&id).map(|e| Arc::clone(&e.spans))
     }
 
     /// 写入缓存（达到容量且为新键时驱逐**最旧**的一个键）。
@@ -115,15 +101,6 @@ impl HighlightCache {
         range: (usize, usize),
         spans: Arc<Vec<SpanView>>,
     ) {
-        if self.entries.len() >= self.capacity
-            && !self.entries.contains_key(&id)
-            && let Some(old) = self.order.first().copied()
-        {
-            self.entries.remove(&old);
-            self.order.remove(0);
-        }
-        // 覆盖已有键时也要刷新访问序。
-        self.touch(&id);
         self.entries.insert(
             id,
             CachedHighlight {
@@ -137,14 +114,12 @@ impl HighlightCache {
 
     /// 失效单个文档的缓存。
     pub fn invalidate(&mut self, id: DocumentId) {
-        self.entries.remove(&id);
-        self.order.retain(|k| *k != id);
+        self.entries.invalidate(&id);
     }
 
     /// 失效全部缓存。
     pub fn invalidate_all(&mut self) {
-        self.entries.clear();
-        self.order.clear();
+        self.entries.invalidate_all();
     }
 
     /// 缓存条目数。
@@ -212,6 +187,12 @@ impl HighlightPace {
         }
     }
 
+    /// 登记「本帧见到该文档」。
+    ///
+    /// 满容量时**任意**淘汰一个（`keys().next()`）——与高亮缓存的真 LRU 不同，
+    /// 这是刻意为之：本表只存「版本 + 时刻」这类廉价 pacing 元数据，误淘汰的代价
+    /// 至多是该文档下次编辑时被当成「首次见到」而**多上色一次**（保守降级，既非
+    /// 重算尖峰、也非陈旧显示）。若哪天这里也改存昂贵产物，再改为与缓存一致的 LRU。
     fn remember(&mut self, id: DocumentId, revision: u64, now: Timestamp) {
         if self.seen.len() >= self.capacity
             && !self.seen.contains_key(&id)

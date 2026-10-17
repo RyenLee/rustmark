@@ -51,7 +51,7 @@ impl MarkdownAppService {
         revision: u64,
     ) -> AppResult<Vec<RenderedBlock>> {
         {
-            let cache = self
+            let mut cache = self
                 .cache
                 .lock()
                 .map_err(|_| AppError::io("渲染缓存锁已损坏"))?;
