@@ -78,7 +78,7 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
     });
     ui.separator();
 
-    let line_count = crate::shared::text::line_count(&app.editor_text);
+    let line_count = app.line_index().count();
     let font_size = theme.editor_font_size;
     // 行号栏：宽度按**最大行号的位数实测**（等宽字体），而不是写死 44pt——
     // 写死会在万行文档里挤掉最后一位、在十行文档里留一片空白。
@@ -212,6 +212,24 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
     };
 
     // 记录旧文本用于 diff（TextEdit 会就地改 `editor_text`）。
+    //
+    // # 为什么这次克隆**省不掉**（问题 053，读 egui 0.37.0 源码后的结论）
+    //
+    // 1MB 上它值 0.22ms／帧（`docs/metrics.md` §3.2.5 的 S1），看着像白给，
+    // 但本项目**无法回避**：`TextEdit` 直接写调用方给的 `&mut dyn TextBuffer`
+    // （`text_edit/builder.rs` 的 `insert_replacing_selection` / `insert_text_at`），
+    // 编辑前的字节**就地在缓冲里被覆盖**。而「领域是内容单一真相」又要求把
+    // 这次编辑换算成相对旧文本的区间命令（`diff_replace`）——旧文本必须留一份。
+    //
+    // 唯一的省法「无输入事件就不克隆」**不成立**：§14.2 的 #4 假设「没有事件
+    // 文本就不会变」，但同一文件里有两条**与 `InputState::events` 无关**的写入路径——
+    // `accesskit_set_text_request(ui, id)`（无障碍 `SetValue`，:640 起）与拖放文本
+    // 插入（读 `raw.dropped_files`，:898 起），两者都在事件列表为空时改写缓冲。
+    // 按事件判空会**静默丢掉**这两类编辑（辅助技术用户 + 拖放粘贴）。
+    //
+    // 补一条「旧文本退回领域内容」的兜底固然能救回正确性，但那条路径要么不触发
+    // （优化收益为零）、要么触发时正是它要省掉的那次全文复制——两边都不划算。
+    // 故此处**据实保留克隆**，并把结论记在报告 §14.3.2。
     let prev = app.editor_text.clone();
 
     // 滚动偏移：**读回**比写入更重要。

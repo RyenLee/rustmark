@@ -1,6 +1,6 @@
 //! 单次编辑差异（`diff_replace`）与插入时的自动变换（括号配对 / 列表续行）。
 
-use super::cursor::{byte_to_char, char_to_byte, line_before, matching_close};
+use super::cursor::{byte_to_char, line_before, matching_close};
 use super::line::list_marker;
 
 /// 一次文本编辑的结果：在旧文本的 `[byte_start, byte_end)` 区间替换为 `inserted`。
@@ -20,54 +20,70 @@ pub struct TextEdit {
 
 /// 计算从 `old` 到 `new` 的最小替换。
 ///
-/// 在字符层面求最长公共前缀与后缀，二者之间的部分即被替换区间。
+/// 求最长公共前缀与后缀，二者之间的部分即被替换区间。
 /// 返回 `None` 表示无变化（文本相同）。
 ///
 /// 这是编辑区「把 egui 改过的字符串同步回领域」的核心：每次按键后，
 /// egui 把 `self.editor_text` 原地改成 `new`，我们用本函数得到一条
 /// [`TextEdit`]，再发 [`crate::application::document::commands::ReplaceRangeCommand`]。
+///
+/// # 为什么在**字节层**求前后缀（问题 049 的修复）
+///
+/// 本函数挂在「每击键一次」的路径上（`editor_view::show` 的 `changed()` 分支），
+/// 1MB 文档下必须避免任何 O(全文) 的**分配**与**解码**。旧实现在字符层比较：
+/// 两侧各 `chars().collect::<Vec<char>>()`（35 万个 char，约 2 × 1.4MB 分配 + 两遍
+/// UTF-8 解码），再用两次 `char_to_byte`（内部 `char_indices().nth(k)`，O(k)）
+/// 把字符索引换回字节——1MB 上实测 **6.8ms**，仅次于状态栏的字数统计。
+///
+/// 字节层只需逐字节比较：**不分配、不解码**，且 UTF-8 的续字节（`0x80..=0xBF`）
+/// 与 ASCII 都参与等值比较，故得到的公共前后缀与字符层结论一致（中文字符的
+/// 首字节不同 → 字符层也在同一处停下）。
+///
+/// 唯一的坑是**字节前缀可能落在字符中间**（如 `é` ↔ `è` 只差末字节，公共前缀
+/// 停在 2 字节字符的第二字节上）。UTF-8 是自同步编码：某位置是否为字符边界
+/// 只取决于**该位置自身的字节**是否为续字节（加上文末），而 `0..prefix` 两侧
+/// 逐字节相同，故边界判定在两侧一致——直接拿 `old.is_char_boundary` 把前缀
+/// 回退、把后缀收拢到字符边界即可，无需构造任何字符级缓冲。
 pub fn diff_replace(old: &str, new: &str) -> Option<TextEdit> {
     if old == new {
         return None;
     }
-    let old_chars: Vec<char> = old.chars().collect();
-    let new_chars: Vec<char> = new.chars().collect();
-    let n = old_chars.len();
-    let m = new_chars.len();
+    let (ob, nb) = (old.as_bytes(), new.as_bytes());
+    let (n, m) = (ob.len(), nb.len());
 
-    // 最长公共前缀（字符数）。
+    // 最长公共前缀（字节）。
     let mut prefix = 0;
-    while prefix < n && prefix < m && old_chars[prefix] == new_chars[prefix] {
+    while prefix < n && prefix < m && ob[prefix] == nb[prefix] {
         prefix += 1;
     }
-    // 最长公共后缀（字符数，且不与前缀重叠）。
-    let mut suffix = 0;
-    while suffix < (n - prefix)
-        && suffix < (m - prefix)
-        && old_chars[n - 1 - suffix] == new_chars[m - 1 - suffix]
-    {
-        suffix += 1;
+    // 回退到字符边界（至多 3 步）。
+    let mut byte_start = prefix;
+    while !old.is_char_boundary(byte_start) {
+        byte_start -= 1;
     }
 
-    let removed_char_start = prefix;
-    let removed_char_end = n - suffix;
-    let inserted_char_start = prefix;
-    let inserted_char_end = m - suffix;
+    // 最长公共后缀（字节，且不与前缀重叠）。
+    let mut suffix = 0;
+    while suffix < n - prefix && suffix < m - prefix && ob[n - 1 - suffix] == nb[m - 1 - suffix] {
+        suffix += 1;
+    }
+    // 收拢到字符边界（至多 3 步；只会让公共后缀变短）。
+    let mut byte_end = n - suffix;
+    while !old.is_char_boundary(byte_end) {
+        byte_end += 1;
+    }
 
-    let byte_start = char_to_byte(old, removed_char_start);
-    let byte_end = char_to_byte(old, removed_char_end);
-    let inserted: String = new_chars[inserted_char_start..inserted_char_end]
-        .iter()
-        .collect();
+    // `new` 中的插入区间终点：公共后缀在两串里占**同样多的字节**。
+    let inserted_byte_end = m - (n - byte_end);
+    let inserted = new[byte_start..inserted_byte_end].to_string();
 
-    // 新文本里光标默认落在插入文本之后。
-    let cursor_char = inserted_char_end;
-    let anchor_char = if inserted_char_start == inserted_char_end {
-        // 纯删除：光标落在删除起点。
-        Some(removed_char_start)
-    } else {
-        None
-    };
+    // 光标 / 锚点是**字符**索引（egui 口径）。前缀在两侧逐字节相同，
+    // 故「前缀的字符数」在 old / new 上是同一个值，只需算一次；
+    // 插入文本之后的字符索引 = 该值 + 插入内容的字符数。
+    let prefix_chars = byte_to_char(old, byte_start);
+    let cursor_char = prefix_chars + inserted.chars().count();
+    // 纯删除（没有插入任何内容）时光标落在删除起点；否则由 egui 自己算。
+    let anchor_char = inserted.is_empty().then_some(prefix_chars);
 
     Some(TextEdit {
         byte_start,

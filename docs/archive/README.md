@@ -16,7 +16,7 @@
 **读归档文档前先知道**：归档文档中的「当前 / 待办 / 未修复」表述只在其**写作日期**成立。
 后续演进以现行文档（`docs/README.md` 列出的各篇）与 `docs/logs/问题记录1.txt` 为准。
 
-## stage-reports/ · 阶段报告与方案（12 篇）
+## stage-reports/ · 阶段报告与方案（13 篇）
 
 | 文档 | 原路径 | 写作日期 | 内容 | 现状（2026-10-16） |
 |---|---|---|---|---|
@@ -33,6 +33,7 @@
 | [p1p2-remediation-plan.md](./stage-reports/p1p2-remediation-plan.md) | `docs/p1p2-remediation-plan.md` | 2026-10-08 | P1/P2 五项未交付功能的分析与路线 | 5/5 已实施（零依赖），另补整篇长图 |
 | [p1p2-implementation-log.md](./stage-reports/p1p2-implementation-log.md) | `docs/p1p2-implementation-log.md` | 2026-10-08~09 | 上述五项 + 四项遗留缺陷的逐步实施记录 | 已完成；记录含每项「修改文件清单/验证/已知问题」 |
 | [optimization-log.md](./stage-reports/optimization-log.md) | `docs/optimization-log.md` | 2026-10-08 | 阶段 08 优化决策日志 OPT-001~014（含放弃项） | 阶段已收尾；「放弃项及原因」对后续优化仍有参考价值 |
+| [textedit-cost-attribution.md](./stage-reports/textedit-cost-attribution.md) | `docs/logs/T.txt` 审计延伸（新建） | 2026-10-17 | 编辑区 1MB 击键帧成本归因（三轮测量 + diff_replace 落地 + 建议二/四/一/三 落地） | **归因已闭环、四项建议（052/053/054/055）全部落地**；现行数字见 `docs/metrics.md` §3.2.7/§3.2.8/§3.2.9/§3.2.10 |
 
 ## audits-2026-10-12/ · 全项目审计快照（2 篇）
 

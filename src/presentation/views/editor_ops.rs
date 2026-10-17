@@ -108,6 +108,105 @@ mod tests {
         assert_eq!(rebuilt, new);
     }
 
+    /// 字节层实现的**等价性基准**：与旧的字符层实现（两侧 `Vec<char>` + 两次
+    /// `char_to_byte`）在所有输入上必须给出**完全相同**的 `TextEdit`。
+    ///
+    /// 049 把 `diff_replace` 从字符层改到字节层（省掉 2 × 1.4MB 分配与 4 遍全文
+    /// 扫描），收益是纯内部的——对外语义一个字都不许变。本用例把这个「不许变」
+    /// 钉死，覆盖中文字节、4 字节字符、以及公共前后缀落在字符中间这些边界。
+    #[test]
+    fn diff_replace_matches_char_level_reference() {
+        /// 旧的字符层实现，原样保留作为基准（勿「顺手优化」）。
+        fn reference(old: &str, new: &str) -> Option<TextEdit> {
+            if old == new {
+                return None;
+            }
+            let old_chars: Vec<char> = old.chars().collect();
+            let new_chars: Vec<char> = new.chars().collect();
+            let (n, m) = (old_chars.len(), new_chars.len());
+            let mut prefix = 0;
+            while prefix < n && prefix < m && old_chars[prefix] == new_chars[prefix] {
+                prefix += 1;
+            }
+            let mut suffix = 0;
+            while suffix < (n - prefix)
+                && suffix < (m - prefix)
+                && old_chars[n - 1 - suffix] == new_chars[m - 1 - suffix]
+            {
+                suffix += 1;
+            }
+            let inserted: String = new_chars[prefix..m - suffix].iter().collect();
+            Some(TextEdit {
+                byte_start: char_to_byte(old, prefix),
+                byte_end: char_to_byte(old, n - suffix),
+                cursor_char: m - suffix,
+                anchor_char: (prefix == m - suffix).then_some(prefix),
+                inserted,
+            })
+        }
+
+        let cases = [
+            ("ab", "aXb"),
+            ("你好", "你X好"),
+            ("你好世界", "你X界"),
+            ("你好", "你好世界"), // 尾部追加
+            ("你好世界", "你好"), // 尾部删除
+            ("café", "cafè"),     // 公共前缀停在 2 字节字符的第二字节上
+            ("éx", "èx"),         // 同上，且尾随字节完全相同
+            ("é", "Ã©"),          // 公共后缀落在字符中间 → 必须收拢到字符边界
+            ("𝄞x", "𝄞y"),         // 4 字节字符之后的小改
+            ("a𝄞b", "ab"),
+            ("a𝄞b", "a𝄞"),
+            ("x", "y"),
+            ("a", ""),
+            ("", "a"),
+            ("abc", "abc"),
+            ("", ""),
+        ];
+        for (old, new) in cases {
+            let got = diff_replace(old, new);
+            assert_eq!(
+                got,
+                reference(old, new),
+                "字节层与字符层结果不一致：old={old:?} new={new:?}"
+            );
+            if let Some(e) = got {
+                // 附带钉住「切片全部合法」（非法边界会 panic，且字节层实现
+                // 的 `is_char_boundary` 回退/收拢就是为它服务的）。
+                let rebuilt = format!(
+                    "{}{}{}",
+                    &old[..e.byte_start],
+                    e.inserted,
+                    &old[e.byte_end..]
+                );
+                assert_eq!(rebuilt, new, "替换回拼 != new：old={old:?} new={new:?}");
+            }
+        }
+    }
+
+    /// 前缀回退：`café` → `cafè` 的公共**字节**前缀是 4（`é`/`è` 共享首字节
+    /// `0xC3`），落在 2 字节字符中间，必须回退到 3。
+    #[test]
+    fn diff_replace_prefix_falls_back_to_char_boundary() {
+        let e = diff_replace("café", "cafè").unwrap();
+        assert_eq!(e.byte_start, 3, "前缀必须回退到 'é' 的起点，而不是 4");
+        assert_eq!(e.byte_end, 5);
+        assert_eq!(e.inserted, "è");
+        assert_eq!(e.cursor_char, 4);
+        assert_eq!(e.anchor_char, None);
+    }
+
+    /// 后缀收拢：`é` → `Ã©` 的公共**字节**后缀是 1（尾字节 `0xA9` 相同），
+    /// 起点落在 `é` 中间，必须收拢到文末（即不认这个后缀）。
+    #[test]
+    fn diff_replace_suffix_collapses_to_char_boundary() {
+        let e = diff_replace("é", "Ã©").unwrap();
+        assert_eq!(e.byte_start, 0);
+        assert_eq!(e.byte_end, 2, "后缀不得落在 'é' 的第二字节上");
+        assert_eq!(e.inserted, "Ã©");
+        assert_eq!(e.cursor_char, 2);
+    }
+
     #[test]
     fn move_line_down_swaps() {
         let text = "a\nb\nc";

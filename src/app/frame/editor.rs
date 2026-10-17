@@ -16,13 +16,22 @@ impl EditorApp {
     /// 会显示成「列 4」——用户数着自己的光标位置会数出「2」。
     /// 原型用 JS 字符串的 `slice`，天然是 UTF-16 码元口径，
     /// 对 BMP 内的汉字等价于字符列。
+    ///
+    /// 自取行索引的便捷入口（单点调用与测试用）；一帧内多处换算请用
+    /// [`Self::cursor_line_col_in`] 共用一次扫描（问题 053）。
     pub fn cursor_line_col(&self) -> (usize, usize) {
-        let starts = self.status_line_starts();
+        let index = self.line_index();
+        self.cursor_line_col_in(&index)
+    }
+
+    /// 同上，但由调用方提供行索引。
+    pub fn cursor_line_col_in(&self, index: &LineIndex) -> (usize, usize) {
+        let starts = index.status_starts();
         // 光标可能落在非字符边界：`clamp_to` 只按**长度**夹紧，
         // 而程序化设值（跳转、测试）能给出任何一个字节偏移。
         // 直接切片会 panic（`panic = "abort"` 下等于终止进程）。
         let cursor = floor_char_boundary(&self.editor_text, self.editor.cursor);
-        let line = crate::presentation::views::scroll_sync::line_of_offset(&starts, cursor);
+        let line = index.line_of_offset(cursor);
         let line_start = starts.get(line).copied().unwrap_or(0);
         // 行首也可能是非法边界（理论上不会：行首由 `split('\n')` 推出，
         // 必然落在字符边界上）。夹一次是为了不给「理论上」留 panic。
@@ -31,34 +40,25 @@ impl EditorApp {
         (line + 1, col)
     }
 
-    /// 状态栏行列换算用的行起点表：[`line_start_offsets`] 摘掉**文末哨兵**。
-    ///
-    /// `line_start_offsets` 在文本不以 `\n` 结尾时会补一个「长度哨兵」
-    /// （供 y 反查等场景把「文末」解析成下一行）。状态栏不能要它：
-    /// 光标停在单行文档的行尾时会被算成「行 2 列 1」——凭空多出的一行。
-    /// 文本以 `\n` 结尾时末行起点本就等于长度（真实的空行），保留。
-    pub(super) fn status_line_starts(&self) -> Vec<usize> {
-        let mut starts =
-            crate::presentation::views::scroll_sync::line_start_offsets(&self.editor_text);
-        if !self.editor_text.is_empty()
-            && !self.editor_text.ends_with('\n')
-            && starts.last() == Some(&self.editor_text.len())
-        {
-            starts.pop();
-        }
-        starts
-    }
-
     /// 选区的行列范围（有选区时状态栏显示 `行 a, 列 b - 行 c, 列 d`）。
     pub fn selection_line_col(&self) -> Option<((usize, usize), (usize, usize))> {
+        let index = self.line_index();
+        self.selection_line_col_in(&index)
+    }
+
+    /// 同上，但由调用方提供行索引。
+    pub fn selection_line_col_in(
+        &self,
+        index: &LineIndex,
+    ) -> Option<((usize, usize), (usize, usize))> {
         let (start, end) = self.editor.selection()?;
         if start == end {
             return None;
         }
-        let starts = self.status_line_starts();
+        let starts = index.status_starts();
         let at = |offset: usize| {
             let offset = floor_char_boundary(&self.editor_text, offset);
-            let line = crate::presentation::views::scroll_sync::line_of_offset(&starts, offset);
+            let line = index.line_of_offset(offset);
             let line_start =
                 floor_char_boundary(&self.editor_text, starts.get(line).copied().unwrap_or(0));
             let col = self.editor_text[line_start..offset].chars().count() + 1;
@@ -69,7 +69,55 @@ impl EditorApp {
 
     /// 文档行数（状态栏右端「N 行」用）。
     pub fn current_line_count(&self) -> usize {
-        crate::shared::text::line_count(&self.editor_text)
+        self.line_index().count()
+    }
+
+    /// 当前文本的行索引（**一遍全文扫描**的产物，见 [`LineIndex`]）。
+    ///
+    /// # 缓存键与失效：`(活动文档, 领域修订版本, 文本字节长度)`
+    ///
+    /// 缓存能成立的前提是「`editor_text` 是领域内容的忠实视图」——这正是本项目的
+    /// 核心纪律（见 [`Self::refresh_text`]）。于是领域修订版本就是「文本已变」的
+    /// **权威信号**，不必再在五处 `editor_text` 写入点上接线一个「脏」标志，
+    /// 也就少了一类漏接线即静默失效的风险（问题 038 的教训）。
+    ///
+    /// 第三个分量是长度，作为两道保险：区分「都还没写过领域的空白态」，
+    /// 并挡住「`editor_text` 已改而领域命令尚未发出」的那一帧窗口
+    /// （帧内窗口见 `editor_view::show` 第 5 步；状态栏读在它之前，故不受影响）。
+    ///
+    /// # 为什么是 `RefCell` 而不是 `&mut`
+    ///
+    /// 取用它的入口（状态栏的 `build_model`、`cursor_line_col`）都是 `&self`，
+    /// 而命中/填充缓存要写回。`EditorApp` 只活在 UI 线程（`eframe::App`），
+    /// 不存在并发共享。返回 `Rc` 而非 `&` 借用是为了让调用方**不持有借用**——
+    /// 否则一帧内两处取用会互相锁死可变借用。
+    pub fn line_index(&self) -> std::rc::Rc<LineIndex> {
+        let key = self.line_index_key();
+        let mut slot = self.line_index_cache.borrow_mut();
+        if let Some((cached_key, index)) = slot.as_ref()
+            && *cached_key == key
+        {
+            return index.clone();
+        }
+        let index = std::rc::Rc::new(LineIndex::new(&self.editor_text));
+        *slot = Some((key, index.clone()));
+        index
+    }
+
+    /// 行索引缓存的键（见 [`Self::line_index`]）。
+    fn line_index_key(&self) -> (Option<DocumentId>, u64, usize) {
+        let revision = self.active_doc.and_then(|id| {
+            self.services
+                .registry
+                .read()
+                .ok()
+                .and_then(|registry| registry.revision_of(id))
+        });
+        (
+            self.active_doc,
+            revision.unwrap_or(0),
+            self.editor_text.len(),
+        )
     }
 
     /// 当前文档统计（状态栏字数、统计浮层共用）。
@@ -79,6 +127,71 @@ impl EditorApp {
     pub fn current_stats(&self) -> Option<StatsView> {
         let id = self.active_doc?;
         self.services.documents.get_stats(GetStatsQuery { id }).ok()
+    }
+
+    /// 状态栏统计（防抖版；建议一 / 问题 039）。
+    ///
+    /// 与 [`crate::application::markdown::service::highlight_cache::HighlightPace`]
+    /// 同源：打字期不每击键整篇重算（`compute_stats` 在 1MB 上 ≈ 9.5ms，
+    /// 见 `docs/metrics.md` §3.2.5），而是沿用「上一次静止时算出的结果」，
+    /// 直到文档**静止满 [`super::STATS_DEBOUNCE_MS`]** 才刷新。
+    ///
+    /// 与高亮的区别：高亮首次见某篇要立刻上色；这里**首次见某篇也要立刻算**
+    /// （否则打开文档后字数先显 0、150ms 后才跳真值，同样 flicker）。
+    /// 故 `doc` 改变（或首算）时直接重算，不走防抖。
+    ///
+    /// 统计浮层（`stats_view`）走 [`Self::current_stats`]（点击时才算、即时），
+    /// 本方法只服务每帧的状态栏。
+    pub fn current_stats_for_status_bar(&mut self) -> Option<StatsView> {
+        let id = self.active_doc?;
+        let revision = self
+            .services
+            .registry
+            .read()
+            .ok()
+            .and_then(|registry| registry.revision_of(id))
+            .unwrap_or(0);
+        let now = self.services.markdown.now();
+
+        // 首次 / 切换文档：立刻算，不防抖（避免开文先显 0）。
+        if self.stats_pace.doc != Some(id) {
+            let stats = self
+                .services
+                .documents
+                .get_stats(GetStatsQuery { id })
+                .ok()?;
+            self.stats_pace.doc = Some(id);
+            self.stats_pace.computed_revision = revision;
+            self.stats_pace.last_seen_revision = revision;
+            self.stats_pace.last_change_at = now;
+            self.stats_pace.cached = Some(stats.clone());
+            return Some(stats);
+        }
+
+        // 同一文档，且已算到当前版本：直接返回缓存。
+        if self.stats_pace.computed_revision == revision {
+            return self.stats_pace.cached.clone();
+        }
+
+        // 版本变了：只在首次见到这个新版本时刷新「变化时刻」。
+        if self.stats_pace.last_seen_revision != revision {
+            self.stats_pace.last_seen_revision = revision;
+            self.stats_pace.last_change_at = now;
+        }
+
+        // 静止满窗口才重算；否则沿用上次结果（打字期不闪烁、不重算）。
+        if now.elapsed_ms_since(self.stats_pace.last_change_at) >= super::STATS_DEBOUNCE_MS {
+            let stats = self
+                .services
+                .documents
+                .get_stats(GetStatsQuery { id })
+                .ok()?;
+            self.stats_pace.computed_revision = revision;
+            self.stats_pace.cached = Some(stats.clone());
+            Some(stats)
+        } else {
+            self.stats_pace.cached.clone()
+        }
     }
 
     /// 把一次文本编辑（来自 egui 的 diff 或纯变换）写入领域。

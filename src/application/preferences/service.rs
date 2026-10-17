@@ -92,6 +92,21 @@ impl PreferencesAppService {
         }
     }
 
+    /// 是否设置了写作目标（问题 053）。
+    ///
+    /// [`Self::goal_progress`] 要**当前字数**才谈得上进度，而字数是整篇统计；
+    /// 状态栏每帧结算目标时，未设目标的那条路径不该为一条不画的进度条付这个成本，
+    /// 故单开一个只读设置的入口（一次读锁 + 一个整数比较）。
+    ///
+    /// 读锁失败按「未设置」返回，与 [`Self::goal_progress`] 同一理由：
+    /// 进度条是锦上添花，不值得为此让整帧渲染失败。
+    pub fn has_writing_goal(&self) -> bool {
+        self.prefs
+            .read()
+            .map(|prefs| prefs.editor().writing_goal().words() > 0)
+            .unwrap_or(false)
+    }
+
     /// 读取当前快捷键冲突列表。
     pub fn get_conflicts(&self, _cmd: GetConflictsQuery) -> AppResult<Vec<ConflictView>> {
         let prefs = self.lock_read()?;

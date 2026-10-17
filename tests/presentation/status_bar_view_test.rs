@@ -19,6 +19,7 @@
 //! 5. **欢迎页永远不出现**：`close_document` 拒绝关最后一个标签，
 //!    于是「一个标签都不剩」这个状态无法达到。
 
+use crate::support::clock::TestClock;
 use crate::support::fake_dialog::FakeDialog;
 use std::fs;
 use std::path::Path;
@@ -26,12 +27,16 @@ use std::sync::Arc;
 
 use rustmark::app::bootstrap::{ConfigPaths, Services};
 use rustmark::app::frame::EditorApp;
+use rustmark::application::document::commands::InsertTextCommand;
 use rustmark::presentation::shortcuts::registry::UiAction;
 use rustmark::presentation::state::status_bar_ui_state::MESSAGE_TTL_MS;
 use rustmark::presentation::views::main_view;
 use rustmark::presentation::views::status_bar_view::{self, StatusBarModel};
 use rustmark::presentation::views::welcome_view::{self, PrimaryAction};
 use rustmark::shared::encoding::TextEncoding;
+
+/// 状态栏统计防抖窗口（毫秒），必须与 `rustmark::app::frame::STATS_DEBOUNCE_MS` 一致。
+const STATS_DEBOUNCE_MS: u64 = 150;
 
 /// 一份含中文、英文、任务项、代码块、链接的语料。
 const CORPUS: &str = "# 标题\n\n这是一段中文 mixed with English words.\n\n```rust\nlet x = 1;\n```\n\n- [x] done\n- [ ] todo\n\n[链接](a.md) 与 ![图](b.png)\n";
@@ -131,7 +136,7 @@ fn selection_shows_a_range() {
         "终点偏移 9 = 第 3 行行首(8) + 1 个字 → 第 2 列"
     );
 
-    let model = status_bar_view::build_model(&app);
+    let model = status_bar_view::build_model(&app, None);
     assert_eq!(model.position, "行 2, 列 1 - 行 3, 列 2");
 }
 
@@ -143,7 +148,10 @@ fn no_selection_shows_a_single_point() {
     app.editor.move_cursor(5);
 
     assert!(app.selection_line_col().is_none());
-    assert_eq!(status_bar_view::build_model(&app).position, "行 2, 列 2");
+    assert_eq!(
+        status_bar_view::build_model(&app, None).position,
+        "行 2, 列 2"
+    );
 }
 
 /// 文末（末尾有换行）不该多算一行。
@@ -191,7 +199,7 @@ fn word_count_matches_the_prototype() {
     // 本实现要求单词**至少含一个字母数字**，故为 27。
     assert_eq!(stats.words, 27, "中日韩按字 + 西文按词，孤立连字符不计");
 
-    let model = status_bar_view::build_model(&app);
+    let model = status_bar_view::build_model(&app, None);
     assert_eq!(
         model.words,
         format!("字数 {}", stats.words),
@@ -284,9 +292,9 @@ fn encoding_shows_gbk_after_opening_a_gbk_file() {
         Some(TextEncoding::Gbk),
         "GBK 文件应被识别为 GBK"
     );
-    assert_eq!(status_bar_view::build_model(&app).encoding, "GBK");
+    assert_eq!(status_bar_view::build_model(&app, None).encoding, "GBK");
     assert!(
-        status_bar_view::build_model(&app)
+        status_bar_view::build_model(&app, None)
             .encoding_hint
             .contains("写回原编码"),
         "提示应说明保存写回原编码"
@@ -300,7 +308,7 @@ fn encoding_shows_utf8_for_a_utf8_file() {
     let (_cfg, mut app) = app_with_file(dir.path(), "u8.md", "# 标题\n\n正文\n");
     run_frame(&mut app);
     assert_eq!(app.status_bar.encoding, Some(TextEncoding::Utf8));
-    assert_eq!(status_bar_view::build_model(&app).encoding, "UTF-8");
+    assert_eq!(status_bar_view::build_model(&app, None).encoding, "UTF-8");
 }
 
 /// 脏标记：改过之后显示「未保存」，保存后回到「已保存」。
@@ -308,18 +316,21 @@ fn encoding_shows_utf8_for_a_utf8_file() {
 fn save_state_follows_the_dirty_flag() {
     let dir = tempfile::tempdir().unwrap();
     let (_cfg, mut app) = app_with_file(dir.path(), "d.md", "原文\n");
-    assert_eq!(status_bar_view::build_model(&app).save_state, "已保存");
+    assert_eq!(
+        status_bar_view::build_model(&app, None).save_state,
+        "已保存"
+    );
 
     // 走一次**真实**编辑：选中全文按 Ctrl+B 加粗 → 变脏。
     let len = app.current_content().map(|t| t.len()).unwrap_or(0);
     app.editor.set_selection(0, len);
     app.execute(UiAction::Bold);
-    let model = status_bar_view::build_model(&app);
+    let model = status_bar_view::build_model(&app, None);
     assert_eq!(model.save_state, "未保存");
     assert!(model.is_dirty, "「未保存」项在原型里用 warning 色，且可点");
 
     app.save_document(false).expect("保存应成功");
-    let after = status_bar_view::build_model(&app);
+    let after = status_bar_view::build_model(&app, None);
     assert_eq!(after.save_state, "已保存");
     assert!(!after.is_dirty);
     assert!(
@@ -387,7 +398,7 @@ fn toggles_flip_the_editor_state() {
     let before_spell = app.editor.spell_check;
     let before_wrap = app.editor.word_wrap;
 
-    let model = status_bar_view::build_model(&app);
+    let model = status_bar_view::build_model(&app, None);
     assert_eq!(
         model.spell_check,
         format!("拼写检查 {}", if before_spell { "开" } else { "关" })
@@ -399,7 +410,7 @@ fn toggles_flip_the_editor_state() {
 
     app.editor.spell_check = !before_spell;
     app.editor.word_wrap = !before_wrap;
-    let after = status_bar_view::build_model(&app);
+    let after = status_bar_view::build_model(&app, None);
     assert_ne!(after.spell_check, model.spell_check);
     assert_ne!(after.word_wrap, model.word_wrap);
 }
@@ -416,13 +427,13 @@ fn theme_label_includes_the_resolved_side() {
 
     // 深色：提示明确说出下一态是浅色主题（一步直达，不绕系统）。
     app.ui.theme.kind = BuiltinTheme::Dark;
-    let dark = status_bar_view::build_model(&app);
+    let dark = status_bar_view::build_model(&app, None);
     assert_eq!(dark.theme_label, "深色主题");
     assert_eq!(dark.theme_hint, "点击切换为浅色主题");
 
     // 浅色：下一态直接是深色主题（不再跳「跟随系统」）。
     app.ui.theme.kind = BuiltinTheme::Light;
-    let light = status_bar_view::build_model(&app);
+    let light = status_bar_view::build_model(&app, None);
     assert_eq!(light.theme_label, "浅色主题");
     assert_eq!(
         light.theme_hint, "点击切换为深色主题",
@@ -436,7 +447,7 @@ fn large_numbers_use_thousands_separators() {
     let dir = tempfile::tempdir().unwrap();
     let body = "行\n".repeat(12_345);
     let (_cfg, app) = app_with_file(dir.path(), "big.md", &body);
-    let model = status_bar_view::build_model(&app);
+    let model = status_bar_view::build_model(&app, None);
     assert_eq!(model.line_count, "12,346 行", "12,345 个换行 + 最后一行");
 }
 
@@ -445,7 +456,7 @@ fn large_numbers_use_thousands_separators() {
 fn every_field_of_the_model_is_populated() {
     let dir = tempfile::tempdir().unwrap();
     let (_cfg, app) = app_with_file(dir.path(), "m.md", CORPUS);
-    let model: StatusBarModel = status_bar_view::build_model(&app);
+    let model: StatusBarModel = status_bar_view::build_model(&app, None);
     for (name, value) in [
         ("kind", model.kind.as_str()),
         ("encoding", model.encoding.as_str()),
@@ -511,7 +522,7 @@ fn goal_item_is_hidden_when_unset() {
     set_writing_goal(&mut app, 0);
     run_frame(&mut app);
 
-    let model = status_bar_view::build_model(&app);
+    let model = status_bar_view::build_model(&app, None);
     assert!(
         model.goal.is_none(),
         "未设目标时不应出现进度项，实际：{:?}",
@@ -532,7 +543,7 @@ fn goal_item_shows_percent_when_set() {
     set_writing_goal(&mut app, 100);
     run_frame(&mut app);
 
-    let model = status_bar_view::build_model(&app);
+    let model = status_bar_view::build_model(&app, None);
     let progress = model.goal.expect("设了目标后应有进度项");
     assert_eq!(progress.goal, 100);
     assert_eq!(progress.words, 27);
@@ -565,7 +576,7 @@ fn already_reached_document_does_not_announce_on_open() {
 fn reaching_goal_announces_once_on_crossing() {
     let dir = tempfile::tempdir().unwrap();
     // 4 个西文词的文档，目标设为 5，写完正文中还差一个词。
-    let (_cfg, mut app) = app_with_file(dir.path(), "g.md", "one two three four");
+    let (_cfg, mut app, clock) = app_with_clock(dir.path(), "g.md", "one two three four");
     set_writing_goal(&mut app, 5);
 
     // 先跑几帧（在目标之下）：静默。
@@ -575,12 +586,19 @@ fn reaching_goal_announces_once_on_crossing() {
     let early = app.services.markdown.now().millis();
     assert!(app.status_bar.take_message(early).is_none(), "达标前应静默");
 
-    // 在文末补上「 five」→ 跨越目标：弹一次。
+    // 在文末补上「 five」→ 跨越目标。
     let end = app.current_content().unwrap().len();
     app.editor.cursor = end;
     app.editor.anchor = None;
     app.insert_at_cursor(" five").expect("插入应成功");
+
+    // 状态栏统计防抖（建议一 / 问题 039）：改动后不立即重算，需等文档静止满
+    // 窗口。先跑一帧「观察到改动」（沿用旧字数，不播报），再把时钟推过窗口
+    // 后跑一帧刷新 —— 此时才跨过目标并播报一次。
     run_frame(&mut app);
+    clock.advance(STATS_DEBOUNCE_MS + 1);
+    run_frame(&mut app);
+
     let crossed = app.services.markdown.now().millis();
     let m1 = app
         .status_bar
@@ -783,4 +801,85 @@ fn cursor_at_end_without_trailing_newline_stays_on_last_line() {
         (2, 4),
         "无尾随换行时文末属于第 2 行第 4 列"
     );
+}
+
+// ===========================================================================
+// 状态栏统计防抖（建议一 / 问题 039）
+// ===========================================================================
+
+/// 造一个带**可控时钟**的应用，并打开指定文件。
+///
+/// 防抖窗口需靠 `TestClock` 确定地「走过期 / 未过期」，真实时钟下
+/// 窗口永不或随机过期，用例无法稳定覆盖两条分支（见 `tests/support/clock.rs`）。
+fn app_with_clock(
+    dir: &Path,
+    rel: &str,
+    content: &str,
+) -> (tempfile::TempDir, EditorApp, Arc<TestClock>) {
+    let cfg = tempfile::tempdir().expect("配置目录");
+    let clock = Arc::new(TestClock::default());
+    let services = Services::assemble_with_clock_and_dialogs(
+        ConfigPaths::in_dir(cfg.path()),
+        clock.clone(),
+        Arc::new(FakeDialog::new()),
+    )
+    .expect("装配应成功");
+    let mut app = EditorApp::new(services, false);
+    let path = dir.join(rel);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).unwrap();
+    }
+    fs::write(&path, content).unwrap();
+    let path_str = path.to_string_lossy().replace('\\', "/");
+    app.open_workspace_file(&path_str).expect("打开应成功");
+    (cfg, app, clock)
+}
+
+/// 打字期不每击键重算：版本变了但时钟未过窗口时，沿用上一次静止结果。
+#[test]
+fn status_bar_stats_debounce_holds_while_typing() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_cfg, mut app, clock) = app_with_clock(dir.path(), "d.md", "hello");
+
+    // 首算：立刻算（避免开文先显 0），拿到初始字数。
+    let first = app.current_stats_for_status_bar().expect("应有统计");
+    assert_eq!(first.words, 1, "「hello」算 1 个词");
+
+    // 改文档（插入两个词），但**不推进时钟**：模拟打字期。
+    let id = app.active_doc_for_probe();
+    app.services
+        .documents
+        .insert_text(InsertTextCommand {
+            id,
+            offset: 5,
+            text: " world foo".to_string(),
+        })
+        .expect("插入应成功");
+
+    // 同一帧（时钟未动）：返回的是**上一次静止**结果，仍是 1 词，未重算。
+    let during = app.current_stats_for_status_bar().expect("应有统计");
+    assert_eq!(during.words, 1, "打字期应沿用旧值，不每击键重算");
+
+    // 时钟推进过窗口：文档已静止，刷新为最新字数（3 词）。
+    clock.advance(STATS_DEBOUNCE_MS + 1);
+    let settled = app.current_stats_for_status_bar().expect("应有统计");
+    assert_eq!(settled.words, 3, "停手满窗口后应刷新为最新字数");
+}
+
+/// 切换文档立刻重算，不沿用旧文档的缓存（避免切到新文档先显旧字数）。
+#[test]
+fn status_bar_stats_debounce_recomputes_on_document_switch() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_cfg, mut app, _clock) = app_with_clock(dir.path(), "a.md", "alpha beta");
+    // 先算一次，建立旧文档缓存。
+    let a = app.current_stats_for_status_bar().expect("应有统计");
+    assert_eq!(a.words, 2);
+
+    // 再打开第二个文档：应立刻重算，拿到新文档的字数。
+    let path = dir.path().join("b.md");
+    fs::write(&path, "gamma").unwrap();
+    let path_str = path.to_string_lossy().replace('\\', "/");
+    app.open_workspace_file(&path_str).expect("打开应成功");
+    let b = app.current_stats_for_status_bar().expect("应有统计");
+    assert_eq!(b.words, 1, "切到新文档应立刻重算其字数");
 }

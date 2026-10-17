@@ -106,17 +106,88 @@ pub fn block_at_offset(rects: &[BlockRect], offset: f32) -> Option<u64> {
 ///
 /// 三行文档算出「第 4 行」，跳转与滚动同步都会落到不存在的行上。
 pub fn line_start_offsets(text: &str) -> Vec<usize> {
-    let mut starts = Vec::with_capacity(crate::shared::text::line_count(text) + 1);
-    let mut cursor = 0usize;
-    for line in text.split('\n') {
-        starts.push(cursor);
-        cursor += line.len() + 1; // 跨过 '\n'（单字节）
+    LineIndex::new(text).into_starts()
+}
+
+/// 行索引：**一遍扫描**同时得到「行起点表」与「行数」（问题 053）。
+///
+/// # 为什么合并成一个类型
+///
+/// 状态栏一帧里要三样东西：光标的行列、选区的行列、右端的「N 行」；编辑区还要
+/// 一次行数（`desired_rows` 与行号栏宽度）。旧写法各调各的——`line_start_offsets`
+/// 一帧最多两次、`line_count` 三次，1MB 上实测每帧**恒定 1.1ms**（见
+/// `docs/metrics.md` §3.2.5 的 S3 0.82 + S4 0.28），而它们要的是**同一份信息**。
+/// 合并后由 `EditorApp` 每帧只构建一次并缓存（文本不变时为零成本）。
+///
+/// # 口径与两个旧函数逐例相等
+///
+/// `split('\n')` 产出 `k + 1` 段（`k` = `\n` 的个数），每段一个行首——所以
+/// **不含哨兵**的起点表长度**恰好等于行数**，不必额外存两个计数：
+///
+/// - [`Self::starts`] 与 [`line_start_offsets`] 逐元素相等（含文末哨兵）；
+/// - [`Self::count`] 与 `shared::text::line_count` 逐例相等；
+/// - [`Self::status_starts`] 是不含哨兵的前半段，即状态栏口径
+///   （哨兵为何会让状态栏「多出一行」，见 `EditorApp::cursor_line_col` 的注释）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LineIndex {
+    /// 行起点表；含可能的文末哨兵，语义与 [`line_start_offsets`] 一致。
+    starts: Vec<usize>,
+    /// `shared::text::line_count` 口径的行数（恒 ≥ 1）。
+    count: usize,
+}
+
+impl LineIndex {
+    /// 一遍扫描文本，同时填行起点表与计数。
+    ///
+    /// 容量按「平均行长 32 字节」估：估算只影响**是否多一次翻倍**（不影响正确性），
+    /// 而换成「先 `line_count` 定容再拆一遍」就是**两遍**全文扫描——正是本次要消掉的
+    /// 东西。典型 Markdown 正文行远长于 32 字节，故绝大多数文档一次到位。
+    pub fn new(text: &str) -> Self {
+        let bytes = text.as_bytes();
+        let mut starts = Vec::with_capacity(bytes.len() / 32 + 2);
+        starts.push(0);
+        let mut count = 1usize;
+        for (i, &b) in bytes.iter().enumerate() {
+            if b == b'\n' {
+                starts.push(i + 1);
+                count += 1;
+            }
+        }
+        // 末行起点已经等于文本长度时**不重复补**哨兵（见 `line_start_offsets`）。
+        if starts.last() != Some(&bytes.len()) {
+            starts.push(bytes.len());
+        }
+        Self { starts, count }
     }
-    // 末行起点已经等于文本长度时**不重复补**（见上文）。
-    if starts.last() != Some(&text.len()) {
-        starts.push(text.len());
+
+    /// 行数（`split('\n').count()` 口径，恒 ≥ 1）。
+    pub const fn count(&self) -> usize {
+        self.count
     }
-    starts
+
+    /// 行起点表（含文末哨兵）——与 [`line_start_offsets`] 的返回值逐元素相等。
+    pub fn starts(&self) -> &[usize] {
+        &self.starts
+    }
+
+    /// 取走行起点表（供 [`line_start_offsets`] 这类只想要表的调用方，零拷贝）。
+    pub fn into_starts(self) -> Vec<usize> {
+        self.starts
+    }
+
+    /// 状态栏口径的行起点表：**摘掉文末哨兵**。
+    ///
+    /// `line_start_offsets` 在文本不以 `\n` 结尾时会补一个长度哨兵供 y 反查用；
+    /// 状态栏不能要它——光标停在单行文档行尾时会被算成「行 2 列 1」，凭空多一行。
+    /// 不含哨兵的部分长度恰好等于 [`Self::count`]，故直接按计数截断。
+    pub fn status_starts(&self) -> &[usize] {
+        &self.starts[..self.count]
+    }
+
+    /// 由字节偏移反查所在行号（语义同 [`line_of_offset`]）。
+    pub fn line_of_offset(&self, offset: usize) -> usize {
+        line_of_offset(self.status_starts(), offset)
+    }
 }
 
 /// 由 y（点）反查所在行号。

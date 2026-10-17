@@ -244,6 +244,15 @@ impl Document {
     ///
     /// 顺序：校验 → 记撤销快照 → 改缓冲区 → 移光标 → 置脏 → 自增版本 → 入事件队列。
     /// `edit` 为无效果编辑（空区间 + 空替换）时**直接返回**，不产生撤销点与事件。
+    ///
+    /// # 为什么先问「会不会合并」再取快照（问题 053）
+    ///
+    /// [`Self::snapshot_at`] 含一份**整篇文本**（1MB = 一次全文分配 + 复制）。
+    /// 而 [`UndoStack::push`] 在合并命中时会把它直接丢弃——连续打字时每个键
+    /// 都在合并窗口内，于是**每敲一个键白付一次全文复制**。改用
+    /// [`UndoStack::would_merge`] 先判（只需 `(类型, 时刻)`，全是标量）：
+    /// 命中走 [`UndoStack::merge`]（滚动时间窗，零分配），未命中才取快照。
+    /// 两条分支的可见结果与旧实现逐例一致（判据同源，见 `undo.rs`）。
     pub fn apply(&mut self, edit: Edit, now: Timestamp) -> Result<(), DocumentError> {
         if edit.is_noop() {
             return Ok(());
@@ -251,8 +260,12 @@ impl Document {
         self.validate_range(edit.range())?;
         let kind = edit.kind();
 
-        let before = self.snapshot_at(now);
-        self.undo.push(before, kind);
+        if self.undo.would_merge(kind, now) {
+            self.undo.merge(now);
+        } else {
+            let before = self.snapshot_at(now);
+            self.undo.push(before, kind);
+        }
 
         if !edit.range().is_empty() {
             self.buffer.remove(edit.range())?;

@@ -31,6 +31,7 @@ mod spell_menu_test;
 mod spell_squiggle_test;
 mod status_bar_view_test;
 mod tab_strip_test;
+mod textedit_cost_attribution_test;
 mod textedit_frame_perf_test;
 mod theme_mapper_test;
 mod toolbar_test;

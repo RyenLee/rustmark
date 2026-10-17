@@ -19,7 +19,7 @@ use rustmark::presentation::state::scroll_sync_state::{
     BlockRect, PaneGeometry, SUPPRESS_MS, ScrollSync, Side,
 };
 use rustmark::presentation::views::scroll_sync::{
-    HIT_BIAS, TARGET_MARGIN, block_at_offset, clamp_scroll, line_at_y, line_of_offset,
+    HIT_BIAS, LineIndex, TARGET_MARGIN, block_at_offset, clamp_scroll, line_at_y, line_of_offset,
     line_start_offsets, offset_for_block,
 };
 use std::sync::Arc;
@@ -393,6 +393,98 @@ fn line_start_offsets_are_byte_offsets() {
     // "中文" 是 6 字节 + 1 换行。
     assert_eq!(starts[1], 7);
     assert_eq!(*starts.last().expect("非空"), text.len());
+}
+
+// ============================================================================
+// 行索引（问题 053）：一遍扫描同时给出「行起点表」与「行数」
+// ============================================================================
+
+/// `LineIndex` 与两个旧函数**逐例等价**——这是「合并到一处」唯一能成立的前提。
+///
+/// 合并的动机是性能（每帧状态栏与编辑区各扫一遍全文），但性能改动的代价是
+/// 可能悄悄改变口径：行数差 1 就是状态栏的「N 行」与光标的「行 M」同时错位，
+/// 而两者在无头测试里都不报错，只有用户会看见。故这里的等价性是**全量**的：
+/// 三个口径（`starts` / `count` / `status_starts`）在所有边界输入上逐一比对。
+#[test]
+fn line_index_matches_the_two_legacy_functions_on_every_case() {
+    let cases = [
+        "",
+        "\n",
+        "\n\n",
+        "a",
+        "ab\ncd",
+        "ab\ncd\n",
+        "a\nb\nc\nd",
+        "中文\n第二行\n",
+        "中文\n",
+        "中文",
+        "a\n\n\nb",
+        "行的末尾没有换行符",
+    ];
+    for case in cases {
+        let index = LineIndex::new(case);
+
+        // ① 行起点表（含哨兵）与 `line_start_offsets` 逐元素相等。
+        assert_eq!(
+            index.starts(),
+            line_start_offsets(case).as_slice(),
+            "行起点表口径不一致：{case:?}"
+        );
+
+        // ② 行数与 `split('\\n').count()`（= `shared::text::line_count`）相等。
+        assert_eq!(
+            index.count(),
+            case.split('\n').count(),
+            "行数口径不一致：{case:?}"
+        );
+
+        // ③ 状态栏口径 = 摘掉哨兵：长度必须恰好等于行数，
+        //    且末元素**永不**指向「文末之后」（那是凭空多出的一行）。
+        let status = index.status_starts();
+        assert_eq!(
+            status.len(),
+            index.count(),
+            "状态栏起点表长度应等于行数：{case:?}"
+        );
+        assert!(
+            status.last().is_none_or(|last| *last <= case.len()),
+            "状态栏行首越界：{case:?}"
+        );
+        if !case.is_empty() && !case.ends_with('\n') {
+            // 不以换行结尾时，末尾那个等于 `len` 的哨兵必须被摘掉，
+            // 否则单行文档的光标在行尾会被算成「行 2 列 1」。
+            assert_ne!(
+                status.last(),
+                Some(&case.len()),
+                "文末哨兵未被摘掉：{case:?}"
+            );
+        }
+        assert_eq!(
+            index.line_of_offset(case.len()),
+            index.count() - 1,
+            "光标在文末时必须落在最后一行（0-based）：{case:?}"
+        );
+    }
+}
+
+/// 单遍扫描的容量估算只影响「是否多一次翻倍」，不得影响任何结果。
+///
+/// 该用例刻意用**行长极端不均**的语料（极短行与极长行混排）逼出估算偏差：
+/// 估算按「平均行长 32 字节」，短行文档会显著低估、长行文档会高估。
+/// 只要结果仍逐元素正确，这个启发式就是安全的。
+#[test]
+fn line_index_capacity_heuristic_never_affects_results() {
+    // 极短行：1MB 级换行密度，估算会低估约一倍。
+    let short = "a\n".repeat(5000);
+    let index = LineIndex::new(&short);
+    assert_eq!(index.count(), 5001, "`\"a\\n\"×5000` 拆出 5001 行");
+    assert_eq!(index.starts()[..3], [0, 2, 4]);
+
+    // 极长行：几乎没有换行，估算会高估。
+    let long = format!("{}\n{}", "x".repeat(40_000), "y".repeat(40_000));
+    let index = LineIndex::new(&long);
+    assert_eq!(index.count(), 2);
+    assert_eq!(index.starts(), [0, 40_001, 80_001]);
 }
 
 /// 由 y 反查行号：含折行时行高不同也能正确命中。

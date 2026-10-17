@@ -20,7 +20,7 @@
 use egui::{Align, CornerRadius, Layout, Rect, Response, Sense, Ui, Vec2};
 
 use crate::app::frame::EditorApp;
-use crate::application::dto::GoalProgressView;
+use crate::application::dto::{GoalProgressView, StatsView};
 use crate::presentation::shortcuts::registry::UiAction;
 use crate::presentation::theme::builtin::Theme;
 
@@ -49,17 +49,37 @@ fn sync_encoding(app: &mut EditorApp) {
 /// 与 `sync_encoding` 同一套路：每帧从应用层投影，而不是在「打开 / 编辑 /
 /// 切换 / 改设置」各处分别写——那些入口太多，漏一处就留一个过期值。
 /// 代价是一次读锁 + 一次整数除法，每帧可忽略。
-fn sync_goal(app: &mut EditorApp) {
+///
+/// # 先问「设了目标吗」再取字数（问题 053）
+///
+/// 未设目标时整项不画（`StatusBarModel.goal`），而字数是一次**整篇统计**
+/// （应用层六遍全文遍历，1MB 上 9.49ms / miss，见 `docs/metrics.md` §3.2.5）。
+/// 旧写法无条件先取字数、再把算不出来的目标投影丢弃，等于为一条不画的进度条
+/// 白付一次统计。改成先问设置（一次读锁 + 一个整数比较）再决定要不要字数——
+/// 这与「新增每帧查询先问：构造是 O(1) 还是 O(全文)」（问题 043 的纪律）同源。
+fn sync_goal(app: &mut EditorApp, stats: Option<&StatsView>) {
     let now_ms = app.services.markdown.now().millis();
-    let words = app.current_stats().map_or(0, |s| s.words);
-    let progress = app.services.preferences.goal_progress(words);
+    let progress = if app.services.preferences.has_writing_goal() {
+        let words = stats.map_or(0, |s| s.words);
+        app.services.preferences.goal_progress(words)
+    } else {
+        // 未设目标：与 `goal_progress(0)` 的可见结果**逐字段等价**
+        // （`goal = 0` → `is_set()` 为假 → 状态栏整项不画，
+        // `percent` 为 `None`、`reached` 为假，`words` 在未设目标时无人读），
+        // 但省掉了一次整篇统计。
+        GoalProgressView::default()
+    };
     let doc = app.active_doc.map(|id| id.as_u64());
     app.status_bar.note_goal(progress, doc, now_ms);
 }
 
 pub fn show(app: &mut EditorApp, ui: &mut Ui) {
     sync_encoding(app);
-    sync_goal(app);
+    // 状态栏统计防抖（建议一 / 问题 039）：每帧只算一次，供「写作目标进度」
+    // 与「字数」共用；打字期沿用上一次静止结果，停手满窗口才刷新。
+    // 统计浮层另走 `current_stats`（点击即时），不受影响。
+    let stats = app.current_stats_for_status_bar();
+    sync_goal(app, stats.as_ref());
     let height = app.theme().metrics.statusbar_height;
     // 先把消息取出来：它带到期时间，必须在绘制前结算，
     // 否则一条 3 天前就该消失的错误会一直画着。
@@ -67,7 +87,7 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
     let message = app.status_bar.take_message(now_ms);
     egui::Panel::bottom("rustmark.statusbar")
         .exact_size(height)
-        .show(ui, |ui| draw(app, ui, message));
+        .show(ui, |ui| draw(app, ui, message, stats));
 }
 
 /// 状态栏要显示的**全部**信息，一次算清。
@@ -114,9 +134,13 @@ pub struct StatusBarModel {
 }
 
 /// 由应用状态构造状态栏模型。
-pub fn build_model(app: &EditorApp) -> StatusBarModel {
-    let (line, col) = app.cursor_line_col();
-    let position = match app.selection_line_col() {
+pub fn build_model(app: &EditorApp, stats: Option<StatsView>) -> StatusBarModel {
+    // 三处行相关文案（光标行列 / 选区行列 / 「N 行」）共用**一次**全文扫描
+    // （问题 053）：旧写法各算各的，1MB 上一帧要扫三遍、其中两遍还各建一份
+    // 58k 项的 `Vec<usize>`，实测每帧恒定 1.1ms。
+    let index = app.line_index();
+    let (line, col) = app.cursor_line_col_in(&index);
+    let position = match app.selection_line_col_in(&index) {
         Some(((sl, sc), (el, ec))) => {
             if (sl, sc) == (el, ec) {
                 format!("行 {line}, 列 {col}")
@@ -126,8 +150,11 @@ pub fn build_model(app: &EditorApp) -> StatusBarModel {
         }
         None => format!("行 {line}, 列 {col}"),
     };
-    let stats = app.current_stats();
-    let words = stats.as_ref().map_or(0, |s| s.words);
+    let words = stats.map_or_else(
+        // `None` 表示「未预计算」：退回即时统计（测试 / 浮层路径等同旧行为）。
+        || app.current_stats().map_or(0, |s| s.words),
+        |s| s.words,
+    );
     let is_dirty = app.current_document_dirty();
     let wrap_on = app.editor.word_wrap;
     let spell_on = app.editor.spell_check;
@@ -155,7 +182,7 @@ pub fn build_model(app: &EditorApp) -> StatusBarModel {
         wrap_on,
         theme_label,
         theme_hint,
-        line_count: format!("{} 行", thousands(app.current_line_count())),
+        line_count: format!("{} 行", thousands(index.count())),
     }
 }
 
@@ -189,11 +216,12 @@ fn draw(
     app: &mut EditorApp,
     ui: &mut Ui,
     message: Option<crate::presentation::state::status_bar_ui_state::StatusMessage>,
+    stats: Option<StatsView>,
 ) {
     let theme = app.theme().clone();
     ui.painter()
         .rect_filled(ui.max_rect(), egui::CornerRadius::ZERO, theme.bg_secondary);
-    let model = build_model(app);
+    let model = build_model(app, stats);
     let now_ms = app.services.markdown.now().millis();
 
     let mut intents: Vec<IntentKind> = Vec::new();

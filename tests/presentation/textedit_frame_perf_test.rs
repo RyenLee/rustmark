@@ -192,10 +192,14 @@ fn warm_editor(app: &mut EditorApp, clock: &TestClock) -> (egui::Context, f64) {
 /// 这条断言立刻红——它同时钉住「高亮降级（OPT-011 ①）仍然生效」这个用户可感的性质。
 ///
 /// **> 500KB（已降级为纯文本）**：给 **64ms**，语义退化为「防数量级退化」。
-/// 这一档**实测超指标**（1MB 约 41ms，见 `docs/metrics.md` §3.2.3）：文本一变就得
-/// 重建 58k 行的 `Galley`，而 egui 0.37 的 `TextEdit` 无视口虚拟化 API，这笔钱
-/// 花在框架里、本项目无法规避（同源结论见 §3.2.2 结论 6）。此处不假装达标，
-/// 只钉住「别更糟」——真要把 1MB 打字做进 16ms，得自绘编辑器。
+/// 这一档**实测超指标**（1MB 约 41ms，见 `docs/metrics.md` §3.2.3）：此处不假装达标，
+/// 只钉住「别更糟」。
+///
+/// ⚠ **2026-10-16 问题 049 修正**：本函数原先写「这笔钱花在框架里、本项目无法规避，
+/// 真要把 1MB 打字做进 16ms 得自绘编辑器」——该归因已被实测证伪。1MB 击键帧里每帧
+/// 真正重排的行数**恒为 1**（不是 58k 行），成本构成为「空闲帧 + 排版层 +
+/// `diff_replace` + 应用层文本变更链」，其中占 58% 的应用层净开销与自绘无关。
+/// 见 `docs/metrics.md` §3.2.4 与 `docs/archive/stage-reports/textedit-cost-attribution.md`。
 fn typing_frame_limit_ms(bytes: usize) -> f64 {
     let release = if bytes >= 1024 * 1024 { 64.0 } else { 16.0 };
     if cfg!(debug_assertions) {
@@ -405,8 +409,10 @@ fn measure_textedit_typing_frame_at_three_sizes() {
         let before = text.len();
         let (ctx, mut time_s) = warm_editor(&mut app, &clock);
 
-        // 同一运行内的空闲帧对照：把「击键帧 − 空闲帧」归因到「文本变化」这件事上
-        // （1MB 档靠它说明多出来的成本不是我们每帧前置工作，而是框架重建 Galley）。
+        // 同一运行内的空闲帧对照：把「击键帧 − 空闲帧」归因到「文本变化」这件事上。
+        // ⚠ 问题 049 起，`textedit_cost_attribution_test.rs` 用八组对照做了完整归因：
+        // 多出来的成本**不是**「框架重建整篇 Galley」（实测每帧只重排 1 行），而是
+        // 「排版层 + `diff_replace` + 应用层文本变更链」。本行注释原先的推断已作废。
         let idle: Vec<f64> = (0..5)
             .map(|_| editor_frame(&ctx, &mut app, &clock, &mut time_s, Vec::new()))
             .collect();

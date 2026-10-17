@@ -137,15 +137,13 @@ impl UndoStack {
     /// 合并条件（三者同时满足）：
     /// ① 上一次编辑也是插入类；② 距上一次记录在 `merge_window_ms` 之内（含端点）；
     /// ③ 上一次记录就发生在**本栈**（由类型归属保证，跨文档不可能合并）。
+    ///
+    /// ⚠ **要合并的那份快照是白构造的**：合并命中时它被直接丢弃，而它含一份整篇
+    /// 文本。调用方若在意这个成本（编辑聚合的每击键路径就很在意），应先用
+    /// [`Self::would_merge`] 判、命中则改调 [`Self::merge`]——见
+    /// [`crate::domain::document::aggregate::Document::apply`]。
     pub fn push(&mut self, before: Snapshot, kind: ModificationKind) -> bool {
-        let merged = matches!(
-            (self.last_kind, self.last_at),
-            (Some(last_kind), Some(last_at))
-                if last_kind.mergeable_with(kind)
-                    && before.at().within(last_at, self.policy.merge_window_ms)
-        );
-
-        if merged {
+        if self.merges_with_last(kind, before.at()) {
             // 滚动窗口：以本次时间作为新的窗口起点，未入栈。
             self.last_at = Some(before.at());
             return true;
@@ -161,6 +159,31 @@ impl UndoStack {
         self.last_kind = Some(kind);
         self.last_at = Some(at);
         false
+    }
+
+    /// 只回答「这次编辑会不会与上一次合并」，**不构造任何快照**（问题 053）。
+    ///
+    /// 判据与 [`Self::push`] 完全同源（共用 [`Self::merges_with_last`]），
+    /// 故「先判后建」与「先建后判」的结果逐例一致。
+    pub fn would_merge(&self, kind: ModificationKind, at: Timestamp) -> bool {
+        self.merges_with_last(kind, at)
+    }
+
+    /// 合并命中：只把窗口起点推到 `at`，不入栈、不构造快照。
+    ///
+    /// 与 [`Self::push`] 的合并分支逐字段等价（那里写的就是 `last_at = at`）。
+    pub fn merge(&mut self, at: Timestamp) {
+        self.last_at = Some(at);
+    }
+
+    /// 合并判据的唯一实现（[`Self::push`] 与 [`Self::would_merge`] 共用）。
+    fn merges_with_last(&self, kind: ModificationKind, at: Timestamp) -> bool {
+        matches!(
+            (self.last_kind, self.last_at),
+            (Some(last_kind), Some(last_at))
+                if last_kind.mergeable_with(kind)
+                    && at.within(last_at, self.policy.merge_window_ms)
+        )
     }
 
     /// 撤销一步：弹出最近一次「编辑前的状态」，并把 `current` 压入重做栈。

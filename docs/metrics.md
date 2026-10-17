@@ -12,7 +12,7 @@
 | `NFR-PERF-01` | 安装包体积 | ≤ 10 MB（预警 8 MB） | Windows：`dir` 或 `stat` 产物；macOS：`du -h *.dmg`；Linux：`stat -c%s *.AppImage` | 三平台各 1 次，取最大值 | **Windows 实测 10.93 MiB，仍越线 0.93 MiB**——初始 11.04 MiB 见 §2.4 归因，依赖复查后的复测见 §2.5 |
 | `NFR-PERF-02` | 冷启动 | ≤ 2s（p50 目标 300–500ms） | 计时脚本：exec 到首帧提交（`app.rs` 内埋点输出） | 每平台 5 次，取中位数；**排除首次磁盘冷缓存** | 待阶段 08 |
 | `NFR-PERF-03` | 空闲内存 | **按平台各自阈值**（ADR-006 修订）：Windows **≤ 150 MB**（判定口径 **Private Working Set**）；macOS / Linux 待 Stage 09 真机补测后填入 | Windows：PowerShell `Get-Process` 取 **PrivateMemorySize64 之外的 Private Working Set**（WorkingSet64 仅作参考，噪声 ±20 MB）；macOS：`footprint <pid>`；Linux：`/proc/<pid>/status` VmRSS | 打开空白文档静置 10s 后取值；三口径**不可横向比较**，各记各的；定阈值前**必须先做地板探针**分清图形栈基线与自有代码 | ✅ 已裁定（Windows 125.3 MB / 阈值 150 MB） |
-| `NFR-PERF-04` | 编辑响应 | ≤ 16ms（一帧），p95 | 帧内埋点：输入事件到重绘完成 | 连续输入 100 次，取 p95 | **已实测（§3.2.3）**：10KB p95 **0.58ms** ✅ ｜ 100KB p95 **4.01ms** ✅ ｜ **1MB p95 42.00ms ❌ 超 2.6×**——根因是 egui 文本一变即重建 58,514 行 `Galley`，0.37 的 `TextEdit` 无视口虚拟化 API，本项目不可规避（§3.2.2 结论 6）。三档均断言「打字期零解析」（计数，非耗时） |
+| `NFR-PERF-04` | 编辑响应 | ≤ 16ms（一帧），p95 | 帧内埋点：输入事件到重绘完成 | 连续输入 100 次，取 p95 | **已实测（§3.2.3）**：10KB p95 **0.49ms** ✅ ｜ 100KB p95 **3.02ms** ✅ ｜ **1MB p95 32.91ms ❌ 超 2.06×**（052 修复前 37.08ms ／ 051 前 42.00ms）。1MB 的**根因已由问题 049 改写**（§3.2.4）：**既不在 egui、也不需要自绘编辑器**。第二轮（§3.2.5）把余下部分拆到代码行：**状态栏每击键一次的整篇字数统计 ~9.5ms 是当前最大单块**。第三轮（§3.2.6）落地 `diff_replace` 字节层改造（6.93 → 0.24ms）。第四轮（§3.2.7）落地排版层缓存 miss 路径去重复分配（E2 9.70 → 4.62ms，−52%）。第五轮（§3.2.8 / 问题 053）收敛零散每帧成本：`LineIndex` 合并 4~5 遍/帧的行扫描为 1 遍 + 复用、未设写作目标时跳过整篇字数统计、撤销合并先判后建省掉每键一次全文快照。三档均断言「打字期零解析」（计数，非耗时）；第六轮（§3.2.9 / 问题 054）把状态栏每击键一次的整篇字数统计纳入防抖（`StatsPace` 节拍器，仿 `HighlightPace`：打字期沿用上次静止值、停手满 150ms 才刷新；on-demand 统计浮层仍走 `current_stats` 即时），每击键省一次 `compute_stats` ~9.5ms——击键帧最大单块就此移出热路径；**第七轮（§3.2.10 / 问题 055）把 `compute_stats` 的六遍全文遍历合并为 1~2 遍（字符一遍 `char_indices` + 链接字节一遍、零分配），1MB 单次结算 9.49 → 5.55ms（−42%），进一步压低「停手帧」的补偿成本**。 |
 | `NFR-PERF-05` | 语法高亮 | ≤ 10ms（10KB 全文） | `HighlightQuery` 计时（调试面板 + 基准） | 20 次取 p50/p95 | 待阶段 05/08 |
 | `NFR-PERF-06` | Markdown 解析 | ≤ 5ms（10KB） | `RenderPreviewQuery` 计时 | 20 次取 p50/p95 | 待阶段 05/08 |
 | `NFR-PERF-07` | 大文件 1MB | 可编辑不卡顿 | 手动验证 + 帧时间 p95 ≤ 16ms | 打开/滚动/查找/保存四项 | 待阶段 07/08 |
@@ -414,6 +414,10 @@ cargo test --release --test presentation -- --nocapture textedit_frame
    `TextEdit` **不提供**该能力（无 `show_viewport` / `visible_range`），要它只能自绘
    编辑器——不在本期范围。逐条审计见 `docs/archive/stage-reports/textedit-lag-audit.md`。
 
+   > ⚠ **2026-10-16 问题 049 限定**：本条测的是**空闲帧**（3.16ms），其归因仍成立；
+   > 但由此推出的「1MB 要达标只能自绘编辑器」**不成立**——击键帧的大头不在这 3ms 里，
+   > 见 §3.2.4 与 `docs/archive/stage-reports/textedit-cost-attribution.md`。
+
 **守卫**：`tests/presentation/textedit_frame_perf_test.rs` 对三档空闲帧 p50 断言
 （release 8 / 8 / 24 ms，debug ×8），只钉「数量级退化」（例如有人再把全文快照拖回帧路径），
 不做数字裁定。「每帧不得快照全文」另有**确定性**钉法——按调用计数断言，见
@@ -451,13 +455,19 @@ diff / 排版 → 重绘，而非直接改 `editor_text`），每帧显式推进
    100 次输入期间高亮缓存 `misses` 增量为 **0**（三档一致）；对照实验（停手越过
    150ms 窗口）让它**涨 1**。变异验证：把防抖短路注掉后，同一条断言立刻抓到
    **99 次**解析。⇒ OPT-011 ①「打字期不上色」在连续输入下确实生效。
-3. **1MB 档超指标，根因在 egui，不在本项目。**文本一变就要重建 58,514 行的
-   `Galley`，42.00ms 与 §3.2.2 空闲帧 3.25ms 的差（约 39ms）来自这里；本项目每帧
-   的前置工作（高亮查询 / 行数 / 旧文本克隆）在 100KB 上合计 < 0.2ms（§3.2.2
-   分项表），线性外推到 1MB 也只有 2ms 量级。egui 0.37 的 `TextEdit` **不提供**
-   视口虚拟化（§3.2.2 结论 6 同源），这笔成本无法在本项目内规避——要做进 16ms
-   只能自绘编辑器，不在本期范围。**据此不假装 1MB 达标**，只对 10KB / 100KB 守
-   16ms 指标。
+3. **1MB 档超指标，根因在应用层——不在 egui、也不在排版层。**
+   本节原文把根因判给「egui 文本一变即重建 58,514 行 `Galley`，这笔成本无法在本项目内
+   规避，只能自绘编辑器」，该判定**已被问题 049 的实测证伪**（§3.2.4）：
+   100 帧连续击键里**每帧真正重排的行数最大值为 1**，整篇重排从未发生；
+   40.92ms 的真实构成是「空闲帧 7.06 + 排版层 9.24 + `diff_replace` 6.93 + 余下 17.68」，
+   其中 `E1 − E7 = 23.67ms` 全部来自 `EditorApp` 的文本变更链（裸宿主里没有这些）。
+   用自绘编辑器替换编辑表面**动不到这 23.67ms**，故「只能自绘」的推论一并撤回。
+   **据此不假装 1MB 达标**，只对 10KB / 100KB 守 16ms 指标。
+
+   > ⚠ **2026-10-16 问题 049 改写**：本条的原始表述为「文本一变就要重建 58,514 行的
+   > `Galley`，42.00ms 与空闲帧 3.25ms 的差（约 39ms）来自这里……只能自绘编辑器」。
+   > 证伪依据与本条的关系见 §3.2.4 结论 1；完整报告见
+   > `docs/archive/stage-reports/textedit-cost-attribution.md`。
 4. **1MB 的 `misses` 同样不增**（> 500KB 走降级路径，压根不进高亮器），
    所以第 2 条的计数断言在三档上一致成立——它钉的是「打字期不得解析」，
    与档位是否降级无关。
@@ -467,6 +477,361 @@ diff / 排版 → 重绘，而非直接改 `editor_text`），每帧显式推进
 三档都断言「打字期 `misses` 不涨」。
 `typing_cheap_because_highlight_is_deferred_not_absent` 提供对照，并钉住「停手后防抖
 已追上文档版本」（`highlight_pace_snapshot`）。
+
+#### 3.2.4 编辑区 1MB 击键帧成本归因（问题 049）
+
+§3.2.3 只记录了 1MB「超指标」的数字与一个**根因判定**。本节用八组对照把 40.92ms
+拆开，并据此**撤回**该判定（原文「egui 文本一变即重建 58,514 行 `Galley` ⟹ 只能自绘编辑器」）。
+
+```text
+cargo test --release --test presentation -- --nocapture profile_1mb_typing_frame
+```
+
+口径同 §3.2.3（真实 `Event::Text`、每帧推进 8ms、可控时钟）。E3 与 E7 **共用同一个
+探针函数**，唯一差别是是否挂自定义 layouter，故 `E7 − E3` 干净地隔离出「自家逐行排版
+相对上游按段落排版的净开销」；`E1 − E7` 则隔离出「`EditorApp` 的每帧前置工作 +
+文本变更回写链」（裸宿主里没有这些）。
+
+| 组 | 被测对象 | p50 | p95 |
+|---|---|---|---|
+| E1 | **现状**：真实 `EditorApp` + 逐行 layouter | **40.92** | 43.42 |
+| — | E1 同运行空闲帧 | 7.06 | — |
+| E1 | 每帧真正重排的行数（100 帧） | **max = 1** | — |
+| E2 | 排版层·文本变一字节（`highlight_layout_with_find`） | 9.24 | 11.17 |
+| E2b | 排版层·整文档缓存命中 | **0.238** | — |
+| E3 | 裸 `TextEdit` + 上游默认 layouter（按段落缓存） | 19.04 | 20.40 |
+| E7 | 裸 `TextEdit` + 本项目逐行 layouter | **17.24** | 17.88 |
+| E8 | `editor_ops::diff_replace`（1MB 整篇） | 6.93 | — |
+
+```text
+40.92 = 空闲帧 7.06 + 文本变更 33.86
+33.86 = 排版层 9.24 + diff_replace 6.93 + 余下 17.68
+应用层净开销（E1 − E7） = 23.67   ←── 占击键帧 58%
+```
+
+**结论**
+
+1. **「文本一变即重建 58,514 行 `Galley`」证伪。** 100 帧连续击键里每帧重建行数
+   **max = 1**，E2 的 20 次独立调用取值集合为 `{1}`——逐行增量缓存（`LINE_LAYOUT` +
+   内容差分映射）完全正常，整篇重排从未发生。§3.2.3 结论 1（重建行数 == 1）才对。
+2. **自研逐行排版层不慢于上游。** 同一宿主、同一文本、只换 layouter：E7 **17.24** <
+   E3 **19.04**（三轮运行方向一致，差额 1.80~4.10ms）。⇒ 自研排版层是有效资产；
+   「换成上游默认 layouter」不是出路。
+3. **大头在应用层，其中一处是确定性缺陷。** `E1 − E7 = 23.67ms` 全部来自 `EditorApp`
+   的文本变更链；`editor_ops::diff_replace` 单项 **6.93ms**——它把 1MB 文本两侧各
+   `chars().collect::<Vec<char>>()`（约 2×1.4MB 分配 + 两遍 UTF-8 解码），再调两次
+   `char_to_byte`（内部 `char_indices().nth(k)`，O(k)）。与问题 046「为两个整数付
+   O(全文)」同一性质，属**低风险可优化项**（改字节层前后缀比较即可）。
+4. **1MB 达标不需要自绘编辑器。** 自绘替换的是编辑表面与排版，动不到第 3 条的
+   23.67ms；而排版层已证明不劣于上游。原判定链「egui 无虚拟化 ⟹ 只能自绘」作废，
+   「是否自绘」应作为独立议题（收益面只剩超大文档可编辑性）重新评估。
+
+**遗留**：余下 17.68ms 未拆开，嫌疑清单与后续步骤见报告 §5。
+
+**守卫**：`tests/presentation/textedit_cost_attribution_test.rs::profile_1mb_typing_frame_cost_attribution`
+按**计数**断言「每帧重建行数 ≤ 4」（实测恒为 1），钉住「逐行增量不得退化成整篇重排」——
+与耗时无关、不受机器快慢影响。数字一律 release；debug 下帧数按 `frames_for()` 缩放，
+只承担守卫职责。完整报告（含三轮复现表与局限声明）见
+`docs/archive/stage-reports/textedit-cost-attribution.md`。
+
+#### 3.2.5 应用层每帧 `O(全文)` 开销（问题 049 续，第二轮）
+
+§3.2.4 把 1MB 击键帧拆到「排版层 / `diff_replace` / 余下 17.68ms」，余下未拆开。
+本节用**消融 + 单项探针 + 长度斜率**三种手段把它拆到代码行。结论：最大单块是
+**状态栏每击键一次的整篇字数统计**，与 egui、与自绘编辑器均无关。
+
+```text
+cargo test --release --test presentation -- --nocapture profile_1mb_app_layer
+```
+
+| 组 | 手段 | 被测对象 | 1MB p50 |
+|---|---|---|---|
+| A2 | 消融 | 状态栏（只切 `status_bar_visible`） | **开 41.45 ／ 关 30.43 → 11.02** |
+| — | — | A2 两组各自的空闲帧 | 7.33 ／ 6.47 |
+| S1 | 合成 | 整篇 `String` 克隆（`prev.clone()` / 撤销快照同源） | 0.22 |
+| S2 | 合成 | `format!` 重建整篇最终串 | 0.37 |
+| S3 | 合成 | `line_start_offsets`（`scroll_sync.rs`，每帧一次） | 0.82 |
+| S4 | 合成 | `line_count`（`shared::text`，编辑区 + 状态栏各一次） | 0.28 |
+| S5 | 真实链路 | 领域 `replace_range` 全链路（10KB 档 ≈ 0） | 0.28 |
+| S6 | 真实链路 | `get_stats` **miss 帧**（整篇克隆 + 全文按行统计） | **9.49** |
+
+```text
+41.45 = 空闲帧 7.33 + 文本变更 34.12
+34.12 = 状态栏整篇统计 9.49 + 排版层 9.23 + diff_replace 6.80 + 余下 8.60
+状态栏账目：每帧恒定 7.33−6.47 = 0.86 ≈ S3+S4 ／ 每击键 (11.02−0.86) = 10.16 ≈ S6
+```
+
+**结论**
+
+1. **最大单块是状态栏的整篇字数统计（9.49ms，占击键帧 23%）。** 状态栏每帧查两次
+   `get_stats`，缓存键 `(id, revision)`；击键帧 `revision` 必变 → 每敲一个键就把 1MB
+   全文重新统计。`compute_stats`（`service/stats.rs:27`）在 1MB 上做**约六遍全文遍历**
+   （按行扫 + 逐字节扫链接 + 逐字符扫字数 + 两次 `chars().count()` + `line_count`）。
+   与问题 046、§3.2.4 结论 3 是**同一类缺陷的第三例**：单次不贵，但挂在每击键路径上。
+2. **关掉状态栏仍 30.43ms（超标 1.9×）⇒ 单修一项不够**，但剩余三项分别在应用层、
+   应用层、`TextEdit` 内部——**没有一项需要自绘编辑器**（§3.2.4 结论 4 继续成立）。
+3. **§3.2.4 的嫌疑清单被实测否决**：`prev.clone()` 0.22、`format!` 重建 0.37、
+   领域 `replace_range` 0.28、`transform_insert`（1MB 普通击键只走单字符短路分支，不扫全文）。
+   真正的钱花在**没人列进清单的状态栏**上。
+
+**优化候选**（详见报告 §11）：①字数统计纳入防抖（~9.5ms，与 `HighlightPace` 同源先例）；
+②`compute_stats` 六遍遍历合并为 1~2 遍（~4~6ms）；③`diff_replace` 改字节层前后缀
+（~6.8ms）。①+③ 预计把 1MB 击键帧从 41.45 → 约 25ms（仍超 16ms，缺口在排版层与
+`TextEdit` 变更路径）。
+
+> ⚠ **③ 已于第三轮落地**（§3.2.6）：实测 6.93 → 0.24ms，1MB 击键帧 40.92 → 33.73~34.55。
+> ①② 仍是待办；落地后按同一口径复测。
+>
+> ⚠ **第四轮补充（报告 §14）**：把「排版层 9.1ms」拆开后，微基准显示其中约 **6.6ms** 是
+> 本项目自己的缓存簿记（`highlight_layout.rs` 的 `:98` 整条 clone / `:114` 拆行 /
+> `:149` 上一版 `Vec<String>` 克隆 / `:270` 58.5k 行 `String` 重建），**与 egui 无关、
+> 自绘也躲不掉**；建议优先级与 ① 相当。①+②+该二项估算把 1MB 击键帧从 34.1 压到
+> **16~18ms**。完整排序与改法见报告 §14。
+
+**守卫**：`tests/presentation/textedit_cost_attribution_test.rs::profile_1mb_app_layer_whole_text_costs`
+断言「关掉状态栏必须真的更快（差额 > 2ms）」+ 每组的注入字节自检。
+
+#### 3.2.6 优化落地：`diff_replace` 字节层前后缀（问题 049 修复）
+
+§3.2.4 / §3.2.5 两轮把 1MB 击键帧拆开后，**唯一的确定性缺陷**是
+`editor_ops::diff_replace`（`transform.rs`）：它挂在「每击键一次」的路径上，
+却先把两整篇文本 `chars().collect::<Vec<char>>()`（1MB = 2 × 35 万 char，
+约 2.8MB 分配 + 两遍 UTF-8 解码），再用两次 `char_to_byte`
+（`char_indices().nth(k)`，O(k)）把字符索引换回字节——只为求一个公共前后缀。
+
+**改法**：前后缀改在**字节层**比较（不分配、不解码），再把字节边界用
+`str::is_char_boundary` 回退/收拢到字符边界。UTF-8 是自同步编码——某位置是否为
+字符边界只取决于该位置自身是否为续字节，而公共前缀段两侧逐字节相同，故边界判定
+两侧一致，无需构造任何字符级缓冲。字符索引此时只需**算一次**（`byte_to_char`
+于前缀处），光标用「前缀字符数 + 插入内容字符数」推出。
+
+| 量 | 修复前 | 修复后（三轮） |
+|---|---|---|
+| `diff_replace`（1MB，文末追加 = 前缀最长） | **6.93** | **0.24 / 0.25 / 0.24** |
+| `diff_replace`（1MB，文档中点替换） | 6.9（同量级，旧实现与位置无关） | **0.33** |
+| 1MB 击键帧 p50（E1） | 40.43 / 40.62 / 40.92 | **34.55 / 33.73 / 35.48** |
+| 1MB 击键帧 p95 | 43.42 | **37.41 / 36.12 / 38.56** |
+| 1MB 同运行空闲帧 | 7.06 | 7.32~7.65 |
+
+改后三轮 E1 区间（33.7~35.5）与改前（40.4~40.9）**无重叠**，差额 5.4~6.4ms，与该项
+绝对降幅（6.7ms）同量级，交叉印证。
+
+**结论**
+
+1. **单次调用提速约 27×**（6.93 → 0.24ms），击键帧同步下降 6.4~7.2ms；差额与
+   `diff_replace` 的绝对降幅一致，说明这笔钱确实全部来自那一处。
+2. **成本不再与改动位置强相关**（文末 0.24 / 中点 0.33）——旧实现无论改哪里都要
+   整篇字符化，新实现只在前缀处做一次字符计数，量级恒定。
+3. **对外语义零变化**：以旧实现为基准做了等价性对照（`diff_replace_matches_char_level_reference`，
+   覆盖中文 / 4 字节字符 / 公共前后缀落在字符中间的边界），逐字段相等。
+4. 1MB 仍超 16ms 2.3×，**剩余大头是状态栏整篇统计（9.30ms）+ 排版层（9.09ms）
+   + 空闲帧（7.5ms）**——即 §3.2.5 的 ①② 两项待办。
+
+**守卫**：`diff_replace` 三条边界单测（前缀回退 / 后缀收拢 / 逐字段等价于旧实现）
++ 归因用例里的量级断言（两位置均须 < 2ms，退化即红）。
+变异验证：去掉两处 `is_char_boundary` 调整 → 三条单测立即全部 panic 在非字符边界切片上。
+
+### 3.2.7 排版层缓存 miss 路径去重复分配（问题 052，2026-10-16）
+
+**背景**：§3.2.5 的隔离微基准把 1MB 的「排版层 9.1ms」里的 71% 定位成**本项目自己的
+缓存簿记**（归因报告 §14.3）。本节是它的落地与实测。
+
+**改动**（`mapper/highlight_layout.rs`、`mapper/highlight_cache.rs`；全部是内部实现，
+对外可观测行为零变化）：
+
+| # | 改动 | 早先的写法 |
+|---|---|---|
+| ① | 整文档缓存**在借用内比对**，文本判据取 `galley.text()` | `c.borrow().clone()`——`Ref<T>` 不实现 `Clone`，复制的是**整条条目**（含 1MB 全文） |
+| ② | 上一版行布局**整条移出**（`mem::take`），用完写回 | `c.lines.clone()`（58k 次小堆分配）+ `c.galleys.clone()` |
+| ③ | 行内容**移动复用**（`Option::take`），只重排的行新建 | `lines.iter().map(to_string).collect()` 全量重建 |
+| ④ | 行 Galley 表**移动**写回 | `c.galleys = line_galleys.clone()` |
+| ⑤ | 拆行按**上一版行数**预置容量 | `split('\n').collect()`（`Split` 的 `size_hint` 下界为 0 → 反复扩容搬移） |
+
+附带：`WHOLE_CACHE` 不再另存一份全文（1MB 常驻内存随之消失）；刻意不用哈希当键
+（碰撞 → 残留旧字形），见 `WholeCacheEntry` 的注释。
+
+**实测**——release、`--test-threads=1`、**同机 A/B**（把两个源文件 `git stash` 回滚后
+用同一条命令再测一次；这是唯一可信的对照方式，不同机器状态的两组数字不可相减）：
+
+```bash
+cargo test --release --test presentation -- --nocapture --test-threads=1 profile_1mb_typing_frame_cost_attribution
+cargo test --release --test presentation -- --nocapture --test-threads=1 measure_textedit_typing_frame_at_three_sizes
+```
+
+| 量 | 改动前 | 改动后 | 变化 |
+|---|---|---|---|
+| **E2 排版层**（1MB、文本变 1 字节） | 9.70ms | **4.62ms** | **−5.08ms（−52%）** |
+| E2b 整文档缓存命中（单次调用） | 0.297ms | **0.029ms** | −0.268ms（−90%） |
+| E1 1MB 击键帧 p50 / p95 | 35.62 / 38.36ms | **29.83 / 31.83ms** | −5.79 / −6.53ms |
+| E1 同运行空闲帧 p50 | 7.61ms | 7.71ms | 持平（噪声） |
+| **`NFR-PERF-04` 口径** 1MB 击键帧 p50 / p95 | 35.19 / 37.08ms | **29.48 / 32.91ms** | −5.71 / −4.17ms |
+| 同上 100KB p95 | 3.40ms | **3.02ms** | −0.38ms |
+| 同上 10KB p95 | 0.59ms | **0.49ms** | −0.10ms |
+| E7 自家逐行排版（裸 `TextEdit` 宿主） | 18.65ms | **13.45ms** | −5.20ms |
+| E3 上游默认 layouter（**对照组**，本次一行未改） | 20.08ms | 20.25ms | 持平 |
+| 每帧真正重排行数（100 帧） | max 1 | max 1 | 不变 |
+
+**判读**
+
+1. **E3 持平是这组数字的对照组**：上游 layouter 本次一行未动，两次读数（20.08 / 20.25）
+   证明机器状态没有漂移，故 E7 的 −5.20ms 确实来自本项目排版层，而不是环境抖动。
+2. **提速不是因为少排了行**：`reshaped_lines` 20 次调用全部为 `[1]`——计数证据，
+   不是耗时推断。
+3. **自家排版层从「略快于上游」变成「显著快于上游」**：E7 − E3 由 −1.43ms 变为
+   **−6.80ms**。「换回上游 layouter」这条路彻底关闭；这也是 §14.4「不建议自绘」
+   的一条新证据——本项目排版层已是这条链上最快的一环。
+4. **落地值低于预估，据实修正**：报告 §14.3 预估 9.1 → 2.5~3.5ms，实际 4.62ms。
+   差额来自预估时未计入的固定项：1 行真实排版 ≈1.5ms、`concat` 逐行克隆 `Arc<Row>`
+   ≈0.4ms、`reuse_map` ≈0.7ms、拆行扫描 ≈0.5ms。**不按预估值记账。**
+5. **账目刷新**：`29.83 = 空闲 7.71 + 排版层 4.62 + 余下 17.50`，其中余下含
+   状态栏整篇统计 ≈9.5ms（自 §3.2.5 沿用，本项未触及状态栏代码）与
+   「`prev` 克隆 / 最终串重建 / 领域回写 / `TextEdit` 变更路径」≈8.0ms。
+
+**守卫**（`tests/presentation/highlight_layout_test.rs`，新增 3 条）
+
+1. `unchanged_lines_share_rows_with_previous_frame`——改一行后，未变的行必须与上一帧
+   **共享同一个 `Arc<Row>`**（`Galley::concat` 对每行做 `Arc::clone`，故「复用」≡
+   「行的 `Arc` 身份不变」），被编辑的那行必须**不**共享。**结构性断言，不受 CI 抖动影响。**
+2. `incremental_reuse_stays_equivalent_to_whole_document_layout`——复用路径的输出必须与
+   「整篇一次排版」逐行等价。既有等价性用例只在**冷缓存**下验证，覆盖不到复用路径；
+   这里覆盖 5 种编辑形态（等长改字 ×3、插入一行、删除一行）。
+3. `whole_document_cache_distinguishes_equal_length_texts`——等长异内容不得互相命中，
+   钉住 ① 换掉的只是**存储方式**、不是判据本身。
+
+顺带把 `assert_rows_equivalent` 由「比字形**个数**」强化为「比字形**字符**」：
+`'d'` 与 `'1'` 都是 1 个字形，只比个数会让「复用了内容已变的旧行」溜过去。
+
+**变异验证**（三次，均当场变红）
+
+| 变异 | 结果 |
+|---|---|
+| 复用索引错位（`old_galleys.get(i)` → `get(i + 1)`） | 新守卫 1 / 2 双双变红（另连带 6 条既有用例） |
+| 文本判据退化为只比长度（`galley.text().len() == text.len()`） | 新守卫 3 变红；守卫 2 报「整篇 Galley 必须携带当前全文」 |
+| 复用映射表改为中段**无条件配对** | 守卫 2 报 `left: "Some **bold** text"` ／ `right: "Some **bo1d** text"`——正是「复用内容已变的旧行」这一失效模式 |
+
+### 3.2.8 零散每帧成本收敛（问题 053，2026-10-17）
+
+**背景**：§3.2.5 的隔离微基准把「每帧前置工作」拆出 6 项（S1 旧文本克隆 / S2 高亮查询 /
+S3 行起点表 / S4 行数 / S5 光标行号 / S6 字数统计）。其中 S3+S4 在 1MB 上合计 **1.1ms/帧**，
+且被状态栏（光标的行列、选区行列、「N 行」）与编辑区（`desired_rows`、行号栏宽度）**各扫一遍**
+——同一份信息每帧被重复扫描 4~5 次。本项把这几处零碎成本收敛，单条都不大、合起来占编辑区
+稳态帧的可见比例。
+
+**改动**（`scroll_sync.rs`、`app/frame.rs`、`app/frame/editor.rs`、`status_bar_view.rs`、
+`editor_view.rs`、`domain/document/undo.rs`、`domain/document/aggregate.rs`、
+`application/preferences/service.rs`）：
+
+| # | 改动 | 早先的写法 | 性质 |
+|---|---|---|---|
+| ① | 新增 `LineIndex`：**一遍扫描**同时给出「行起点表 + 行数」；`EditorApp` 每帧按 `(doc, revision, len)` 缓存一份，帧内其余调用 O(1) 复用 | `line_start_offsets` 与 `line_count` 各扫一遍、每处各扫一遍（4~5 遍/帧） | 落地 |
+| ② | `sync_goal` 先问 `has_writing_goal()`，**未设目标时跳过整篇字数统计** | 无条件先取 `current_stats()`（一次整篇六遍遍历，miss 时 1MB 上 9.49ms），再把算不出的目标投影丢弃 | 落地 |
+| ③ | `UndoStack` 新增 `would_merge`/`merge`；`Document::apply` 先判「会不会合并」再决定**是否构造整篇快照**，合并命中只滚动时间窗（零分配） | `push` 每次都先 `snapshot_at`（含一份整篇 `String` 复制），合并命中再丢弃——连续打字每键白付一次全文复制 | 落地 |
+| ④ | `prev = editor_text.clone()` | 每帧无条件克隆 1MB 旧文本（`diff_replace` 的基准） | **据实保留**（见下） |
+
+**④ 为什么保留克隆（而非门控）**：§3.2 的归因里假设「无输入事件文本就不会变」，但同一文件里
+有两条**与 `InputState::events` 无关**的写入路径——无障碍 `SetValue`（`accesskit_set_text_request`）
+与拖放文本插入（读 `raw.dropped_files`）。按事件判空会**静默丢掉**这两类编辑（辅助技术用户 +
+拖放粘贴），而补一条「旧文本退回领域内容」的兜底要么不触发（优化收益为零）、要么触发时正是要省掉
+的那次全文复制——两边都不划算。故保留克隆，结论记入 §14.3.2。
+
+**派生收益（非本轮 A/B，依 §3.2.5 实测外推，免环境漂移争议）**
+
+- ① 把 4~5 遍/帧 降为 1 遍 + O(1) 复用：1MB 上省 **~0.8~1.1ms/帧**（S3 0.82 + S4 0.28 各多扫 3~4 次）。
+- ③ 连续打字时每个键都在合并窗内：1MB 上每个键省一次 ~1ms 的整篇 `String` 复制。
+- ② 默认（未设目标）每帧省一次 `current_stats()` 查表；注意这只堵了「目标进度」支路，
+  **状态栏每击键一次的整篇字数统计已纳入防抖（建议一 / 问题 054 落地）**：打字期沿用上次静止值、停手满 150ms 才刷新，每击键省一次 `compute_stats` ~9.5ms（详见 §3.2.9）；**`compute_stats` 六遍遍历合并为 1~2 遍（建议三 / V11-39 ②）已于 §3.2.10 / 问题 055 落地（1MB 单次结算 9.49 → 5.55ms，−42%）**。
+
+**门禁（全部本地通过）**
+
+| 门禁 | 结果 |
+|---|---|
+| `cargo fmt --check` | ✅ |
+| `cargo run --bin check-arch` | ✅ |
+| `cargo clippy --all-targets --all-features -- -D warnings` | ✅（仅沙箱 `os error 5` 锁文件告警，非代码） |
+| `cargo test --all-targets` | ✅ **1764 通过 · 0 失败 · 2 忽略**（较 052 后 +2 条 `LineIndex` 等价守卫） |
+
+**守卫**
+
+1. `line_index_matches_the_two_legacy_functions_on_every_case`（`tests/presentation/scroll_sync_test.rs`）：
+   `LineIndex` 的 `starts` / `count` / `status_starts` 在 12 个边界输入（空 / 纯换行 / 中文 / 文末无换行…）
+   上**逐元素**等于 `line_start_offsets` 与 `line_count`——合并成一处唯一能成立的前提是口径逐例等价。
+2. `merge_within_window_is_single_undo_point`（`tests/domain/undo_test.rs`）：连打 3 字撤销深度仍为 1，
+   因 `Document::apply` 已走 `would_merge`→`merge` 新路径，回归即红。
+3. `goal_item_is_hidden_when_unset`（`tests/presentation/status_bar_view_test.rs`）：未设目标时状态栏整项不画，
+   保证 ② 的跳过不改变可见结果。
+
+> 注：① 的提速未做整轮 A/B——它改的是每帧稳态扫描次数，与 052 的命中路径正交，且 §3.2.5 已有分项数字
+> 可直接外推；若需硬数字，复用 §3.2.7 的同机 A/B 流程即可。
+
+### 3.2.9 状态栏字数统计防抖（问题 054，2026-10-17）
+
+**背景**：§3.2.5 把状态栏每击键一次的整篇字数统计点名为 1MB 击键帧的**最大单块**（~9.5ms / 占 23%）。050 的 A2 消融已确认：状态栏每帧查两次 `get_stats`，缓存键含 `revision` → 击键帧 `revision` 必变 → 每敲一个键就把 1MB 全文重新统计。`compute_stats`（`service/stats.rs`）在 1MB 上做**约六遍全文遍历**（按行 `split` + 字节扫链接 + 逐字符扫字数 + `chars().count()` + `chars().filter(!ws).count()` + `line_count`）。用户口径：**打字期显示「上一次静止时算出的字数」、停手满窗口后再刷新**（与 048 `HighlightPace` / 预览防抖同源先例）。**on-demand 统计浮层（点击时刻）必须保持即时、不走防抖**——那是用户主动请求当前精确值。
+
+**改动**（`app/frame.rs`、`app/frame/editor.rs`、`presentation/views/status_bar_view.rs`）：
+
+| # | 改动 | 早先的写法 | 性质 |
+|---|---|---|---|
+| ① | 新增 `StatsPace` 节拍器（`EditorApp.stats_pace`），每帧由 `status_bar_view::show` 经 `current_stats_for_status_bar()` 驱动；窗口常量 `STATS_DEBOUNCE_MS = 150`（与 `HighlightPace` 一致） | 状态栏每帧直接调 `current_stats()`，击键帧必 miss → 重算全文 | 落地 |
+| ② | `current_stats_for_status_bar()` 仿 `HighlightPace::settled`：**首次见某篇 / 切换文档立即算**（无闪烁）；`computed_revision == revision` 直接返缓存；`last_seen_revision != revision` 只更新「最后变化时刻」；`now - last_change_at >= STATS_DEBOUNCE_MS` 才重算，否则返回上次静止值 | 每次都重算（无节拍器） | 落地 |
+| ③ | `status_bar_view::show` 每帧只算一次，把结果以**拥有值** `Option<StatsView>` 同时传给 `sync_goal` / `build_model` / `draw`，三处同帧共享一次结算 | `build_model` / `sync_goal` 各自独立调 `current_stats()`（同帧两次，防抖期开销×2） | 落地 |
+| ④ | `stats_view.rs` 的 on-demand 浮层**仍走 `current_stats()`**（点击时刻即时），不受 `StatsPace` 影响 | —（本来就是独立路径） | 据实保留 |
+
+**派生收益（非整轮 A/B，依 050 A2 消融实测外推）**
+
+- 打字期每击键省一次 `compute_stats`：1MB 上 **~9.5ms/击键**（占击键帧 ~23% 的最大单块）从热路径移除；停手满 150ms 后只补算一次。
+- ③ 保证 `build_model` / `sync_goal` / `draw` 同帧只结算一次——与 V11-39「同帧两次调用须共享一次结算」的约束一致，防抖期开销不翻倍。
+
+**门禁（全部本地通过）**
+
+| 门禁 | 结果 |
+|---|---|
+| `cargo fmt --check` | ✅ |
+| `cargo run --bin check-arch` | ✅ |
+| `cargo clippy --all-targets --all-features -- -D warnings` | ✅（仅沙箱 `os error 5` 锁文件告警，非代码） |
+| `cargo test --all-targets` | ✅ **0 失败**（含 2 条新增防抖测试 + 2 条既有测试因口径变更同步修正 + `textedit_cost_attribution_test::profile_1mb_app_layer_whole_text_costs` 断言翻转以锁定热点已消除） |
+
+**守卫**
+
+1. `status_bar_stats_debounce_holds_while_typing`（`tests/presentation/status_bar_view_test.rs`）：首帧 = 1 词；插入 " world foo" 但**不推进时钟** → 仍显示 1 词（沿用静止值）；`clock.advance(151)` 后 → 3 词（停手满窗口才刷新）。
+2. `status_bar_stats_debounce_recomputes_on_document_switch`（`tests/presentation/status_bar_view_test.rs`）："alpha beta" = 2 词；打开 "b.md" "gamma" → **立即** 1 词（切换文档不防抖，无闪烁）。
+3. `reaching_goal_announces_once_on_crossing`：因字数更新延后到防抖窗口之后，该用例改以可控时钟推进 `STATS_DEBOUNCE_MS+1` 后再 `run_frame`，断言行为不变。
+4. `textedit_cost_attribution_test::profile_1mb_app_layer_whole_text_costs`：原断言「关掉状态栏必须真的更快（差额 > 2ms）」锁定的是**修复前**热点；修复后该热点已不存在，断言翻转成「开/关状态栏每击键差额 < 3ms」（≈0），证明 `compute_stats` 不再挂在每击键热路径上。
+
+> 注：`compute_stats` 六遍全文遍历合并为 1~2 遍（建议三 / V11-39 ②）**已于 §3.2.10 / 问题 055 落地**：字符一遍 `char_indices` + 链接字节一遍、零分配，1MB 单次结算 9.49 → 5.55ms（−42%），「停手帧」的补偿成本随之再降（建议一已把该成本移出每击键热路径，二者正交、可合并提交）。
+
+### 3.2.10 `compute_stats` 六遍遍历合并为 1~2 遍（问题 055，2026-10-17）
+
+**背景**：050 的 A2 消融已确认状态栏每击键一次的整篇字数统计是 1MB 击键帧最大单块（~9.5ms），根因是 `compute_stats`（`service/stats.rs`）在 1MB 上做**约六遍全文遍历**：按行 `split` + 每行 `trim`/判定、`count_links_and_images` 逐字节、`count_words` 逐字符、`chars().count()`、`chars().filter(!ws).count()`、`line_count` 逐字节再扫一次。建议一（§3.2.9）已把这笔成本从每击键热路径移出（防抖到停手帧），但**停手帧仍要付一次 ~9.5ms**——建议三（V11-39 ②）的目标是把六遍遍历合并为 1~2 遍，压低这次结算的单次成本（估 ~4~6ms）。
+
+**改动**（`application/document/service/stats.rs`）：
+
+| # | 改动 | 早先的写法 | 性质 |
+|---|---|---|---|
+| ① | 重写 `compute_stats` 为**两遍**：第一遍用一个持久的 `char_indices()` 迭代器同时驱动字符 / 非空格字符 / 词（CJK 按字 + 西文按词状态机）/ 行数，行尾以**零拷贝切片** `&text[line_start..bi]` 结算标题 / 围栏 / 任务 / 段落；第二遍仅 `count_links_and_images` 做字节层 `link_tail_len` 配对（链接/图片极少，绝大多数文档此遍几乎不做事） | 六遍独立遍历（split + 每行 3 次 `chars()` + 2 次整篇 `chars().count()` + `line_count` + 链接/字数各一遍） | 落地 |
+| ② | **零分配**：词用 `in_token` / `token_has_alnum` 状态机（不再为每 token 建 `String`）；行内容以零拷贝 `&str` 切片传入 `finish_line`（不再为每行建 `line_buf`） | 每行重建 `line_buf`、每个西文 token 重建 `current` `String` | 落地 |
+| ③ | 等价性基准 `reference_compute_stats`（旧六遍实现）**原样保留**于测试模块，23 组混合输入上逐项断言新实现与之相等——对外语义不许变 | — | 据实保留 |
+
+**派生收益（同机 A/B，release 实测）**
+
+- 1MB 单次 `compute_stats`：**9.49ms → 5.55ms（−3.94ms，−42%）**——落在 V11-39 ② 估的「−4~6ms」区间内；对应的 `get_stats` miss 帧（S6 单项探针）由 11.30ms（含缓存开销的早期测量）收敛到 5.55ms。
+- 与建议一正交：建议一把 `compute_stats` 从「每击键」移出，建议三把「停手帧那一次」从 ~9.5ms 压到 ~5.5ms——二者叠加后，1MB 下状态栏统计的总代价基本归零（打字期为 0，停手补偿 ~5.5ms 只发生一次）。
+- **对可观测行为零变化**：23 组输入（含跨行链接 `[a\n](b)`、围栏内外、任务列表、CJK/西文/混合、空行边界）上 `words`/`characters`/`lines`/`paragraphs`/`headings`/`code_blocks`/`links`/`images`/`tasks`/`reading_minutes` 逐项相等。
+
+**门禁（全部本地通过）**
+
+| 门禁 | 结果 |
+|---|---|
+| `cargo fmt --check` | ✅ |
+| `cargo run --bin check-arch` | ✅ |
+| `cargo clippy --all-targets --all-features -- -D warnings` | ✅（仅沙箱 `os error 5` 锁文件告警，非代码） |
+| `cargo test --all-targets` | ✅ **0 失败**（含 2 条新增守卫；既有 `document_service_test` / `alignment_test` 的特定数字断言全部保持） |
+
+**守卫**
+
+1. `single_pass_matches_reference_on_mixed_inputs`（`src/application/document/service/stats.rs` 测试模块）：新 `compute_stats` 与旧 `reference_compute_stats` 在 23 组混合输入上**逐项字段相等**（含跨行链接、围栏、任务列表、CJK/西文/混合、空行边界）——对外语义钉死。
+2. `single_pass_is_faster_than_reference_ab`（`src/.../stats.rs` 测试模块，**release 口径**）：同机 A/B，新单遍 < 旧六遍 × 0.8（实测比值约 0.58）。debug 下 1MB 计时噪声大，仅打印比值、不卡门禁；release 下做硬断言，防止某次改动把单遍写回更慢的实现。
+
+> 实现注：第一版单遍曾用 `text[i..].chars().next()` 逐字符重建迭代器，反而比旧六遍还慢（8.8ms vs 10.2ms，仅 −13%）——瓶颈是每次都重建 `Chars` 迭代器。改用**持久的 `char_indices()`** 后降到 5.55ms。这印证了本仓「微基准量出的是成本上限」纪律：−3.94ms 是实测值，并非把旧实现预估的「六遍 × 单价」直接相减。
 
 ### 3.3 防抖与窗口值校准（S8-06）
 

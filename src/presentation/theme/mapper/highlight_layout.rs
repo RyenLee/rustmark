@@ -5,8 +5,8 @@ use std::sync::Arc;
 use egui::text::TextWrapping;
 
 use super::highlight_cache::{
-    LARGE_FILE_BYTES, LAST_STATS, LINE_LAYOUT, WHOLE_CACHE, atlas_token, build_line_job,
-    editor_metrics_signature,
+    LARGE_FILE_BYTES, LAST_STATS, LINE_LAYOUT, LineLayout, WHOLE_CACHE, atlas_token,
+    build_line_job, editor_metrics_signature,
 };
 use super::*;
 use crate::application::dto::{RangeView, SpanView};
@@ -48,6 +48,29 @@ pub fn highlight_layout(
 ///
 /// 换主题后 `palette_signature(theme)` 变化 → 两层缓存全部失效 → 下一帧整篇重建，
 /// 因此「切换主题无需重启」依旧成立。
+///
+/// # 缓存 miss 路径的成本纪律（问题 052）
+///
+/// 本函数在**每次击键**时都走完整条 miss 路径，故沿途**不得出现「与文档长度或
+/// 行数成正比的重复劳动」**。实测（1MB / 58,514 行）曾有下列开销，均已消除：
+///
+/// | 位置 | 早先的写法 | 实测 |
+/// |---|---|---|
+/// | 整文档缓存读取 | `c.borrow().clone()`（`Ref<T>` 不实现 `Clone`，克隆的是整条条目，含 1MB 全文） | 0.23ms／帧 |
+/// | 取上一版行布局 | `c.lines.clone()`（58k 次小堆分配）+ `c.galleys.clone()` | 2.47ms + 0.44ms |
+/// | 回写行内容 | `lines.iter().map(to_string).collect()`，全部 58k 行重建 | 2.29ms |
+/// | 回写行 Galley | `line_galleys.clone()` | 0.44ms |
+/// | 整文档缓存回写 | `text.to_string()` | 0.23ms |
+/// | 拆行 | `split('\n').collect()`（容量下界为 0 → 反复扩容搬移） | 1.17ms |
+///
+/// 现改为：整文档缓存在借用内比对（文本判据取 `galley.text()`）、上一版行布局
+/// **整条移出**（`mem::take`）、行内容**移动复用**、行 Galley 表移动回写、
+/// 拆行按上一版行数预置容量。全部是「本来就要做同一件事，只是不再重复分配」，
+/// 对外可观测行为零变化（由 `tests/presentation/highlight_layout_test.rs` 的
+/// 等价性与计数器断言钉住）。
+///
+/// **新增每帧查询前先问一次**：这次构造是 O(1)，还是 O(全文) / O(行数)？
+/// （同问题 043 / 046 定下的纪律。）
 pub fn highlight_layout_with_find(
     ctx: &egui::Context,
     theme: &Theme,
@@ -86,32 +109,83 @@ pub fn highlight_layout_with_find(
 
     // 1) 整文档缓存：文本 / 主题 / 换行 / 查找命中 / 着色状态 / 排版度量 /
     //    图集令牌未变 → 直接返回。
-    if let Some((
-        cached_sig,
-        cached_text,
-        cached_wrap,
-        galley,
-        cached_find,
-        cached_colored,
-        cached_metrics,
-        cached_atlas,
-    )) = WHOLE_CACHE.with(|c| c.borrow().clone())
-        && cached_sig == sig
-        && cached_text == text
-        && cached_wrap == wrap_width
-        && cached_find == find_sig
-        && cached_colored == colored
-        && cached_metrics == metrics
-        && cached_atlas == atlas
-    {
+    //
+    // **在借用内比对，不克隆条目**（问题 052）：早先写成
+    // `WHOLE_CACHE.with(|c| c.borrow().clone())`——而 `Ref<T>` 不实现 `Clone`，
+    // 克隆的是 `T` 本身，于是每帧（含空闲帧）都在复制整条条目，含那份 1MB 全文。
+    // 文本判据改取 `galley.text()`（见 `WholeCacheEntry` 的注释），整条命中路径
+    // 只剩一次 `Arc<Galley>` 克隆。
+    let hit = WHOLE_CACHE.with(|c| {
+        let c = c.borrow();
+        match c.as_ref() {
+            Some((
+                cached_sig,
+                cached_wrap,
+                galley,
+                cached_find,
+                cached_colored,
+                cached_metrics,
+                cached_atlas,
+            )) if *cached_sig == sig
+                && *cached_wrap == wrap_width
+                && *cached_find == find_sig
+                && *cached_colored == colored
+                && *cached_metrics == metrics
+                && *cached_atlas == atlas
+                && galley.text() == text =>
+            {
+                Some(galley.clone())
+            }
+            _ => None,
+        }
+    });
+    if let Some(galley) = hit {
         return galley;
     }
 
     // 大文件降级：跳过 span 着色，纯文本排版（仍逐行缓存）。
 
+    // 取上一版行布局：**整条移出**（`mem::take`）而不是克隆，用完在函数末尾写回。
+    //
+    // 早先这里是 `c.lines.clone()` + `c.galleys.clone()`——1MB / 58k 行文档下每次
+    // 击键克隆 58k 个 `String`（58k 次小堆分配，微基准 2.47ms）与 58k 个 `Arc`
+    // （0.44ms）；而这份旧表比完即弃，纯属白干（问题 052）。
+    //
+    // 一致才谈得上复用：主题 / 换行宽度 / 查找命中 / 着色状态 / 排版度量 / 图集
+    // 令牌任一不同即视为无上一版。`colored` 与 `atlas` 必须在键里，理由见
+    // `LineLayout` 各字段的注释（前者防「打字后颜色再也不回来」，后者防 V11-17 乱码）。
+    let previous: Option<LineLayout> = LINE_LAYOUT.with(|c| {
+        let mut c = c.borrow_mut();
+        let reusable = c.valid
+            && c.sig == sig
+            && c.wrap == wrap_width
+            && c.find_sig == find_sig
+            && c.colored == colored
+            && c.metrics == metrics
+            && c.atlas == atlas;
+        reusable.then(|| std::mem::take(&mut *c))
+    });
+
+    // 上一版每行的内容与 Galley。
+    //
+    // `old_lines` 多包一层 `Option` 是为了下面能**移动**取走被复用的那一行
+    // （`Option::take` + `mem::take` 都不产生分配）。
+    let (mut old_lines, old_galleys): (Vec<Option<String>>, Vec<Arc<egui::Galley>>) = match previous
+    {
+        Some(p) => (p.lines.into_iter().map(Some).collect(), p.galleys),
+        None => (Vec::new(), Vec::new()),
+    };
+
     // 拆行：`split('\n')` 天然保留末尾空行语义（"a\nb\n" → ["a","b",""]），
     // 与 `concat` 的换行补齐一致。
-    let lines: Vec<&str> = text.split('\n').collect();
+    //
+    // 容量按**上一版行数**预置（问题 052）：连续输入时行数几乎不变，于是这一次
+    // 分配就够。`Split` 的 `size_hint` 下界是 0，不预置的话 `collect` 会按
+    // 4→8→… 反复重新分配——1MB / 58k 行下实测 1.17ms，其中大半是这些无谓搬移。
+    // 刻意**不**为此再扫一遍全文数 `\n`：`shared::text::line_count` 在 1MB 上自身
+    // 就要 0.3~0.5ms，省下的分配还不够抵这一次额外扫描。
+    let mut lines: Vec<&str> = Vec::with_capacity(old_lines.len() + 1);
+    lines.extend(text.split('\n'));
 
     // 按起点升序的 span 快照；`active` 用双指针维护，使 span 分配是 **O(行数 + span数)**。
     // （逐行全量 `.filter(...)` 会退化成 O(行数 × span数)，10KB 文档就足以让每次击键卡顿。）
@@ -128,69 +202,50 @@ pub fn highlight_layout_with_find(
         v
     };
 
-    // 取上一版行布局（主题 / 换行宽度 / 查找命中 / 着色状态 / 图集令牌
-    // 一致才谈得上复用）。
-    //
-    // `colored` 必须参与：行缓存按**行内容**比对，而防抖期排的纯文本行
-    // 与停手后带色的同一行内容完全相同——不带这个标志就会被复用，
-    // 颜色永远补不回来。
-    // `atlas` 同理：图集被 egui 重建后，旧 `Galley` 的字形坐标已失效，
-    // 内容再相同也不能复用（V11-17）。
-    let previous = LINE_LAYOUT.with(|c| {
-        let c = c.borrow();
-        if c.valid
-            && c.sig == sig
-            && c.wrap == wrap_width
-            && c.find_sig == find_sig
-            && c.colored == colored
-            && c.metrics == metrics
-            && c.atlas == atlas
-        {
-            Some((c.lines.clone(), c.galleys.clone()))
-        } else {
-            None
-        }
-    });
-
     // 逐行判断「新第 i 行能否复用旧的某行」，得到一张映射表。
     //
     // 先看前后缀（吸收「行号整体平移」的情形：中间插入 / 删除一行时，
     // 前后大量行的**内容**其实没变），再对夹在中间的段落尝试逐行配对——
     // 后者覆盖「全文替换」这类多处散布的改动：行数不变、只有部分行真的变了。
     // 配对不上（两侧行数不同）就老实地重排中间段。
-    let reuse_map: Vec<Option<usize>> = match &previous {
-        None => vec![None; lines.len()],
-        Some((old_lines, _)) => {
-            let (n, m) = (old_lines.len(), lines.len());
-            let mut map = vec![None; m];
+    //
+    // 比的是**行内容**，与「该行所有权是否已被取走」无关（此刻尚未取任何一行）。
+    let reuse_map: Vec<Option<usize>> = if old_lines.is_empty() {
+        vec![None; lines.len()]
+    } else {
+        let (n, m) = (old_lines.len(), lines.len());
+        // 旧表此刻必然全是 `Some`（还没开始取）；`unwrap_or("")` 只是防御。
+        let old = |i: usize| old_lines[i].as_deref().unwrap_or("");
+        let mut map = vec![None; m];
 
-            let mut pre = 0usize;
-            while pre < n.min(m) && old_lines[pre] == lines[pre] {
-                map[pre] = Some(pre);
-                pre += 1;
-            }
-            let mut suf = 0usize;
-            while pre + suf < n.min(m) && old_lines[n - 1 - suf] == lines[m - 1 - suf] {
-                map[m - 1 - suf] = Some(n - 1 - suf);
-                suf += 1;
-            }
+        let mut pre = 0usize;
+        while pre < n.min(m) && old(pre) == lines[pre] {
+            map[pre] = Some(pre);
+            pre += 1;
+        }
+        let mut suf = 0usize;
+        while pre + suf < n.min(m) && old(n - 1 - suf) == lines[m - 1 - suf] {
+            map[m - 1 - suf] = Some(n - 1 - suf);
+            suf += 1;
+        }
 
-            // 中间两段行数相同才做逐行配对，否则（插入 / 删除了行）无从对齐。
-            let mid_new = pre..(m - suf);
-            let mid_old = pre..(n - suf);
-            if mid_new.len() == mid_old.len() {
-                for k in 0..mid_new.len() {
-                    let (i, j) = (mid_old.start + k, mid_new.start + k);
-                    if old_lines[i] == lines[j] {
-                        map[j] = Some(i);
-                    }
+        // 中间两段行数相同才做逐行配对，否则（插入 / 删除了行）无从对齐。
+        let mid_new = pre..(m - suf);
+        let mid_old = pre..(n - suf);
+        if mid_new.len() == mid_old.len() {
+            for k in 0..mid_new.len() {
+                let (i, j) = (mid_old.start + k, mid_new.start + k);
+                if old(i) == lines[j] {
+                    map[j] = Some(i);
                 }
             }
-            map
         }
+        map
     };
 
     let mut line_galleys: Vec<Arc<egui::Galley>> = Vec::with_capacity(lines.len());
+    // 新版每行的内容。所有权策略见循环内「行内容的所有权」一段（问题 052）。
+    let mut new_lines: Vec<String> = Vec::with_capacity(lines.len());
     let mut stats = HighlightStats {
         total_lines: lines.len(),
         ..Default::default()
@@ -249,12 +304,28 @@ pub fn highlight_layout_with_find(
             }
         }
 
-        match (reuse_idx, &previous) {
-            (Some(old_idx), Some((_, old_galleys))) => {
-                line_galleys.push(old_galleys[old_idx].clone());
+        // 行内容的所有权（问题 052）：命中映射表就**移动**上一版那条 `String`，
+        // 只有真正重排的行才新建。早先这里是
+        // `lines.iter().map(|s| (*s).to_string()).collect()`——把 58k 行**全部**
+        // 重新分配一遍（微基准 2.29ms），而其中绝大多数与上一版逐字节相同，
+        // `reuse_map` 早就知道是哪几行了。
+        //
+        // 映射表是单射（前缀段 `< pre`、后缀段 `>= n - suf`、中段夹在两者之间，
+        // 三段互不相交），故每行至多被取走一次。万一该不变式被破坏，
+        // `unwrap_or_else` 退回「重新分配一条」——内容依旧正确，且绝不 panic
+        // （`panic = "abort"` 下崩一次即整窗口消失）。
+        let owned = reuse_idx.and_then(|i| old_lines.get_mut(i).and_then(Option::take));
+        new_lines.push(owned.unwrap_or_else(|| (*line).to_owned()));
+
+        // 复用行的 Galley 只是 `Arc` 克隆（薄外壳），不触发任何重新排版；
+        // `concat` 拼接时同样只克隆各行的 `Arc<Row>`，故整篇 Galley 与这张逐行表
+        // **共享**同一份行数据（内存不翻倍）。
+        match reuse_idx.and_then(|i| old_galleys.get(i).cloned()) {
+            Some(g) => {
+                line_galleys.push(g);
                 stats.cached_lines += 1;
             }
-            _ => {
+            None => {
                 let job = build_line_job(theme, line, &line_spans, &line_bgs, wrap_width);
                 // `Fonts::layout_job` 本身已返回 `Arc<Galley>`，不要再包一层。
                 let g = ctx.fonts_mut(|f| f.layout_job(job));
@@ -263,20 +334,6 @@ pub fn highlight_layout_with_find(
             }
         }
     }
-
-    // 记住这一版，供下一次变更做差分。
-    LINE_LAYOUT.with(|c| {
-        let mut c = c.borrow_mut();
-        c.lines = lines.iter().map(|s| (*s).to_string()).collect();
-        c.galleys = line_galleys.clone();
-        c.sig = sig;
-        c.wrap = wrap_width;
-        c.find_sig = find_sig;
-        c.colored = colored;
-        c.metrics = metrics;
-        c.atlas = atlas;
-        c.valid = true;
-    });
 
     // 2) 拼回整文档 Galley：`job.text` 写全本（保证双击选词 / 三击选行基于全文），
     //    各行的 `ends_with_newline` 与纵向偏移由 `concat` 处理。
@@ -294,7 +351,8 @@ pub fn highlight_layout_with_find(
     // 修复方式只是「把 `sections` 撑起来」：用正文格式 append 整段文本。
     // 真正的着色早已烘焙在逐行 `Galley` 里，`concat` 不会重新排版，
     // 因此这段格式化信息只用于让 `is_empty()` 返回 `false`，不影响任何字形。
-    // 顺带 `job.text` 也由此写成全文（与原来直接赋值等价）。
+    // 顺带 `job.text` 也由此写成全文——它现在同时充当**整文档缓存的全文键**
+    // （`galley.text() == text`，问题 052），故这一句 append 有两重作用，不可删。
     let mut job = egui::text::LayoutJob {
         wrap: TextWrapping {
             max_width: if wrap_width > 0.0 {
@@ -307,16 +365,35 @@ pub fn highlight_layout_with_find(
         ..Default::default()
     };
     job.append(text, 0.0, StyleMapper::new(theme).format("plain"));
+    // `concat` 只借用 `line_galleys`，返回后它即可被移动进行缓存（不再克隆）。
     let combined = Arc::new(egui::Galley::concat(
         Arc::new(job),
         &line_galleys,
         ctx.pixels_per_point(),
     ));
 
+    // 记住这一版，供下一次变更做差分。
+    //
+    // 两个 `Vec` 都是**移动**进来的（问题 052）：早先是 `new_lines` 全新重建 +
+    // `c.galleys = line_galleys.clone()`，前者白花 2.29ms、后者白花 0.44ms。
+    LINE_LAYOUT.with(|c| {
+        let mut c = c.borrow_mut();
+        c.lines = new_lines;
+        c.galleys = line_galleys;
+        c.sig = sig;
+        c.wrap = wrap_width;
+        c.find_sig = find_sig;
+        c.colored = colored;
+        c.metrics = metrics;
+        c.atlas = atlas;
+        c.valid = true;
+    });
+
+    // 整文档条目**不再另存一份全文**：`combined.text()`（= `job.text`，上一行刚写入
+    // 的那份）就是缓存键里的全文判据（问题 052，见 `WholeCacheEntry` 的注释）。
     WHOLE_CACHE.with(|c| {
         *c.borrow_mut() = Some((
             sig,
-            text.to_string(),
             wrap_width,
             combined.clone(),
             find_sig,

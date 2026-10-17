@@ -82,7 +82,15 @@ fn span(start: usize, end: usize, style: &str) -> SpanView {
     }
 }
 
-/// 逐行比对两个 Galley 的行结构：行数、每行字形数、换行标记、行宽。
+/// 逐行比对两个 Galley 的行结构：行数、每行字形**内容**、字形数、换行标记。
+///
+/// 字形必须比到**字符**、不能只比个数：`'d'` 与 `'1'` 都是 1 个字形，
+/// 只比个数会让「复用了一行内容已经变了的旧 Galley」这类错误溜过去
+/// （问题 052 新引入的复用路径正是这种风险：行 Galley 与行内容一旦错位，
+/// 复用出来的就是**旧内容**，而个数往往恰好相同）。
+///
+/// 配套变异验证见 `incremental_reuse_stays_equivalent_to_whole_document_layout`：
+/// 把复用映射表改成「无条件按行号复用」，本条即以「第 N 行字形内容不一致」变红。
 fn assert_rows_equivalent(actual: &egui::Galley, expected: &egui::Galley, label: &str) {
     assert_eq!(
         actual.rows.len(),
@@ -90,6 +98,12 @@ fn assert_rows_equivalent(actual: &egui::Galley, expected: &egui::Galley, label:
         "{label}：行数不一致（按行 concat 与整篇排版不等价）"
     );
     for (i, (a, e)) in actual.rows.iter().zip(expected.rows.iter()).enumerate() {
+        let a_chars: String = a.row.glyphs.iter().map(|g| g.chr).collect();
+        let e_chars: String = e.row.glyphs.iter().map(|g| g.chr).collect();
+        assert_eq!(
+            a_chars, e_chars,
+            "{label}：第 {i} 行字形内容不一致（是否复用了内容已变的旧行？）"
+        );
         assert_eq!(
             a.glyphs.len(),
             e.glyphs.len(),
@@ -459,6 +473,125 @@ fn repeated_line_hits_stay_cached() {
         "越过曾经 LRU 容量的文档同样只能重排 1 行"
     );
     assert_eq!(second.reshaped_lines, 1, "同一行反复编辑应保持只去重排一行");
+}
+
+// ============================================================================
+// 增量复用的结构性守卫（问题 052：缓存 miss 路径去重复分配）
+// ============================================================================
+
+/// 改一行后，**未变的行必须与上一帧共享同一份 `Arc<Row>`**——即「真复用，没重排」。
+///
+/// 问题 052 把上一版行布局改成「整条移出 + 用完写回」，并把行内容的 `String`
+/// 移动复用。这类改动一旦取错行（映射表非单射、索引错位），逐行的**计数**断言
+/// 仍可能通过（`cached_lines` 只数条数），但内容会悄悄错掉。
+///
+/// `Galley::concat` 对每行做的是 `Arc::clone(&placed_row.row)`，故「复用」在结构上
+/// 等价于「行数据的 `Arc` 身份不变」——这条比耗时断言硬，也不会在 CI 上抖动。
+#[test]
+fn unchanged_lines_share_rows_with_previous_frame() {
+    clear_highlight_caches();
+    let ctx = test_ctx();
+    let theme = Theme::dark();
+
+    // 6 行：["# 标题", "", "第一段", "第二段", "第三段", ""]，序号 3 是「第二段」。
+    let base = "# 标题\n\n第一段\n第二段\n第三段\n";
+    let first = highlight_layout(&ctx, &theme, base, None, 400.0);
+
+    let edited = base.replace("第二段", "第二段改");
+    let second = highlight_layout(&ctx, &theme, &edited, None, 400.0);
+
+    assert_eq!(second.rows.len(), first.rows.len(), "测试前提：行数不变");
+    const EDITED_ROW: usize = 3;
+    for i in 0..first.rows.len() {
+        let shared = std::sync::Arc::ptr_eq(&first.rows[i].row, &second.rows[i].row);
+        if i == EDITED_ROW {
+            assert!(
+                !shared,
+                "第 {i} 行是被编辑的那一行，必须是新排出来的 `Row`，不得复用旧行"
+            );
+        } else {
+            assert!(
+                shared,
+                "第 {i} 行内容未变，必须复用上一帧的 `Arc<Row>`（真复用，而非重新排版）"
+            );
+        }
+    }
+    assert_eq!(second.text(), edited, "整篇 Galley 必须携带编辑后的全文");
+}
+
+/// 增量（含复用行）的输出必须与**整篇一次排版**逐行等价。
+///
+/// `per_line_concat_matches_whole_document_layout` 只在**冷缓存**下验证了这条
+/// 等价性——那时根本没有可复用的行。复用路径的行是「上一帧那个 Galley 里的行」，
+/// 是否仍然等价取决于所有权复用有没有取错行，必须单独钉住（问题 052）。
+///
+/// 编辑形态覆盖三类：等长改字（行数与字节长度都不变）、插入一行（行号整体平移）、
+/// 删除一行（行数减少）。**刻意全用等长 / ASCII 编辑**：span 是按原文算出的字节
+/// 区间，掺入多字节字符会让参考实现切到字符中间而 panic——那是 DEF-04 的另一个
+/// 话题，与本用例要钉的性质无关。
+#[test]
+fn incremental_reuse_stays_equivalent_to_whole_document_layout() {
+    clear_highlight_caches();
+    let ctx = test_ctx();
+    let theme = Theme::dark();
+
+    let base = "# Heading\n\nSome **bold** text\nand more\n";
+    let spans = vec![span(0, 9, "heading:1"), span(12, 16, "strong")];
+    highlight_layout(&ctx, &theme, base, Some(&spans), 400.0);
+
+    let edits = [
+        base.replace("bold", "bo1d"),       // 等长改字：行数、长度都不变
+        base.replace("Heading", "Headin9"), // 改首行
+        base.replace("text", "TEXT"),       // 改中段
+        base.replace("# Heading\n", "# Heading\nx\n"), // 插入一行：行号平移
+        base.replace("and more\n", ""),     // 删除一行：行数减少
+    ];
+
+    for edited in edits {
+        let actual = highlight_layout(&ctx, &theme, &edited, Some(&spans), 400.0);
+        let expected = reference_layout(&ctx, &theme, &edited, &spans, 400.0);
+        assert_rows_equivalent(&actual, &expected, &format!("增量复用 {edited:?}"));
+        assert_eq!(
+            actual.text(),
+            edited,
+            "{edited:?}：整篇 Galley 必须携带当前全文"
+        );
+    }
+}
+
+/// 整文档缓存的全文判据必须**精确**——等长的不同文本不得互相命中。
+///
+/// 问题 052 把「另存一份全文」换成 `galley.text()`（整篇 Galley 本就带着全文）。
+/// 这条钉住换掉的只是**存储方式**、不是判据本身：若有人改成用长度或弱哈希当键，
+/// 等长文本会误命中 → 编辑区停在旧内容（且旧字形的颜色 / 坐标一并残留）。
+#[test]
+fn whole_document_cache_distinguishes_equal_length_texts() {
+    clear_highlight_caches();
+    let ctx = test_ctx();
+    let theme = Theme::dark();
+
+    // 两份文本**等长**（11 字节）且行数相同，只有第 2 行末字符不同。
+    let a_text = "alpha\nbeta\n";
+    let b_text = "alpha\nbetX\n";
+    assert_eq!(a_text.len(), b_text.len(), "测试前提：两份文本必须等长");
+
+    let a = highlight_layout(&ctx, &theme, a_text, None, 400.0);
+    let b = highlight_layout(&ctx, &theme, b_text, None, 400.0);
+
+    assert_eq!(a.rows.len(), b.rows.len(), "测试前提：两者行数相同");
+    assert!(
+        !std::sync::Arc::ptr_eq(&a, &b),
+        "等长的不同文本不得命中同一个整文档缓存条目"
+    );
+    assert_eq!(b.text(), b_text, "命中的条目必须确实对应新文本");
+
+    // 再排一次第一份：缓存里现存的是 `b`，长度相同也**不得**命中。
+    let a_again = highlight_layout(&ctx, &theme, a_text, None, 400.0);
+    assert_eq!(
+        a_again.text(),
+        a_text,
+        "换回旧文本必须重新排版，而非按长度命中"
+    );
 }
 
 // ============================================================================

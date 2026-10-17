@@ -45,6 +45,7 @@ use crate::shared::fonts::EditorFontChoice;
 use crate::shared::path::FilePath;
 use crate::shared::result::AppResult;
 use crate::shared::text_format::{self, TextFormats};
+use crate::shared::time::Timestamp;
 
 use crate::presentation::shortcuts::dispatcher::{Dispatch, ShortcutDispatcher};
 use crate::presentation::shortcuts::registry::{ShortcutRegistry, UiAction};
@@ -71,6 +72,7 @@ use crate::presentation::state::symbol_ui_state::SymbolUiState;
 use crate::presentation::theme::builtin::{self, BuiltinTheme, Theme};
 use crate::presentation::theme::mapper;
 use crate::presentation::views::editor_ops;
+use crate::presentation::views::scroll_sync::LineIndex;
 // `floor_char_boundary` 的语义与「为何只下取整」见 `shared::geometry`；
 // 程序化设值（大纲跳转、测试、`TextEdit` 回调）能给任意字节偏移，
 // 而 `&str[a..b]` 遇到非字符边界会 panic，`panic = "abort"` 下即窗口消失。
@@ -84,11 +86,63 @@ pub use workspace::{WorkspaceEntries, WorkspaceSearch};
 ///
 /// # 为什么 UI 状态与应用服务**平铺**在同一结构体里
 ///
+/// 行索引缓存的存储类型（见 [`EditorApp::line_index_cache`]）。
+///
+/// 取出成别名以压住 `clippy::type-complexity`：`(键, 值)` 的嵌套组合
+/// 达到告警阈值。键是 `(活动文档, 领域修订版本, 文本字节长度)`，
+/// 值是一次全文扫描得到的 [`LineIndex`]。
+type LineIndexCache =
+    std::cell::RefCell<Option<((Option<DocumentId>, u64, usize), std::rc::Rc<LineIndex>)>>;
+
 /// 两者需要高频交叉读取（执行动作要知道当前选区，切主题要同步预览缓存）。
 /// 再包一层「上下文」只会多一次间接寻址，却不带来任何隔离。
 /// 真正的隔离不靠结构体嵌套，而靠 `check-arch` 的依赖禁令——
 /// 表现层**拿不到** `domain` 与 `infrastructure` 的类型，
 /// 物理上无法把业务真值塞进 UI 状态。
+/// 状态栏字数统计的**防抖**节拍器（建议一 / 问题 039）。
+///
+/// 与编辑器高亮的 `HighlightPace` 同源：打字期不每击键整篇重算
+/// （1MB 上 `compute_stats` ≈ 9.5ms，见 `docs/metrics.md` §3.2.5），
+/// 而是沿用「上一次静止时算出的结果」，直到文档**静止满 [`STATS_DEBOUNCE_MS`]** 才刷新。
+///
+/// 与高亮的区别：高亮首次见某篇要立刻上色；这里**首次见某篇也要立刻算**
+/// （否则打开文档后字数先显 0、150ms 后才跳真值，同样 flicker）。
+/// 故 `doc` 改变（或首算）时直接重算，不走防抖。
+///
+/// 统计浮层（`stats_view`）走 [`EditorApp::current_stats`]（点击时才算、即时），
+/// 本节拍器只服务每帧的状态栏。
+pub(crate) struct StatsPace {
+    /// 缓存所属文档；`None` 表示尚未计算过任何一次。
+    pub(crate) doc: Option<DocumentId>,
+    /// 上次**见到**的修订版本（用于检测「本帧相对上次是否变了」）。
+    pub(crate) last_seen_revision: u64,
+    /// `cached` 所对应的修订版本（即「已算到哪一版」）。
+    pub(crate) computed_revision: u64,
+    /// 上次见到修订变化的时刻（用于判定是否静止满窗口）。
+    pub(crate) last_change_at: Timestamp,
+    /// 最近一次（可能滞后的）统计结果。
+    pub(crate) cached: Option<StatsView>,
+}
+
+impl Default for StatsPace {
+    fn default() -> Self {
+        Self {
+            doc: None,
+            last_seen_revision: 0,
+            computed_revision: 0,
+            last_change_at: Timestamp::from_millis(0),
+            cached: None,
+        }
+    }
+}
+
+/// 状态栏统计防抖窗口（毫秒）。
+///
+/// 取 150ms：与编辑器高亮 `HighlightPace` 的静止窗口一致——用户停手约一帧半后
+/// 刷新字数，打字期完全不重算。数字来自 `docs/metrics.md` §3.2.5：`compute_stats`
+/// 在 1MB 上 ≈ 9.5ms，与其每击键付一次，不如等静止后付一次。
+pub(crate) const STATS_DEBOUNCE_MS: u64 = 150;
+
 pub struct EditorApp {
     /// 用例服务（组合根装配产物）。
     pub services: Services,
@@ -164,6 +218,16 @@ pub struct EditorApp {
     /// 它不是「另一份真值」——`refresh_text()` 每次命令后都用领域内容覆盖它，
     /// 保证二者永不漂移（双写不一致是原型 `editor.ts` 的致命缺陷 B-05）。
     pub(crate) editor_text: String,
+    /// 当前文本的**行索引缓存**：`(键, 索引)`（问题 053）。
+    ///
+    /// 键是 `(活动文档, 领域修订版本, 文本字节长度)`，理由见
+    /// [`EditorApp::line_index`]。放在这里而不是每帧现算，是因为状态栏
+    /// （光标的行列 / 选区的行列 / 「N 行」）与编辑区（`desired_rows` /
+    /// 行号栏宽度）一帧要问四五次**同一份**信息，1MB 上实测每题一次
+    /// 全文扫描、每帧恒定 1.1ms（`docs/metrics.md` §3.2.5）。
+    line_index_cache: LineIndexCache,
+    /// 状态栏字数统计的防抖节拍器（建议一 / 问题 039；见 [`StatsPace`]）。
+    stats_pace: StatsPace,
     /// 领域编辑后需要把 egui 光标重设到的**字符**位置 `(cursor, anchor)`。
     ///
     /// egui 的 `TextEdit` 在内部记一套光标状态；领域命令改了文本后，
@@ -360,6 +424,9 @@ impl EditorApp {
             installed_font_family: None,
             active_doc: None,
             editor_text: String::new(),
+            line_index_cache: std::cell::RefCell::new(None),
+            // 首次见某篇文档要立刻算（避免开文先显 0），故默认空、惰性填充。
+            stats_pace: StatsPace::default(),
             pending_cursor: None,
             clear_undoer_next: false,
             ime_composing: false,
