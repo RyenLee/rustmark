@@ -38,4 +38,5 @@ mod toolbar_test;
 mod toolbar_visual_test;
 mod top_menu_test;
 mod ui_state_test;
+mod welcome_view_test;
 mod word_wrap_test;

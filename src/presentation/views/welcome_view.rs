@@ -49,7 +49,13 @@ const SLOGAN: &str = "原生轻量 · 秒级启动 · 低内存占用";
 /// 版本号（`env!("CARGO_PKG_VERSION")` 在编译期取，避免两处版本号漂移）。
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// 最近文件最多显示多少条。
-const MAX_RECENT: usize = 8;
+///
+/// 用户 2026-10-18 要求「倒序显示 5 条就行」：**顺序**由领域层
+/// [`RecentFiles`] 保证——`last_opened` 降序，即最新的在最上面
+/// （问题记录 058 有呈现层回归用例钉住这条契约）；这里只定**条数**。
+///
+/// [`RecentFiles`]: crate::domain::workspace::value_objects::RecentFiles
+const MAX_RECENT: usize = 5;
 /// 最近文件卡片宽度。
 const RECENT_WIDTH: f32 = 460.0;
 /// 主操作按钮高度。
@@ -106,7 +112,7 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
         hints::hints(ui, &theme, app);
     });
 
-    // 滚动：最近文件可能很多（虽截断到 8 条）+ 小窗口高度不足。
+    // 滚动：最近文件可能很多（虽截断到 5 条）+ 小窗口高度不足。
     // 包在 `ScrollArea` 里而不是让内容溢出——溢出部分在 egui 里
     // 直接被裁掉，用户连「下面还有东西」都不知道。
     let _ = ScrollArea::vertical().show(ui, |_| {});
