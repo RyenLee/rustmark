@@ -532,9 +532,31 @@ fn paint_nav_arrow(painter: &egui::Painter, rect: egui::Rect, dir: f32, color: e
 }
 
 /// 路径面包屑：显示当前文档的保存路径（未保存显示「未命名文档」）。
+///
+/// 路径必须截断（问题 059）：顶栏是横向布局，裸 `ui.label` 的长路径会
+/// 一路延伸出面板右缘被**硬切**（截图实证：`logs\问题记录1.txt` 只剩
+/// 残形）。截断走仓库 sanctioned 形态——**`ui.put` 显式矩形 + `truncate()`**
+/// （标签标题同款）：put 的矩形就是换行的 `max_width`，截断宽度确定可证。
+/// 单挂 `.truncate()` 不够——put 的矩形右界取自环境可用宽，而它本身
+/// 就是错的（见下）。「多枚 truncate 标签同排会越界冲面板」的禁令
+/// （040 布局纪律）针对多标签同排，此处仅一枚、独占剩余宽。
+/// 全路径走悬停提示补全——截断保宽度，语义不丢。
+///
+/// # 环境可用宽不可信（问题 059 的深层根因）
+///
+/// egui 的 `Placer::expand_to_include_rect` 把 Ui 的 min_rect **与
+/// max_rect 一起**扩：同面板里更早的超宽内容（菜单栏、标签条横向溢出）
+/// 会把面板 Ui 的 max_rect 连带撑出窗口——实测 360pt 窗口下
+/// `available_rect_before_wrap` 的右界漂到 440。`clip_rect` 不随内容
+/// 膨胀，是唯一稳定的面板界：右界按面板左内边距对称推出，上下界直接
+/// 钳到 clip（顺带修掉 rest 底部越出面板底缘 4pt 的隐性溢出）。
 fn draw_breadcrumb(app: &EditorApp, ui: &mut Ui) {
     let path = app.current_document_path();
     let theme = app.theme();
+    let clip = ui.clip_rect();
+    // 面板内容左内边距（TopDown 布局下光标 x 即内容左界）。
+    let inset = ui.cursor().left() - clip.left();
+    let content_right = clip.right() - inset;
     ui.horizontal(|ui| {
         // 文档图标：向量手绘，替代原 📄 字形。废止字形的理由与工具栏图标
         // 同源（emoji 依赖字体覆盖，见 `presentation::icons` 的模块文档），
@@ -550,6 +572,16 @@ fn draw_breadcrumb(app: &EditorApp, ui: &mut Ui) {
                 accent: color,
             },
         );
-        ui.label(path);
+        // 剩余宽度独占给路径，右界钳到内容右界、上下界钳到面板。
+        let mut rest = ui.available_rect_before_wrap();
+        rest.max.x = rest.max.x.min(content_right);
+        rest.min.y = rest.min.y.max(clip.top());
+        rest.max.y = rest.max.y.min(clip.bottom());
+        ui.put(
+            rest,
+            egui::Label::new(path.clone())
+                .truncate()
+                .show_tooltip_when_elided(true),
+        );
     });
 }

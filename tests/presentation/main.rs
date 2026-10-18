@@ -7,6 +7,7 @@
 #[path = "../support/mod.rs"]
 mod support;
 
+mod breadcrumb_test;
 mod editor_frame_geometry_test;
 mod editor_view_test;
 mod enter_ime_test;
