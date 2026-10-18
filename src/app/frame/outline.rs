@@ -42,17 +42,22 @@ impl EditorApp {
         self.goto_byte_offset(offset);
     }
 
-    /// 跳到某个字节偏移（选中该处并滚进视口）。
+    /// 跳到某个字节偏移（选中该处并滚到视口顶部）。
     ///
-    /// 大纲跳转与搜索跳转共用它——两条路径对「跳过去之后要做什么」
-    /// 的理解必须一致（选中 + 滚动），否则用户会发现「大纲跳转不选中、
-    /// 搜索跳转选中」，进而怀疑其中一个坏了。
+    /// 大纲跳转、搜索跳转、拼写建议跳转共用它——三条路径对「跳过去
+    /// 之后要做什么」的理解必须一致（选中 + 滚动），否则用户会发现
+    /// 「大纲跳转不选中、搜索跳转选中」，进而怀疑其中一个坏了。
+    ///
+    /// 滚动意图取 [`RevealIntent::Top`]（问题 066）：这些都是**离散
+    /// 跳转**，目标行必须贴视口顶部；沿用查找替换的「已在视口内就
+    /// 不动 / 落 1/4 处」会让点击目录后半数情况毫无反应、跳过去了
+    /// 也与标题顶部差四分之一屏。
     pub fn goto_byte_offset(&mut self, offset: usize) {
         let at = offset.min(self.editor_text.len());
         self.editor.set_selection(at, at);
         let cursor = editor_ops::byte_to_char(&self.editor_text, at);
         self.pending_cursor = Some((cursor, cursor));
-        self.scroll_to_offset(at);
+        self.scroll_to_offset(at, RevealIntent::Top);
     }
 
     /// 用一条拼写建议替换 `[start, end)` 区间（V11-07 右键菜单）。

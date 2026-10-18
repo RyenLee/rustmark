@@ -40,6 +40,28 @@ use crate::presentation::theme::mapper;
 /// 留一点余量既好看，也让上一块的末尾露出来，便于确认上下文。
 pub const TARGET_MARGIN: f32 = 8.0;
 
+/// 「把某个偏移滚进视口」的两种意图（问题 066）。
+///
+/// 查找「下一个」与大纲 / 搜索跳转对「跳过去之后要做什么」的理解
+/// **不一样**，硬套同一策略必坏一头：
+///
+/// - [`Self::IntoViewport`] 连续触发（连按 F3），每次都把命中顶到视口
+///   上部会让画面剧烈跳动，故「已在视口内就不动」；
+/// - [`Self::Top`] 是离散跳转，用户的期望就是「目标出现在我眼前最
+///   上方」——套用「已可见就不动」会让点击看起来毫无反应，套用
+///   「落 1/4 处」则与标题顶部差四分之一屏。
+///
+/// 落点与「预览区点击 → 编辑区」的 [`drive_editor`] 对齐（同为
+/// `行顶 − TARGET_MARGIN`）：两条跳转路径的手感必须一致，否则用户
+/// 会发现「点预览跳得准、点大纲对不齐」。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum RevealIntent {
+    /// 一律滚到该行顶部（贴视口顶，留 [`TARGET_MARGIN`]）。
+    Top,
+    /// 已在视口内则不动；否则落到视口上部 1/4 处（查找防抖）。
+    IntoViewport,
+}
+
 /// 命中判定时从视口顶部再往下探的距离（点）。
 ///
 /// 块与块之间有 4px 间隔（预览区 `add_space(4.0)`）；
@@ -319,7 +341,11 @@ fn drive_editor(app: &mut EditorApp, block_id: Option<u64>) -> bool {
     };
     let starts = line_start_offsets(&app.editor_text);
     let line = line_of_offset(&starts, offset);
-    let y = tops.get(line).copied().unwrap_or(0.0);
+    // Galley 坐标 → 内容坐标：加每帧实测的文本顶端偏移（TextEdit atom
+    // frame 的竖向内边距，见 [`ScrollSync::set_editor_text_top`]）。
+    // 不加这一项，预览点击跳转会系统性偏高该偏移（实测 4pt）——
+    // 与大纲跳转（问题 066）同源，两条路径必须一起修。
+    let y = tops.get(line).copied().unwrap_or(0.0) + app.ui.sync.editor_text_top();
 
     let geom = app.ui.sync.geometry(Side::Editor);
     app.editor.scroll_y = clamp_scroll(y - TARGET_MARGIN, geom);

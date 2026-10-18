@@ -118,6 +118,21 @@ pub struct ScrollSync {
     last: [Option<f32>; 2],
     /// 两侧几何量。
     geom: [PaneGeometry; 2],
+    /// 编辑区文本 Galley 顶端相对**滚动内容原点**的偏移（点）。
+    ///
+    /// `line_tops` 是 Galley 坐标系（第 0 行顶 = y 0），而滚动换算
+    /// （`scroll_to_offset` / `drive_editor`）要的是内容坐标系——两者
+    /// 差一个常量：egui 的 `TextEdit` atom frame 默认把
+    /// `spacing.button_padding` 当内边距（见 egui
+    /// `theme/default_style.rs`；本项目 `mapper` 将其设为
+    /// `(space_md, space_xs)`），Galley 于是不从内容原点起画。
+    ///
+    /// 由编辑区**每帧实测**（`galley_pos.y - 内容原点`）后写入，故：
+    /// ① 不被主题间距的具体数值绑死；② 换 egui 版本若改了 frame
+    /// 语义，这里自动跟上；③ 不把「TextEdit 有内边距」这个 UI 结构
+    /// 细节泄露进滚动数学。缺省 0 = 尚未测量（首帧），此时滚动换算
+    /// 退化为不加补偿——与修复前完全一致，不会更坏。
+    editor_text_top: f32,
     /// 是否启用同步。
     pub enabled: bool,
     /// 预览区点击某块后待执行的跳转（`Some(block_id)`）。
@@ -142,6 +157,7 @@ impl ScrollSync {
             owner_until_ms: 0,
             last: [None, None],
             geom: [PaneGeometry::default(), PaneGeometry::default()],
+            editor_text_top: 0.0,
             enabled: true,
             pending_click: None,
             drive_count: 0,
@@ -173,6 +189,24 @@ impl ScrollSync {
     /// 取一侧的几何量。
     pub fn geometry(&self, side: Side) -> PaneGeometry {
         self.geom[side.index()]
+    }
+
+    /// 记录编辑区文本 Galley 顶端相对滚动内容原点的偏移（每帧由编辑区实测）。
+    ///
+    /// 为什么值得单独一个字段而不是塞进 [`PaneGeometry`]：它是**编辑器
+    /// 特有**的排版常量（预览区没有「Galley 之外再套一层 frame」的问题），
+    /// 且 [`Self::reset`] 刻意**不清**它——换文档不改 frame 内边距，
+    /// 而清了它会让「reset 之后、下一帧编辑区渲染之前」发生的跳转
+    /// 丢掉补偿。
+    pub fn set_editor_text_top(&mut self, offset: f32) {
+        if offset.is_finite() {
+            self.editor_text_top = offset;
+        }
+    }
+
+    /// 取编辑区文本顶端偏移（`line_tops` → 内容坐标系的加数）。
+    pub fn editor_text_top(&self) -> f32 {
+        self.editor_text_top
     }
 
     /// 预览区点击了某个块，请求编辑区跳转。

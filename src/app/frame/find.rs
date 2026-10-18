@@ -44,14 +44,24 @@ impl EditorApp {
         self.pending_cursor = Some((ce, cs));
         // 滚动到可见：命中在文档很后面时，不滚屏的话「计数显示 8/12」
         // 而光标还在开头，用户完全看不出跳到了哪。
-        self.scroll_to_offset(found.start);
+        // 意图取 `IntoViewport`（连按 F3 防抖，见 `RevealIntent`）。
+        self.scroll_to_offset(found.start, RevealIntent::IntoViewport);
     }
 
-    /// 把某个字节偏移滚进编辑区视口（已在视口内则不动）。
+    /// 把某个字节偏移滚进编辑区视口。
     ///
     /// 复用 S6-06 的行顶表（[`mapper::line_tops`]）把字节偏移换成 y，
     /// 再用与滚动同步同一套夹紧，避免「跳转后又被同步逻辑拖回去」。
-    pub fn scroll_to_offset(&mut self, byte_offset: usize) {
+    ///
+    /// # 两种意图（问题 066）
+    ///
+    /// 语义与落点差异见 [`RevealIntent`]。离散跳转（大纲 / 检查 /
+    /// 搜索结果 / 拼写建议，统一经 [`Self::goto_byte_offset`]）取
+    /// [`RevealIntent::Top`]：目标行贴视口顶部，**不因「已在视口内」
+    /// 跳过**——点击类操作的全部意义就是「把这一章送到我眼前最上方」，
+    /// 可见性判定会让半数点击看起来毫无反应；也不落 1/4 处——那与
+    /// 标题顶部差四分之一屏。
+    pub fn scroll_to_offset(&mut self, byte_offset: usize, intent: RevealIntent) {
         let theme = self.theme().clone();
         // 优先用精确行顶表（含折行），缓存未就绪时退化成「统一行高」估算
         // （见 S6-05 #12）：跳转仍让目标行落进视口上部，只是位置略有偏差，
@@ -63,25 +73,35 @@ impl EditorApp {
         });
         let starts = crate::presentation::views::scroll_sync::line_start_offsets(&self.editor_text);
         let line = crate::presentation::views::scroll_sync::line_of_offset(&starts, byte_offset);
-        let Some(&top) = tops.get(line) else {
+        let Some(&galley_top) = tops.get(line) else {
             return;
         };
-        let bottom = tops.get(line + 1).copied().unwrap_or(top);
+        // Galley 坐标 → 内容坐标：加每帧实测的文本顶端偏移（TextEdit atom
+        // frame 的竖向内边距，见 [`crate::presentation::state::scroll_sync_state::ScrollSync::set_editor_text_top`]）。
+        // 不加这一项，跳转落点会系统性偏高该偏移（问题 066 探针实测
+        // 4pt：标题应贴视口顶 +8pt、实际 +12pt）。
+        let top = galley_top + self.ui.sync.editor_text_top();
         let geom = self.ui.sync.geometry(Side::Editor);
         if geom.viewport_h <= 0.0 {
             return;
         }
-        let view_top = self.editor.scroll_y;
-        let view_bottom = view_top + geom.viewport_h;
-        // 已在视口内就**不动**：每次跳转都把命中顶到视口上部会让长文档里
-        // 连续「下一个」时画面剧烈跳动，反而更难看清自己在哪。
-        // 只有完全看不见（命中是折行成多行的高亮段落时会超出视口）才滚。
-        if top >= view_top && bottom <= view_bottom {
-            return;
-        }
-        // 目标：让该行落在视口**上部**（留 1/4 屏余量），
-        // 而不是刚好贴边——贴边时用户分不清「跳到这里了」还是「本来就在这」。
-        let target = top - geom.viewport_h * 0.25;
+        let target = match intent {
+            RevealIntent::Top => top - TARGET_MARGIN,
+            RevealIntent::IntoViewport => {
+                let bottom = tops.get(line + 1).copied().unwrap_or(top);
+                let view_top = self.editor.scroll_y;
+                let view_bottom = view_top + geom.viewport_h;
+                // 已在视口内就**不动**：每次跳转都把命中顶到视口上部会让长文档里
+                // 连续「下一个」时画面剧烈跳动，反而更难看清自己在哪。
+                // 只有完全看不见（命中是折行成多行的高亮段落时会超出视口）才滚。
+                if top >= view_top && bottom <= view_bottom {
+                    return;
+                }
+                // 目标：让该行落在视口**上部**（留 1/4 屏余量），
+                // 而不是刚好贴边——贴边时用户分不清「跳到这里了」还是「本来就在这」。
+                top - geom.viewport_h * 0.25
+            }
+        };
         let clamped = crate::presentation::views::scroll_sync::clamp_scroll(target, geom);
         if (clamped - self.editor.scroll_y).abs() > 0.5 {
             self.editor.scroll_y = clamped;

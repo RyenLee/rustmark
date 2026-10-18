@@ -72,7 +72,7 @@ use crate::presentation::state::symbol_ui_state::SymbolUiState;
 use crate::presentation::theme::builtin::{self, BuiltinTheme, Theme};
 use crate::presentation::theme::mapper;
 use crate::presentation::views::editor_ops;
-use crate::presentation::views::scroll_sync::LineIndex;
+use crate::presentation::views::scroll_sync::{LineIndex, RevealIntent, TARGET_MARGIN};
 // `floor_char_boundary` 的语义与「为何只下取整」见 `shared::geometry`；
 // 程序化设值（大纲跳转、测试、`TextEdit` 回调）能给任意字节偏移，
 // 而 `&str[a..b]` 遇到非字符边界会 panic，`panic = "abort"` 下即窗口消失。

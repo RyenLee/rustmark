@@ -267,6 +267,10 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
         .auto_shrink([false, false])
         .vertical_scroll_offset(start_y)
         .show(ui, |ui| {
+            // 滚动内容原点：本帧内容坐标系的 y=0（`ScrollArea` 的内容从
+            // 这里开始排）。TextEdit 的 Galley **并不**从这儿起画——它
+            // 的 atom frame 有竖向内边距，差值在下方实测。
+            let content_top = ui.min_rect().top();
             // 视口高（已扣掉滚动条占位）= 文本区 frame 要撑到的高度。
             //
             // 这里刻意**不用** `ui.available_height()`：`content_max_rect` 的顶端
@@ -342,7 +346,22 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
                     app.editor.anchor = Some(a);
                 }
 
-                // 5) 文本变更 → diff → 领域命令。
+                // 5) 文本顶端偏移：Galley 坐标系 → 滚动内容坐标系。
+                //
+                //    `TextEdit` 的 atom frame 默认把 `spacing.button_padding`
+                //    当内边距（egui `theme/default_style.rs`；本项目 `mapper`
+                //    将其设为 `(space_md, space_xs)`），于是 Galley 顶端比
+                //    内容原点低一截（实测 4pt）。`line_tops` 报的是 Galley
+                //    坐标（第 0 行顶 = 0），而滚动换算要内容坐标——差一个
+                //    常量就等于所有跳转 / 同步系统性偏一截（问题 066：
+                // 探针实测标题应贴视口顶 +8pt、实际 +12pt）。
+                //    这里每帧实测并交给同步层：既不被主题间距的具体数值
+                //    绑死，也不把 UI 结构细节泄露进滚动数学。
+                app.ui
+                    .sync
+                    .set_editor_text_top(editor.galley_pos.y - content_top);
+
+                // 6) 文本变更 → diff → 领域命令。
                 //
                 //    早退策略：egui 每帧都要调 `.show(ui)`（UI 必须渲染），
                 //    但 diff 计算 + flush_edit 只在本帧**真的改了**时才值得做。
@@ -386,7 +405,7 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
                     app.ui.sync.note_programmatic_scroll(Side::Editor, now_ms);
                 }
 
-                // 6) 右键：落在错词上就开「你可能想输入」菜单（V11-07）。
+                // 7) 右键：落在错词上就开「你可能想输入」菜单（V11-07）。
                 //
                 //    左键点进编辑区一律关菜单：那表示用户要继续打字，
                 //    一个浮在正文上的菜单只会挡住他要看的那行。

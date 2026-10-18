@@ -21,6 +21,7 @@ mod lint_tab_test;
 mod math_glyph_test;
 mod multi_document_test;
 mod outline_alignment_test;
+mod outline_jump_scroll_test;
 mod preview_view_test;
 mod s6_11f_test;
 mod s6_12_test;
