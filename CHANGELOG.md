@@ -6,6 +6,15 @@ Release Notes 依此自动归组。
 
 ## [未发布]
 
+### 2026-10-18 · 面包屑「文件路径」截断修复（用户反馈）
+
+> 原始诉求与逐项记录：`docs/logs/问题记录1.txt` 059；任务状态：`docs/v1.1-backlog.md` V11-46。
+
+- **问题**：标签条下方的文件路径行，长路径延伸出面板右缘被硬切（截图实证 `logs` 只剩残形）。
+- **根因两层**：`draw_breadcrumb` 裸 `ui.label` 不截断；且 egui 的 `Placer::expand_to_include_rect` 把 Ui 的 min_rect 与 max_rect 一起扩——同面板里更早的超宽内容（菜单栏/标签条横向溢出）把「环境可用宽」连带污染，`truncate()` 挂上后 put 的矩形右界照样漂出窗口（360pt 窗口实测漂到 440）。
+- **修复**：`ui.put` 显式矩形 + `Label::truncate()` + `show_tooltip_when_elided`；矩形右界按 `clip_rect`（不随内容膨胀的唯一稳定面板界）对称推出，上下界钳到 clip（顺带修掉该行底部越出面板底缘 4pt 的隐性溢出）。
+- **回归**：`tests/presentation/breadcrumb_test.rs` 2 条真帧用例——窄窗口超长路径断言右缘不越界、`galley.elided` 置位、galley 全文保留完整路径（elide 只发生在字形层，语义不丢）；宽窗口短路径断言完整显示不 elide。
+
 ### 2026-10-18 · 欢迎页「最近文件」倒序 5 条（用户诉求）
 
 > 原始诉求与逐项记录：`docs/logs/问题记录1.txt` 058；任务状态：`docs/v1.1-backlog.md` V11-45。
