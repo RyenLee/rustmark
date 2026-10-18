@@ -6,13 +6,22 @@ Release Notes 依此自动归组。
 
 ## [未发布]
 
+### 2026-10-18 · 面包屑「文件路径」底部被遮挡修复（用户二反馈）
+
+> 原始诉求与逐项记录：`docs/logs/问题记录1.txt` 060；任务状态：`docs/v1.1-backlog.md` V11-47。
+
+- **问题**：059 修完右缘硬切后，用户二反馈路径文字**底部被面板底缘裁掉 1pt**。
+- **根因不在截断逻辑，在顶栏纵向预算**：分段实测（`ui.cursor().top()` 埋点）——菜单栏实占 ~45pt（超 40pt 设计值 ~5pt）、`ui.separator()` 预留 ~10pt，二者把面包屑行挤到 `cursor.top=84`、面板底缘 `clip.bottom=100` → 面包屑带仅 **16pt**；路径文字 15pt 高、加字脚（font leading/descender）视觉高 ~17pt，`visual_bounding_rect` 实测 `86..101`、底部探出面板 1pt 被裁（egui `Label` 在 `put` 内 `rect.left_top()` 顶对齐、视觉外框含字脚 → 底缘溢出）。
+- **修复两层**：① `ui.separator()` 改 `egui::Separator::default().spacing(1.0)`——只画 1px 发丝线、不再占 ~10pt 布局高度（该留白本就不在顶栏预算 `topbar+tabstrip+tabbar=100` 内），省下的空间还给标签条与面包屑，面包屑带回 ~25pt；② `draw_breadcrumb` 内 `ui.horizontal` 改 `ui.horizontal_top`（顶层横向排布必须顶对齐，项目 egui 布局纪律），避免子控件在窄带里被交叉轴居中。
+- **回归**：`tests/presentation/breadcrumb_test.rs` 在原 2 条（右缘 + elide + 全文）基础上，各加一条「底缘不越面板」断言（`rect.bottom() <= panel_bottom + 0.5`，`panel_bottom = topbar+tabstrip+tabbar`），窄/宽窗口实测文字底缘均 ≤ 面板底缘。**边界交代**：菜单栏溢出其 40pt 设计值是既有的（注释已预警），本条只治面包屑被挤的症状、未动菜单栏自身高度逻辑；要彻底对齐预算应另立条目让菜单栏高度回落或把分隔线高度计入 `height`。
+
 ### 2026-10-18 · 面包屑「文件路径」截断修复（用户反馈）
 
-> 原始诉求与逐项记录：`docs/logs/问题记录1.txt` 059；任务状态：`docs/v1.1-backlog.md` V11-46。
+> 原始诉求与逐项记录：`docs/logs/问题记录1.txt` 059；任务状态：`docs/v1.1-backlog.md` V11-46。关联：底部被遮挡见 060。
 
 - **问题**：标签条下方的文件路径行，长路径延伸出面板右缘被硬切（截图实证 `logs` 只剩残形）。
 - **根因两层**：`draw_breadcrumb` 裸 `ui.label` 不截断；且 egui 的 `Placer::expand_to_include_rect` 把 Ui 的 min_rect 与 max_rect 一起扩——同面板里更早的超宽内容（菜单栏/标签条横向溢出）把「环境可用宽」连带污染，`truncate()` 挂上后 put 的矩形右界照样漂出窗口（360pt 窗口实测漂到 440）。
-- **修复**：`ui.put` 显式矩形 + `Label::truncate()` + `show_tooltip_when_elided`；矩形右界按 `clip_rect`（不随内容膨胀的唯一稳定面板界）对称推出，上下界钳到 clip（顺带修掉该行底部越出面板底缘 4pt 的隐性溢出）。
+- **修复**：`ui.put` 显式矩形 + `Label::truncate()` + `show_tooltip_when_elided`；矩形右界按 `clip_rect`（不随内容膨胀的唯一稳定面板界）对称推出，上下界钳到 clip（顺带修掉该行底部越出面板底缘 4pt 的隐性溢出——**该 4pt 实为常态、非本项主因**，真正的底部裁切由 060 的根因解释）。
 - **回归**：`tests/presentation/breadcrumb_test.rs` 2 条真帧用例——窄窗口超长路径断言右缘不越界、`galley.elided` 置位、galley 全文保留完整路径（elide 只发生在字形层，语义不丢）；宽窗口短路径断言完整显示不 elide。
 
 ### 2026-10-18 · 欢迎页「最近文件」倒序 5 条（用户诉求）
