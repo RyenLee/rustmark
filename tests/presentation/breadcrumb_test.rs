@@ -167,11 +167,21 @@ fn long_path_is_truncated_within_window() {
     );
     let (rect, galley_text, elided) = &crumbs[0];
 
+    let panel_bottom = app.theme().metrics.topbar_height
+        + app.theme().metrics.tabstrip_height
+        + app.theme().metrics.tabbar_height;
     assert!(
         rect.right() <= NARROW_W + 0.5,
-        "面包屑文字右缘 {} 超出窗口右缘 {NARROW_W}——路径没有被截断，\
+        "面包crumb 文字右缘 {} 超出窗口右缘 {NARROW_W}——路径没有被截断，\
          正沿横向布局延伸出面板被硬切（问题 059 症状）",
         rect.right()
+    );
+    assert!(
+        rect.bottom() <= panel_bottom + 0.5,
+        "面包屑文字底部 {} 越出面板底缘 {panel_bottom}——文字被竖向裁切\
+         （问题 060 症状：原 `ui.horizontal` 交叉轴居中，窄带里 15pt 文字\
+         居中后底部探出 1pt）",
+        rect.bottom()
     );
     assert!(elided, "窄窗口下 galley 应标记 elided（末尾补省略号）");
     // elide 只发生在字形层：galley 全文仍是完整路径（无障碍 / 悬停提示语义不丢）。
@@ -187,8 +197,16 @@ fn short_path_shows_in_full_when_it_fits() {
     let crumbs = breadcrumb_texts(&texts, &app);
 
     assert_eq!(crumbs.len(), 1, "面包屑行应恰有一段文字，实际：{crumbs:?}");
-    let (_, galley_text, elided) = &crumbs[0];
+    let (rect, galley_text, elided) = &crumbs[0];
     assert!(!elided, "路径放得下时不应 elide");
+    let panel_bottom = app.theme().metrics.topbar_height
+        + app.theme().metrics.tabstrip_height
+        + app.theme().metrics.tabbar_height;
+    assert!(
+        rect.bottom() <= panel_bottom + 0.5,
+        "面包屑文字底部 {} 越出面板底缘 {panel_bottom}（问题 060）",
+        rect.bottom()
+    );
     assert_eq!(
         *galley_text, path,
         "路径放得下时应完整显示（含文件名），实际：{galley_text:?}"

@@ -61,7 +61,13 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
         .exact_size(height)
         .show(ui, |ui| {
             menu_bar::draw_app_menu_bar(app, ui);
-            ui.separator();
+            // 分隔线：仅画 1px 发丝线、不再占布局高度。默认 `ui.separator()`
+            // 预留 ~9–11pt（1px 线 + 上下各 ~4pt 留白），而该留白**不在顶栏
+            // 预算内**（`topbar+tabstrip+tabbar=100`）。菜单栏实测又常溢出其
+            // 40pt 设计值，二者叠加把面包屑行挤到只剩 ~16pt——15pt 文字加
+            // 字脚后底部探出面板底缘 1pt 被裁（问题 060）。改成分隔线只留
+            // 1pt 高度，省下的空间还给标签条与面包屑。
+            ui.add(egui::Separator::default().spacing(1.0));
             draw_tab_strip(app, ui);
             draw_breadcrumb(app, ui);
         });
@@ -548,8 +554,17 @@ fn paint_nav_arrow(painter: &egui::Painter, rect: egui::Rect, dir: f32, color: e
 /// max_rect 一起**扩：同面板里更早的超宽内容（菜单栏、标签条横向溢出）
 /// 会把面板 Ui 的 max_rect 连带撑出窗口——实测 360pt 窗口下
 /// `available_rect_before_wrap` 的右界漂到 440。`clip_rect` 不随内容
-/// 膨胀，是唯一稳定的面板界：右界按面板左内边距对称推出，上下界直接
-/// 钳到 clip（顺带修掉 rest 底部越出面板底缘 4pt 的隐性溢出）。
+/// 膨胀，是唯一稳定的面板界：右界按面板左内边距对称推出。
+///
+/// # 纵向必须 `horizontal_top`（问题 060 补充）
+///
+/// 顶栏菜单栏的实占常超过其 40pt 设计值，连带把面包屑行压到只剩 ~16pt
+/// （实测 `cursor.top=84`、`clip.bottom=100`）。若用 `ui.horizontal`，子
+/// 控件会被**交叉轴居中**到这一窄带里——15pt 高的路径文字居中后底部
+/// 探出面板底缘 1pt 被裁掉（截图「路径行文字底部被遮挡」）。改用
+/// `horizontal_top`：子控件贴顶对齐、占据整条窄带，文字顶缘落在行首，
+/// 底部留 1pt 余量不再越界。这是项目 egui 布局纪律「顶层横向排布必须
+/// `horizontal_top`」在面包屑处的落地。
 fn draw_breadcrumb(app: &EditorApp, ui: &mut Ui) {
     let path = app.current_document_path();
     let theme = app.theme();
@@ -557,7 +572,7 @@ fn draw_breadcrumb(app: &EditorApp, ui: &mut Ui) {
     // 面板内容左内边距（TopDown 布局下光标 x 即内容左界）。
     let inset = ui.cursor().left() - clip.left();
     let content_right = clip.right() - inset;
-    ui.horizontal(|ui| {
+    ui.horizontal_top(|ui| {
         // 文档图标：向量手绘，替代原 📄 字形。废止字形的理由与工具栏图标
         // 同源（emoji 依赖字体覆盖，见 `presentation::icons` 的模块文档），
         // 且从此与文件树里手绘的页面图标共用同一套规格表。
@@ -572,11 +587,10 @@ fn draw_breadcrumb(app: &EditorApp, ui: &mut Ui) {
                 accent: color,
             },
         );
-        // 剩余宽度独占给路径，右界钳到内容右界、上下界钳到面板。
+        // 剩余宽度独占给路径，右界钳到内容右界（竖向上 `horizontal_top`
+        // 已贴顶，无需再钳）。
         let mut rest = ui.available_rect_before_wrap();
         rest.max.x = rest.max.x.min(content_right);
-        rest.min.y = rest.min.y.max(clip.top());
-        rest.max.y = rest.max.y.min(clip.bottom());
         ui.put(
             rest,
             egui::Label::new(path.clone())
