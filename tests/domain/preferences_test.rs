@@ -197,6 +197,7 @@ fn preferences_rejects_invalid_editor_settings() {
         false,
         400,
         0.5,
+        false,
         WritingGoal::new(0),
         LintSettings::all_enabled(),
         12,
@@ -231,6 +232,7 @@ fn preferences_indent_unit_derives_from_tab_size() {
             false,
             400,
             0.5,
+            false,
             WritingGoal::new(0),
             LintSettings::all_enabled(),
             12,
@@ -314,6 +316,7 @@ fn editor_settings_round_trip_through_toml_persists_writing_goal() {
             false,
             400,
             0.5,
+            false,
             WritingGoal::new(1500),
             LintSettings::all_enabled(),
             12,
@@ -334,6 +337,29 @@ fn max_open_documents_defaults_to_twelve() {
     );
 }
 
+/// 侧栏开合默认**收起**（问题 062），且可被 `with_sidebar_visible` 改写。
+///
+/// 默认值与 `AppUiState::new` 的初始值必须一致：两处都是「第一次打开时
+/// 侧栏是收起的」，不一致的表现是启动瞬间闪一下侧栏再收起。
+#[test]
+fn sidebar_visibility_defaults_to_collapsed() {
+    assert!(
+        !EditorSettings::default_settings().sidebar_visible(),
+        "默认侧栏应为收起（内容区优先）"
+    );
+    let opened = EditorSettings::default_settings().with_sidebar_visible(true);
+    assert!(opened.sidebar_visible(), "改成展开后应读出展开");
+    // 其余字段不受影响（值对象不可变，`with_*` 只动一个字段）。
+    assert_eq!(
+        opened.split_ratio(),
+        EditorSettings::default_settings().split_ratio()
+    );
+    assert_eq!(
+        opened.max_open_documents(),
+        EditorSettings::default_settings().max_open_documents()
+    );
+}
+
 /// 上限 0 是非法值（一个文档都打不开 = 应用不可用），必须被拒绝。
 #[test]
 fn max_open_documents_zero_is_invalid() {
@@ -345,6 +371,7 @@ fn max_open_documents_zero_is_invalid() {
         false,
         400,
         0.5,
+        false,
         WritingGoal::new(0),
         LintSettings::all_enabled(),
         0,

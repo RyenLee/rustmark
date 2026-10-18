@@ -85,6 +85,10 @@ impl EditorApp {
                 self.ui
                     .set_theme(builtin::resolve(&self.settings().theme, self.system_dark));
                 self.ui.set_split_ratio(self.settings().editor.split_ratio);
+                // 侧栏开合同属编辑器设置（问题 062）：重置该分区后配置回到
+                // 默认（收起），界面必须跟着走——否则出现「配置里是收起、
+                // 屏幕上还开着」，下次启动又变收起，看起来像随机。
+                self.ui.sidebar_visible = self.settings().editor.sidebar_visible;
             }
             Err(e) => self.settings_ui.set_error(e.to_string()),
         }
@@ -132,6 +136,10 @@ impl EditorApp {
             spell_check: snapshot.spell_check,
             show_line_numbers: snapshot.show_line_numbers,
             split_ratio: self.settings().editor.split_ratio,
+            // 侧栏开合同理沿用当前值（问题 062）：「取消」回滚的是**设置页里
+            // 改过的字段**，而开合是在界面上随手切的、不经过设置页，
+            // 让它跟着取消一起跳变才是意外。
+            sidebar_visible: self.settings().editor.sidebar_visible,
             // 设置页尚未提供写作目标输入框，保存时沿用当前值，避免被 0 覆盖。
             writing_goal: self.settings().editor.writing_goal,
             // 取消时把 lint 开关也回滚到打开设置那一刻（V11-08）。

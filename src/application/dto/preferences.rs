@@ -182,6 +182,10 @@ pub struct EditorSettingsView {
     /// 编辑区 / 预览区分割比例（0.2 ~ 0.8）；旧配置缺省时按 `0.5` 处理。
     #[serde(default)]
     pub split_ratio: f32,
+    /// 侧栏是否展开（问题 062：记住上次的开合状态）；旧配置缺省按 `false`
+    /// （收起）处理——与领域 `EditorSettings::default_settings()` 一致。
+    #[serde(default)]
+    pub sidebar_visible: bool,
     /// 写作目标（字数）；`0` = 未设置（V11-05）。旧配置缺省按 `0` 处理。
     #[serde(default)]
     pub writing_goal: u32,
@@ -322,6 +326,7 @@ impl SettingsView {
                 spell_check: false,
                 show_line_numbers: true,
                 split_ratio: 0.5,
+                sidebar_visible: false,
                 writing_goal: 0,
                 lint: LintRulesView::default(),
                 max_open_documents: default_max_open_documents(),

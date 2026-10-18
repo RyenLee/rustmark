@@ -46,6 +46,19 @@ const DIVIDER_HIT_SCALE: f32 = 1.5;
 /// 入参是 eframe 0.37 传入的根 `Ui`（覆盖整个窗口、无默认边距与底色），
 /// 所有 `Panel` 都从这里就地切分。
 pub fn show(app: &mut EditorApp, ui: &mut Ui) {
+    draw(app, ui);
+    // 帧末：侧栏开合**变了就落盘**（问题 062）。
+    //
+    // 必须放在**所有绘制之后**：右上角按钮的点击发生在顶栏绘制阶段，
+    // 放在前面会漏掉本帧那一次切换（用户点完立刻关窗口就丢了）。
+    // 与 `persist_split_ratio` 同一手法（都在主视图帧末统一落盘，而不是在
+    // 每个切换入口各写一遍——入口有四条以上，漏一个是静默失效）。
+    app.persist_sidebar_visibility();
+}
+
+/// 绘制三栏布局（[`show`] 的实现体；单独成函数只为让帧末的落盘
+/// 不受中途 `return` 影响）。
+fn draw(app: &mut EditorApp, ui: &mut Ui) {
     let metrics = app.theme().metrics;
 
     // 防御性底色：先把整块可用区域铺成面板底色（`bg_secondary`），画在最底层。

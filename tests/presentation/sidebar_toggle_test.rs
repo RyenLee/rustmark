@@ -25,12 +25,18 @@ const SCREEN: egui::Vec2 = egui::vec2(1280.0, 800.0);
 
 fn app_fixture() -> (tempfile::TempDir, EditorApp) {
     let dir = tempfile::tempdir().expect("应可创建临时目录");
+    let app = app_at(dir.path());
+    (dir, app)
+}
+
+/// 用**同一份配置目录**再装配一个应用（= 模拟重启）。
+fn app_at(config_dir: &std::path::Path) -> EditorApp {
     let services = Services::assemble_with_dialogs(
-        ConfigPaths::in_dir(dir.path()),
+        ConfigPaths::in_dir(config_dir),
         Arc::new(FakeDialog::new()),
     )
     .expect("装配应成功");
-    (dir, EditorApp::new(services, false))
+    EditorApp::new(services, false)
 }
 
 fn raw_input(events: Vec<egui::Event>) -> egui::RawInput {
@@ -212,5 +218,49 @@ fn sidebar_defaults_to_collapsed_and_topbar_button_toggles_it() {
     assert!(
         !app.ui.sidebar_visible,
         "再次点击右上角按钮应收起侧栏（按钮是收起/展开双向切换）"
+    );
+}
+
+/// 开合状态**跨重启保留**（问题 062）：点按钮展开 → 帧末落盘 → 用同一份
+/// 配置重新装配的应用仍是展开；反过来收起后重启仍是收起。
+///
+/// 刻意走「真帧点击 → 帧末落盘」而不是直接调持久化方法：
+/// 「落盘发生在帧末」正是这条需求最容易漏的一环——点击发生在顶栏绘制
+/// 阶段，写盘点若排在它之前，用户点完立刻关窗口就丢了。真帧跑一遍才能
+/// 钉住这个时序。
+#[test]
+fn sidebar_visibility_is_remembered_across_restarts() {
+    let dir = tempfile::tempdir().expect("应可创建临时目录");
+    let mut app = app_at(dir.path());
+    let ctx = fresh_ctx();
+
+    // ① 展开（真帧点击右上角按钮）。
+    let band = breadcrumb_band(&app);
+    let btn = sidebar_button_rect(&out_shapes(&ctx, &mut app), band);
+    click_at(&ctx, &mut app, btn.center());
+    assert!(app.ui.sidebar_visible, "点击后应展开");
+    // ② 再画一帧：落盘发生在这一帧的末尾。
+    out_shapes(&ctx, &mut app);
+    drop(app);
+
+    // ③ 重启：上次是展开，启动就该是展开。
+    let restarted = app_at(dir.path());
+    assert!(
+        restarted.ui.sidebar_visible,
+        "上次展开过，重启后应仍是展开（记住上次的开合状态）"
+    );
+
+    // ④ 反向同样成立：收起后重启仍是收起（不是「只记得展开」）。
+    let mut reopened = app_at(dir.path());
+    reopened.ui.toggle_sidebar();
+    assert!(!reopened.ui.sidebar_visible);
+    let ctx2 = fresh_ctx();
+    let _ = out_shapes(&ctx2, &mut reopened);
+    drop(reopened);
+
+    let collapsed = app_at(dir.path());
+    assert!(
+        !collapsed.ui.sidebar_visible,
+        "上次收起过，重启后应仍是收起"
     );
 }

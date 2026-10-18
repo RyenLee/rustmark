@@ -168,6 +168,18 @@ pub struct EditorSettings {
     /// 编辑区 / 预览区分割比例（0.2 ~ 0.8），持久化以记住用户拖拽结果。
     #[serde(default)]
     split_ratio: f32,
+    /// 侧栏是否展开（问题 062：**记住上次的开合状态**）。
+    ///
+    /// 默认 `false`（收起）——与 `AppUiState::new` 的初始值一致：内容区优先，
+    /// 文件树按需展开。持久化它而不是每次都回到默认，是因为「开合侧栏」是
+    /// 用户按自己的屏幕与任务调过一次就长期成立的选择：写长文的人常年收起、
+    /// 在多个文件间跳的人常年展开，每次启动都让他重调一遍等于没记住。
+    ///
+    /// `#[serde(default)]`：旧配置文件没有这个字段，缺了按 `false`（收起）
+    /// 读出——与默认设置一致，不让旧配置因缺字段而整体加载失败
+    /// （同 `split_ratio` / `writing_goal` 的处理）。
+    #[serde(default)]
+    sidebar_visible: bool,
     /// 写作目标（字数）；`0` = 未设置（V11-05）。
     ///
     /// `#[serde(default)]`：**旧配置文件里没有这个字段**，缺了必须按
@@ -207,6 +219,7 @@ impl EditorSettings {
             show_line_numbers: true,
             undo_merge_window_ms: 400,
             split_ratio: 0.5,
+            sidebar_visible: false,
             writing_goal: WritingGoal::default(),
             lint: LintSettings::all_enabled(),
             max_open_documents: MAX_OPEN_DOCUMENTS_DEFAULT,
@@ -225,6 +238,7 @@ impl EditorSettings {
         show_line_numbers: bool,
         undo_merge_window_ms: u64,
         split_ratio: f32,
+        sidebar_visible: bool,
         writing_goal: WritingGoal,
         lint: LintSettings,
         max_open_documents: u32,
@@ -237,6 +251,7 @@ impl EditorSettings {
             show_line_numbers,
             undo_merge_window_ms,
             split_ratio,
+            sidebar_visible,
             writing_goal,
             lint,
             // 原样存入：0 由 `is_valid` 拒绝（显式构造是编程错误，该响铃），
@@ -278,6 +293,22 @@ impl EditorSettings {
     /// 编辑区 / 预览区分割比例（0.2 ~ 0.8）。
     pub const fn split_ratio(&self) -> f32 {
         self.split_ratio
+    }
+
+    /// 侧栏是否展开（默认收起，见字段文档）。
+    pub const fn sidebar_visible(&self) -> bool {
+        self.sidebar_visible
+    }
+
+    /// 设置侧栏开合，返回新的设置（值对象不可变）。
+    ///
+    /// 供「侧栏开合变化 → 落盘」这条链路使用：不新增第二份开合状态，
+    /// 持久化的就是 `AppUiState::sidebar_visible` 的当前值。
+    pub const fn with_sidebar_visible(self, visible: bool) -> Self {
+        Self {
+            sidebar_visible: visible,
+            ..self
+        }
     }
 
     /// 写作目标（字数）；`0` = 未设置（V11-05）。

@@ -99,6 +99,54 @@ fn scan_marks_directories_as_directories() {
     );
 }
 
+/// 文件树**默认全收起**（问题 062）：刚扫描完只画根目录的直接子项。
+///
+/// 此前装载时会把顶层目录全展开，用户打开一个文件夹先被塞进一层他没要求
+/// 看的内容。钉住这条的正面理由不是「少画几行」，而是**默认状态必须是用户
+/// 自己点出来的**：要找的文件所在目录由 `expand_ancestors` 在打开时逐层
+/// 展开到可见（按需），不需要靠启动时的猜测。
+#[test]
+fn file_tree_starts_fully_collapsed() {
+    let ws = workspace();
+    let (_cfg, app) = app_with_workspace(ws.path());
+    let root = app.workspace_root();
+
+    assert!(
+        app.sidebar.expanded_dirs.is_empty(),
+        "装载后不应自动展开任何目录，实测：{:?}",
+        app.sidebar.expanded_dirs
+    );
+    let rows = tree_rows(&app.workspace_entries.items, &root, &|p| {
+        app.sidebar.is_expanded(p)
+    });
+    let names: Vec<&str> = rows.iter().map(|r| r.name.as_str()).collect();
+    assert_eq!(
+        names,
+        vec!["docs", "readme.md"],
+        "只应画出根的直接子项（docs 收起，其下的 img / guide.md 不画），实测：{names:?}"
+    );
+}
+
+/// 打开文件仍会把它的祖先目录展开到可见（全收起默认不得伤到这条）。
+///
+/// 与 [`file_tree_starts_fully_collapsed`] 成对：默认不猜用户要看哪一层，
+/// 但用户真的打开某个文件时，树里必须能看到那个文件——否则「默认收起」
+/// 会退化成「文件树永远找不到刚打开的文件」。
+#[test]
+fn opening_a_file_expands_its_ancestors() {
+    let ws = workspace();
+    let root = ws.path().to_path_buf();
+    let (_cfg, mut app) = app_with_workspace(&root);
+
+    app.open_workspace_file(&joined(&root, "docs/guide.md"))
+        .expect("打开工作区文件应成功");
+
+    assert!(
+        app.sidebar.is_expanded(&joined(&root, "docs")),
+        "打开 docs/guide.md 后 docs 必须展开，否则树里看不到刚打开的文件"
+    );
+}
+
 /// 树投影把扁平条目折成带缩进的层级行。
 #[test]
 fn tree_projection_builds_hierarchical_rows() {

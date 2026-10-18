@@ -85,6 +85,7 @@ fn set_editor_valid_persists() {
             spell_check: true,
             show_line_numbers: false,
             split_ratio: 0.5,
+            sidebar_visible: false,
             writing_goal: 500,
             lint: Default::default(),
             max_open_documents: 12,
@@ -107,6 +108,7 @@ fn set_editor_goal_beyond_max_saturates_instead_of_failing() {
             spell_check: false,
             show_line_numbers: false,
             split_ratio: 0.5,
+            sidebar_visible: false,
             // 远超领域上限：必须饱和到 1_000_000，而不是让保存失败（V11-05）。
             writing_goal: u32::MAX,
             lint: Default::default(),
@@ -132,6 +134,7 @@ fn set_editor_invalid_tab_size_fails() {
             spell_check: true,
             show_line_numbers: false,
             split_ratio: 0.5,
+            sidebar_visible: false,
             writing_goal: 0,
             lint: Default::default(),
             max_open_documents: 12,

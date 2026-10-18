@@ -290,6 +290,7 @@ fn to_editor(view: &EditorSettingsView) -> AppResult<EditorSettings> {
         view.show_line_numbers,
         400,
         view.split_ratio,
+        view.sidebar_visible,
         // 目标在领域层饱和到上限：界面填多大都不会让设置保存失败（V11-05）。
         WritingGoal::new(view.writing_goal),
         to_lint_settings(&view.lint),
@@ -337,6 +338,7 @@ fn to_editor_view(editor: &EditorSettings) -> EditorSettingsView {
         spell_check: editor.spell_check(),
         show_line_numbers: editor.show_line_numbers(),
         split_ratio: editor.split_ratio(),
+        sidebar_visible: editor.sidebar_visible(),
         writing_goal: editor.writing_goal().words(),
         lint: to_lint_rules_view(editor.lint()),
         // 兜底收敛：领域值只可能经 serde / `new` 两条路变 0，前者已收敛，

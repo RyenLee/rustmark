@@ -63,7 +63,8 @@ impl EditorApp {
     /// 把后台扫描的结果应用到 UI 状态（异步 PickFolder 路径使用）。
     ///
     /// 后台线程已完成领域层 `scan_tree`（RwLock 写入 + EventBus publish），
-    /// 这里只构造 `WorkspaceEntries` 快照 + 展开顶层目录——纯 UI 状态变更。
+    /// 这里只构造 `WorkspaceEntries` 快照——纯 UI 状态变更（**不**自动展开
+    /// 任何目录，默认全收起见 [`Self::scan_workspace`]）。
     pub(crate) fn apply_scan_result(
         &mut self,
         root: &str,
@@ -79,11 +80,6 @@ impl EditorApp {
                 .map(|e| (e.path.as_str().to_string(), e.is_directory))
                 .collect(),
         );
-        // 首次装入时把根目录下的目录全部展开。
-        if self.sidebar.needs_initial_expand {
-            self.sidebar.needs_initial_expand = false;
-            self.expand_top_level();
-        }
     }
 
     /// 轮询后台扫描 channel（每帧调一次）。
@@ -229,28 +225,16 @@ impl EditorApp {
                 .map(|e| (e.path.as_str().to_string(), e.is_directory))
                 .collect(),
         );
-        // 首次装入时把根目录下的目录全部展开：折叠的全展开会让用户
-        // 以为「文件树是空的」，而实际只是没展开。
-        if self.sidebar.needs_initial_expand {
-            self.sidebar.needs_initial_expand = false;
-            self.expand_top_level();
-        }
+        // 树**默认全收起**（问题 062）：装载后只画根目录的直接子项，
+        // 目录一律不自动展开。
+        //
+        // 此前会展开顶层目录，理由是「怕用户以为树是空的」——那个担心不成立：
+        // `tree_rows` 里根的直接子项（depth 0）恒可见，收起的目录自己也仍然
+        // 画出来，只是不画它的子项。反过来，自动展开等于用户打开一个文件夹
+        // 就先被塞进一层他没要求看的内容，目录一大就是一屏噪音；而用户真正
+        // 要找的文件所在的目录，在打开文件时由 `expand_ancestors` 逐层展开
+        // 到可见——那才是「按需展开」。
         Ok(self.workspace_entries.items.len())
-    }
-
-    /// 展开根目录下的全部目录（仅第一层，深层留给用户自己点）。
-    pub(super) fn expand_top_level(&mut self) {
-        let root = self.workspace_root();
-        let top: Vec<String> = self
-            .workspace_entries
-            .items
-            .iter()
-            .filter(|(path, is_dir)| *is_dir && parent_of(path) == root)
-            .map(|(path, _)| path.clone())
-            .collect();
-        for path in top {
-            self.sidebar.expand(&path);
-        }
     }
 
     /// 打开工作区里的某个文件（文件树点击 / 搜索跳转都走这里）。
@@ -471,13 +455,6 @@ impl EditorApp {
         }
         self.scan_workspace(&root).unwrap_or(0)
     }
-}
-
-/// 父目录路径（末段之前）；无父目录时返回空串。
-pub(super) fn parent_of(path: &str) -> String {
-    path.rfind('/')
-        .map(|cut| path[..cut].to_string())
-        .unwrap_or_default()
 }
 
 /// 把领域命中转成表现层的分组结构，并算出每条命中的高亮区间。

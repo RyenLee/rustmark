@@ -66,6 +66,7 @@ fn customized() -> Preferences {
         false,
         800,
         0.5,
+        false,
         WritingGoal::new(1200),
         rustmark::domain::preferences::value_objects::LintSettings::all_enabled(),
         9,
@@ -247,6 +248,7 @@ fn concurrent_style_repeated_saves_keep_file_valid() {
             false,
             400,
             0.5,
+            false,
             WritingGoal::new(0),
             rustmark::domain::preferences::value_objects::LintSettings::all_enabled(),
             7,
@@ -255,6 +257,43 @@ fn concurrent_style_repeated_saves_keep_file_valid() {
     }
     assert!(repo.load().is_ok(), "最后一次写入的文件必须可解析");
     assert!(dir.backups().is_empty(), "正常保存不应产生备份");
+}
+
+// ============================================================================
+// 问题 062 · 侧栏开合状态的持久化
+// ============================================================================
+
+/// **旧配置文件**（没有 `sidebar_visible` 字段）必须按默认「收起」读出，
+/// 而不是让整个配置加载失败——后者会连主题与缩进一起打回默认。
+///
+/// 做法：先存一份当前版本的配置，再把 `sidebar_visible` 那行删掉，
+/// 模拟老版本写下的文件（不手写整份 TOML，格式变了这条也不会假绿）。
+#[test]
+fn preferences_without_sidebar_visible_load_as_collapsed() {
+    let dir = TempDir::new("sidebar-legacy");
+    let repo = repo_in(&dir);
+
+    repo.save(&Preferences::default_preferences())
+        .expect("保存应成功");
+    let path = dir.join("settings.toml");
+    let text = fs::read_to_string(&path).expect("配置应可读");
+    let stripped: String = text
+        .lines()
+        .filter(|line| !line.contains("sidebar_visible"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert_ne!(stripped, text, "应确实删掉了 sidebar_visible 那一行");
+    fs::write(&path, stripped).expect("回写应成功");
+
+    let loaded = repo.load().expect("旧配置应能加载（缺字段不报错）");
+    assert!(
+        !loaded.editor().sidebar_visible(),
+        "缺字段应按默认（收起）读出，而不是加载失败"
+    );
+    assert!(
+        dir.backups().is_empty(),
+        "缺字段不该触发「备份 + 回退默认」——那会丢掉其余设置"
+    );
 }
 
 // ============================================================================
@@ -278,6 +317,7 @@ fn lint_rule_choices_survive_a_toml_round_trip() {
         true,
         400,
         0.5,
+        false,
         WritingGoal::new(0),
         LintSettings {
             heading_jump: false,
@@ -353,6 +393,7 @@ fn prefs_with_custom_syntax(syn_heading: Option<&str>) -> Preferences {
         true,
         400,
         0.5,
+        false,
         WritingGoal::new(0),
         rustmark::domain::preferences::value_objects::LintSettings::all_enabled(),
         3,

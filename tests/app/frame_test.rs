@@ -68,6 +68,63 @@ fn layout_actions_toggle_independent_flags() {
     );
 }
 
+/// 侧栏开合跨重启保留（问题 062）：默认收起 → 展开并落盘 → 重新装配
+/// （同一份配置）仍是展开；收起并落盘 → 仍是收起。
+///
+/// 这条只管「值确实进了配置文件、启动时确实读回来了」；「落盘发生在哪一帧」
+/// 由 `tests/presentation/sidebar_toggle_test.rs` 的真帧用例钉住。
+#[test]
+fn sidebar_visibility_round_trips_through_preferences() {
+    let (dir, mut app) = app();
+    assert!(
+        !app.ui.sidebar_visible,
+        "首次启动（无配置）应默认收起：内容区优先"
+    );
+
+    app.execute(UiAction::ToggleSidebar);
+    assert!(app.ui.sidebar_visible);
+    app.persist_sidebar_visibility();
+
+    let restarted = EditorApp::new(
+        Services::assemble_with_dialogs(
+            ConfigPaths::in_dir(dir.path()),
+            Arc::new(FakeDialog::new()),
+        )
+        .expect("装配应成功"),
+        false,
+    );
+    assert!(
+        restarted.ui.sidebar_visible,
+        "上次是展开，重启后应仍是展开（记住上次的开合状态）"
+    );
+
+    // 反向：收起后重启仍是收起。
+    let mut reopened = EditorApp::new(
+        Services::assemble_with_dialogs(
+            ConfigPaths::in_dir(dir.path()),
+            Arc::new(FakeDialog::new()),
+        )
+        .expect("装配应成功"),
+        false,
+    );
+    reopened.execute(UiAction::ToggleSidebar);
+    reopened.persist_sidebar_visibility();
+    assert!(!reopened.ui.sidebar_visible);
+
+    let collapsed = EditorApp::new(
+        Services::assemble_with_dialogs(
+            ConfigPaths::in_dir(dir.path()),
+            Arc::new(FakeDialog::new()),
+        )
+        .expect("装配应成功"),
+        false,
+    );
+    assert!(
+        !collapsed.ui.sidebar_visible,
+        "上次收起过，重启后应仍是收起"
+    );
+}
+
 #[test]
 fn every_overlay_opening_action_actually_opens_its_overlay() {
     let (_dir, mut app) = app();

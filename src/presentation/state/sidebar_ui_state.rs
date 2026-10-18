@@ -53,12 +53,6 @@ pub struct SidebarUiState {
     pub error: Option<String>,
     /// 侧栏提示（如「已创建 xxx.md」）。
     pub notice: Option<String>,
-    /// 是否还没做过「首次自动展开」。
-    ///
-    /// 单独记一个布尔而不是拿 `expanded_dirs.is_empty()` 判断：
-    /// 用户手动全部收起后 `expanded_dirs` 也是空的，那样每次重扫都会
-    /// 把他收起的目录重新展开——他刚做的操作被系统悄悄撤销。
-    pub needs_initial_expand: bool,
     /// 上一帧**实际绘制过**的标签（`None` 表示侧栏还没画过）。
     ///
     /// 存在的理由：焦点只能交给「刚切过来」的搜索标签，但标签值可能
@@ -92,7 +86,6 @@ impl SidebarUiState {
     pub fn new() -> Self {
         Self {
             outline_max_level: 6,
-            needs_initial_expand: true,
             ..Default::default()
         }
     }

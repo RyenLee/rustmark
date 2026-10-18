@@ -165,6 +165,43 @@ impl EditorApp {
             .set_editor(SetEditorCommand { editor });
     }
 
+    /// 侧栏开合**变化时**落盘（每帧调用一次，内部比对，没变就直接返回）。
+    ///
+    /// # 为什么是「每帧比对」而不是「在切换处写」
+    ///
+    /// 能改 `sidebar_visible` 的入口有四条以上：`UiAction::ToggleSidebar`
+    /// （右上角按钮 / Ctrl+\ / 视图菜单）、`ToggleOutline` 与 `FindInFiles`
+    /// （`toggle_sidebar_tab` 会顺带展开或收起）、以及侧栏活动栏的点击
+    /// （`sidebar_view` 里直接调 `AppUiState::toggle_sidebar_tab`，不经
+    /// `execute`）。逐个入口写一遍就是「漏一个静默失效」的经典形状——
+    /// 项目里 `UiAction` 漏接线的代价已经在 038 付过一次。故改为在帧末
+    /// 统一比对：任何入口改了它，这一帧都会被落盘。
+    ///
+    /// 与 `persist_split_ratio` 同一手法（读回设置 → 只改一个字段 → 回写），
+    /// 保证不丢用户已设的缩进 / 自动换行 / 自动保存等。写盘失败刻意忽略：
+    /// 开合状态是显示偏好，为它弹错会打断编辑。
+    pub fn persist_sidebar_visibility(&mut self) {
+        if self.ui.sidebar_visible == self.sidebar_visible_persisted {
+            return;
+        }
+        let Ok(settings) = self.services.preferences.get_settings(GetSettingsQuery) else {
+            return;
+        };
+        let mut editor = settings.editor;
+        editor.sidebar_visible = self.ui.sidebar_visible;
+        if self
+            .services
+            .preferences
+            .set_editor(SetEditorCommand { editor })
+            .is_err()
+        {
+            return;
+        }
+        // 只有真写成了才更新基准：写失败时下一帧会再试一次，
+        // 否则这次失败会被永久记住（状态从此再也不落盘）。
+        self.sidebar_visible_persisted = self.ui.sidebar_visible;
+    }
+
     /// 取得活动文档；没有则新建一个空白未命名文档。
     ///
     /// # 谁在调用

@@ -336,6 +336,14 @@ pub struct EditorApp {
     >,
     /// 侧栏扫描 loading 态（显示"正在扫描..."提示）。
     pub(crate) scan_loading: bool,
+    /// 侧栏开合**上次落盘**的值（会话级，不参与别的判定）。
+    ///
+    /// 存在的理由：开合状态要「变了就写盘」（问题 062），而写入动作在
+    /// 每帧末尾发生，判断「变没变」必须有一个上一次的值可比。拿
+    /// `get_settings()` 每次去问也行，但那会把整张快捷键表一起克隆一遍
+    /// （`SettingsView` 含 `Vec<ShortcutView>`）——60fps 下为两个布尔付这个
+    /// 代价不值当，与 `split_dragging`「只在跳变时写一次」同源。
+    sidebar_visible_persisted: bool,
 }
 
 pub(crate) use capture::PendingCapture;
@@ -441,9 +449,17 @@ impl EditorApp {
             pending_close_all: false,
             scan_pending: None,
             scan_loading: false,
+            // 真实值在下面按持久化设置覆盖（与 `split_ratio` 同一手法）。
+            sidebar_visible_persisted: false,
         };
         // 分割比例以持久化配置为权威来源：用户拖过的比例重启后仍生效。
         app.ui.split_ratio = settings.editor.split_ratio.clamp(SPLIT_MIN, SPLIT_MAX);
+        // 侧栏开合同理（问题 062）：上次是展开的就还展开，是收起的就还收起。
+        // 同时把它记为「已落盘值」，供每帧的变更检测做基准（见
+        // [`Self::persist_sidebar_visibility`]）——不然启动第一帧就会被判成
+        // 「变了」，白写一次配置文件。
+        app.ui.sidebar_visible = settings.editor.sidebar_visible;
+        app.sidebar_visible_persisted = settings.editor.sidebar_visible;
         // 行号栏开关同样以持久化配置为权威来源（默认隐藏，见领域 `EditorSettings`）。
         app.editor.line_numbers = settings.editor.show_line_numbers;
         app
@@ -530,6 +546,8 @@ impl eframe::App for EditorApp {
 
         // 4) 绘制。视图层在 S6-02~S6-11 逐步接入。
         //    egui 0.37 起根 `Ui` 已自带全窗口可用区，Panel 全部从 `ui` 切分。
+        // 侧栏开合的落盘在主视图帧末完成（见 `main_view::show`）——
+        // 那里才是「本帧所有点击都处理完」的位置。
         crate::presentation::views::main_view::show(self, ui);
 
         // 4.5) 草稿恢复提示（DEF-02）：启动发现遗留草稿时居中提示。
