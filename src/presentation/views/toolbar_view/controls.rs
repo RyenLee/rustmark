@@ -3,6 +3,7 @@
 use egui::{Align, CornerRadius, Layout, RichText, Ui};
 
 use crate::app::frame::EditorApp;
+use crate::presentation::icons;
 use crate::presentation::shortcuts::registry::UiAction;
 use crate::presentation::theme::builtin::{Metrics, Theme};
 
@@ -17,7 +18,8 @@ pub const FLAT_GROUP: &str = "格式";
 /// 下拉触发器右侧的三角。
 ///
 /// 实测本机字体下**有**字形；`▾`（U+25BE）**没有**，用它会画出一个豆腐块方框
-/// （口径与清单见 [`UiAction::icon`] 与 `tests/presentation/toolbar_visual_test.rs`）。
+/// （字形覆盖的口径与教训见 `tests/presentation/toolbar_visual_test.rs`；
+/// 工具栏动作图标已全部改为向量绘制，见 [`crate::presentation::icons`]）。
 const DROPDOWN_ARROW: &str = "⏷";
 
 /// 编辑区工具栏的分组：下拉标题 → 该组动作（均为 `MenuGroup::Format`）。
@@ -94,66 +96,48 @@ fn control_radius(m: &Metrics) -> CornerRadius {
     CornerRadius::same(m.radius_button.round().clamp(0.0, 255.0) as u8)
 }
 
-/// 工具栏按钮上的文案：`图标 + 空格 + 工具栏专用短文案`。
+/// 工具栏控件的两种形态。
 ///
-/// 用 [`UiAction::toolbar_label`] 而不是 [`UiAction::label`]：后者是菜单 /
-/// 命令面板里的完整说法（「提升标题级别」），铺到一行按钮上会横向溢出。
-/// 完整说法由悬停提示补足（见 [`draw_flat_actions`]）。
-///
-/// 图标与文案之间是**一个普通空格**而非布局间距——它们属于同一段文字，
-/// 用 `add_space` 会在动作没有图标时留下一段看不懂的空白。
-pub fn button_text(action: UiAction) -> String {
-    match action.icon() {
-        Some(icon) => format!("{icon} {}", action.toolbar_label()),
-        None => action.toolbar_label().to_string(),
-    }
+/// 渲染与用例都从这个枚举取值（见 [`toolbar_controls`]），「界面上有几个
+/// 控件、各是什么」因此只有一处定义。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ToolbarControl {
+    /// 平铺**图标按钮**：一个动作 = 一个按钮，只有图形、没有文字。
+    ///
+    /// 原实现是「字形图标 + 短文案」（`B 加粗`）。文字在 16pt 图标旁边
+    /// 只起注释作用，却把按钮撑成长短不一的块；且字形图标依赖字体覆盖
+    /// （豆腐块风险，见 [`crate::presentation::icons`] 的模块文档）。
+    /// 现改为纯向量图形：一行按钮因此是一条整齐的正方形栅格。
+    Flat(UiAction),
+    /// 分组下拉触发器：标题文字 + 右侧三角，动作展开后才出现。
+    ///
+    /// 标题是**分组名**（「插入」/「列表/结构」/「行操作」）而不是某个
+    /// 动作名——它回答「这组是干什么的」，故保留文字；这与「动作图标」
+    /// 不是一类东西，不纳入纯图形化。
+    Dropdown(&'static str),
 }
 
-/// 工具栏上**每一个控件**的可见文案，按从左到右的顺序。
-///
-/// 「平铺分组」（[`FLAT_GROUP`]）里的每个动作各是一个按钮，文案见 [`button_text`]；
-/// 其余分组各是一个下拉，**只画分组标题**，动作要展开才出现。
+/// 工具栏上**每一个控件**，按从左到右的顺序。
 ///
 /// # 为什么要单独给一个函数，而不是让用例自己遍历 `editor_toolbar_groups`
 ///
-/// 「工具栏上到底有几个控件、每个叫什么」此前散落在两处：渲染时按
+/// 「工具栏上到底有几个控件、各是什么形态」此前散落在两处：渲染时按
 /// `title == FLAT_GROUP` 决定平铺还是下拉，用例则假设「所有分组标题都可见」——
 /// 一旦某个分组改成平铺，用例就去找一个根本不存在的标题而失败（实测：
 /// 「格式」组平铺后，`top_menu_test` 里找「格式」标题的断言全红）。
 ///
 /// 现在渲染与用例都从这个函数取值，「用例检查的控件」与「实际画出的控件」
 /// 不可能再对不上：改分组形态只需改这里一处。
-pub fn toolbar_control_labels() -> Vec<String> {
+pub fn toolbar_controls() -> Vec<ToolbarControl> {
     let mut out = Vec::new();
     for (title, actions) in editor_toolbar_groups() {
         if title == FLAT_GROUP {
-            out.extend(actions.iter().map(|a| button_text(*a)));
+            out.extend(actions.into_iter().map(ToolbarControl::Flat));
         } else {
-            out.push(title.to_string());
+            out.push(ToolbarControl::Dropdown(title));
         }
     }
     out
-}
-
-/// 一个工具栏控件的**统一外观**。
-///
-/// # 刻意不指定 `fill` / `stroke`
-///
-/// 指定它们会把悬停 / 按下反馈一并写死，按钮就成了死按钮。这里让 egui 走
-/// `visuals.widgets.{inactive,hovered,active}`——主题映射里这三种状态的
-/// 底色 / 描边 / 文字色已经统一（见本节的说明）。这样「统一配色」不是把
-/// 颜色抄两遍，而是**只有一个来源**：改主题时两者必然一起变。
-///
-/// 尺寸同理：`min_size` 只钉高度（宽度随文案），`corner_radius` 取自主题，
-/// 内边距沿用 egui 的 `button_padding`——平铺按钮与下拉触发器都走这里，
-/// 于是它们不可能长得不一样。
-fn control_button(ui: &mut Ui, theme: &Theme, text: impl Into<String>, h: f32) -> egui::Response {
-    let m = theme.metrics;
-    ui.add(
-        egui::Button::new(RichText::new(text.into()).size(m.ui_font_size - 1.0))
-            .min_size(egui::vec2(0.0, h))
-            .corner_radius(control_radius(&m)),
-    )
 }
 
 /// 组与组之间的竖直分隔线。
@@ -190,8 +174,11 @@ fn group_divider(ui: &mut Ui, theme: &Theme, h: f32) {
 ///   避免整条工具栏被 18 个按钮挤爆——窄窗口里最右侧的按钮会被裁掉，
 ///   而「被裁掉」等于「这个功能不存在」。
 ///
-/// 两档的**外观完全一致**（同一个 `control_button`），差别只有「右侧有没有三角」，
-/// 因此用户看到的是「一排同类按钮」，而不是「两种控件混排」。
+/// 两档共用同一套**尺寸 / 圆角 / 配色 / 间距**（等高、齐平、同色，见
+/// [`control_height`] 与 [`control_button`] 的说明），差别在内容形态：
+/// 平铺档是**纯图形图标按钮**（[`icon_button`]，语义靠悬停），
+/// 下拉档是**分组标题 + 三角**（标题是分组名，不是动作名，故保留文字）。
+/// 用户看到的因此仍是「一排同类控件」，而不是两种混排。
 ///
 /// 工具栏位于**编辑区顶部**（上下布局：工具栏在上、文本在下），作用域与编辑区
 /// 内容一致，见 `editor_view::show`。
@@ -237,12 +224,50 @@ pub fn draw_editor_toolbar(app: &mut EditorApp, ui: &mut Ui) {
     }
 }
 
+/// 平铺图标按钮的**图形边长**（点）。
+///
+/// 16×16 设计栅格（见 [`crate::presentation::icons`]）缩放到 17pt：
+/// 30pt 的按钮里上下左右各留约 6.5pt 呼吸位，图标既不被边框咬住，
+/// 也不会小到失去辨识。
+const ICON_SIZE: f32 = 17.0;
+
+/// 一个平铺动作的**纯图形按钮**：固定正方形、向量图标、悬停提示补语义。
+///
+/// # 为什么手绘而不继续用 `egui::Button`
+///
+/// `Button` 的内容只能是文字（或另一个 widget），装不进向量图形；而把图形
+/// 塞进 `Button` 又会回到「先量文案宽、再画图形」的老路。这里按项目既有
+/// 的图标按钮范式手绘（与标签条「全部关闭」按钮同源）：
+///
+/// - **底色与 egui `Button` 完全同源**：取 `visuals.widgets.style(&response)`
+///   的 `weak_bg_fill`——常态 / 悬停 / 按下分别落在主题映射的
+///   `bg_tertiary` / `accent_soft` / `accent_soft` 上，不是另抄一套颜色；
+/// - **图标色与按钮文字色同源**：`style.fg_stroke.color`，于是文字按钮与
+///   图标按钮在任何主题下深浅一致；
+/// - **可发现性靠悬停**：按钮上没有文字，完整说法（「提升标题级别」这种）
+///   由 `on_hover_text(action.label())` 补足——与「全部关闭」图标按钮
+///   同一哲学（041 起该按钮即如此）。
+fn icon_button(ui: &mut Ui, theme: &Theme, action: UiAction, h: f32) -> egui::Response {
+    // 固定正方形：一行平铺按钮因此是一条整齐的栅格。
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(h, h), egui::Sense::click());
+    let style = ui.visuals().widgets.style(&response);
+    ui.painter()
+        .rect_filled(rect, control_radius(&theme.metrics), style.weak_bg_fill);
+    let colors = icons::IconColors {
+        primary: style.fg_stroke.color,
+        accent: theme.accent,
+    };
+    let icon_rect = egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(ICON_SIZE));
+    icons::paint_icon(ui.painter(), icons::Icon::Action(action), icon_rect, colors);
+    response
+}
+
 /// 把「格式」分组的动作平铺成按钮。
 ///
 /// 组内间距取 `space_xs`（比组间的分隔线间距小一档），于是「同组」在视觉上聚拢、
 /// 「不同组」被分隔线自然切开——分组关系不需要额外的分组标题来说明。
 ///
-/// 按钮上只有短文案（见 [`button_text`]），完整说法由**悬停提示**补足：
+/// 按钮上**只有图形**（见 [`icon_button`]），完整说法由**悬停提示**补足：
 /// 可发现性靠悬停保证，不靠把按钮撑宽。返回被点击的动作（没有则为 `None`），
 /// 由调用方统一走 `app.execute`。
 fn draw_flat_actions(ui: &mut Ui, theme: &Theme, actions: &[UiAction], h: f32) -> Option<UiAction> {
@@ -251,7 +276,7 @@ fn draw_flat_actions(ui: &mut Ui, theme: &Theme, actions: &[UiAction], h: f32) -
         if i > 0 {
             ui.add_space(theme.metrics.space_xs);
         }
-        let resp = control_button(ui, theme, button_text(*action), h).on_hover_text(action.label());
+        let resp = icon_button(ui, theme, *action, h).on_hover_text(action.label());
         if resp.clicked() {
             hit = Some(*action);
         }
@@ -259,7 +284,7 @@ fn draw_flat_actions(ui: &mut Ui, theme: &Theme, actions: &[UiAction], h: f32) -
     hit
 }
 
-/// 低频分组：一个与平铺按钮**同款**的按钮 + 其右侧的下拉菜单。
+/// 低频分组：一个与平铺按钮**同规格**的按钮 + 其右侧的下拉菜单。
 ///
 /// # 为什么不用 `ComboBox`
 ///
@@ -267,8 +292,15 @@ fn draw_flat_actions(ui: &mut Ui, theme: &Theme, actions: &[UiAction], h: f32) -
 /// 「插入」与「列表/结构」因此一样宽，横向空间被白白吃掉，宽度也不再传递
 /// 「这个分组有多重」的信息；它的高度也不受控（实测 23，与 `ui.button` 的 22 错位）。
 /// 换成 `Button` + [`egui::containers::menu::MenuButton`]（egui 的菜单按钮本身就是
-/// `Button`）之后，触发器与平铺按钮共用 `control_button` 的尺寸与配色，
-/// 宽度自然跟随文案。
+/// `Button`）之后，触发器宽度自然跟随文案。
+///
+/// # 与平铺图标按钮如何保持同规格
+///
+/// 触发器要在右侧挂三角（`right_text`），无法与纯图形的 [`icon_button`] 合并
+/// 成一个函数，但**尺寸 / 圆角 / 配色全部同源**：高度取 [`control_height`]、
+/// 圆角取 [`control_radius`]，底色与文字色走 egui 的
+/// `visuals.widgets.{inactive,hovered,active}`——主题映射已把三者统一
+/// （见本文件头「视觉规范」一节），因此不是把颜色抄两遍。
 fn draw_group_dropdown(
     app: &mut EditorApp,
     ui: &mut Ui,

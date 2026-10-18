@@ -20,7 +20,8 @@ use rustmark::app::bootstrap::{ConfigPaths, Services};
 use rustmark::app::frame::EditorApp;
 use rustmark::presentation::shortcuts::registry::{MenuGroup, UiAction};
 use rustmark::presentation::views::toolbar_view::{
-    MENU_LABEL_SHORTCUT_GAP, editor_toolbar_groups, menu_row_width, toolbar_control_labels,
+    MENU_LABEL_SHORTCUT_GAP, ToolbarControl, editor_toolbar_groups, menu_row_width,
+    toolbar_controls,
 };
 use std::sync::Arc;
 
@@ -186,6 +187,50 @@ fn top_region_height(app: &EditorApp) -> f32 {
     m.topbar_height + m.tabstrip_height + m.tabbar_height
 }
 
+/// 工具栏那一行的**控件背景矩形**（按左缘排序）。
+///
+/// 平铺按钮纯图形化后没有文字可循（见 `toolbar_visual_test`），只能按几何
+/// 定位。两条判据与视觉用例同源：高等于 `control_height`
+/// （`editor_toolbar_height − 2·space_xxs`，同时排除顶栏 `ComboBox` 与
+/// 大背景板）、落在工具栏行带内、宽 < 260（排除整行背景）。
+fn toolbar_control_rects(ctx: &egui::Context, app: &mut EditorApp) -> Vec<egui::Rect> {
+    let m = app.theme().metrics;
+    let expected_h = m.editor_toolbar_height - 2.0 * m.space_xxs;
+    let top_limit = top_region_height(app);
+    let band_end = top_limit + m.editor_toolbar_height + 40.0;
+
+    let out = crate::support::run_ui(ctx, raw_input(Vec::new()), |ui| {
+        rustmark::presentation::theme::mapper::apply(ui.ctx(), &app.ui.theme);
+        rustmark::presentation::views::main_view::show(app, ui);
+    });
+    fn walk(shape: &egui::epaint::Shape, out: &mut Vec<egui::Rect>) {
+        match shape {
+            egui::epaint::Shape::Rect(x) => out.push(x.rect),
+            egui::epaint::Shape::Vec(v) => {
+                for s in v {
+                    walk(s, out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut rects = Vec::new();
+    for clipped in &out.shapes {
+        walk(&clipped.shape, &mut rects);
+    }
+    let mut out: Vec<egui::Rect> = rects
+        .into_iter()
+        .filter(|r| {
+            (r.height() - expected_h).abs() < 1.5
+                && r.center().y > top_limit
+                && r.center().y < band_end
+                && r.width() < 260.0
+        })
+        .collect();
+    out.sort_by(|a, b| a.min.x.partial_cmp(&b.min.x).unwrap());
+    out
+}
+
 /// 全部格式类动作（工具理应包含的那一批）。
 fn format_actions() -> Vec<UiAction> {
     UiAction::ALL
@@ -227,21 +272,44 @@ fn editor_toolbar_lives_in_editor_pane_not_top_region() {
 
     // ② 编辑区工具栏上的**每一个控件**都在「顶栏下方」（y >= top_limit）。
     //
-    // 控件文案取自 `toolbar_control_labels()`：平铺分组给出的是每个按钮的
-    // 文案（「B 加粗」），下拉分组给出的是分组标题（「插入」）。此前这里
-    // 假设「所有分组标题都可见」，但「格式」组已改为平铺——分组标题根本
-    // 不存在，于是断言去找一个画不出来的字而必然失败。
+    // 两种控件分别定位：平铺按钮是**纯图形**（没有文字），按控件背景矩形
+    // 的几何定位；下拉触发器按标题文字定位。几何矩形按从左到右消耗，
+    // 平铺按钮消耗完后**剩下的矩形必须恰好都是下拉触发器**——
+    // 渲染层多画或少画一个控件，都会让这个对账断供。
+    let rects = toolbar_control_rects(&ctx, &mut app);
+    let dropdown_count = toolbar_controls()
+        .iter()
+        .filter(|c| matches!(c, ToolbarControl::Dropdown(_)))
+        .count();
+    let mut rect_iter = rects.iter();
     let mut bar_ys: Vec<(String, f32)> = Vec::new();
-    for label in toolbar_control_labels() {
-        let y = y_of(&painted, &label)
-            .unwrap_or_else(|| panic!("编辑区工具栏缺少控件「{label}」——它必须画在编辑区顶部"));
+    for control in toolbar_controls() {
+        let (name, y) = match control {
+            ToolbarControl::Flat(action) => {
+                let r = rect_iter
+                    .next()
+                    .unwrap_or_else(|| panic!("编辑区工具栏应有平铺按钮 {action:?} 的背景矩形"));
+                (format!("{action:?}"), r.center().y)
+            }
+            ToolbarControl::Dropdown(title) => {
+                let y = y_of(&painted, title).unwrap_or_else(|| {
+                    panic!("编辑区工具栏缺少下拉「{title}」——它必须画在编辑区顶部")
+                });
+                (title.to_string(), y)
+            }
+        };
         assert!(
             y >= top_limit,
-            "编辑区工具栏控件「{label}」还在顶栏里（y={y}，顶栏高={top_limit}）\
+            "编辑区工具栏控件「{name}」还在顶栏里（y={y}，顶栏高={top_limit}）\
              ——它必须移到编辑区顶部"
         );
-        bar_ys.push((label, y));
+        bar_ys.push((name, y));
     }
+    assert_eq!(
+        rect_iter.count(),
+        dropdown_count,
+        "工具栏多画了控件矩形——渲染层与 `toolbar_controls()` 的清单不一致"
+    );
     assert!(
         bar_ys.len() >= 4,
         "编辑区工具栏控件太少（{}），本用例将失去意义",
@@ -283,6 +351,9 @@ fn editor_toolbar_lives_in_editor_pane_not_top_region() {
 ///
 /// 只断言「都在」不够——把 4 个分组标题继续铺在菜单栏那一行，
 /// 上面那条用例照样绿（它只看「有没有」和「工具栏行是否在下方」）。
+///
+/// 平铺按钮是纯图形、没有文字，其位置由几何定位把关（见上一条用例）；
+/// 这里只需盯**下拉标题**——它是工具栏上唯一的文字控件。
 #[test]
 fn the_two_layers_do_not_mix_contents() {
     let (_dir, mut app) = app_with_open_document();
@@ -290,16 +361,18 @@ fn the_two_layers_do_not_mix_contents() {
     let painted = run_frame(&ctx, &mut app, Vec::new());
     let top_limit = top_region_height(&app);
 
-    // 编辑区工具栏的控件文案不得出现在「顶栏」那一行。
-    for label in toolbar_control_labels() {
-        for (rect, text) in &painted {
-            if *text == label {
-                assert!(
-                    rect.center().y >= top_limit,
-                    "编辑区工具栏控件「{label}」出现在应用级菜单栏那一行\
-                     （y={}）——两层内容混了",
-                    rect.center().y
-                );
+    // 编辑区工具栏的下拉标题不得出现在「顶栏」那一行。
+    for control in toolbar_controls() {
+        if let ToolbarControl::Dropdown(title) = control {
+            for (rect, text) in &painted {
+                if text == title {
+                    assert!(
+                        rect.center().y >= top_limit,
+                        "编辑区工具栏下拉「{title}」出现在应用级菜单栏那一行\
+                         （y={}）——两层内容混了",
+                        rect.center().y
+                    );
+                }
             }
         }
     }
@@ -445,7 +518,7 @@ fn open_app_menu(
 ///
 /// 编辑区工具栏里只有**下拉分组**平时只显示分组标题（「插入」「列表/结构」
 /// 「行操作」），真正的动作（「代码块」…）要打开对应分组才画出来。
-/// 「格式」组已改为**平铺按钮**（「B 加粗」…），没有可点开的下拉，
+/// 「格式」组已改为**平铺图标按钮**（纯图形、无文字），没有可点开的下拉，
 /// 见 `toolbar_view::FLAT_GROUP`。
 ///
 /// 逻辑与 `open_app_menu` 一致：先定位分组标题、点开、再补一帧越过 sizing pass。
@@ -600,14 +673,25 @@ fn opening_a_menu_keeps_both_layers_visible() {
         rect_of(&frame, "文件").is_some(),
         "下拉打开后菜单栏本身不应消失"
     );
-    // 编辑区工具栏的常驻控件（平铺按钮「B 加粗」与下拉标题「插入」）不得因为
-    // 应用级下拉被打开而消失——下拉是**叠加**，不是替换。
-    for label in ["B 加粗", "插入"] {
-        assert!(
-            rect_of(&frame, label).is_some(),
-            "下拉打开后编辑区工具栏的「{label}」不见了——下拉把工具栏顶掉了"
-        );
-    }
+    // 编辑区工具栏的常驻控件不得因为应用级下拉被打开而消失——
+    // 下拉是**叠加**，不是替换。
+    //
+    // 下拉标题「插入」按文字定位；平铺按钮纯图形化后没有文字可循，
+    // 按控件背景矩形的几何定位（判据与视觉用例同源）。两类控件合起来
+    // 必须一个不少——少画任何一个都说明下拉把工具栏顶掉了。
+    assert!(
+        rect_of(&frame, "插入").is_some(),
+        "下拉打开后编辑区工具栏的「插入」不见了——下拉把工具栏顶掉了"
+    );
+    let controls = toolbar_control_rects(&ctx, &mut app);
+    assert_eq!(
+        controls.len(),
+        toolbar_controls().len(),
+        "下拉打开后编辑区工具栏的控件矩形对不上（{} / {}）——\
+         平铺图标按钮被下拉顶掉了",
+        controls.len(),
+        toolbar_controls().len()
+    );
 }
 
 /// 重写后的菜单项**仍然可点击**，且点击触发的正是同一个 `UiAction`。
@@ -664,34 +748,35 @@ fn clicking_a_dropdown_item_runs_its_action() {
 ///
 /// # 为什么分两路验证
 ///
-/// 编辑区工具栏有两类控件：**平铺按钮**（「格式」组，文案是
-/// 「B 加粗」这种）与**分组下拉**（「插入」…，动作要展开才出现）。
-/// 两者的控件写法不同（前者是裸 `Button`，后者是 `Button` + `MenuButton`），
-/// 各自的「可点」必须分别验证，否则一类被改成死按钮而另一类仍然绿。
+/// 编辑区工具栏有两类控件：**平铺图标按钮**（「格式」组，纯图形、无文字）
+/// 与**分组下拉**（「插入」…，动作要展开才出现）。两者的控件写法不同
+/// （前者是手绘图标按钮，后者是 `Button` + `MenuButton`），各自的「可点」
+/// 必须分别验证，否则一类被改成死按钮而另一类仍然绿。
 ///
-/// 这里先点平铺按钮「B 加粗」，再点下拉项「代码块」，两条路径都要真的改文档。
+/// 这里先点平铺按钮「加粗」，再点下拉项「代码块」，两条路径都要真的改文档。
 #[test]
 fn clicking_a_toolbar_button_runs_its_action() {
-    // ① 平铺按钮：「B 加粗」直接点。
+    // ① 平铺按钮：按**几何**定位（纯图形按钮没有文字可循）。
+    //    「加粗」是平铺分组的第一个动作，控件矩形按左缘排序，故取它的下标。
     let (_dir, mut app) = app_with_open_document();
     let ctx = fresh_ctx();
     let before = app.current_content().unwrap_or_default();
 
-    let frame = run_frame(&ctx, &mut app, Vec::new());
-    let bold_button = format!(
-        "{} {}",
-        UiAction::Bold.icon().expect("加粗应有图标"),
-        UiAction::Bold.toolbar_label()
-    );
-    let rect = rect_of(&frame, &bold_button)
-        .unwrap_or_else(|| panic!("编辑区工具栏应有平铺按钮「{bold_button}」"));
-    click_at(&ctx, &mut app, rect.center());
+    let rects = toolbar_control_rects(&ctx, &mut app);
+    let bold_index = toolbar_controls()
+        .iter()
+        .position(|c| *c == ToolbarControl::Flat(UiAction::Bold))
+        .expect("加粗应是平铺按钮");
+    let bold_rect = *rects
+        .get(bold_index)
+        .unwrap_or_else(|| panic!("工具栏应有 {bold_index} 号控件的背景矩形（加粗）"));
+    click_at(&ctx, &mut app, bold_rect.center());
 
     let after = app.current_content().unwrap_or_default();
-    assert_ne!(after, before, "点击工具栏「{bold_button}」没有改变文档内容");
+    assert_ne!(after, before, "点击工具栏「加粗」图标按钮没有改变文档内容");
     assert!(
         after.contains("**"),
-        "点击「{bold_button}」应插入加粗标记，实际内容：{after:?}"
+        "点击「加粗」应插入加粗标记，实际内容：{after:?}"
     );
 
     // ② 分组下拉项：「插入」→「代码块」。
@@ -755,36 +840,23 @@ fn app_menu_buttons_share_one_row() {
 
 /// 编辑区工具栏的控件同样必须同排齐平（同一缺陷的第二个现场）。
 ///
-/// 控件清单取自 `toolbar_control_labels()`——它同时包含平铺按钮
-/// （「B 加粗」…）与下拉标题（「插入」…），因此两类控件会被一起检查。
-/// 「一排同类按钮」这个视觉目标要求它们**顶边一致**，否则整行看上去
-/// 仍是「两种控件混排」。
+/// 控件清单取自 `toolbar_controls()`——它同时包含平铺图标按钮
+/// 与下拉标题，因此两类控件会被一起检查。平铺按钮没有文字，
+/// 按背景矩形定位。「一排同类控件」这个视觉目标要求它们**顶边一致**，
+/// 否则整行看上去仍是「两种控件混排」。
 #[test]
 fn editor_toolbar_buttons_share_one_row() {
     let (_dir, mut app) = app_with_open_document();
     let ctx = fresh_ctx();
-    let painted = run_frame(&ctx, &mut app, vec![]);
-    let top_limit = top_region_height(&app);
+    let rects = toolbar_control_rects(&ctx, &mut app);
+    assert!(rects.len() >= 4, "工具栏控件太少：{rects:?}");
 
-    let labels = toolbar_control_labels();
-    assert!(labels.len() >= 4, "工具栏控件太少：{labels:?}");
-
-    let mut tops = Vec::new();
-    for label in &labels {
-        // 只认编辑区工具栏那一行（在顶栏区域之下）的命中。
-        let r = painted
-            .iter()
-            .filter(|(r, t)| t == label && r.top() > top_limit)
-            .map(|(r, _)| *r)
-            .next()
-            .unwrap_or_else(|| panic!("工具栏应有控件「{label}」（且在顶栏之下）"));
-        tops.push(r.top());
-    }
+    let tops: Vec<f32> = rects.iter().map(|r| r.top()).collect();
     let lo = tops.iter().cloned().fold(f32::MAX, f32::min);
     let hi = tops.iter().cloned().fold(f32::MIN, f32::max);
     assert!(
         hi - lo < 1.0,
-        "工具栏控件顶边不齐（两种控件混排的下楼梯）：tops={tops:?}，labels={labels:?}"
+        "工具栏控件顶边不齐（两种控件混排的下楼梯）：tops={tops:?}"
     );
 }
 
@@ -862,7 +934,25 @@ fn three_pane_top_bars_align() {
             .unwrap_or_else(|| panic!("顶栏应有「{needle}」且在顶栏行内"))
     };
     let sidebar_c = center_of("文件");
-    let toolbar_c = center_of("B 加粗");
+    // 工具栏行：平铺按钮纯图形化后没有文字可循，行中心改按**控件背景矩形**
+    // 的几何取（判据与 `toolbar_control_rects` 同源：高 = control_height、
+    // 落在工具栏行带内、宽 < 260 排除整行背景）。三种控件（图标按钮 /
+    // 下拉触发器）的矩形等高，取任意一个的中心 y 即是这一行的中心。
+    let m = app.theme().metrics;
+    let expected_h = m.editor_toolbar_height - 2.0 * m.space_xxs;
+    let top_limit = top_region_height(&app);
+    let band_end = top_limit + m.editor_toolbar_height + 40.0;
+    let toolbar_c = fills
+        .iter()
+        .filter(|(r, _)| {
+            (r.height() - expected_h).abs() < 1.5
+                && r.center().y > top_limit
+                && r.center().y < band_end
+                && r.width() < 260.0
+        })
+        .map(|(r, _)| r.center().y)
+        .next()
+        .unwrap_or_else(|| panic!("顶栏应有编辑区工具栏的控件矩形且在顶栏行内"));
     let preview_c = center_of("预览");
     for (name, c) in [("工具栏按钮", toolbar_c), ("预览标题", preview_c)] {
         assert!(

@@ -38,13 +38,14 @@ mod controls;
 mod menu_bar;
 
 pub use controls::{
-    FLAT_GROUP, button_text, draw_editor_toolbar, editor_toolbar_groups, toolbar_control_labels,
+    FLAT_GROUP, ToolbarControl, draw_editor_toolbar, editor_toolbar_groups, toolbar_controls,
 };
 pub use menu_bar::{MENU_LABEL_SHORTCUT_GAP, MENU_ROW_PAD, menu_row_width};
 
 use egui::{RichText, Ui};
 
 use crate::app::frame::EditorApp;
+use crate::presentation::icons;
 
 /// 绘制全局顶栏：应用级菜单栏 + 标签条 + 路径面包屑。
 ///
@@ -533,8 +534,22 @@ fn paint_nav_arrow(painter: &egui::Painter, rect: egui::Rect, dir: f32, color: e
 /// 路径面包屑：显示当前文档的保存路径（未保存显示「未命名文档」）。
 fn draw_breadcrumb(app: &EditorApp, ui: &mut Ui) {
     let path = app.current_document_path();
+    let theme = app.theme();
     ui.horizontal(|ui| {
-        ui.weak("📄");
+        // 文档图标：向量手绘，替代原 📄 字形。废止字形的理由与工具栏图标
+        // 同源（emoji 依赖字体覆盖，见 `presentation::icons` 的模块文档），
+        // 且从此与文件树里手绘的页面图标共用同一套规格表。
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(13.0, 13.0), egui::Sense::hover());
+        let color = theme.text_secondary;
+        icons::paint_icon(
+            ui.painter(),
+            icons::Icon::Document,
+            rect,
+            icons::IconColors {
+                primary: color,
+                accent: color,
+            },
+        );
         ui.label(path);
     });
 }
