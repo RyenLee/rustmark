@@ -6,6 +6,14 @@ Release Notes 依此自动归组。
 
 ## [未发布]
 
+### 2026-10-18 · 三连修复：页签重叠 + exe 终端 + 侧栏默认收起/展开（用户三项反馈）
+
+> 原始诉求与逐项记录：`docs/logs/问题记录1.txt` 061。
+
+- **标签条页签重叠**：真帧探针实锤两层根因——① 循环体内 `ui.put`（标题 / × 按钮）把父 Ui 光标推到 put 矩形右缘，下一槽位从被污染的光标出发，步进 166 ≠ 槽宽 170，底色重叠 2pt；② `ui.put` 子布局居中（`centered_and_justified`），**没被 elide 的标题从矩形水平中点起画**，长标题右移 ~65pt 压进关闭按钮区与条带右端（059 的面包屑「未命名文档」偏右即同一机制）。修：槽位 x 按序号显式推进 + `Label::halign(Align::LEFT)`（面包屑与欢迎页最近文件同步修）+ `TAB_GAP` 2→8。回归：`tabs_never_overlap_and_titles_stay_in_their_tab`（× 中心距 = 槽位步进 + 标题右缘不越本标签，修前双红）。
+- **release exe 启动带终端**：`main.rs` 缺 `windows_subsystem` 声明，Windows 默认按 console 子系统链接。加 `#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]`——release 隐藏终端，debug 保留控制台（`RUST_LOG` 日志要经它）；macOS / Linux 的 GUI 程序不经 console 子系统启动，无此现象。
+- **侧栏默认收起 + 右上角收起/展开按钮**：`AppUiState::new` 的 `sidebar_visible` 默认 `false`（会话级，不落盘）；新增 `Icon::Sidebar`（圆角外框 + 左栏竖线）与面包屑行右端**常驻**切换按钮——收起后整个侧栏面板含头部都不渲染，头部入口必成单程票；动作走 `UiAction::ToggleSidebar` 与 Ctrl+\ / 视图菜单同路径。回归：`sidebar_defaults_to_collapsed_and_topbar_button_toggles_it`（默认收起 / 按钮右上角定位 / 点击往返 / 展开有内容）。
+
 ### 2026-10-18 · 面包屑「文件路径」底部被遮挡修复（用户二反馈）
 
 > 原始诉求与逐项记录：`docs/logs/问题记录1.txt` 060；任务状态：`docs/v1.1-backlog.md` V11-47。
