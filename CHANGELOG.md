@@ -6,6 +6,16 @@ Release Notes 依此自动归组。
 
 ## [未发布]
 
+### 2026-10-18 · 文件树默认收起 + 侧栏开合状态跨重启记住（用户四项反馈）
+
+> 原始诉求与逐项记录：`docs/logs/问题记录1.txt` 062；任务状态：`docs/v1.1-backlog.md` V11-49。承接 061（侧栏默认收起 + 右上角收起/展开按钮已落地）。
+
+- **「文件」标签下的文件树默认收起**：装载工作区后不再自动展开顶层目录——删掉 `SidebarUiState::needs_initial_expand` 与 `EditorApp::expand_top_level`（`parent_of` 随之退役）。当初自动展开的理由是「怕用户以为树是空的」，它不成立：`tree_rows` 里根的直接子项（depth 0）恒可见、被收起的目录自身也照画，只是不画它的子项。真正「按需展开」的是打开文件时 `expand_ancestors` 把该文件所有祖先目录展开到可见——故默认全收起不会让人找不到刚打开的文件（有回归成对钉住）。
+- **记住上次的开合状态**：`EditorSettings` 新增 `sidebar_visible`（默认 `false`，`#[serde(default)]`——旧配置文件没有这个字段时按「收起」读出，而不是让整个配置加载失败），全链路接通：领域值对象 → DTO `EditorSettingsView` → `PreferencesAppService` 双向映射 → `EditorApp::new` 启动时读回（与 `split_ratio` 同一手法）。落盘点**只有一个**：`main_view::show` 的帧末（`EditorApp::persist_sidebar_visibility`，内部与会话级基准 `sidebar_visible_persisted` 比对，没变就直接返回）。不放各个切换入口——能改它的入口有四条以上，其中一个（侧栏活动栏点击）还不经 `execute`，逐个写就是漏一个静默失效。设置页「取消」与「恢复本组默认」对该字段的处理与 `split_ratio` 对齐。
+- **右上角收起/展开按钮**：061 已落地（面包屑行右端常驻 `Icon::Sidebar`，动作走 `UiAction::ToggleSidebar`），本条未改动。
+- **回归 6 条**：域默认收起与 `with_sidebar_visible` 单字段改写；旧配置缺字段按收起读出且不触发备份回退；应用级往返 `sidebar_visibility_round_trips_through_preferences`；真帧往返 `sidebar_visibility_is_remembered_across_restarts`（真帧点按钮 → 帧末落盘 → 换实例仍展开 / 反向仍收起）；文件树默认全收起 + 打开文件仍展开祖先。变异验证：注掉帧末落盘或注掉启动读回，两条往返用例当场变红。
+- **边界**：文件树的展开/收起仍只活在会话里——展开状态是一串目录路径，工作区一换就全部失效，持久化它等于记住一堆不存在的目录。
+
 ### 2026-10-18 · 三连修复：页签重叠 + exe 终端 + 侧栏默认收起/展开（用户三项反馈）
 
 > 原始诉求与逐项记录：`docs/logs/问题记录1.txt` 061。
