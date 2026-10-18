@@ -27,6 +27,7 @@ mod scroll_sync_test;
 mod settings_view_test;
 mod shortcut_registry_test;
 mod sidebar_boundary_test;
+mod sidebar_toggle_test;
 mod sidebar_view_test;
 mod spell_menu_test;
 mod spell_squiggle_test;

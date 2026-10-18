@@ -98,9 +98,14 @@ fn recent_row(ui: &mut Ui, theme: &Theme, width: f32, item: &RecentFileView) -> 
         egui::pos2(rect.left() + 12.0, rect.top()),
         egui::vec2(name_avail, rect.height()),
     );
+    // `halign(LEFT)`（问题 061）：`ui.put` 的子布局居中，没被 elide 的
+    // 短文件名会从 name_rect 的水平中点起画、视觉上右移半个可用宽；
+    // elide 的长名恰好撑满全宽才侥幸无恙。显式左对齐与目录文字对齐。
     ui.put(
         name_rect,
-        egui::Label::new(RichText::new(&name).color(theme.text_primary).size(13.0)).truncate(),
+        egui::Label::new(RichText::new(&name).color(theme.text_primary).size(13.0))
+            .truncate()
+            .halign(egui::Align::LEFT),
     );
     if show_dir {
         ui.painter().galley(

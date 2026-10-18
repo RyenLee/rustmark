@@ -134,7 +134,10 @@ impl AppUiState {
     /// 以给定主题构造。
     pub fn new(theme: Theme) -> Self {
         Self {
-            sidebar_visible: true,
+            // 首次打开默认**收起**侧栏（问题 061 用户诉求）：内容区优先——
+            // 阅读与编辑是主任务，文件树按需展开（顶栏右上角的侧栏按钮 /
+            // Ctrl+\ / 视图菜单都可展开）。会话级状态，不落盘。
+            sidebar_visible: false,
             sidebar_tab: SidebarTab::Files,
             preview_visible: true,
             status_bar_visible: true,

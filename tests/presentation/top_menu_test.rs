@@ -879,6 +879,9 @@ fn editor_toolbar_buttons_share_one_row() {
 #[test]
 fn three_pane_top_bars_align() {
     let (dir, mut app) = app_fixture();
+    // 默认收起（问题 061）：本用例要对齐的三条「顶栏」之一是侧栏内容
+    // 面板的标题行，先展开侧栏。
+    app.ui.sidebar_visible = true;
     let file = dir.path().join("note.md");
     std::fs::write(&file, "# 标题\n\n正文一行。\n").expect("写文件应成功");
     app.open_path(&file.to_string_lossy()).expect("打开应成功");

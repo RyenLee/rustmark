@@ -154,6 +154,8 @@ pub enum Icon {
     Action(UiAction),
     /// 文档 / 文件（面包屑等「这是一个文件」的场景）。
     Document,
+    /// 侧栏（收起/展开切换）：「主内容 + 左栏」的布局语言。
+    Sidebar,
 }
 
 /// 规格表缓存：首帧建表，之后每帧零分配。
@@ -315,6 +317,17 @@ fn build_specs() -> Vec<(Icon, Vec<IconOp>)> {
                 line((6.0, 8.4), (10.0, 8.4), 1.2, Tone::Primary),
             ],
         ),
+        // **侧栏**：圆角外框 + 左 1/3 的竖向分割线——「主内容 + 左栏」的
+        // 布局语言（VS Code 的 layout-sidebar-left 同款拓扑）。收起 / 展开
+        // 共用这一枚：图形表意「侧栏」，状态由悬停提示文案区分——
+        // 方向性箭头（« / »）在两种状态间跳动会让人找不到按钮。
+        (
+            Icon::Sidebar,
+            vec![
+                round_rect(2.4, 3.0, 11.2, 10.0, 1.5, Paint::Stroke, 1.4, Tone::Primary),
+                line((6.2, 3.0), (6.2, 13.0), 1.4, Tone::Primary),
+            ],
+        ),
     ]
 }
 
@@ -464,6 +477,7 @@ mod tests {
             Icon::Action(UiAction::InlineCode),
             Icon::Action(UiAction::InsertLink),
             Icon::Document,
+            Icon::Sidebar,
         ] {
             assert!(!spec(icon).is_empty(), "{icon:?} 的规格表是空的");
         }

@@ -128,7 +128,10 @@ fn close_overlay_does_not_silently_exit_focus_mode() {
 fn toggle_outline_switches_sidebar_tab() {
     let (_dir, mut app) = app();
     assert_eq!(app.ui.sidebar_tab, SidebarTab::Files);
-    assert!(app.ui.sidebar_visible, "默认应显示侧栏");
+    // 默认收起（问题 061）：本用例钉的是「标签切换与收起」语义，先展开
+    // 到可见基线。
+    app.ui.sidebar_visible = true;
+    assert!(app.ui.sidebar_visible);
 
     app.execute(UiAction::ToggleOutline);
     assert_eq!(app.ui.sidebar_tab, SidebarTab::Outline);

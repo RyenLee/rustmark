@@ -612,6 +612,11 @@ fn nav_arrows_step_in_both_directions_and_stop_at_the_ends() {
     let prev = arrows[0].center();
     let next = arrows[arrows.len() - 1].center();
     // 连点 ◀：一路滚到最左，doc0 必须出现。
+    //
+    // ⚠ 「doc0 可见」≠「已在最左」（问题 061 修正几何后暴露）：doc0 占
+    // 内容坐标 [行左, 行左+槽宽]，偏移小于一个槽宽时它就已部分可见——
+    // 旧步进（166 < 槽宽 170）恰好让「首次可见」与「偏移归零」同帧到达，
+    // 掩盖了这个前提漏洞。故 doc0 出现后继续点 ◀ 直到位置不再变化。
     let mut seen_doc0 = false;
     for _ in 0..12 {
         click_at(&ctx, &mut app, prev);
@@ -622,6 +627,16 @@ fn nav_arrows_step_in_both_directions_and_stop_at_the_ends() {
         }
     }
     assert!(seen_doc0, "连点 ◀ 应能把 doc0 滚进视口");
+    let mut at_left = run_frame(&ctx, &mut app, Vec::new());
+    for _ in 0..12 {
+        click_at(&ctx, &mut app, prev);
+        let next = run_frame(&ctx, &mut app, Vec::new());
+        let settled = first_x(&at_left, "doc0") == first_x(&next, "doc0");
+        at_left = next;
+        if settled {
+            break;
+        }
+    }
 
     // 到底后继续点 ◀ 不再变化（幂等，不抖动）。
     let at_left = run_frame(&ctx, &mut app, Vec::new());
@@ -656,7 +671,6 @@ fn first_x(painted: &[(egui::Rect, String)], text: &str) -> f32 {
 }
 
 /// 分隔线不得压进导航箭头的热区（问题 043 截图实证）。
-///
 /// 「全部关闭」按钮与分隔线是**手写绝对坐标**：曾漏加面板内边距基准
 /// `strip_left`，分隔线正好画在 ▶ 的矩形里、按钮与箭头贴死——headless
 /// 测试用「箭头 vs 图标」比较测不出（图标在按钮内缩 14pt，恰好躲过）。
@@ -702,5 +716,105 @@ fn the_close_all_divider_never_crosses_a_nav_arrow() {
                  「全部关闭」的坐标基准又漏了面板内边距（问题 043）"
             );
         }
+    }
+}
+
+// ============================================================================
+// 问题 061：页签重叠（槽位步进被 put 污染 + 标题中置右溢）
+// ============================================================================
+
+/// CJK 字形来自应用字库：默认 egui 字库无 CJK，标签标题会画成豆腐块。
+fn fresh_ctx_with_app_fonts() -> egui::Context {
+    rustmark::presentation::theme::mapper::clear_highlight_caches();
+    let ctx = egui::Context::default();
+    let setup = rustmark::infrastructure::fonts::font_definitions(None);
+    ctx.set_fonts(setup.definitions);
+    crate::support::run_ui(&ctx, raw_input(Vec::new()), |_| {});
+    ctx
+}
+
+/// 相邻页签不得重叠、标题不得右溢出自己的标签（问题 061 截图实证）。
+///
+/// 两层根因（探针实测，slot 8..178 → 174..344）：
+///
+/// 1. **槽位步进被 put 污染**：循环体内的 `ui.put`（标题 / × 按钮）会把
+///    **父 Ui 的光标**推到 put 矩形右缘——最后落笔的 × 按钮右缘在
+///    「标签右缘 − 2pt」，下一槽位若从光标出发，步进 = 槽宽 − 4 而非
+///    槽宽，相邻标签底色重叠 2pt、× 距右邻标签仅 6pt。
+/// 2. **标题中置右溢**：`ui.put` 的子布局是 `centered_and_justified`，
+///    Label 的 galley 锚点取 `rect.center_top()`——**没被 elide 的标题从
+///    put 矩形的水平中点起画**，长标题整体右移半个可用宽（实测 65pt）
+///    压进标签右侧的关闭按钮区乃至条带右端。
+///
+/// 判据：× 按钮的 galley 宽度恒定，其**中心距 = 槽位步进**（修前 166 ≠
+/// 176，修后相等）；长标题的 galley 右缘不得越过本标签的右缘（修前
+/// 溢出 ~30pt，修后余量 ~35pt）。
+#[test]
+fn tabs_never_overlap_and_titles_stay_in_their_tab() {
+    let (dir, mut app) = app_fixture();
+    // 标题含一枚接近截断线的长名（不 elide、但修前必右溢）。
+    let names = [
+        "缓存改进",
+        "问题记录1",
+        "上线前体检报告-很长很长的标题测试",
+        "第四篇",
+    ];
+    for name in names {
+        let path = dir.path().join(format!("{name}.md"));
+        std::fs::write(&path, "body\n").expect("写文件应成功");
+        app.open_path(path.to_str().unwrap()).expect("打开应成功");
+    }
+    let ctx = fresh_ctx_with_app_fonts();
+    let painted = run_frame(&ctx, &mut app, Vec::new());
+
+    // 行锚与既有用例一致：「全部关闭」图标定位标签行的 y。
+    let anchor = close_all_icon_rect(&out_shapes(&ctx, &mut app), strip_rect(&app));
+    let row_y = anchor.center().y;
+
+    // 槽位步进 = TAB_MAX_W(168) + TAB_GAP(8)；常量私有，此处按值钉住，
+    // 改常量时这里会红——正是提醒同步本判据。
+    const SLOT_PITCH: f32 = 176.0;
+    const TAB_W: f32 = 168.0;
+
+    // × 按钮的文字矩形（每标签一枚；关闭按钮 put 居中于其矩形，galley
+    // 中心 = 按钮矩形中心 = 标签右缘 − 12pt）。
+    let mut crosses: Vec<egui::Rect> = rects_of(&painted, "×")
+        .into_iter()
+        .filter(|r| (r.center().y - row_y).abs() <= SAME_ROW_EPS)
+        .collect();
+    crosses.sort_by(|a, b| a.center().x.total_cmp(&b.center().x));
+    assert_eq!(
+        crosses.len(),
+        names.len(),
+        "每个标签应恰有一枚 × 关闭按钮，实际：{crosses:?}"
+    );
+    for pair in crosses.windows(2) {
+        let pitch = pair[1].center().x - pair[0].center().x;
+        assert!(
+            (pitch - SLOT_PITCH).abs() <= 0.5,
+            "× 按钮步进 {pitch:.1} ≠ 槽位步进 {SLOT_PITCH:.0}——put 把父光标推到 \
+             × 右缘、下一槽位随之左移，页签底色重叠（问题 061）"
+        );
+    }
+
+    // 行左基准：第一枚 × 中心 = 行左 + TAB_W − 12（见上）。
+    let row_left = crosses[0].center().x - (TAB_W - 12.0);
+    for (i, name) in names.iter().enumerate() {
+        let title_rect = painted
+            .iter()
+            .filter(|(r, t)| {
+                t.starts_with(&name[..name.chars().take(4).map(char::len_utf8).sum()])
+                    && (r.center().y - row_y).abs() <= SAME_ROW_EPS
+            })
+            .map(|(r, _)| *r)
+            .next()
+            .unwrap_or_else(|| panic!("标题「{name}」不在标签行上"));
+        let tab_right = row_left + i as f32 * SLOT_PITCH + TAB_W;
+        assert!(
+            title_rect.right() <= tab_right + 0.5,
+            "「{name}」标题右缘 {:.1} 越过本标签右缘 {tab_right:.1}——put 居中锚点\
+             把标题画出了自己的标签（问题 061）",
+            title_rect.right()
+        );
     }
 }

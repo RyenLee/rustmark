@@ -46,6 +46,7 @@ use egui::{RichText, Ui};
 
 use crate::app::frame::EditorApp;
 use crate::presentation::icons;
+use crate::presentation::shortcuts::registry::UiAction;
 
 /// 绘制全局顶栏：应用级菜单栏 + 标签条 + 路径面包屑。
 ///
@@ -211,12 +212,22 @@ fn draw_tab_strip(app: &mut EditorApp, ui: &mut Ui) {
                     // 横向布局是**必须的**，见函数头规则 2。
                     ui.horizontal_top(|ui| {
                         // 横向间隙归零：egui 会在每个 widget 之后自动追加
-                        // `item_spacing.x`（默认 8pt），真实槽宽因此变成 176 而
-                        // 非 170——步进与标签边界对不齐，滚到底时最后一个标签
+                        // `item_spacing.x`（默认 8pt），真实槽宽因此变成 184 而
+                        // 非 176——步进与标签边界对不齐，滚到底时最后一个标签
                         // 总被切一半，用户据此以为「右边还有」。间距从此完全由
                         // `TAB_GAP` 控制，槽宽精确等于 `TAB_MAX_W + TAB_GAP`。
                         ui.spacing_mut().item_spacing.x = 0.0;
-                        for doc in &docs {
+                        // 槽位基准（问题 061）：循环体内的 `ui.put`（标题 /
+                        // 关闭按钮）会把**父 Ui 的光标**推到 put 矩形右缘——
+                        // 最后一枚 put 是 × 按钮（右缘 = 标签右缘 − 2pt），下一
+                        // 槽位若仍从光标出发，步进变成 166 而非 176，相邻标签
+                        // 底色重叠 2pt、× 距下一标签仅 6pt（探针实测
+                        // slot 8..178 → 174..344；用户截图即此症状）。故行内
+                        // 基准在此**一次性**捕获，x 按序号显式推进，与光标漂移
+                        // 彻底解耦。
+                        let row_left = ui.cursor().left();
+                        let row_top = ui.cursor().top();
+                        for (i, doc) in docs.iter().enumerate() {
                             let title = if doc.title.is_empty() {
                                 "未命名"
                             } else {
@@ -231,10 +242,11 @@ fn draw_tab_strip(app: &mut EditorApp, ui: &mut Ui) {
                             // 宽度少一个间隙，滚到「底」时最后一个标签仍被切掉一截，
                             // 用户据此以为右边还有（问题 042 的另一半）。并入槽位后
                             // 内容宽精确等于「标签数 × 槽宽」。
-                            let (slot_rect, response) = ui.allocate_exact_size(
+                            let slot_rect = egui::Rect::from_min_size(
+                                egui::pos2(row_left + i as f32 * (TAB_MAX_W + TAB_GAP), row_top),
                                 egui::vec2(TAB_MAX_W + TAB_GAP, TAB_ROW_H),
-                                egui::Sense::click(),
                             );
+                            let response = ui.allocate_rect(slot_rect, egui::Sense::click());
                             // 标签本体只占槽位的前 `TAB_MAX_W`，尾部留作间隙。
                             let rect = egui::Rect::from_min_size(
                                 slot_rect.min,
@@ -281,6 +293,15 @@ fn draw_tab_strip(app: &mut EditorApp, ui: &mut Ui) {
                             let name_avail =
                                 (rect.width() - (cursor_x - rect.left()) - CLOSE_W - TAB_PAD)
                                     .max(0.0);
+                            //
+                            // `halign(LEFT)` 是必须的（问题 061）：`ui.put` 的子
+                            // 布局是 `centered_and_justified`，Label 的 galley 锚点
+                            // 取 `rect.center_top()`——**没被 elide 的标题会从 put
+                            // 矩形的水平中点起画**，长标题整体右溢 ~65pt、压进
+                            // 右邻标签（探针实测三枚标题的左缘 = put 中心 x；
+                            // 用户截图中「上线前体检报告」压住左邻的 × 即此）。
+                            // elide 的 galley 恰好撑满 put 全宽才侥幸看不出来。
+                            // 显式左对齐后 galley 恒从矩形左缘起画。
                             ui.put(
                                 egui::Rect::from_min_size(
                                     egui::pos2(cursor_x, rect.top()),
@@ -291,7 +312,8 @@ fn draw_tab_strip(app: &mut EditorApp, ui: &mut Ui) {
                                 } else {
                                     theme.text_secondary
                                 }))
-                                .truncate(),
+                                .truncate()
+                                .halign(egui::Align::LEFT),
                             );
                             // 关闭按钮：用极小的「×」；点击后关闭该标签并结束本帧渲染
                             // （避免继续遍历已失效的 `docs` 列表造成重复关闭）。
@@ -321,8 +343,9 @@ fn draw_tab_strip(app: &mut EditorApp, ui: &mut Ui) {
                                 return;
                             }
                             // 间隙已并入槽位（见 `slot_rect` 处注释）：相邻两个标签
-                            // 若都被填色（选中 + 悬停）会连成一条色带，2pt 足够分开，
-                            // 又不破坏「一行」的观感。
+                            // 若都被填色（选中 + 悬停）也不相连——8pt 间隙在两个
+                            // 圆角色块之间留出明确的分界（问题 061 前仅 2pt，用户
+                            // 截图实证观感上与重叠无异），又不破坏「一行」的观感。
                         }
                     });
                 })
@@ -490,8 +513,9 @@ const TAB_MAX_W: f32 = 168.0;
 const TAB_PAD: f32 = 8.0;
 /// 关闭按钮预留宽。
 const CLOSE_W: f32 = 22.0;
-/// 相邻标签的间距（问题 038）：避免「选中 + 悬停」两块底色连成一条带。
-const TAB_GAP: f32 = 2.0;
+/// 相邻标签的间距（问题 038 引入时 2pt，问题 061 起放宽到 8pt）：选中 /
+/// 悬停两块底色之间要有明确分界，2pt 在深色主题下与重叠无异（用户截图）。
+const TAB_GAP: f32 = 8.0;
 /// 「全部关闭」的悬停提示文案（041 起按钮本体是图标，语义靠它补全）。
 const CLOSE_ALL_LABEL: &str = "全部关闭";
 /// 标签条滚动区的 `id_salt`——`ScrollArea` 的滚动状态按它寻址，手写 offset
@@ -565,9 +589,9 @@ fn paint_nav_arrow(painter: &egui::Painter, rect: egui::Rect, dir: f32, color: e
 /// `horizontal_top`：子控件贴顶对齐、占据整条窄带，文字顶缘落在行首，
 /// 底部留 1pt 余量不再越界。这是项目 egui 布局纪律「顶层横向排布必须
 /// `horizontal_top`」在面包屑处的落地。
-fn draw_breadcrumb(app: &EditorApp, ui: &mut Ui) {
+fn draw_breadcrumb(app: &mut EditorApp, ui: &mut Ui) {
     let path = app.current_document_path();
-    let theme = app.theme();
+    let theme = app.theme().clone();
     let clip = ui.clip_rect();
     // 面板内容左内边距（TopDown 布局下光标 x 即内容左界）。
     let inset = ui.cursor().left() - clip.left();
@@ -588,14 +612,76 @@ fn draw_breadcrumb(app: &EditorApp, ui: &mut Ui) {
             },
         );
         // 剩余宽度独占给路径，右界钳到内容右界（竖向上 `horizontal_top`
-        // 已贴顶，无需再钳）。
+        // 已贴顶，无需再钳），并给右端的侧栏按钮让位。
+        //
+        // `halign(LEFT)` 与标签条标题同理（问题 061）：`put` 子布局居中，
+        // **没被 elide 的短路径会从 rest 矩形的水平中点起画**（用户截图
+        // 「未命名文档」浮在行中偏右即此），显式左对齐修正。
         let mut rest = ui.available_rect_before_wrap();
-        rest.max.x = rest.max.x.min(content_right);
+        rest.max.x = rest.max.x.min(content_right - SIDEBAR_TOGGLE_W - 6.0);
         ui.put(
             rest,
             egui::Label::new(path.clone())
                 .truncate()
+                .halign(egui::Align::LEFT)
                 .show_tooltip_when_elided(true),
         );
+        draw_sidebar_toggle(app, ui, clip, inset);
+    });
+}
+
+/// 侧栏收起/展开按钮的边长（正方形，贴面包屑行右缘）。
+const SIDEBAR_TOGGLE_W: f32 = 18.0;
+
+/// 窗口右上角的**常驻**侧栏切换按钮（问题 061）。
+///
+/// # 为什么它必须在顶栏、而不是侧栏自己的头部
+///
+/// 收起后整个侧栏面板（含活动栏与面板头）都不再渲染——头部的任何入口
+/// 都会随之消失，「收起」得是单程票。面包屑行右端是两种状态下都存在、
+/// 且语义上属于「窗口级布局控制」的位置：侧栏在左，按钮贴最右，空间
+/// 对仗；悬停提示补全当前动作与快捷键。
+///
+/// 状态复用 `sidebar_visible`（与 Ctrl+\ / 视图菜单同一路径，不引入第二
+/// 份「收起」状态）；动作走 [`UiAction::ToggleSidebar`] 汇入
+/// `EditorApp::execute`——三入口（按钮 / 快捷键 / 菜单）行为一致由
+/// 既有回归钉住。矩形右界按 `clip_rect` 推（问题 059：环境可用宽不可信）。
+fn draw_sidebar_toggle(app: &mut EditorApp, ui: &mut Ui, clip: egui::Rect, inset: f32) {
+    let btn_rect = egui::Rect::from_min_size(
+        egui::pos2(
+            clip.right() - inset - SIDEBAR_TOGGLE_W,
+            ui.cursor().top().max(clip.top()),
+        ),
+        egui::vec2(SIDEBAR_TOGGLE_W, SIDEBAR_TOGGLE_W),
+    );
+    let response = ui.allocate_rect(btn_rect, egui::Sense::click());
+    if response.clicked() {
+        app.execute(UiAction::ToggleSidebar);
+    }
+    // 悬停底色与 056 的图标按钮同源：取 egui widget 视觉的 weak_bg_fill，
+    // 与 Button 的悬停反馈像素级一致。
+    if response.hovered() || response.clicked() {
+        let hover_bg = ui.style().interact(&response).weak_bg_fill;
+        ui.painter()
+            .rect_filled(btn_rect, egui::CornerRadius::same(4), hover_bg);
+    }
+    let color = if response.hovered() {
+        app.theme().text_primary
+    } else {
+        app.theme().text_secondary
+    };
+    icons::paint_icon(
+        ui.painter(),
+        icons::Icon::Sidebar,
+        btn_rect,
+        icons::IconColors {
+            primary: color,
+            accent: color,
+        },
+    );
+    response.on_hover_text(if app.ui.sidebar_visible {
+        "收起侧栏（Ctrl+\\）"
+    } else {
+        "展开侧栏（Ctrl+\\）"
     });
 }

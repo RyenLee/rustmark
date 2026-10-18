@@ -517,6 +517,9 @@ fn find_options_report_active_count() {
 #[test]
 fn layout_toggles_are_independent() {
     let mut state = AppUiState::new(Theme::dark());
+    // 默认收起（问题 061）：开关语义与初始态无关，先展开到「可见」基线。
+    state.sidebar_visible = true;
+    assert!(state.sidebar_visible);
 
     state.toggle_sidebar();
     assert!(!state.sidebar_visible);
@@ -535,6 +538,9 @@ fn layout_toggles_are_independent() {
 #[test]
 fn clicking_same_sidebar_tab_collapses_it() {
     let mut state = AppUiState::new(Theme::dark());
+    // 默认收起（问题 061）：本用例钉的是「可见时再点同一标签 → 收起」，
+    // 先展开到可见基线（顶栏按钮 / Ctrl+\ 的路径）。
+    state.sidebar_visible = true;
     assert!(state.sidebar_visible);
     assert_eq!(state.sidebar_tab, SidebarTab::Files);
 
