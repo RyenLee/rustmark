@@ -1,20 +1,23 @@
-//! 侧栏收起/展开（问题 061）：默认收起 + 顶栏右上角常驻切换按钮。
+//! 侧栏收起/展开（问题 061 引入；问题 063 按钮挪到面包屑行左端）：
+//! 默认收起 + 顶栏常驻切换按钮。
 //!
 //! # 钉住的不变量
 //!
 //! 1. **默认收起**——首次打开（`AppUiState::new`）侧栏不可见，内容区优先。
-//! 2. **按钮常驻窗口右上角**——收起后整个侧栏面板（含活动栏与面板头）
-//!    都不再渲染，头部入口会消失；按钮必须活在两种状态都可见的位置
-//!    （面包屑行右端），否则「收起」是单程票。
+//! 2. **按钮常驻面包屑行最左端、与侧栏相邻**——收起后整个侧栏面板（含
+//!    活动栏与面板头）都不再渲染，头部入口会消失，按钮必须活在两种状态
+//!    都可见的位置；且两种状态下按钮都贴着侧栏的边（展开时贴侧栏右缘、
+//!    收起时贴窗口左上角），不随状态跳到窗口另一头（问题 063：右上角
+//!    离侧栏太远，不人性化）。
 //! 3. **点击即切换**——按钮走 `UiAction::ToggleSidebar` 汇入
 //!    `EditorApp::execute`，与 Ctrl+\ / 视图菜单同一路径；连点两次回到
 //!    原状态（不是一次性触发）。
 //! 4. **展开真的有内容**——展开后活动栏的「文件」导航项出现在左侧，
 //!    防止「状态翻了、界面没变」的假开关。
 //!
-//! 按钮定位：从真帧的绘制指令里取面包屑行（顶栏最后一行）内**最右的
+//! 按钮定位：从真帧的绘制指令里取面包屑行（顶栏最后一行）内**最左的
 //! 描边圆角矩形**——那是 `Icon::Sidebar` 的外框（行内另一枚描边圆角矩形
-//! 是左端的文档图标，x 远小于它）。
+//! 是它右侧的文档图标）。
 
 use crate::support::fake_dialog::FakeDialog;
 use rustmark::app::bootstrap::{ConfigPaths, Services};
@@ -77,8 +80,8 @@ fn breadcrumb_band(app: &EditorApp) -> egui::Rect {
     )
 }
 
-/// 面包屑行内**最右**的描边圆角矩形（= `Icon::Sidebar` 外框；行内另一枚
-/// 描边圆角矩形是左端的文档图标）。
+/// 面包屑行内**最左**的描边圆角矩形（= `Icon::Sidebar` 外框；行内另一枚
+/// 描边圆角矩形是它右侧的文档图标）。
 fn sidebar_button_rect(shapes: &[egui::epaint::ClippedShape], band: egui::Rect) -> egui::Rect {
     fn walk(shape: &egui::epaint::Shape, band: egui::Rect, out: &mut Vec<egui::Rect>) {
         match shape {
@@ -101,7 +104,8 @@ fn sidebar_button_rect(shapes: &[egui::epaint::ClippedShape], band: egui::Rect) 
     }
     rects.sort_by(|a, b| a.left().total_cmp(&b.left()));
     rects
-        .pop()
+        .first()
+        .copied()
         .expect("面包屑行内应画出侧栏切换按钮（描边外框）")
 }
 
@@ -163,7 +167,7 @@ fn text_has_files_on_left(out: &egui::FullOutput, min_y: f32) -> bool {
     hit
 }
 
-/// 默认收起 + 右上角按钮可切换、可往返、展开后有真实内容。
+/// 默认收起 + 切换按钮可往返、展开后有真实内容。
 #[test]
 fn sidebar_defaults_to_collapsed_and_topbar_button_toggles_it() {
     let (_dir, mut app) = app_fixture();
@@ -175,14 +179,14 @@ fn sidebar_defaults_to_collapsed_and_topbar_button_toggles_it() {
         "首次打开侧栏应默认收起（问题 061 用户诉求：内容区优先）"
     );
 
-    // ② 按钮在窗口右上角：面包屑行内最右的描边圆角矩形，中心 x 应落在
-    //    窗口右侧 5% 内。
+    // ② 按钮在窗口左上角（问题 063：收起态下面包屑行从窗口左缘起排，
+    //    按钮贴行首）：行内最左的描边圆角矩形，右缘应落在窗口左侧 3% 内。
     let band = breadcrumb_band(&app);
     let btn = sidebar_button_rect(&out_shapes(&ctx, &mut app), band);
     assert!(
-        btn.center().x > SCREEN.x * 0.95,
-        "侧栏切换按钮应常驻窗口右上角，实际中心 x={:.1}",
-        btn.center().x
+        btn.right() < SCREEN.x * 0.03,
+        "收起状态下侧栏切换按钮应贴窗口左上角，实际左缘 x={:.1}",
+        btn.left()
     );
 
     // ③ 收起状态下左侧没有活动栏（「文件」导航项不在屏幕左侧）。
@@ -200,7 +204,7 @@ fn sidebar_defaults_to_collapsed_and_topbar_button_toggles_it() {
     click_at(&ctx, &mut app, btn.center());
     assert!(
         app.ui.sidebar_visible,
-        "点击右上角按钮应展开侧栏（与 Ctrl+\\ / 视图菜单同路径）"
+        "点击按钮应展开侧栏（与 Ctrl+\\ / 视图菜单同路径）"
     );
 
     // ⑤ 展开真的有内容：活动栏「文件」导航项出现在屏幕左侧。
@@ -213,11 +217,21 @@ fn sidebar_defaults_to_collapsed_and_topbar_button_toggles_it() {
         "展开后活动栏应渲染「文件」导航项"
     );
 
+    // ⑤' 展开态按钮紧贴侧栏右缘（问题 063 的核心诉求）：展开下面包屑行
+    //    从侧栏右侧起排，按钮应贴行首、落在窗口左侧 1/4 内——而不是
+    //    061 之前那样孤悬在窗口右上角。
+    let btn = sidebar_button_rect(&out_shapes(&ctx, &mut app), band);
+    assert!(
+        btn.right() < SCREEN.x * 0.25,
+        "展开状态下侧栏切换按钮应紧贴侧栏右缘，实际左缘 x={:.1}",
+        btn.left()
+    );
+
     let btn = sidebar_button_rect(&out_shapes(&ctx, &mut app), band);
     click_at(&ctx, &mut app, btn.center());
     assert!(
         !app.ui.sidebar_visible,
-        "再次点击右上角按钮应收起侧栏（按钮是收起/展开双向切换）"
+        "再次点击按钮应收起侧栏（按钮是收起/展开双向切换）"
     );
 }
 
@@ -234,7 +248,7 @@ fn sidebar_visibility_is_remembered_across_restarts() {
     let mut app = app_at(dir.path());
     let ctx = fresh_ctx();
 
-    // ① 展开（真帧点击右上角按钮）。
+    // ① 展开（真帧点击切换按钮）。
     let band = breadcrumb_band(&app);
     let btn = sidebar_button_rect(&out_shapes(&ctx, &mut app), band);
     click_at(&ctx, &mut app, btn.center());

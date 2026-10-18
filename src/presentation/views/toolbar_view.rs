@@ -597,6 +597,10 @@ fn draw_breadcrumb(app: &mut EditorApp, ui: &mut Ui) {
     let inset = ui.cursor().left() - clip.left();
     let content_right = clip.right() - inset;
     ui.horizontal_top(|ui| {
+        // 侧栏切换按钮在行**最左端**（问题 063）：展开时紧贴侧栏右缘、
+        // 收起时贴窗口左上角——两种状态下按钮都长在侧栏边上，而不是孤悬
+        // 在窗口另一头。必须先画它，后面的文档图标与路径才排在它右侧。
+        draw_sidebar_toggle(app, ui, clip, inset);
         // 文档图标：向量手绘，替代原 📄 字形。废止字形的理由与工具栏图标
         // 同源（emoji 依赖字体覆盖，见 `presentation::icons` 的模块文档），
         // 且从此与文件树里手绘的页面图标共用同一套规格表。
@@ -612,13 +616,14 @@ fn draw_breadcrumb(app: &mut EditorApp, ui: &mut Ui) {
             },
         );
         // 剩余宽度独占给路径，右界钳到内容右界（竖向上 `horizontal_top`
-        // 已贴顶，无需再钳），并给右端的侧栏按钮让位。
+        // 已贴顶，无需再钳）。侧栏按钮已挪到行左端（问题 063），右界
+        // 不再为它让位。
         //
         // `halign(LEFT)` 与标签条标题同理（问题 061）：`put` 子布局居中，
         // **没被 elide 的短路径会从 rest 矩形的水平中点起画**（用户截图
         // 「未命名文档」浮在行中偏右即此），显式左对齐修正。
         let mut rest = ui.available_rect_before_wrap();
-        rest.max.x = rest.max.x.min(content_right - SIDEBAR_TOGGLE_W - 6.0);
+        rest.max.x = rest.max.x.min(content_right);
         ui.put(
             rest,
             egui::Label::new(path.clone())
@@ -626,32 +631,37 @@ fn draw_breadcrumb(app: &mut EditorApp, ui: &mut Ui) {
                 .halign(egui::Align::LEFT)
                 .show_tooltip_when_elided(true),
         );
-        draw_sidebar_toggle(app, ui, clip, inset);
     });
 }
 
-/// 侧栏收起/展开按钮的边长（正方形，贴面包屑行右缘）。
+/// 侧栏收起/展开按钮的边长（正方形，贴面包屑行左缘）。
 const SIDEBAR_TOGGLE_W: f32 = 18.0;
 
-/// 窗口右上角的**常驻**侧栏切换按钮（问题 061）。
+/// 面包屑行**最左端**的常驻侧栏切换按钮（问题 061 引入，问题 063 从
+/// 右上角挪来）。
+///
+/// # 为什么必须在行左端（问题 063：与侧栏的邻近性）
+///
+/// 061 把按钮放在面包屑行右端（窗口右上角），侧栏一展开，按钮离它
+/// 实际控制的对象隔了整个编辑区——用户反馈「与侧边栏间距过远，不
+/// 人性化」。挪到行左端后：展开时按钮紧贴侧栏右缘（面包屑行从侧栏
+/// 右侧起排），收起时贴窗口左上角（收起后行从窗口左缘起排）——两种
+/// 状态下按钮都**长在侧栏边上**，位置不随状态跳到窗口另一头。
 ///
 /// # 为什么它必须在顶栏、而不是侧栏自己的头部
 ///
 /// 收起后整个侧栏面板（含活动栏与面板头）都不再渲染——头部的任何入口
-/// 都会随之消失，「收起」得是单程票。面包屑行右端是两种状态下都存在、
-/// 且语义上属于「窗口级布局控制」的位置：侧栏在左，按钮贴最右，空间
-/// 对仗；悬停提示补全当前动作与快捷键。
+/// 都会随之消失，「收起」得是单程票。面包屑行左端是两种状态下都存在、
+/// 且始终与侧栏相邻的位置。
 ///
 /// 状态复用 `sidebar_visible`（与 Ctrl+\ / 视图菜单同一路径，不引入第二
 /// 份「收起」状态）；动作走 [`UiAction::ToggleSidebar`] 汇入
 /// `EditorApp::execute`——三入口（按钮 / 快捷键 / 菜单）行为一致由
-/// 既有回归钉住。矩形右界按 `clip_rect` 推（问题 059：环境可用宽不可信）。
+/// 既有回归钉住。矩形左界按 `clip_rect` 推（问题 059：环境可用宽不可信，
+/// 左界同理不取 `cursor().left()` 而取面板左内边距，行首两者相等）。
 fn draw_sidebar_toggle(app: &mut EditorApp, ui: &mut Ui, clip: egui::Rect, inset: f32) {
     let btn_rect = egui::Rect::from_min_size(
-        egui::pos2(
-            clip.right() - inset - SIDEBAR_TOGGLE_W,
-            ui.cursor().top().max(clip.top()),
-        ),
+        egui::pos2(clip.left() + inset, ui.cursor().top().max(clip.top())),
         egui::vec2(SIDEBAR_TOGGLE_W, SIDEBAR_TOGGLE_W),
     );
     let response = ui.allocate_rect(btn_rect, egui::Sense::click());
