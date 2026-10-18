@@ -7,9 +7,6 @@ use crate::presentation::theme::builtin::Theme;
 
 use super::*;
 
-/// 检查结果行高（比文件树的 24 略高：一行放下「规则名 + 说明」两段文字）。
-const LINT_ROW_HEIGHT: f32 = 34.0;
-
 /// 检查标签。
 ///
 /// 与大纲同源（见文件头表格）：`lint_document` 是 O(行数) 的线性扫描，
@@ -71,49 +68,63 @@ fn rules_enabled(rules: &crate::application::dto::LintRulesView) -> bool {
 ///
 /// `allocate_ui` 与 `horizontal` 一样走 `scope`，子 Ui 的默认 sense 是
 /// **hover**（`UiBuilder::sense` 默认值），其 `Response::clicked()` 恒为
-/// false——症状是「检查结果行点击无响应」。故这里不用 `allocate_ui`，
-/// 改用 `scope_builder` + `max_rect` 显式声明点击语义。
+/// false——症状是「检查结果行点击无响应」。故先 `ui.horizontal` 排出
+/// 内容取回整行矩形，再用 `ui.interact` 在同一矩形上挂 click-sense
+/// 命中区（与大纲行 / 文件行 / 搜索行同款做法）。
+///
+/// # 必须用 `ui.horizontal`，不能用 `with_layout`（问题 065）
+///
+/// `with_layout` **不限定子 Ui 的高度**：子 Ui 拿到的是滚动区剩余的
+/// **全部**可用高（探针实测 509pt），行内控件被 Center 交叉对齐放到
+/// 这块高度的垂直中点——整行浮在面板中部；且子 Ui 的 `min_rect` 被
+/// 撑成 509pt，每行的游标暴涨 512pt，**只有第一行落在视口内**，其余
+/// 行画在面板外直接被裁掉；`row_rect`（顶部 34pt）与文字（面板中部）
+/// 还相差 248pt，点文字根本不命中。`ui.horizontal` 把子 Ui 初始高定为
+/// `spacing().interact_size.y`（18pt），行内控件在行高内居中，行与行
+/// 正常排列——这正是大纲 / 文件 / 搜索三个标签一直在用的结构。
 fn lint_row(
     ui: &mut Ui,
     theme: &Theme,
     issue: &crate::application::dto::LintIssueView,
 ) -> egui::Response {
-    let row_rect = egui::Rect::from_min_size(
-        ui.cursor().min,
-        egui::vec2(ui.available_width(), LINT_ROW_HEIGHT),
-    );
     // 整行显式声明 `Sense::click()`：规则名 + 说明 + 行号多段 `Ui` 默认只有
     // hover sense，会盖在行交互之上、吞掉点击（与大纲行同款缺陷）。先
-    // `with_layout` 排出内容，再用 `ui.interact` 在 `row_rect` 上挂 click-sense
+    // `ui.horizontal` 排出内容取回整行矩形，再用 `ui.interact` 挂 click-sense
     // 命中区（问题 1：检查结果行点击无响应）。
-    ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-        ui.add_space(ROW_PAD);
-        ui.label(RichText::new(&issue.rule_label).color(theme.text_primary));
-        // 说明占「剩余宽 − 行号预留」并**截断**：行号预留与大纲同款
-        // `OUTLINE_LINE_NO_W`，超长行号向左侵吞省略号，可接受（侧栏
-        // 宽度固定，省略号是唯一不失真的降级）。
-        let avail = (ui.available_width() - OUTLINE_LINE_NO_W).max(0.0);
-        ui.allocate_ui_with_layout(
-            egui::vec2(avail, 0.0),
-            Layout::left_to_right(Align::Center),
-            |ui| {
-                ui.add(
-                    egui::Label::new(RichText::new(&issue.message).color(theme.text_secondary))
-                        .truncate(),
-                );
-            },
-        );
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            // 行号展示按人类习惯 +1（DTO 里是 0-based，见 `LintIssueView`）。
+    let row_response = ui
+        .horizontal(|ui| {
             ui.add_space(ROW_PAD);
-            ui.weak((issue.line + 1).to_string());
-        });
-    });
+            let rule = ui.label(RichText::new(&issue.rule_label).color(theme.text_primary));
+            // 说明占「剩余宽 − 行号预留」并**截断**：行号预留与大纲同款
+            // `OUTLINE_LINE_NO_W`，超长行号向左侵吞省略号，可接受（侧栏
+            // 宽度固定，省略号是唯一不失真的降级）。
+            let avail = (ui.available_width() - OUTLINE_LINE_NO_W).max(0.0);
+            // 子 Ui 高度取规则名的实测行高，**不能传 0**：0 高子矩形会被行的
+            // Center 交叉对齐填满行高后落在行垂直中点，其中的说明文字再按
+            // egui「横向布局不向上越界」规则被压到中点之下——比规则名低半个
+            // 行高（与大纲行同款缺陷，见 `outline.rs` 同处注释）。
+            ui.allocate_ui_with_layout(
+                egui::vec2(avail, rule.rect.height()),
+                Layout::left_to_right(Align::Center),
+                |ui| {
+                    ui.add(
+                        egui::Label::new(RichText::new(&issue.message).color(theme.text_secondary))
+                            .truncate(),
+                    );
+                },
+            );
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                // 行号展示按人类习惯 +1（DTO 里是 0-based，见 `LintIssueView`）。
+                ui.add_space(ROW_PAD);
+                ui.weak((issue.line + 1).to_string());
+            });
+        })
+        .response;
     let row_id = ui.scope_id().with((
         "rustmark.lint.row",
         issue.line,
         &issue.rule_label,
         &issue.message,
     ));
-    ui.interact(row_rect, row_id, egui::Sense::click())
+    ui.interact(row_response.rect, row_id, egui::Sense::click())
 }

@@ -58,7 +58,7 @@ pub(super) fn outline_tab(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
                 let row_response = ui
                     .horizontal(|ui| {
                         ui.add_space(ROW_PAD + (item.level.saturating_sub(1)) as f32 * INDENT_STEP);
-                        ui.label(
+                        let hash = ui.label(
                             RichText::new("#".repeat(item.level as usize))
                                 .color(theme.text_secondary),
                         );
@@ -66,8 +66,18 @@ pub(super) fn outline_tab(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
                         // 固定宽的侧栏撑出一条不可见的黑边（SidePanel 是
                         // `exact_width`，溢出内容只会被裁掉）。
                         let avail = (ui.available_width() - OUTLINE_LINE_NO_W).max(0.0);
+                        // 子 Ui 的高度**必须是行高**（取 `#` 标签的实测高度），
+                        // 不能传 0：`allocate_ui_with_layout` 的 `desired_size`
+                        // 会被外层行的 Center 交叉对齐填满成行高
+                        // （`Layout::next_frame_ignore_wrap`），0 高的子矩形
+                        // 于是落在**行垂直中点**；其中的标题再按 egui 的
+                        // 「横向布局不向上越界」规则（`frame_rect.top() <
+                        // cursor.top()` 时整体下推）被压到中点之下——标题比
+                        // `#` 低半个行高（探针实测 8.5pt，用户截图即此），
+                        // 且右端的行号也被 0 高子矩形带偏 3.5pt。
+                        // 传行高后子矩形与行重合，三段自然同一水平线。
                         ui.allocate_ui_with_layout(
-                            egui::vec2(avail, 0.0),
+                            egui::vec2(avail, hash.rect.height()),
                             Layout::left_to_right(Align::Center),
                             |ui| {
                                 ui.add(egui::Label::new(text).truncate());
