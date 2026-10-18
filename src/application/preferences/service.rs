@@ -338,7 +338,9 @@ fn to_editor_view(editor: &EditorSettings) -> EditorSettingsView {
         spell_check: editor.spell_check(),
         show_line_numbers: editor.show_line_numbers(),
         split_ratio: editor.split_ratio(),
-        sidebar_visible: editor.sidebar_visible(),
+        // 透传三态（问题 064）：`None`（未决定）不能被折叠成 `false`，
+        // 否则「打开文件夹时自动展开」永远看不到未决定的状态。
+        sidebar_visible: editor.sidebar_visible_decision(),
         writing_goal: editor.writing_goal().words(),
         lint: to_lint_rules_view(editor.lint()),
         // 兜底收敛：领域值只可能经 serde / `new` 两条路变 0，前者已收敛，

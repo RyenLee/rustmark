@@ -18,3 +18,4 @@ mod open_limit_test;
 mod routing_exporter_test;
 mod save_all_test;
 mod text_format_guard_test;
+mod workspace_reveal_test;

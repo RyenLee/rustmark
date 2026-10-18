@@ -66,7 +66,7 @@ fn customized() -> Preferences {
         false,
         800,
         0.5,
-        false,
+        Some(false),
         WritingGoal::new(1200),
         rustmark::domain::preferences::value_objects::LintSettings::all_enabled(),
         9,
@@ -248,7 +248,7 @@ fn concurrent_style_repeated_saves_keep_file_valid() {
             false,
             400,
             0.5,
-            false,
+            Some(false),
             WritingGoal::new(0),
             rustmark::domain::preferences::value_objects::LintSettings::all_enabled(),
             7,
@@ -290,6 +290,11 @@ fn preferences_without_sidebar_visible_load_as_collapsed() {
         !loaded.editor().sidebar_visible(),
         "缺字段应按默认（收起）读出，而不是加载失败"
     );
+    assert_eq!(
+        loaded.editor().sidebar_visible_decision(),
+        None,
+        "缺字段应读出「没决定过」而不是 Some(false)——后者会把用户\n        锁死成「手动收起」，打开文件夹时再也不自动展开（问题 064）"
+    );
     assert!(
         dir.backups().is_empty(),
         "缺字段不该触发「备份 + 回退默认」——那会丢掉其余设置"
@@ -317,7 +322,7 @@ fn lint_rule_choices_survive_a_toml_round_trip() {
         true,
         400,
         0.5,
-        false,
+        Some(false),
         WritingGoal::new(0),
         LintSettings {
             heading_jump: false,
@@ -393,7 +398,7 @@ fn prefs_with_custom_syntax(syn_heading: Option<&str>) -> Preferences {
         true,
         400,
         0.5,
-        false,
+        Some(false),
         WritingGoal::new(0),
         rustmark::domain::preferences::value_objects::LintSettings::all_enabled(),
         3,

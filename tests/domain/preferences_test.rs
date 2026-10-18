@@ -197,7 +197,7 @@ fn preferences_rejects_invalid_editor_settings() {
         false,
         400,
         0.5,
-        false,
+        Some(false),
         WritingGoal::new(0),
         LintSettings::all_enabled(),
         12,
@@ -232,7 +232,7 @@ fn preferences_indent_unit_derives_from_tab_size() {
             false,
             400,
             0.5,
-            false,
+            Some(false),
             WritingGoal::new(0),
             LintSettings::all_enabled(),
             12,
@@ -316,7 +316,7 @@ fn editor_settings_round_trip_through_toml_persists_writing_goal() {
             false,
             400,
             0.5,
-            false,
+            Some(false),
             WritingGoal::new(1500),
             LintSettings::all_enabled(),
             12,
@@ -341,14 +341,28 @@ fn max_open_documents_defaults_to_twelve() {
 ///
 /// 默认值与 `AppUiState::new` 的初始值必须一致：两处都是「第一次打开时
 /// 侧栏是收起的」，不一致的表现是启动瞬间闪一下侧栏再收起。
+///
+/// 问题 064 起默认值是**三态**的：`sidebar_visible()`（折叠成布尔）为
+/// `false`，但 `sidebar_visible_decision()`（原样）是 `None`——「没决定过」
+/// 与「决定过收起」必须可区分，前者允许打开文件夹时自动展开。
 #[test]
 fn sidebar_visibility_defaults_to_collapsed() {
     assert!(
         !EditorSettings::default_settings().sidebar_visible(),
         "默认侧栏应为收起（内容区优先）"
     );
+    assert_eq!(
+        EditorSettings::default_settings().sidebar_visible_decision(),
+        None,
+        "默认应是「没决定过」而不是「决定过收起」——否则打开文件夹时\n        永远等不到自动展开（问题 064）"
+    );
     let opened = EditorSettings::default_settings().with_sidebar_visible(true);
     assert!(opened.sidebar_visible(), "改成展开后应读出展开");
+    assert_eq!(
+        opened.sidebar_visible_decision(),
+        Some(true),
+        "`with_sidebar_visible` 落成的必须是明确决定 Some(true)，不能留 None"
+    );
     // 其余字段不受影响（值对象不可变，`with_*` 只动一个字段）。
     assert_eq!(
         opened.split_ratio(),
@@ -371,7 +385,7 @@ fn max_open_documents_zero_is_invalid() {
         false,
         400,
         0.5,
-        false,
+        Some(false),
         WritingGoal::new(0),
         LintSettings::all_enabled(),
         0,

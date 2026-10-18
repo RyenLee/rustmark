@@ -105,10 +105,16 @@ impl EditorApp {
                 // （没有 update() 循环）等待后台 channel 完成的时序问题。
                 let root = path.as_str().to_string();
                 match self.scan_workspace(&root) {
-                    Ok(count) => self.status_bar.notice(
-                        format!("已打开工作区：{}（{count} 项）", Self::display_name(&root)),
-                        self.services.markdown.now().millis(),
-                    ),
+                    Ok(count) => {
+                        self.status_bar.notice(
+                            format!("已打开工作区：{}（{count} 项）", Self::display_name(&root)),
+                            self.services.markdown.now().millis(),
+                        );
+                        // 切到工作区视图（问题 064）：离开欢迎页、亮出文件
+                        // 树面板、按需展开侧栏。只在扫描成功时做——失败时
+                        // 根目录没换上，停在欢迎页看错误提示才是对的。
+                        self.reveal_workspace_sidebar();
+                    }
                     Err(e) => self.set_status_error(&format!(
                         "无法打开工作区 {}：{e}",
                         Self::display_name(&root)

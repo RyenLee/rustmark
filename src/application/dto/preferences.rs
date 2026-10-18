@@ -182,10 +182,14 @@ pub struct EditorSettingsView {
     /// 编辑区 / 预览区分割比例（0.2 ~ 0.8）；旧配置缺省时按 `0.5` 处理。
     #[serde(default)]
     pub split_ratio: f32,
-    /// 侧栏是否展开（问题 062：记住上次的开合状态）；旧配置缺省按 `false`
-    /// （收起）处理——与领域 `EditorSettings::default_settings()` 一致。
+    /// 侧栏开合状态（问题 062 / 064）。
+    ///
+    /// 三态而不是布尔：`None` = 用户还没决定过（允许「打开文件夹时自动
+    /// 展开」），`Some(_)` = 用户或系统的明确决定，之后一律尊重。旧配置
+    /// 文件没有这个字段时缺省 `None`——缺字段意味着用户从未见过这个开关，
+    /// 不该把他的状态锁死成「手动收起」。
     #[serde(default)]
-    pub sidebar_visible: bool,
+    pub sidebar_visible: Option<bool>,
     /// 写作目标（字数）；`0` = 未设置（V11-05）。旧配置缺省按 `0` 处理。
     #[serde(default)]
     pub writing_goal: u32,
@@ -326,7 +330,7 @@ impl SettingsView {
                 spell_check: false,
                 show_line_numbers: true,
                 split_ratio: 0.5,
-                sidebar_visible: false,
+                sidebar_visible: None,
                 writing_goal: 0,
                 lint: LintRulesView::default(),
                 max_open_documents: default_max_open_documents(),

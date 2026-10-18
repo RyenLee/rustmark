@@ -188,7 +188,11 @@ impl EditorApp {
             return;
         };
         let mut editor = settings.editor;
-        editor.sidebar_visible = self.ui.sidebar_visible;
+        // 写盘一律落 `Some`：走到这里说明 `sidebar_visible` 刚被某个入口
+        // 改过（问题 064 的「打开文件夹自动展开」也算一次改动），用户可见
+        // 的结果就是他的决定——包括「自动展开后他又手动收起」，那同样是
+        // 明确的 `Some(false)`，下次启动尊重。
+        editor.sidebar_visible = Some(self.ui.sidebar_visible);
         if self
             .services
             .preferences
@@ -234,6 +238,11 @@ impl EditorApp {
     /// 它只是为了让编辑区第一帧可编辑。所以启动时若也显示欢迎页，
     /// 底下那份空白文档就成了「看不见但存在」的多余标签。
     pub fn should_show_welcome(&self) -> bool {
-        self.active_doc.is_none()
+        // 离开欢迎页的条件有两个：打开了文档、或打开了工作区（问题 064）。
+        // 早先只判 `active_doc`，从欢迎页「打开文件夹」会停在这个页面——
+        // 文件夹扫完了、文件树也装好了，屏幕上却什么都没有，用户以为点了
+        // 没反应。工作区根一旦非空即进入工作区视图，编辑区由
+        // `ensure_document`（editor_view 每帧兜底）建一页空白文档。
+        self.active_doc.is_none() && self.workspace_root().is_empty()
     }
 }

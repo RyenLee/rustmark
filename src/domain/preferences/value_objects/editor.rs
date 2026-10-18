@@ -168,18 +168,27 @@ pub struct EditorSettings {
     /// 编辑区 / 预览区分割比例（0.2 ~ 0.8），持久化以记住用户拖拽结果。
     #[serde(default)]
     split_ratio: f32,
-    /// 侧栏是否展开（问题 062：**记住上次的开合状态**）。
+    /// 侧栏开合的**持久化决定**（问题 062 引入，问题 064 由 `bool` 改三态）。
     ///
-    /// 默认 `false`（收起）——与 `AppUiState::new` 的初始值一致：内容区优先，
-    /// 文件树按需展开。持久化它而不是每次都回到默认，是因为「开合侧栏」是
-    /// 用户按自己的屏幕与任务调过一次就长期成立的选择：写长文的人常年收起、
-    /// 在多个文件间跳的人常年展开，每次启动都让他重调一遍等于没记住。
+    /// `None` = **用户还没决定过**（默认，界面按收起渲染）；
+    /// `Some(true/false)` = 决定过了（用户手动开合，或打开文件夹时自动展开
+    /// 落下的）——此后一律尊重这个决定。
     ///
-    /// `#[serde(default)]`：旧配置文件没有这个字段，缺了按 `false`（收起）
-    /// 读出——与默认设置一致，不让旧配置因缺字段而整体加载失败
-    /// （同 `split_ratio` / `writing_goal` 的处理）。
-    #[serde(default)]
-    sidebar_visible: bool,
+    /// # 为什么必须是三态而不是 `bool`
+    ///
+    /// 需求两头夹：① 打开文件夹后应自动展开侧栏，让刚打开的树露出来；
+    /// ② 「若侧边栏此前被用户手动折叠，则尊重该状态不强制展开」。
+    /// `bool` 无法表达「收起」到底是**默认值**还是**用户的选择**——两者都
+    /// 是 `false`，于是要么每次打开文件夹都把用户收起的侧栏顶开，要么
+    /// 永远不自动展开。`None` 这个第三态专门承载「没决定过」，两条需求
+    /// 才能同时成立。
+    ///
+    /// `#[serde(default)]`：旧配置文件没有这个字段，缺了按 `None`（未决定）
+    /// 读出，不让旧配置因缺字段而整体加载失败（同 `split_ratio` 的处理）。
+    /// `skip_serializing_if`：`None` 写进 TOML 会变成「值缺失」，直接省掉
+    /// 这个键，读回来仍是 `None`——语义闭合。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sidebar_visible: Option<bool>,
     /// 写作目标（字数）；`0` = 未设置（V11-05）。
     ///
     /// `#[serde(default)]`：**旧配置文件里没有这个字段**，缺了必须按
@@ -219,7 +228,7 @@ impl EditorSettings {
             show_line_numbers: true,
             undo_merge_window_ms: 400,
             split_ratio: 0.5,
-            sidebar_visible: false,
+            sidebar_visible: None,
             writing_goal: WritingGoal::default(),
             lint: LintSettings::all_enabled(),
             max_open_documents: MAX_OPEN_DOCUMENTS_DEFAULT,
@@ -238,7 +247,7 @@ impl EditorSettings {
         show_line_numbers: bool,
         undo_merge_window_ms: u64,
         split_ratio: f32,
-        sidebar_visible: bool,
+        sidebar_visible: Option<bool>,
         writing_goal: WritingGoal,
         lint: LintSettings,
         max_open_documents: u32,
@@ -295,18 +304,28 @@ impl EditorSettings {
         self.split_ratio
     }
 
-    /// 侧栏是否展开（默认收起，见字段文档）。
+    /// 侧栏是否展开（`None` 即未决定，按收起渲染）。
     pub const fn sidebar_visible(&self) -> bool {
+        matches!(self.sidebar_visible, Some(true))
+    }
+
+    /// 持久化的开合决定（三态，见字段文档）。
+    ///
+    /// 「打开文件夹要不要自动展开侧栏」只能问这里：问
+    /// [`Self::sidebar_visible`]（已折叠成 `bool`）会把「默认收起」误判成
+    /// 「用户收起」，于是永远不敢自动展开。
+    pub const fn sidebar_visible_decision(&self) -> Option<bool> {
         self.sidebar_visible
     }
 
     /// 设置侧栏开合，返回新的设置（值对象不可变）。
     ///
     /// 供「侧栏开合变化 → 落盘」这条链路使用：不新增第二份开合状态，
-    /// 持久化的就是 `AppUiState::sidebar_visible` 的当前值。
+    /// 持久化的就是 `AppUiState::sidebar_visible` 的当前值。**落成 `Some`**
+    /// ——写入即代表这是一次决定，之后不再被自动展开覆盖。
     pub const fn with_sidebar_visible(self, visible: bool) -> Self {
         Self {
-            sidebar_visible: visible,
+            sidebar_visible: Some(visible),
             ..self
         }
     }

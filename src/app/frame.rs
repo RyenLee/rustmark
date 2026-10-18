@@ -454,12 +454,16 @@ impl EditorApp {
         };
         // 分割比例以持久化配置为权威来源：用户拖过的比例重启后仍生效。
         app.ui.split_ratio = settings.editor.split_ratio.clamp(SPLIT_MIN, SPLIT_MAX);
-        // 侧栏开合同理（问题 062）：上次是展开的就还展开，是收起的就还收起。
-        // 同时把它记为「已落盘值」，供每帧的变更检测做基准（见
+        // 侧栏开合同理（问题 062 / 064）：上次明确决定过展开的就还展开、
+        // 收起的就还收起；**没决定过**（`None`，首次启动或旧配置）按默认
+        // 收起——之后打开文件夹时再自动展开（`reveal_workspace_sidebar`）。
+        // 同时把有效值记为「已落盘值」，供每帧的变更检测做基准（见
         // [`Self::persist_sidebar_visibility`]）——不然启动第一帧就会被判成
-        // 「变了」，白写一次配置文件。
-        app.ui.sidebar_visible = settings.editor.sidebar_visible;
-        app.sidebar_visible_persisted = settings.editor.sidebar_visible;
+        // 「变了」，白写一次配置文件。注意基准取**有效值**而非决定本身：
+        // `None` + 界面收起 = 与磁盘一致，不该触发写盘。
+        let sidebar_effective = settings.editor.sidebar_visible.unwrap_or(false);
+        app.ui.sidebar_visible = sidebar_effective;
+        app.sidebar_visible_persisted = sidebar_effective;
         // 行号栏开关同样以持久化配置为权威来源（默认隐藏，见领域 `EditorSettings`）。
         app.editor.line_numbers = settings.editor.show_line_numbers;
         app

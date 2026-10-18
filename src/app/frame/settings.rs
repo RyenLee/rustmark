@@ -86,9 +86,10 @@ impl EditorApp {
                     .set_theme(builtin::resolve(&self.settings().theme, self.system_dark));
                 self.ui.set_split_ratio(self.settings().editor.split_ratio);
                 // 侧栏开合同属编辑器设置（问题 062）：重置该分区后配置回到
-                // 默认（收起），界面必须跟着走——否则出现「配置里是收起、
-                // 屏幕上还开着」，下次启动又变收起，看起来像随机。
-                self.ui.sidebar_visible = self.settings().editor.sidebar_visible;
+                // 默认（未决定 = 默认收起），界面必须跟着走——否则出现
+                // 「配置里是收起、屏幕上还开着」，下次启动又变收起，
+                // 看起来像随机。
+                self.ui.sidebar_visible = self.settings().editor.sidebar_visible.unwrap_or(false);
             }
             Err(e) => self.settings_ui.set_error(e.to_string()),
         }
