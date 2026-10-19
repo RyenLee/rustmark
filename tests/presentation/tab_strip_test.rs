@@ -799,6 +799,20 @@ fn tabs_never_overlap_and_titles_stay_in_their_tab() {
 
     // 行左基准：第一枚 × 中心 = 行左 + TAB_W − 12（见上）。
     let row_left = crosses[0].center().x - (TAB_W - 12.0);
+    // 「标题左缘 − 槽位左原点」在各标签间必须恒定 = 左对齐。
+    //
+    // # 为什么单靠上面「右缘不越标签」不够
+    //
+    // 居中偏移是 `(name_avail − 文字宽) / 2`：短标题约 60pt，而标题右缘到
+    // 标签右缘的余量有 ~90pt——**短标题即使被居中也不会越界**。于是
+    // `Label::halign(LEFT)` 在 egui 0.37 变成空操作（见
+    // `widgets::text::put_elided` 的对照表）后，整整一个版本没人发现：
+    // 用户看到的只是「未命名文档」这类短标题浮在标签中间偏右。
+    //
+    // 这条判据用**不同长度**的标题互相比对：左对齐时各标签的偏移相同；
+    // 居中时偏移随文字宽度漂移（本组样本相差约 30pt）。它不依赖
+    // `TAB_PAD` 的具体取值，改内边距不会误报。
+    let mut left_offsets: Vec<f32> = Vec::new();
     for (i, name) in names.iter().enumerate() {
         let title_rect = painted
             .iter()
@@ -809,12 +823,25 @@ fn tabs_never_overlap_and_titles_stay_in_their_tab() {
             .map(|(r, _)| *r)
             .next()
             .unwrap_or_else(|| panic!("标题「{name}」不在标签行上"));
-        let tab_right = row_left + i as f32 * SLOT_PITCH + TAB_W;
+        let tab_left = row_left + i as f32 * SLOT_PITCH;
+        let tab_right = tab_left + TAB_W;
         assert!(
             title_rect.right() <= tab_right + 0.5,
             "「{name}」标题右缘 {:.1} 越过本标签右缘 {tab_right:.1}——put 居中锚点\
              把标题画出了自己的标签（问题 061）",
             title_rect.right()
         );
+        left_offsets.push(title_rect.left() - tab_left);
     }
+    let min = left_offsets.iter().copied().fold(f32::INFINITY, f32::min);
+    let max = left_offsets
+        .iter()
+        .copied()
+        .fold(f32::NEG_INFINITY, f32::max);
+    assert!(
+        max - min <= 1.0,
+        "各标签标题左缘偏移不一致（{left_offsets:?}，极差 {:.1}pt）——标题没有从\
+         槽位左缘起画，而是按自身宽度居中（问题 061 在 egui 0.37 下的复发形态）",
+        max - min
+    );
 }

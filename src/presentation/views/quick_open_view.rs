@@ -22,6 +22,7 @@ use crate::presentation::state::quick_open_ui_state::{
     MAX_CANDIDATES, QuickOpenItem, candidates_from_workspace, filter_candidates,
 };
 use crate::presentation::theme::builtin::Theme;
+use crate::presentation::widgets;
 
 /// 对话框默认尺寸（对齐原型 `.palette { width: 480px }`）。
 const WIDTH: f32 = 480.0;
@@ -264,10 +265,13 @@ fn results(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, list: &[QuickOpenIte
                     egui::pos2(rect.left() + 8.0, rect.top()),
                     egui::vec2(name_avail.max(0.0), rect.height()),
                 );
-                ui.put(
+                // 名字从 `name_rect` 左缘起画：`ui.put` 的居中会把短名字推到
+                // 矩形中部（与问题 061 同源），配方见
+                // `widgets::text::put_elided`。
+                widgets::text::put_elided(
+                    ui,
                     name_rect,
-                    egui::Label::new(RichText::new(&item.name).color(name_color).size(13.0))
-                        .truncate(),
+                    RichText::new(&item.name).color(name_color).size(13.0),
                 );
                 let clicked = response.clicked();
                 if response.hovered() {

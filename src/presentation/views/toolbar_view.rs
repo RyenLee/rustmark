@@ -47,6 +47,7 @@ use egui::{RichText, Ui};
 use crate::app::frame::EditorApp;
 use crate::presentation::icons;
 use crate::presentation::shortcuts::registry::UiAction;
+use crate::presentation::widgets;
 
 /// 绘制全局顶栏：应用级菜单栏 + 标签条 + 路径面包屑。
 ///
@@ -293,27 +294,26 @@ fn draw_tab_strip(app: &mut EditorApp, ui: &mut Ui) {
                             let name_avail =
                                 (rect.width() - (cursor_x - rect.left()) - CLOSE_W - TAB_PAD)
                                     .max(0.0);
-                            //
-                            // `halign(LEFT)` 是必须的（问题 061）：`ui.put` 的子
-                            // 布局是 `centered_and_justified`，Label 的 galley 锚点
-                            // 取 `rect.center_top()`——**没被 elide 的标题会从 put
-                            // 矩形的水平中点起画**，长标题整体右溢 ~65pt、压进
-                            // 右邻标签（探针实测三枚标题的左缘 = put 中心 x；
-                            // 用户截图中「上线前体检报告」压住左邻的 × 即此）。
-                            // elide 的 galley 恰好撑满 put 全宽才侥幸看不出来。
-                            // 显式左对齐后 galley 恒从矩形左缘起画。
-                            ui.put(
+                            // 标题必须从槽位左缘起画（问题 061）：`ui.put` 的子
+                            // 布局是 `centered_and_justified`，没被 elide 的标题
+                            // 会从矩形中点起画、整体右溢压进右邻标签（用户截图
+                            // 「上线前体检报告」压住左邻的 ×）。061 当年用
+                            // `Label::halign(LEFT)` 修，但那次修复在 egui 0.37 下
+                            // 已失效——`halign` 只决定字形相对**自身分配矩形**的
+                            // 落点，而那个矩形已被父布局居中。现改走
+                            // `widgets::text::put_elided`（`left_to_right` 布局），
+                            // 对照表见该函数文档。
+                            widgets::text::put_elided(
+                                ui,
                                 egui::Rect::from_min_size(
                                     egui::pos2(cursor_x, rect.top()),
                                     egui::vec2(name_avail, rect.height()),
                                 ),
-                                egui::Label::new(RichText::new(title).color(if active {
+                                RichText::new(title).color(if active {
                                     theme.text_primary
                                 } else {
                                     theme.text_secondary
-                                }))
-                                .truncate()
-                                .halign(egui::Align::LEFT),
+                                }),
                             );
                             // 关闭按钮：用极小的「×」；点击后关闭该标签并结束本帧渲染
                             // （避免继续遍历已失效的 `docs` 列表造成重复关闭）。
@@ -624,13 +624,11 @@ fn draw_breadcrumb(app: &mut EditorApp, ui: &mut Ui) {
         // 「未命名文档」浮在行中偏右即此），显式左对齐修正。
         let mut rest = ui.available_rect_before_wrap();
         rest.max.x = rest.max.x.min(content_right);
-        ui.put(
-            rest,
-            egui::Label::new(path.clone())
-                .truncate()
-                .halign(egui::Align::LEFT)
-                .show_tooltip_when_elided(true),
-        );
+        // `halign(LEFT)` 与标签条标题同理（问题 061）：`put` 子布局居中，
+        // **没被 elide 的短路径会从 rest 矩形的水平中点起画**（用户截图
+        // 「未命名文档」浮在行中偏右即此），显式左对齐修正。该配方收在
+        // `widgets::text::put_elided` 里，此处不再有写漏 halign 的余地。
+        widgets::text::put_elided(ui, rest, path.clone());
     });
 }
 

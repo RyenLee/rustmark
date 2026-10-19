@@ -4,6 +4,7 @@ use egui::{RichText, Ui, Vec2};
 
 use crate::application::dto::RecentFileView;
 use crate::presentation::theme::builtin::Theme;
+use crate::presentation::widgets;
 
 use super::*;
 
@@ -100,12 +101,12 @@ fn recent_row(ui: &mut Ui, theme: &Theme, width: f32, item: &RecentFileView) -> 
     );
     // `halign(LEFT)`（问题 061）：`ui.put` 的子布局居中，没被 elide 的
     // 短文件名会从 name_rect 的水平中点起画、视觉上右移半个可用宽；
-    // elide 的长名恰好撑满全宽才侥幸无恙。显式左对齐与目录文字对齐。
-    ui.put(
+    // elide 的长名恰好撑满全宽才侥幸无恙。配方收在
+    // `widgets::text::put_elided`，显式左对齐与目录文字对齐。
+    widgets::text::put_elided(
+        ui,
         name_rect,
-        egui::Label::new(RichText::new(&name).color(theme.text_primary).size(13.0))
-            .truncate()
-            .halign(egui::Align::LEFT),
+        RichText::new(&name).color(theme.text_primary).size(13.0),
     );
     if show_dir {
         ui.painter().galley(
