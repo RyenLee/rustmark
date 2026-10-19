@@ -305,3 +305,37 @@ fn autosave_tracker_due_is_pure_and_consuming() {
         "due 后必须清除追踪，避免重复自动保存"
     );
 }
+
+/// `next_due_in` 为 `run_autosave` 提供「到期帧」调度的依据（问题 068）：
+/// egui 是事件驱动重绘，必须预约「剩余时长后的一帧」，到期时刻才有帧执行保存。
+#[test]
+fn next_due_in_reports_remaining_time_until_the_next_document_is_due() {
+    let tracker = AutoSaveTracker::new();
+    let interval = 1_000u64;
+
+    assert_eq!(
+        tracker.next_due_in(Timestamp::from_millis(0), interval),
+        None,
+        "没有在计时的文档时不应安排到期帧"
+    );
+
+    let a = DocumentId::new();
+    let b = DocumentId::new();
+    tracker.record(a, 0, Timestamp::from_millis(0));
+    tracker.record(b, 0, Timestamp::from_millis(400));
+    assert_eq!(
+        tracker.next_due_in(Timestamp::from_millis(100), interval),
+        Some(900),
+        "应取**最近到期**文档的剩余时长"
+    );
+
+    // `due` 取走到期文档后，`next_due_in` 反映的是**剩余**文档的到期点——
+    // 保存一帧里要把两条信息都用上：先保存，再为剩余文档预约下一帧。
+    let due = tracker.due(Timestamp::from_millis(1_000), interval);
+    assert_eq!(due, vec![a], "文档 a 此刻应到期");
+    assert_eq!(
+        tracker.next_due_in(Timestamp::from_millis(1_000), interval),
+        Some(400),
+        "只剩文档 b 时按它的记录时刻算剩余（b 于 t=400 记录，now=1000，剩 400ms）"
+    );
+}

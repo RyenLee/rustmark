@@ -206,6 +206,49 @@ impl EditorApp {
         self.sidebar_visible_persisted = self.ui.sidebar_visible;
     }
 
+    /// 侧栏宽度**变化时**落盘（每帧调用一次，内部比对，没变就直接返回）。
+    ///
+    /// # 为什么是「每帧比对」而不是「在拖拽结束处写」
+    ///
+    /// 能改 `sidebar_width` 的入口不止拖拽一条：分割条拖拽、双击复位、
+    /// 设置页「恢复本组默认」都会改它。逐个入口写一遍就是「漏一个静默
+    /// 失效」的经典形状（问题 062 为 `sidebar_visible` 付过这个学费），
+    /// 故与 `persist_sidebar_visibility` 同处帧末统一比对。
+    ///
+    /// # 为什么拖拽中要跳过
+    ///
+    /// 拖拽期间宽度**每帧**都在变，若不过滤就会 60fps 写配置文件——
+    /// 这正是 `persist_split_ratio` 选择「只在松手那一刻写」要避免的。
+    /// 松手那一帧 `sidebar_dragging` 已归 false，宽度 ≠ 基准，自然
+    /// 落盘一次；双击复位与设置页重置不走拖拽，同样被这一帧捕获。
+    ///
+    /// 与两个邻居同一手法（读回设置 → 只改一个字段 → 回写），保证不丢
+    /// 用户已设的缩进 / 自动换行 / 自动保存等。写盘失败刻意忽略：
+    /// 宽度是显示偏好，为它弹错会打断编辑。
+    pub fn persist_sidebar_width(&mut self) {
+        if self.ui.sidebar_dragging {
+            return;
+        }
+        if self.ui.sidebar_width == self.sidebar_width_persisted {
+            return;
+        }
+        let Ok(settings) = self.services.preferences.get_settings(GetSettingsQuery) else {
+            return;
+        };
+        let mut editor = settings.editor;
+        editor.sidebar_width = Some(self.ui.sidebar_width);
+        if self
+            .services
+            .preferences
+            .set_editor(SetEditorCommand { editor })
+            .is_err()
+        {
+            return;
+        }
+        // 只有真写成了才更新基准（同 `persist_sidebar_visibility`）。
+        self.sidebar_width_persisted = self.ui.sidebar_width;
+    }
+
     /// 取得活动文档；没有则新建一个空白未命名文档。
     ///
     /// # 谁在调用

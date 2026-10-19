@@ -67,10 +67,14 @@ const ACTIVITY_BAR_W: f32 = 48.0;
 
 /// 绘制侧栏（作为 `SidePanel::left` 的一部分）。
 ///
-/// 宽度由 `main_view` 用 `exact_width` 固定，这里不再重复决定——
-/// 宽度若在两处各算一次，改主题尺寸时必然只改到一处。
-pub fn show(app: &mut EditorApp, ui: &mut Ui) {
-    let width = app.theme().metrics.sidebar_width;
+/// 宽度由调用方（`main_view`）算好传入——它同时要把同一个宽度用在
+/// 侧栏分割条上，两处各算一次必然漂移。宽度若在两处各算一次，
+/// 改主题尺寸时必然只改到一处（同 `Metrics` 单一真源的理由）。
+///
+/// 传入的是**生效宽**（已按窗口做动态夹紧），不是 `AppUiState` 里
+/// 的用户值：窄窗口下两者不相等，面板必须按生效宽排，否则会超出
+/// 「侧栏 ≤ 主体区 60%」的约束。
+pub fn show(app: &mut EditorApp, ui: &mut Ui, width: f32) {
     let ctx = ui.ctx().clone();
     egui::Panel::left("rustmark.sidebar")
         .exact_size(width)

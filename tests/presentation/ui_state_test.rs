@@ -7,7 +7,9 @@
 //!
 //! 另含S6-12 的分层断言：UI State 不得持有业务类型。
 
-use rustmark::presentation::state::app_ui_state::{AppUiState, SPLIT_MAX, SPLIT_MIN, SidebarTab};
+use rustmark::presentation::state::app_ui_state::{
+    AppUiState, SIDEBAR_MAX, SIDEBAR_MIN, SPLIT_MAX, SPLIT_MIN, SidebarTab,
+};
 use rustmark::presentation::state::dialog_ui_state::{DialogUiState, Overlay};
 use rustmark::presentation::state::editor_ui_state::EditorUiState;
 use rustmark::presentation::state::find_replace_ui_state::{
@@ -585,6 +587,73 @@ fn split_ratio_is_clamped() {
         state.set_split_ratio(ratio);
         assert!((state.editor_ratio() + state.preview_ratio() - 1.0).abs() < 1e-6);
     }
+}
+
+/// 侧栏宽度必须夹紧，否则分割条能把侧栏拖没或拖成主角（问题 067）。
+#[test]
+fn sidebar_width_is_clamped() {
+    let mut state = AppUiState::new(Theme::dark());
+
+    // 没拖过时取主题默认宽度（`Metrics::sidebar_width` 是唯一真源）。
+    assert!(
+        (state.sidebar_width - Theme::dark().metrics.sidebar_width).abs() < 1e-6,
+        "初始宽度应取主题默认，实测 {}",
+        state.sidebar_width
+    );
+
+    state.set_sidebar_width(400.0);
+    assert!(
+        (state.sidebar_width - 400.0).abs() < 1e-6,
+        "合法值不应被改动"
+    );
+
+    state.set_sidebar_width(10.0);
+    assert_eq!(state.sidebar_width, SIDEBAR_MIN, "不能拖到放不下内容");
+
+    state.set_sidebar_width(5000.0);
+    assert_eq!(state.sidebar_width, SIDEBAR_MAX, "不能拖到侧栏成主角");
+
+    state.set_sidebar_width(-5.0);
+    assert_eq!(state.sidebar_width, SIDEBAR_MIN);
+}
+
+/// 生效宽还要按窗口宽度做一次**动态**夹紧：侧栏不得超过主体区
+/// （编辑区 + 预览区）的 60%，否则窄窗下编辑区被吃到几乎为零
+/// （问题 067；静态上界管不住窄窗口）。
+#[test]
+fn effective_sidebar_width_respects_dynamic_ceiling() {
+    let mut state = AppUiState::new(Theme::dark());
+    let divider_w = 4.0; // Metrics::divider_width
+
+    // 宽窗口：动态上界 0.375×(1600−4)=598.5 > 静态上界 560 → 静态上界生效。
+    state.set_sidebar_width(560.0);
+    assert!(
+        (state.effective_sidebar_width(1600.0, divider_w) - 560.0).abs() < 1e-6,
+        "宽窗口下静态上界先到"
+    );
+
+    // 1280 窗口（验收基线）：动态上界 0.375×1276=478.5 < 560 → 夹到 478.5。
+    assert!(
+        (state.effective_sidebar_width(1280.0, divider_w) - 478.5).abs() < 0.1,
+        "1280 窗口下 560 必须被夹到约 478.5，实测 {}",
+        state.effective_sidebar_width(1280.0, divider_w)
+    );
+
+    // 用户值低于动态上界时原样生效（默认 308 在 1280 窗口不受影响）。
+    state.set_sidebar_width(308.0);
+    assert!(
+        (state.effective_sidebar_width(1280.0, divider_w) - 308.0).abs() < 1e-6,
+        "低于动态上界的用户值必须原样生效"
+    );
+
+    // 极窄窗口：动态上界 0.375×396=148.5 低于静态下界 180 → 以下界兜底
+    // （clamp 的区间不能反转，否则算出负宽）。
+    state.set_sidebar_width(560.0);
+    assert_eq!(
+        state.effective_sidebar_width(400.0, divider_w),
+        SIDEBAR_MIN,
+        "极窄窗口下动态上界低于静态下界，必须以下界为准"
+    );
 }
 
 /// 专注模式：进入与退出。
@@ -1245,6 +1314,8 @@ fn ui_state_has_no_dto_fields() {
     let _: SidebarTab = state.sidebar_tab;
     let _: bool = state.preview_visible;
     let _: f32 = state.split_ratio;
+    let _: f32 = state.sidebar_width;
+    let _: bool = state.sidebar_dragging;
     let _: bool = state.focus_mode;
     let _: usize = state.active_tab;
     let _: usize = state.tab_count;

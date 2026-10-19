@@ -3,6 +3,7 @@
 use std::path::Path;
 
 use crate::shared::ids::DocumentId;
+use crate::shared::path::FilePath;
 use crate::shared::result::AppResult;
 
 use super::super::queries::*;
@@ -15,9 +16,15 @@ impl DocumentAppService {
     ///
     /// 内容取自注册表当前态，**不**走领域事件：写草稿只是「崩溃保险」，
     /// 不应污染文档的脏标记或触发保存流程。
+    ///
+    /// 路径走 [`Self::get_tab_summary`]（O(1) 轻量查询，不做全文快照）：
+    /// 草稿要连文档身份一起存，否则恢复出来的文档一律是「未命名」，
+    /// 标签条丢失原始文件名（问题 069）。
     pub fn save_draft(&self, drafts_dir: &Path, id: DocumentId) -> AppResult<()> {
         let content = self.get_content(GetContentQuery { id, range: None })?;
-        self.repository.save_draft(drafts_dir, id, &content)
+        let path = self.get_tab_summary(GetDocumentQuery { id })?.path;
+        self.repository
+            .save_draft(drafts_dir, id, &content, path.as_ref())
     }
 
     /// 读取某文档的遗留草稿（不存在返回 `None`）。
@@ -30,13 +37,20 @@ impl DocumentAppService {
         self.repository.clear_draft(drafts_dir, id)
     }
 
-    /// 扫描草稿目录，返回全部遗留草稿 `(文档 ID, 内容)`（启动恢复用）。
-    pub fn pending_recoveries(&self, drafts_dir: &Path) -> AppResult<Vec<(DocumentId, String)>> {
+    /// 扫描草稿目录，返回全部遗留草稿 `(文档 ID, 内容, 路径)`（启动恢复用）。
+    ///
+    /// 路径来自旁车文件（问题 069）：崩溃前文档的磁盘身份。`None` 表示
+    /// 该草稿属于从未保存过的未命名文档，恢复后仍是「未命名」。
+    pub fn pending_recoveries(
+        &self,
+        drafts_dir: &Path,
+    ) -> AppResult<Vec<(DocumentId, String, Option<FilePath>)>> {
         let ids = self.repository.list_drafts(drafts_dir)?;
         let mut out = Vec::with_capacity(ids.len());
         for id in ids {
             if let Some(content) = self.load_draft(drafts_dir, id)? {
-                out.push((id, content));
+                let path = self.repository.load_draft_path(drafts_dir, id)?;
+                out.push((id, content, path));
             }
         }
         Ok(out)

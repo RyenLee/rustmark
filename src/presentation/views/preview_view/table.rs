@@ -26,11 +26,21 @@ use super::*;
 /// 测量用的字体与渲染相同（`Metrics::preview_font_size`），且 egui 的
 /// `strong` 只加深颜色、不换粗体字形（见 `RichText::strong` 的实现），
 /// 因此表头用同一字体测出的自然宽度是**精确**的。
+///
+/// # 宽度基准为什么必须跟「自动换行」开关走（问题 068）
+///
+/// * 开：`available` 取当前 `ui.available_width()`。调用点所在的块子树已被
+///   `preview_view::show` 用 `set_max_width` 钳到**视口宽**，故这里读到的是
+///   不受前序块污染的稳定值——每张表都独立按同一个视口宽算列宽，
+///   第一张表再宽也不会把后面的表带偏。
+/// * 关：`available` 取 `INFINITY`，列宽退回**自然宽**，超出视口的部分交给
+///   预览区的横向滚动条——与关闭换行时的代码块同一行为，而不是被压进面板。
 pub(super) fn draw_table(
     app: &mut EditorApp,
     ui: &mut Ui,
     theme: &Theme,
     table: &TableView,
+    wrap: bool,
     internal_targets: &[(String, u64)],
 ) {
     let m = theme.metrics;
@@ -39,7 +49,11 @@ pub(super) fn draw_table(
         .corner_radius(CornerRadius::same(6))
         .inner_margin(egui::Margin::same(m.pane_padding as i8))
         .show(ui, |ui| {
-            let available = ui.available_width();
+            let available = if wrap {
+                ui.available_width()
+            } else {
+                f32::INFINITY
+            };
 
             // —— 测量：每列最宽内容的单行宽度 ——
             let font = FontId::proportional(m.preview_font_size);
@@ -55,6 +69,13 @@ pub(super) fn draw_table(
                 }
             }
             let widths = table_column_distribution(&natural, available);
+            let cols_layout = ColumnLayout {
+                widths: &widths,
+                aligns: &table.aligns,
+                // 单元格文本是否在格子内折行：跟随「自动换行」开关——
+                // 关闭时单元格按自然宽单行排开（与整表口径一致）。
+                wrap,
+            };
 
             // 行与行**不留间距**，否则列间竖线会在每行交界处断开，网格变成虚线。
             // 行距改由单元格自己的纵向内边距提供（见 `table_row`）。
@@ -62,10 +83,6 @@ pub(super) fn draw_table(
 
             let row_count = table.rows.len();
             let last = row_count.saturating_sub(1);
-            let cols_layout = ColumnLayout {
-                widths: &widths,
-                aligns: &table.aligns,
-            };
             if !table.header.is_empty() {
                 table_row(
                     app,
@@ -110,22 +127,32 @@ fn measure_cell(ui: &Ui, font: &FontId, text: &str) -> f32 {
 /// 表格列宽分配（**纯函数**，不依赖 egui，可脱离 UI 单测）。
 ///
 /// * `natural[c]`：第 c 列最宽内容的单行宽度（**不含**内边距）。
-/// * `available`：表格可用总宽。
+/// * `available`：表格可用总宽；`INFINITY` 表示「关闭自动换行」——
+///   不压缩、不摊满，直接按自然宽排开，超出部分交给横向滚动条。
 /// * 返回每列的最终宽度（**含**左右内边距 [`TABLE_CELL_PAD`]）。
 ///
-/// 两条不变量（各有单测钉住；「列宽和」均不含列间距——间距由布局层的
+/// 三条不变量（各有单测钉住；「列宽和」均不含列间距——间距由布局层的
 /// `item_spacing` 提供，值同为 [`TABLE_COL_GAP`]，故分配只对
 /// 「面板宽 − 列间距」负责）：
 ///
 /// 1. `sum(widths) + 列间距 == min(需求宽, available)`——放得下时占满面板、
 ///    放不下时正好用满，既不溢出也不留大段空白；
-/// 2. 放不下时每列 `>= [`TABLE_MIN_COL_W`]`——内容再长也不把短列挤没。
+/// 2. 放不下且预算给得起时每列 `>= [`TABLE_MIN_COL_W`]`——内容再长也不把短列挤没；
+/// 3. 预算连保底都给不起（窗口极窄 / 列数极多）时**均分预算**，总和仍恰为
+///    `available`——宁可每列窄一点，也不能溢出视口（问题 068：溢出会膨胀
+///    `ScrollArea` 的内容宽，把后续所有块的可用宽一起带偏）。
 ///
 /// 分配策略：长列拿大头（按内容占比），这正是「长内容展示合理」的实现点。
 pub fn table_column_distribution(natural: &[f32], available: f32) -> Vec<f32> {
     let cols = natural.len();
     if cols == 0 {
         return Vec::new();
+    }
+    // 关闭自动换行：不压缩、不摊满，按自然宽排开。超出视口的部分交给预览区
+    // 的横向滚动条（与关闭换行时的代码块同一行为）。放在最前：下面的
+    // 「放得下」分支会拿 `available - need` 做富余摊分，对 INFINITY 无意义。
+    if available.is_infinite() {
+        return natural.iter().map(|n| n + 2.0 * TABLE_CELL_PAD).collect();
     }
     let cols_f = cols as f32;
     let gaps = TABLE_COL_GAP * (cols - 1) as f32;
@@ -157,8 +184,11 @@ pub fn table_column_distribution(natural: &[f32], available: f32) -> Vec<f32> {
         let budget = available - gaps;
         let floor_total = TABLE_MIN_COL_W * cols_f;
         if budget <= floor_total {
-            // 窗口极窄：预算连保底都给不起，宁可溢出也不把内容挤没了。
-            return vec![TABLE_MIN_COL_W; cols];
+            // 窗口极窄 / 列数极多：预算连保底都给不起。均分预算（保底 1pt 防零宽），
+            // 总和仍恰为 available——「宁可溢出」是旧实现，溢出会把 ScrollArea 的
+            // 内容宽撑大，让后续所有块的可用宽一起失真（问题 068 的传播源）。
+            let per_col = (budget / cols_f).max(1.0);
+            return vec![per_col; cols];
         }
         let flex = budget - floor_total;
         natural
@@ -177,6 +207,8 @@ pub fn table_column_distribution(natural: &[f32], available: f32) -> Vec<f32> {
 struct ColumnLayout<'a> {
     widths: &'a [f32],
     aligns: &'a [CellAlignView],
+    /// 单元格文本是否在格子内折行（跟随「自动换行」开关）。
+    wrap: bool,
 }
 
 /// 表格的一行：表头底色 + 列间竖线 + 行底线 + 单元格行内富文本。
@@ -210,7 +242,11 @@ fn table_row(
     bottom_line: bool,
     internal_targets: &[(String, u64)],
 ) {
-    let ColumnLayout { widths, aligns } = cols_layout;
+    let ColumnLayout {
+        widths,
+        aligns,
+        wrap,
+    } = cols_layout;
     let m = theme.metrics;
     let size = m.preview_font_size;
     let line_height = size * m.preview_line_height;
@@ -236,10 +272,29 @@ fn table_row(
                 let w = widths[c];
                 let align = align_of(aligns.get(c));
                 let spans = cell_spans.get(c).map_or(&[][..], Vec::as_slice);
+                // 单元格文本的折行宽：**完整减去左右两侧内边距**。旧实现读
+                // `ui.available_width()`，此时只扣了左侧一次 `add_space`，
+                // 比格子内容区宽出 8pt——文本会侵入右侧内边距。
+                // 关闭自动换行时传 `INFINITY`：单元格单行排开，与整表口径一致。
+                let cell_max_w = if wrap {
+                    (w - 2.0 * TABLE_CELL_PAD).max(0.0)
+                } else {
+                    f32::INFINITY
+                };
                 let res = ui.allocate_ui_with_layout(
                     egui::vec2(w, 0.0),
                     Layout::left_to_right(Align::TOP),
                     |ui| {
+                        // 格子内部横向间距归零（问题 068 的真正根因）：
+                        // `add_space` 在横向布局里会**额外**吞一份 item_spacing
+                        // （分配 8pt 实际推进 16pt），加上行级列间距 8pt，
+                        // 实际列距变成 `列宽 + 16`，而列宽分配只预算了
+                        // `列宽 + 8`——列数一多整表就比预算宽出
+                        // `(列数-1)×8`，溢出视口并膨胀 ScrollArea 的内容宽，
+                        // 把后续所有块的可用宽一起带偏。归零后格子精确占据
+                        // `widths[c]`，与 [`table_column_distribution`] 的
+                        // 预算口径严格一致。
+                        ui.spacing_mut().item_spacing.x = 0.0;
                         ui.add_space(TABLE_CELL_PAD);
                         ui.with_layout(Layout::top_down(align), |ui| {
                             ui.set_min_width(w - 2.0 * TABLE_CELL_PAD);
@@ -260,8 +315,7 @@ fn table_row(
                                     base_style: if header { "strong" } else { "" },
                                 },
                                 egui::Sense::hover(),
-                                // 单元格宽度固定，文本在格子内折行（不随全局开关）。
-                                ui.available_width(),
+                                cell_max_w,
                                 internal_targets,
                             );
                             ui.add_space(pad_y);

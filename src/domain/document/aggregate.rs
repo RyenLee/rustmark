@@ -121,6 +121,28 @@ impl Document {
         document
     }
 
+    /// 由草稿恢复：路径 + 内容 + **脏**状态（问题 069）。
+    ///
+    /// 与 [`Self::open`] 的两点差别，都是崩溃恢复的语义决定的：
+    /// 1. **状态为脏**：草稿内容与磁盘不一致（否则不会有草稿），
+    ///    当干净文档会在关闭标签时被静默丢弃——恢复出的内容随之消失；
+    /// 2. `saved_at` 为 `None`：草稿不记录原文件的最后保存时刻，
+    ///    下次真正保存时由 `mark_saved` 补上，不猜。
+    ///
+    /// 标题取自路径文件名（与 [`Self::open`] 同规则）：恢复出的文档
+    /// 在标签条上显示原始文件名，而不是一律「未命名」。
+    pub fn recover(
+        id: DocumentId,
+        path: FilePath,
+        buffer: BufferHandle,
+        now: Timestamp,
+        policy: UndoPolicy,
+    ) -> Self {
+        let mut document = Self::open_with_policy(id, path, buffer, None, now, policy);
+        document.state = ModificationState::dirty();
+        document
+    }
+
     /// 用自定义撤销策略新建空白文档（供偏好设置注入，S3-12 → S8）。
     pub fn new_untitled_with_policy(
         buffer: BufferHandle,

@@ -291,6 +291,7 @@ fn to_editor(view: &EditorSettingsView) -> AppResult<EditorSettings> {
         400,
         view.split_ratio,
         view.sidebar_visible,
+        view.sidebar_width,
         // 目标在领域层饱和到上限：界面填多大都不会让设置保存失败（V11-05）。
         WritingGoal::new(view.writing_goal),
         to_lint_settings(&view.lint),
@@ -341,6 +342,9 @@ fn to_editor_view(editor: &EditorSettings) -> EditorSettingsView {
         // 透传三态（问题 064）：`None`（未决定）不能被折叠成 `false`，
         // 否则「打开文件夹时自动展开」永远看不到未决定的状态。
         sidebar_visible: editor.sidebar_visible_decision(),
+        // 侧栏宽度同理透传 `None`（没拖过 = 跟主题默认），
+        // 不能被折叠成某个具体宽度。
+        sidebar_width: editor.sidebar_width(),
         writing_goal: editor.writing_goal().words(),
         lint: to_lint_rules_view(editor.lint()),
         // 兜底收敛：领域值只可能经 serde / `new` 两条路变 0，前者已收敛，

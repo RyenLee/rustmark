@@ -278,11 +278,15 @@ pub struct EditorApp {
     egui_ime_armed: bool,
     /// 「armed」保护窗口的到期时刻（毫秒）；到点后补发 `Disabled` 复位 egui。
     egui_ime_armed_until_ms: u64,
-    /// 启动时发现、待用户处置的遗留草稿 `(文档 ID, 内容)`（DEF-02 恢复）。
+    /// 启动时发现、待用户处置的遗留草稿 `(文档 ID, 内容, 路径)`（DEF-02 恢复）。
+    ///
+    /// 路径为崩溃前文档的磁盘身份（问题 069）：恢复时据此还原原始文件名，
+    /// 标签条不再一律显示「未命名」。`None` 表示该草稿属于从未保存过的
+    /// 未命名文档。
     ///
     /// 非空时每帧弹出一个居中的恢复提示；用户选择「恢复全部」或「丢弃全部」
     /// 后才清空。空列表则完全不渲染，不影响正常编辑。
-    pending_recoveries: Vec<(DocumentId, String)>,
+    pending_recoveries: Vec<(DocumentId, String, Option<FilePath>)>,
     /// 本帧预览区在窗口中的矩形（**逻辑点**；布局未完成时为 `None`）。
     ///
     /// 由 `main_view` 在`CentralPanel` 布局出预览区时写入，
@@ -344,6 +348,13 @@ pub struct EditorApp {
     /// （`SettingsView` 含 `Vec<ShortcutView>`）——60fps 下为两个布尔付这个
     /// 代价不值当，与 `split_dragging`「只在跳变时写一次」同源。
     sidebar_visible_persisted: bool,
+    /// 上一次落盘的侧栏宽度（基准值，供帧末变更检测比对）。
+    ///
+    /// 与 `sidebar_visible_persisted` 同源：`persist_sidebar_width`
+    /// 每帧比对「当前宽度 ≠ 基准」决定要不要写盘。拿 `get_settings()`
+    /// 每次去问也行，但那会把整张快捷键表一起克隆一遍——60fps 下为
+    /// 一个浮点数付这个代价不值当。
+    sidebar_width_persisted: f32,
 }
 
 pub(crate) use capture::PendingCapture;
@@ -451,9 +462,21 @@ impl EditorApp {
             scan_loading: false,
             // 真实值在下面按持久化设置覆盖（与 `split_ratio` 同一手法）。
             sidebar_visible_persisted: false,
+            // 基准在下面与 `ui.sidebar_width` 一并确定（持久化值或主题默认）。
+            sidebar_width_persisted: 0.0,
         };
         // 分割比例以持久化配置为权威来源：用户拖过的比例重启后仍生效。
         app.ui.split_ratio = settings.editor.split_ratio.clamp(SPLIT_MIN, SPLIT_MAX);
+        // 侧栏宽度同理（问题 067）：拖过的宽度重启后仍生效；**没拖过**
+        // （`None`，首次启动或旧配置）保持 `AppUiState::new` 里的主题
+        // 默认宽度。夹紧在 `set_sidebar_width` 内做（手改配置写出 5000
+        // 也不会把侧栏撑出窗口）。
+        if let Some(width) = settings.editor.sidebar_width {
+            app.ui.set_sidebar_width(width);
+        }
+        // 基准取**生效值**（持久化值或主题默认）：与磁盘一致就不该触发
+        // 写盘，否则每次启动都会白写一次配置文件。
+        app.sidebar_width_persisted = app.ui.sidebar_width;
         // 侧栏开合同理（问题 062 / 064）：上次明确决定过展开的就还展开、
         // 收起的就还收起；**没决定过**（`None`，首次启动或旧配置）按默认
         // 收起——之后打开文件夹时再自动展开（`reveal_workspace_sidebar`）。
@@ -544,8 +567,10 @@ impl eframe::App for EditorApp {
                 self.execute(action);
             }
 
-            // 3.5) 自动保存（DEF-02 修复）：周期把脏文档写入草稿，崩溃后可恢复。
-            self.run_autosave();
+            // 3.5) 自动保存（DEF-02 修复；问题 068 补「到期帧」调度）：
+            //      周期把脏文档写入草稿，崩溃后可恢复；没有输入事件时由
+            //      `request_repaint_after` 保证到期时刻仍有一帧来执行。
+            self.run_autosave(ctx);
         }
 
         // 4) 绘制。视图层在 S6-02~S6-11 逐步接入。

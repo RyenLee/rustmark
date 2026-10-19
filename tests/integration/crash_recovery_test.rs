@@ -237,7 +237,7 @@ fn draft_persistence_roundtrip_and_clear() {
         "尚无草稿时应返回 None"
     );
 
-    repo.save_draft(&drafts, id, "未保存的草稿内容")
+    repo.save_draft(&drafts, id, "未保存的草稿内容", None)
         .expect("写草稿应成功");
     assert_eq!(
         repo.load_draft(&drafts, id).unwrap(),
@@ -321,13 +321,18 @@ fn autosave_writes_draft_and_is_recoverable_after_wiring() {
         "草稿内容应与文档当前内容一致（恢复不丢字）"
     );
 
-    // 启动恢复扫描应发现该草稿。
+    // 启动恢复扫描应发现该草稿（连路径一起，问题 069）。
     let recoveries = services
         .documents
         .pending_recoveries(&services.drafts_dir)
         .expect("扫描草稿应成功");
     assert_eq!(recoveries.len(), 1, "应发现 1 份待恢复草稿");
     assert_eq!(recoveries[0].1, expected, "恢复内容应与文档一致");
+    assert_eq!(
+        recoveries[0].2,
+        Some(fp(&src)),
+        "待恢复草稿应带上原文档路径（问题 069：此前只存内容，恢复后一律「未命名」）"
+    );
 
     // 恢复后清草稿（与 `EditorApp::render_recovery_prompt` 的「丢弃」同路径）。
     services
@@ -392,6 +397,11 @@ fn restart_scan_finds_leftover_drafts() {
     assert_eq!(
         recoveries[0].1, "未保存的改动v1\n",
         "恢复内容应与崩溃前一致"
+    );
+    assert_eq!(
+        recoveries[0].2,
+        Some(fp(&src)),
+        "重启扫描应带回原文档路径（问题 069）"
     );
 }
 
@@ -559,4 +569,326 @@ fn recovery_prompt_discard_clears_leftover_drafts() {
         0,
         "丢弃后磁盘上的草稿应被删除"
     );
+}
+
+/// 回归（问题 069）：恢复后**标签条必须出现对应文档**。
+///
+/// 用户实测：异常关闭 → 提示恢复 → 点「恢复全部」后编辑区与预览区都有内容，
+/// 但标签条是空的——恢复出的文档没有以标签形式出现。
+///
+/// 本用例驱动**真实帧循环**：先跑几帧让恢复提示渲染，再走与按钮同一条
+/// 代码路径的 `recover_all_drafts`，随后继续跑帧，最后断言标签列表
+/// （`open_document_list`，即标签条的数据源）里有一份标题为「未命名」的文档。
+///
+/// 覆盖的是**无路径**草稿（未命名文档崩溃）的分支；带路径草稿恢复后
+/// 显示原始文件名的用例见 [`recovered_draft_with_path_shows_filename_in_tab`]。
+#[test]
+fn recovered_draft_appears_in_tab_strip() {
+    let dir = tempfile::tempdir().expect("临时目录应创建成功");
+
+    // 第一轮：编辑并留草稿后「崩溃」。
+    let mut app = app_with_one_second_autosave(dir.path());
+    app.new_document().expect("新建文档应成功");
+    app.insert_at_cursor("崩溃前未保存").expect("插入应成功");
+    std::thread::sleep(Duration::from_millis(1_100));
+    let ctx = egui::Context::default();
+    let mut frame = eframe::Frame::_new_kittest();
+    for _ in 0..2 {
+        crate::support::run_ui(&ctx, frame_input(), |ui| {
+            app.ui(ui, &mut frame);
+        });
+    }
+    drop(app);
+
+    // 第二轮：重启，扫描到遗留草稿。
+    let mut restarted = app_with_one_second_autosave(dir.path());
+    assert_eq!(restarted.pending_recoveries().len(), 1, "应扫描到 1 份草稿");
+
+    // 恢复提示渲染中的几帧（用户看到弹窗、尚未点击）。
+    let ctx2 = egui::Context::default();
+    let mut frame2 = eframe::Frame::_new_kittest();
+    for _ in 0..2 {
+        crate::support::run_ui(&ctx2, frame_input(), |ui| {
+            restarted.ui(ui, &mut frame2);
+        });
+    }
+
+    // 「恢复全部」（与弹窗按钮同一条代码路径）。
+    restarted.recover_all_drafts();
+
+    // 恢复后再跑几帧：标签条按 `open_document_list` 绘制。
+    for _ in 0..3 {
+        crate::support::run_ui(&ctx2, frame_input(), |ui| {
+            restarted.ui(ui, &mut frame2);
+        });
+    }
+
+    let tabs = restarted.open_document_list();
+    assert_eq!(
+        tabs.len(),
+        1,
+        "恢复后标签条应有 1 个文档，实际：{:?}",
+        tabs.iter().map(|t| t.title.clone()).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        tabs[0].title, "未命名",
+        "恢复出的未命名文档标题应为「未命名」"
+    );
+    assert!(
+        restarted
+            .current_content()
+            .is_some_and(|c| c.contains("崩溃前未保存")),
+        "恢复内容应进入活动文档"
+    );
+}
+
+/// 回归（问题 069 · 根因）：**带路径**的草稿恢复后，标签条应显示原始文件名。
+///
+/// 用户实测：异常关闭 → 提示恢复 → 点「恢复全部」后编辑区与预览区都有内容，
+/// 但标签条没有对应文档名称——草稿只存了内容、没存路径，恢复出的文档
+/// 一律是「未命名」，多份草稿之间更是完全无法区分。
+///
+/// 本用例走「从磁盘打开 → 编辑 → 崩溃 → 重启 → 恢复」全链路，断言：
+/// - 启动扫描带回原文档路径；
+/// - 恢复后标签标题是文件名去扩展名（`report.md` → `report`）；
+/// - 恢复出的文档带路径（`Ctrl+S` 直接写回原文件）；
+/// - 文档置脏——草稿内容与磁盘不一致，关闭时会提示保存，不静默丢内容。
+#[test]
+fn recovered_draft_with_path_shows_filename_in_tab() {
+    let dir = tempfile::tempdir().expect("临时目录应创建成功");
+
+    // 第一轮：从磁盘打开文件并编辑，留草稿后「崩溃」。
+    let src = dir.path().join("report.md");
+    std::fs::write(&src, "# 周报\n").expect("应可写源文件");
+    let mut app = app_with_one_second_autosave(dir.path());
+    app.open_workspace_file(&src.to_string_lossy())
+        .expect("打开应成功");
+    app.insert_at_cursor("崩溃前未保存").expect("插入应成功");
+    std::thread::sleep(Duration::from_millis(1_100));
+    let ctx = egui::Context::default();
+    let mut frame = eframe::Frame::_new_kittest();
+    for _ in 0..2 {
+        crate::support::run_ui(&ctx, frame_input(), |ui| {
+            app.ui(ui, &mut frame);
+        });
+    }
+    drop(app);
+
+    // 第二轮：重启，扫描到遗留草稿（应带原文档路径）。
+    let mut restarted = app_with_one_second_autosave(dir.path());
+    assert_eq!(restarted.pending_recoveries().len(), 1, "应扫描到 1 份草稿");
+    assert_eq!(
+        restarted.pending_recoveries()[0].2,
+        Some(fp(&src)),
+        "草稿应带上原文档路径（问题 069 根因：此前只存内容）"
+    );
+
+    // 恢复提示渲染中的几帧（egui Area 首帧是 sizing pass），随后「恢复全部」。
+    let ctx2 = egui::Context::default();
+    let mut frame2 = eframe::Frame::_new_kittest();
+    for _ in 0..2 {
+        crate::support::run_ui(&ctx2, frame_input(), |ui| {
+            restarted.ui(ui, &mut frame2);
+        });
+    }
+    restarted.recover_all_drafts();
+
+    // 恢复后再跑几帧：标签条按 `open_document_list` 绘制。
+    for _ in 0..3 {
+        crate::support::run_ui(&ctx2, frame_input(), |ui| {
+            restarted.ui(ui, &mut frame2);
+        });
+    }
+
+    let tabs = restarted.open_document_list();
+    assert_eq!(
+        tabs.len(),
+        1,
+        "恢复后标签条应有 1 个文档，实际：{:?}",
+        tabs.iter().map(|t| t.title.clone()).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        tabs[0].title, "report",
+        "标签条应显示原始文件名（去扩展名），而不是「未命名」"
+    );
+    assert_eq!(tabs[0].path, Some(fp(&src)), "恢复的文档应记住原路径");
+    assert!(
+        tabs[0].is_dirty,
+        "恢复的文档应置脏：草稿内容与磁盘不一致，关闭时须提示保存"
+    );
+    assert!(
+        restarted
+            .current_content()
+            .is_some_and(|c| c.contains("崩溃前未保存")),
+        "恢复内容应进入活动文档"
+    );
+}
+
+/// 回归（问题 069 · 点击路径）：**模拟真实点击**「恢复全部」按钮，
+/// 验证点击之后标签条真的出现文档。
+///
+/// 与 [`recovered_draft_appears_in_tab_strip`] 的差别：那个用例直接调
+/// `recover_all_drafts`（与按钮同代码路径），本用例连**点击本身**一起模拟
+/// ——从真帧绘制指令里找到「恢复全部」按钮的位置，注入指针事件点击它。
+/// 这样「按钮点了没反应」这类故障也会被本用例捕获。
+#[test]
+fn clicking_recover_button_shows_tab() {
+    let dir = tempfile::tempdir().expect("临时目录应创建成功");
+
+    // 第一轮：编辑并留草稿后「崩溃」。
+    let mut app = app_with_one_second_autosave(dir.path());
+    app.new_document().expect("新建文档应成功");
+    app.insert_at_cursor("点击恢复的内容").expect("插入应成功");
+    std::thread::sleep(Duration::from_millis(1_100));
+    let ctx = egui::Context::default();
+    let mut frame = eframe::Frame::_new_kittest();
+    for _ in 0..2 {
+        crate::support::run_ui(&ctx, frame_input(), |ui| {
+            app.ui(ui, &mut frame);
+        });
+    }
+    drop(app);
+
+    // 第二轮：重启，扫描到遗留草稿。
+    let mut restarted = app_with_one_second_autosave(dir.path());
+    assert_eq!(restarted.pending_recoveries().len(), 1, "应扫描到 1 份草稿");
+
+    // 先跑几帧：egui 的 Area 首帧是 sizing pass（只测量、不绘制），
+    // 恢复窗口从第二帧起才真正画出来。
+    for _ in 0..3 {
+        crate::support::run_ui(&ctx, frame_input(), |ui| {
+            restarted.ui(ui, &mut frame);
+        });
+    }
+
+    // 渲染一帧，从绘制指令里找「恢复全部」按钮（文字形状的中心）。
+    let out = crate::support::run_ui(&ctx, frame_input(), |ui| {
+        restarted.ui(ui, &mut frame);
+    });
+    let btn = find_text_center(&out.shapes, "恢复全部").expect("恢复提示里应画出「恢复全部」按钮");
+    assert!(
+        restarted.pending_recoveries().len() == 1,
+        "点击前待恢复列表应仍在"
+    );
+
+    // 点击：按下 + 松开各一帧（egui 的 clicked 需要 press 与 release 同帧闭环）。
+    for pressed in [true, false] {
+        crate::support::run_ui(
+            &ctx,
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1280.0, 800.0),
+                )),
+                events: vec![
+                    egui::Event::PointerMoved(btn),
+                    egui::Event::PointerButton {
+                        pos: btn,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::default(),
+                    },
+                ],
+                ..Default::default()
+            },
+            |ui| {
+                restarted.ui(ui, &mut frame);
+            },
+        );
+    }
+
+    // 点击后再跑几帧：标签条应已重绘。
+    for _ in 0..3 {
+        crate::support::run_ui(&ctx, frame_input(), |ui| {
+            restarted.ui(ui, &mut frame);
+        });
+    }
+
+    assert!(
+        restarted.pending_recoveries().is_empty(),
+        "点击「恢复全部」后待恢复列表应清空"
+    );
+    let tabs = restarted.open_document_list();
+    assert_eq!(
+        tabs.len(),
+        1,
+        "点击恢复后标签条应有 1 个文档，实际：{:?}",
+        tabs.iter().map(|t| t.title.clone()).collect::<Vec<_>>()
+    );
+    assert!(
+        restarted
+            .current_content()
+            .is_some_and(|c| c.contains("点击恢复的内容")),
+        "恢复内容应进入活动文档"
+    );
+
+    // 标签条区域（顶栏中间一行）里应真的画出「未命名」标签文字。
+    let m = restarted.theme().metrics;
+    let strip_top = m.topbar_height;
+    let strip_bottom = strip_top + m.tabstrip_height;
+    let out = crate::support::run_ui(&ctx, frame_input(), |ui| {
+        restarted.ui(ui, &mut frame);
+    });
+    let mut texts: Vec<(String, egui::Pos2)> = Vec::new();
+    fn collect_texts(shapes: &[egui::epaint::ClippedShape], out: &mut Vec<(String, egui::Pos2)>) {
+        fn walk(shape: &egui::epaint::Shape, out: &mut Vec<(String, egui::Pos2)>) {
+            match shape {
+                egui::epaint::Shape::Text(t) => {
+                    out.push((t.galley.text().to_string(), t.pos));
+                }
+                egui::epaint::Shape::Vec(v) => v.iter().for_each(|s| walk(s, out)),
+                _ => {}
+            }
+        }
+        for clipped in shapes {
+            walk(&clipped.shape, out);
+        }
+    }
+    collect_texts(&out.shapes, &mut texts);
+    let tab_label = texts
+        .iter()
+        .find(|(t, pos)| t == "未命名" && pos.y >= strip_top && pos.y < strip_bottom);
+    assert!(
+        tab_label.is_some(),
+        "标签条区域（y ∈ [{strip_top}, {strip_bottom})）应画出「未命名」标签，\
+         实际该区域文字：{:?}",
+        texts
+            .iter()
+            .filter(|(_, pos)| pos.y >= strip_top && pos.y < strip_bottom)
+            .map(|(t, _)| t.as_str())
+            .collect::<Vec<_>>()
+    );
+}
+
+/// 在绘制指令里找某段文字的形状中心（按钮定位用）。
+fn find_text_center(shapes: &[egui::epaint::ClippedShape], text: &str) -> Option<egui::Pos2> {
+    fn walk(shape: &egui::epaint::Shape, text: &str, out: &mut Option<egui::Pos2>) {
+        if out.is_some() {
+            return;
+        }
+        match shape {
+            egui::epaint::Shape::Text(t) => {
+                if t.galley.text().contains(text) {
+                    *out = Some(t.galley.rect.center() + t.pos.to_vec2());
+                }
+            }
+            egui::epaint::Shape::Vec(v) => {
+                for s in v {
+                    walk(s, text, out);
+                    if out.is_some() {
+                        return;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = None;
+    for clipped in shapes {
+        walk(&clipped.shape, text, &mut out);
+        if out.is_some() {
+            break;
+        }
+    }
+    out
 }

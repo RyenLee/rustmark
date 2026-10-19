@@ -244,4 +244,31 @@ impl DocumentAppService {
         self.bus.publish(DomainEvent::DocumentOpened(id));
         Ok(id)
     }
+
+    /// 从草稿恢复**带路径**的文档（问题 069）。
+    ///
+    /// 与 [`Self::new_document_with_content`] 的两点差别：
+    /// 1. **路径来自草稿旁车文件**：恢复出的文档记得自己的磁盘身份，
+    ///    标签条显示原始文件名（而不是一律「未命名」），`Ctrl+S` 也直接
+    ///    写回原文件——用户认得出哪个是哪个，也不用再走一次「另存为」；
+    /// 2. **标记为脏**（领域构造器保证）：草稿内容与磁盘不一致，
+    ///    关闭标签时会照常提示保存，恢复出的未保存修改不会静默丢失。
+    pub fn recover_document(&mut self, path: &FilePath, content: &str) -> AppResult<DocumentId> {
+        let now = self.clock.now();
+        let buffer = self.buffer_factory.create(content);
+        let document = Document::recover(
+            DocumentId::new(),
+            path.clone(),
+            buffer,
+            now,
+            self.undo_policy,
+        );
+        let id = document.id();
+        {
+            let mut reg = self.lock_write()?;
+            reg.insert(document);
+        }
+        self.bus.publish(DomainEvent::DocumentOpened(id));
+        Ok(id)
+    }
 }

@@ -547,6 +547,15 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
         .vertical_scroll_offset(start_y)
         .show(ui, |ui| {
             ui.vertical(|ui| {
+                // 视口宽度基准（问题 068）：必须在**任何内容绘制之前**捕获。
+                //
+                // `ScrollArea::both()` 的内容 `Ui` 在某个子块超出视口宽时会把
+                // 自己的 `max_rect` 向右撑大（横向滚动条的实现机制）——此后
+                // 所有块的 `ui.available_width()` 都返回**膨胀后**的宽度。
+                // 典型传播链：第一张超宽表格 → 后续表格跟着按膨胀宽分配列宽
+                // → 一起溢出屏幕。在第一块之前捕获的宽度就是干净的视口宽，
+                // 全部块共享同一个基准，互不污染。
+                let viewport_w = ui.available_width();
                 let mut rects: Vec<BlockRect> = Vec::with_capacity(blocks.len());
                 // 相对原点：滚动内容的第一块顶边即 y = 0。
                 // 用「第一块的实际顶边」而不是某个常量，是因为 `ScrollArea`
@@ -578,6 +587,16 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
                     // `id_salt` 正是 `ui.push_id` 的等价物（也是 egui 提示里给的解法）：
                     // 传入 `block.id`（单次解析内唯一）后，各块子树 id 互不相同。
                     let res = ui.scope_builder(egui::UiBuilder::new().id_salt(block.id), |ui| {
+                        // 开着自动换行时把本块钳到视口宽（问题 068）：块内所有
+                        // `available_width()` 调用——包括表格 Frame 内、代码块、
+                        // 列表——都读到钳制后的稳定值；不可拆分的长词由 egui
+                        // 在钳制宽处硬折行。块内任何内容因此都超不出视口，
+                        // 也就不会膨胀外层 `max_rect` 去污染后续块。
+                        // 关闭换行时不钳：内容按自然宽排开，靠横向滚动条查看
+                        // （这正是关闭换行的设计行为，膨胀即滚动条的依据）。
+                        if wrap_for_footnotes {
+                            ui.set_max_width(viewport_w);
+                        }
                         draw_block(app, ui, &theme, block, &headings, &internal_targets)
                     });
                     let rect = res.response.rect;
@@ -591,8 +610,13 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
                     // 假定块与块之间就是这个值（见其文件头注释），改这里要同步那边。
                     ui.add_space(theme.metrics.space_xs);
                 }
-                // 脚注区：紧跟最后一个正文块之后（V11-18）。
+                // 脚注区：紧跟最后一个正文块之后（V11-18）。与正文块同一条
+                // 视口宽钳制口径——否则它读到的 `available_width()` 会被
+                // 前序块（若有）的膨胀污染（问题 068）。
                 if !footnotes.is_empty() {
+                    if wrap_for_footnotes {
+                        ui.set_max_width(viewport_w);
+                    }
                     toc::draw_footnote_section(
                         app,
                         ui,
@@ -643,9 +667,10 @@ fn draw_block(
     headings: &[HeadingEntry],
     internal_targets: &[(String, u64)],
 ) {
-    // 预览区也跟随「自动换行」开关：开 → 正文、列表、代码块、降级源码卡
-    // 都在面板宽度内折行，不出现横向滚动条；关 → 不折行，长行靠预览区
-    // 底部横向滚动条查看（与编辑区行为一致）。
+    // 预览区也跟随「自动换行」开关：开 → 正文、列表、代码块、**表格**、
+    // 降级源码卡都在面板宽度内折行，不出现横向滚动条；关 → 不折行，
+    // 长行靠预览区底部横向滚动条查看（与编辑区行为一致）。
+    // 表格在关闭时按自然宽排开（问题 068），而不是被压进面板宽度。
     let wrap = app.editor.word_wrap;
     match block.kind.as_str() {
         "heading" => blocks::draw_heading(app, ui, theme, block, internal_targets),
@@ -657,7 +682,7 @@ fn draw_block(
         "table" => {
             // 结构化缺失（理论上不该发生）时退回纯文本，总比空白好。
             match &block.table {
-                Some(table) => table::draw_table(app, ui, theme, table, internal_targets),
+                Some(table) => table::draw_table(app, ui, theme, table, wrap, internal_targets),
                 None => blocks::draw_paragraph(app, ui, theme, block, wrap, internal_targets),
             }
         }
@@ -674,7 +699,7 @@ fn draw_block(
         "math" => embedded::draw_math(ui, theme, block, wrap),
         "diagram" => embedded::draw_diagram(ui, theme, block, wrap),
         "toc" => toc::draw_toc(app, ui, theme, block, headings, internal_targets),
-        other => toc::draw_raw(app, ui, theme, block, other, internal_targets),
+        other => toc::draw_raw(app, ui, theme, block, other, wrap, internal_targets),
     }
 }
 

@@ -320,17 +320,29 @@ impl DocumentRepository for FsDocumentRepository {
     ///
     /// 草稿**不覆盖**原文件，故不需要 rename；用「写临时 + rename」同样是为了
     /// 避免恢复时读到半截内容。
+    ///
+    /// `path` 为 `Some` 时同时写旁车 `<doc_id>.draft.path`（问题 069）：
+    /// 只存内容的草稿恢复后一律是「未命名」，标签条丢失原始文件名，
+    /// 多份草稿之间更是完全无法区分。旁车只记一行路径字符串。
     fn save_draft(
         &self,
         drafts_dir: &Path,
         document_id: DocumentId,
         content: &str,
+        path: Option<&FilePath>,
     ) -> Result<(), AppError> {
         fs::create_dir_all(drafts_dir)
             .map_err(|e| AppError::io(format!("无法创建草稿目录 {}：{e}", drafts_dir.display())))?;
         let draft_path = drafts_dir.join(format!("{document_id}.draft"));
         let bytes = Self::encode(content, LineEnding::Lf, false);
-        Self::atomic_write(&draft_path, &bytes)
+        Self::atomic_write(&draft_path, &bytes)?;
+        // 旁车写在内容之后：内容才是恢复的命根子，路径丢了最多退回「未命名」，
+        // 内容丢了才是事故。未命名文档（`None`）没有路径可记，不写旁车。
+        if let Some(path) = path {
+            let sidecar_path = drafts_dir.join(format!("{document_id}.draft.path"));
+            Self::atomic_write(&sidecar_path, path.as_str().as_bytes())?;
+        }
+        Ok(())
     }
 
     /// 读取草稿；不存在返回 `None`。
@@ -348,16 +360,51 @@ impl DocumentRepository for FsDocumentRepository {
         Ok(Some(Self::decode(&bytes)))
     }
 
+    /// 读取草稿旁车文件里记的文档路径（问题 069）；不存在返回 `None`。
+    ///
+    /// 旁车损坏（截断 / 非法路径）时**不当致命**，退回 `None`：
+    /// 调用方 `pending_recoveries` 一失败就会丢掉**全部**待恢复草稿
+    /// （启动处 `unwrap_or_default`），为一行路径赔上所有内容不值当。
+    fn load_draft_path(
+        &self,
+        drafts_dir: &Path,
+        document_id: DocumentId,
+    ) -> Result<Option<FilePath>, AppError> {
+        let sidecar_path = drafts_dir.join(format!("{document_id}.draft.path"));
+        if !sidecar_path.exists() {
+            return Ok(None);
+        }
+        let bytes = fs::read(&sidecar_path).map_err(|e| {
+            AppError::io(format!("无法读取草稿路径 {}：{e}", sidecar_path.display()))
+        })?;
+        let raw = String::from_utf8_lossy(&bytes);
+        Ok(FilePath::new(raw.trim()).ok())
+    }
+
     /// 删除草稿；不存在按成功处理（幂等）。
+    ///
+    /// 旁车文件（`<doc_id>.draft.path`）一并删除：留着就是磁盘垃圾，
+    /// 且万一将来文档 ID 复用，旧路径会被错当成新文档的身份。
     fn clear_draft(&self, drafts_dir: &Path, document_id: DocumentId) -> Result<(), AppError> {
         let draft_path = drafts_dir.join(format!("{document_id}.draft"));
         match fs::remove_file(&draft_path) {
-            Ok(()) => Ok(()),
+            Ok(()) => {}
             // 「不存在」视为成功：调用方只想确保草稿已消失。
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                return Err(AppError::io(format!(
+                    "无法删除草稿 {}：{e}",
+                    draft_path.display()
+                )));
+            }
+        }
+        let sidecar_path = drafts_dir.join(format!("{document_id}.draft.path"));
+        match fs::remove_file(&sidecar_path) {
+            Ok(()) => Ok(()),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(e) => Err(AppError::io(format!(
-                "无法删除草稿 {}：{e}",
-                draft_path.display()
+                "无法删除草稿路径 {}：{e}",
+                sidecar_path.display()
             ))),
         }
     }

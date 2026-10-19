@@ -86,6 +86,7 @@ fn set_editor_valid_persists() {
             show_line_numbers: false,
             split_ratio: 0.5,
             sidebar_visible: Some(false),
+            sidebar_width: None,
             writing_goal: 500,
             lint: Default::default(),
             max_open_documents: 12,
@@ -109,6 +110,7 @@ fn set_editor_goal_beyond_max_saturates_instead_of_failing() {
             show_line_numbers: false,
             split_ratio: 0.5,
             sidebar_visible: Some(false),
+            sidebar_width: None,
             // 远超领域上限：必须饱和到 1_000_000，而不是让保存失败（V11-05）。
             writing_goal: u32::MAX,
             lint: Default::default(),
@@ -135,6 +137,7 @@ fn set_editor_invalid_tab_size_fails() {
             show_line_numbers: false,
             split_ratio: 0.5,
             sidebar_visible: Some(false),
+            sidebar_width: None,
             writing_goal: 0,
             lint: Default::default(),
             max_open_documents: 12,
@@ -302,4 +305,19 @@ fn set_theme_light_keeps_custom_palette_through_to_theme() {
         .custom
         .expect("切到 light 后自定义调色板不应被丢弃");
     assert_eq!(got.accent, "#33AAFF");
+}
+
+/// 兜底设置必须与默认设置对齐自动保存间隔（问题 068）。
+///
+/// `fallback()` 供「运行期读配置失败」时渲染兜底界面使用。旧值 `None`
+/// 等于「关闭自动保存」——读失败本只该意味着「读不到用户的定制」，
+/// 不该把崩溃恢复保险一并关掉。
+#[test]
+fn fallback_settings_keep_autosave_enabled() {
+    let view = SettingsView::fallback();
+    assert_eq!(
+        view.editor.auto_save_interval,
+        Some(30),
+        "兜底设置的自动保存间隔应与默认设置（30 秒）一致"
+    );
 }

@@ -198,6 +198,7 @@ fn preferences_rejects_invalid_editor_settings() {
         400,
         0.5,
         Some(false),
+        None,
         WritingGoal::new(0),
         LintSettings::all_enabled(),
         12,
@@ -233,6 +234,7 @@ fn preferences_indent_unit_derives_from_tab_size() {
             400,
             0.5,
             Some(false),
+            None,
             WritingGoal::new(0),
             LintSettings::all_enabled(),
             12,
@@ -317,6 +319,8 @@ fn editor_settings_round_trip_through_toml_persists_writing_goal() {
             400,
             0.5,
             Some(false),
+            // 侧栏宽度（问题 067）：拖拽定下的宽度必须经 TOML 往返带回。
+            Some(420.0),
             WritingGoal::new(1500),
             LintSettings::all_enabled(),
             12,
@@ -324,6 +328,11 @@ fn editor_settings_round_trip_through_toml_persists_writing_goal() {
         .unwrap();
     // 目标值经由 `EditorSettings` 携带，落到 `Preferences` 里。
     assert_eq!(preferences.editor().writing_goal().words(), 1500);
+    assert_eq!(
+        preferences.editor().sidebar_width(),
+        Some(420.0),
+        "侧栏宽度应随设置持久化"
+    );
 }
 
 /// 打开文档上限默认 12（问题 038）：低于常见「同时对照几份文档」的
@@ -386,6 +395,7 @@ fn max_open_documents_zero_is_invalid() {
         400,
         0.5,
         Some(false),
+        None,
         WritingGoal::new(0),
         LintSettings::all_enabled(),
         0,

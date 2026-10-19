@@ -190,6 +190,13 @@ pub struct EditorSettingsView {
     /// 不该把他的状态锁死成「手动收起」。
     #[serde(default)]
     pub sidebar_visible: Option<bool>,
+    /// 侧栏宽度（pt）；`None` = 用户没拖过，按主题默认宽度渲染。
+    ///
+    /// 与领域 `EditorSettings::sidebar_width` 一一对应；旧配置文件没有
+    /// 这个字段时缺省 `None`（缺字段意味着用户从未拖过分割条，不该把
+    /// 他的状态锁死成一个具体宽度）。
+    #[serde(default)]
+    pub sidebar_width: Option<f32>,
     /// 写作目标（字数）；`0` = 未设置（V11-05）。旧配置缺省按 `0` 处理。
     #[serde(default)]
     pub writing_goal: u32,
@@ -326,11 +333,15 @@ impl SettingsView {
             editor: EditorSettingsView {
                 tab_size: 4,
                 word_wrap: true,
-                auto_save_interval: None,
+                // 与领域默认（`default_settings` 的 `Some(30)`）对齐（问题 068）：
+                // 读失败只是「读不到用户的定制」，不该把自动保存一并关掉——
+                // 旧值 `None` 会让兜底界面里的自动保存静默失效。
+                auto_save_interval: Some(30),
                 spell_check: false,
                 show_line_numbers: true,
                 split_ratio: 0.5,
                 sidebar_visible: None,
+                sidebar_width: None,
                 writing_goal: 0,
                 lint: LintRulesView::default(),
                 max_open_documents: default_max_open_documents(),

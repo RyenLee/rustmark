@@ -85,6 +85,13 @@ impl EditorApp {
                 self.ui
                     .set_theme(builtin::resolve(&self.settings().theme, self.system_dark));
                 self.ui.set_split_ratio(self.settings().editor.split_ratio);
+                // 侧栏宽度同属编辑器设置：重置后配置回到默认（`None` =
+                // 跟主题默认宽度），界面必须跟着走——否则出现「配置里是
+                // 主题默认、屏幕上还是用户拖过的宽度」，下次启动又变回去，
+                // 看起来像随机。落盘基准由帧末的 `persist_sidebar_width`
+                // 自行比对（当前值 ≠ 基准即写一次 `Some(主题默认)`）。
+                self.ui
+                    .set_sidebar_width(self.ui.theme.metrics.sidebar_width);
                 // 侧栏开合同属编辑器设置（问题 062）：重置该分区后配置回到
                 // 默认（未决定 = 默认收起），界面必须跟着走——否则出现
                 // 「配置里是收起、屏幕上还开着」，下次启动又变收起，
@@ -141,6 +148,9 @@ impl EditorApp {
             // 改过的字段**，而开合是在界面上随手切的、不经过设置页，
             // 让它跟着取消一起跳变才是意外。
             sidebar_visible: self.settings().editor.sidebar_visible,
+            // 侧栏宽度同理：它是拖拽定的、不经过设置页，「取消」不该把它
+            // 打回主题默认（与 split_ratio 同一处理）。
+            sidebar_width: self.settings().editor.sidebar_width,
             // 设置页尚未提供写作目标输入框，保存时沿用当前值，避免被 0 覆盖。
             writing_goal: self.settings().editor.writing_goal,
             // 取消时把 lint 开关也回滚到打开设置那一刻（V11-08）。

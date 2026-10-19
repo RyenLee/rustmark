@@ -261,18 +261,31 @@ pub(super) fn draw_definition_list(
 /// 未支持的扩展块（原始 HTML）：等宽原样显示并标注类型。
 ///
 /// 保留原文而不是隐藏——用户至少能看到自己写了什么，也知道这块没被渲染。
+///
+/// 折行跟随「自动换行」开关（问题 068）：egui 的 `Label` 默认按可用宽折行，
+/// 与正文其它块「关闭 = 不折行、靠横向滚动条」的行为不一致，故显式指定：
+/// 开 → `Wrap`（在钳制后的视口宽内折行），关 → `Extend`（单行排开，
+/// 撑出预览区的横向滚动条）。
 pub(super) fn draw_raw(
     _app: &mut EditorApp,
     ui: &mut Ui,
     theme: &Theme,
     block: &BlockView,
     kind: &str,
+    wrap: bool,
     _internal_targets: &[(String, u64)],
 ) {
-    ui.label(
-        RichText::new(&block.content)
-            .font(FontId::monospace(theme.metrics.preview_font_size - 1.0))
-            .color(theme.text_secondary),
+    ui.add(
+        egui::Label::new(
+            RichText::new(&block.content)
+                .font(FontId::monospace(theme.metrics.preview_font_size - 1.0))
+                .color(theme.text_secondary),
+        )
+        .wrap_mode(if wrap {
+            egui::TextWrapMode::Wrap
+        } else {
+            egui::TextWrapMode::Extend
+        }),
     );
     if let Some(marker) = kind.strip_prefix("raw:") {
         ui.weak(format!("未渲染的 {marker} 块"));

@@ -1292,6 +1292,11 @@ fn sidebar_content_fills_the_panel_height() {
     );
 
     // 不变量 2：活动栏底色矩形必须纵向贯穿面板。压扁时它只有 18pt 高。
+    //
+    // 左界 < 100 把候选限定在活动栏带（面板内容 8..56pt）：4px 宽的
+    // 侧栏分割条（问题 067 新增，位于 [308,312]）同样「宽 ≤ 60 且
+    // 右界 ≤ 320」，但它贯穿面板高与活动栏是否被压扁无关——混进来
+    // 会让这条压扁回归断言失去牙齿（分割条永远够高）。
     let activity_h = shapes
         .iter()
         .filter(|cs| in_sidebar(cs.clip_rect))
@@ -1300,7 +1305,7 @@ fn sidebar_content_fills_the_panel_height() {
             walk_rects(&cs.shape, &mut |r| rects.push(r.rect));
             rects
         })
-        .filter(|r| r.width() <= 60.0 && r.right() <= 320.0)
+        .filter(|r| r.width() <= 60.0 && r.left() < 100.0)
         .fold(0.0_f32, |acc, r| acc.max(r.height()));
     assert!(
         activity_h > 300.0,
@@ -1591,5 +1596,159 @@ fn non_text_file_in_the_tree_is_dimmed_and_refuses_to_open() {
     assert!(
         notice.contains("暂不支持打开该格式"),
         "双击图片应说明原因而不是静默无反应，实际状态栏 = {notice:?}"
+    );
+}
+
+// ===========================================================================
+// 问题 067 · 侧栏分割条拖拽（宽度可调 + 双击复位 + 跨重启记住）
+// ===========================================================================
+
+/// 跑一帧（带主题映射），让 egui 的交互状态推进一帧。
+fn one_frame(ctx: &egui::Context, app: &mut EditorApp, input: egui::RawInput) {
+    let _ = crate::support::run_ui(ctx, input, |ui| {
+        rustmark::presentation::theme::mapper::apply(ui.ctx(), &app.ui.theme);
+        main_view::show(app, ui);
+    });
+}
+
+/// 把指针移到 `pos`（单独一帧，不带按键）。
+///
+/// 必须在按下**之前**做：按下那一帧若同时带 `PointerMoved`，从上一个
+/// 位置跳到起点的位移会被算进该帧的 `pointer.delta()`——分割条有 drag
+/// sense，这一跳可能被当成一次拖拽（无头测试里指针的「上一个位置」
+/// 不可控，可能是窗口原点）。
+fn move_pointer(ctx: &egui::Context, app: &mut EditorApp, pos: egui::Pos2) {
+    let mut input = frame_input();
+    input.events.push(egui::Event::PointerMoved(pos));
+    one_frame(ctx, app, input);
+}
+
+/// 在 `pos` 上按住，分步横移 `dx`，再松开（问题 067 的拖拽模拟）。
+///
+/// 分步而不是一步到位：egui 的 `pointer.delta()` 是**逐帧**的位移差，
+/// 分步既贴近真实指针轨迹，也顺带验证「跨帧累加」这条实现假设
+/// （每帧只加本帧位移，`width` 取上一帧写回后的生效值）。
+fn drag_horizontally(ctx: &egui::Context, app: &mut EditorApp, pos: egui::Pos2, dx: f32) {
+    const STEP: f32 = 10.0;
+    let steps = (dx / STEP).round().max(1.0) as i32;
+
+    move_pointer(ctx, app, pos);
+    // 按下（指针已在起点，本帧 delta 为 0，不会误触发拖拽）。
+    let mut input = frame_input();
+    input.events.push(egui::Event::PointerMoved(pos));
+    input.events.push(egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers: Default::default(),
+    });
+    one_frame(ctx, app, input);
+    // 分步移动（按键状态由 egui 跨帧保持，只需发 PointerMoved）。
+    for i in 1..=steps {
+        let mut input = frame_input();
+        input.events.push(egui::Event::PointerMoved(egui::pos2(
+            pos.x + STEP * i as f32,
+            pos.y,
+        )));
+        one_frame(ctx, app, input);
+    }
+    // 松开。
+    let end = egui::pos2(pos.x + STEP * steps as f32, pos.y);
+    let mut input = frame_input();
+    input.events.push(egui::Event::PointerMoved(end));
+    input.events.push(egui::Event::PointerButton {
+        pos: end,
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: Default::default(),
+    });
+    one_frame(ctx, app, input);
+}
+
+/// 形状里最左侧的「4px 宽 × 贯穿面板高」矩形 = 侧栏分割条。
+///
+/// 两条分割条都是这个形状（各 4px 宽、占满主体带高），按 x 排序取
+/// 最左的那条即侧栏分割条；侧栏内部分隔线是 1px 宽，进不了这个带宽。
+fn sidebar_divider_left(shapes: &[egui::epaint::ClippedShape]) -> Option<f32> {
+    let mut lefts: Vec<f32> = Vec::new();
+    for cs in shapes {
+        walk_rects(&cs.shape, &mut |r| {
+            if (3.5..=4.5).contains(&r.rect.width()) && r.rect.height() > 500.0 {
+                lefts.push(r.rect.left());
+            }
+        });
+    }
+    lefts.into_iter().reduce(f32::min)
+}
+
+/// 拖侧栏分割条：宽度跟手变化、面板几何右移、结果跨重启记住。
+///
+/// 三条断言各钉一层：状态值（拖拽数学）、几何（面板真的变宽了）、
+/// 持久化（帧末落盘 + 启动读回整条链）。第三条同时钉住「帧末落盘
+/// 接线」——若 `main_view::show` 忘了调 `persist_sidebar_width`，
+/// 前两条照样绿而重启后宽度丢失。
+#[test]
+fn dragging_the_sidebar_divider_resizes_the_sidebar_and_persists() {
+    let ws = workspace();
+    let root = ws.path().to_path_buf();
+    let (cfg, mut app) = app_with_workspace(&root);
+    app.ui.sidebar_visible = true;
+
+    let ctx = egui::Context::default();
+    // 默认宽 308（1280 窗口下动态上界 478.5，不夹）→ 分割条中心 310。
+    drag_horizontally(&ctx, &mut app, egui::pos2(310.0, 400.0), 60.0);
+
+    assert!(
+        (app.ui.sidebar_width - 368.0).abs() < 1.0,
+        "拖 60px 后宽度应为 368，实测 {}",
+        app.ui.sidebar_width
+    );
+
+    // 几何：分割条矩形左缘应随宽度右移到 368。
+    let shapes = settled_shapes(&ctx, &mut app);
+    let left = sidebar_divider_left(&shapes).expect("应能找到侧栏分割条矩形");
+    assert!(
+        (left - 368.0).abs() < 1.0,
+        "分割条应随拖拽右移到 368，实测左缘 {left}"
+    );
+
+    // 跨重启：帧末落盘 → 新实例仍是 368（整条持久化链）。
+    let restarted = EditorApp::new(
+        Services::assemble_with_dialogs(
+            ConfigPaths::in_dir(cfg.path()),
+            Arc::new(FakeDialog::new()),
+        )
+        .expect("装配应成功"),
+        false,
+    );
+    assert!(
+        (restarted.ui.sidebar_width - 368.0).abs() < 1.0,
+        "拖拽结果应跨重启记住，实测 {}",
+        restarted.ui.sidebar_width
+    );
+}
+
+/// 双击侧栏分割条复位到主题默认宽度（问题 067 的逃生门）。
+#[test]
+fn double_clicking_the_sidebar_divider_resets_to_theme_default() {
+    let ws = workspace();
+    let root = ws.path().to_path_buf();
+    let (_cfg, mut app) = app_with_workspace(&root);
+    app.ui.sidebar_visible = true;
+    // 先拖宽（420 在 1280 窗口的动态上界 478.5 之内，原样生效）。
+    app.ui.set_sidebar_width(420.0);
+
+    let ctx = egui::Context::default();
+    // 落定一帧：交互判定依赖上一帧建立的布局。
+    one_frame(&ctx, &mut app, frame_input());
+    // 指针先就位（理由同 `drag_horizontally`：按下帧的 delta 必须为 0）。
+    move_pointer(&ctx, &mut app, egui::pos2(422.0, 400.0));
+    double_click_at(&ctx, &mut app, egui::pos2(422.0, 400.0));
+
+    let default_width = app.theme().metrics.sidebar_width;
+    assert!(
+        (app.ui.sidebar_width - default_width).abs() < 1e-6,
+        "双击应复位到主题默认宽度 {default_width}，实测 {}",
+        app.ui.sidebar_width
     );
 }

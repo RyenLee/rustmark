@@ -114,6 +114,18 @@ fn default_max_open_documents() -> u32 {
     MAX_OPEN_DOCUMENTS_DEFAULT
 }
 
+/// `EditorSettings::auto_save_interval` 的 serde 缺省值（问题 068）。
+///
+/// 旧配置文件里没有这个字段。该字段此前**没有** serde 缺省，而 TOML
+/// 反序列化对「缺字段」直接报错——仓储 `load()` 的处理是「备份 + 整体回退
+/// 默认」，代价是用户其余全部配置一起作废，且默认值里自动保存是开着的，
+/// 行为上还算不出错；但只要手改 / 同步盘把这一行弄丢，整个配置就没了。
+/// 补上缺省（与 `default_settings()` 的 `Some(30)` 一致）后，缺字段只影响
+/// 这一个字段。
+fn default_auto_save_interval() -> Option<u32> {
+    Some(30)
+}
+
 /// 反序列化 `max_open_documents`：把 0 收敛到 1。
 ///
 /// # 为什么必须在 serde 入口收敛，而不是留给 `is_valid` 拒绝
@@ -150,6 +162,11 @@ pub struct EditorSettings {
     tab_size: TabSize,
     word_wrap: bool,
     /// 自动保存间隔（秒）；`None` 表示关闭自动保存。
+    ///
+    /// `#[serde(default = "default_auto_save_interval")]`（问题 068）：
+    /// 旧配置 / 被外部改坏的配置缺这个字段时按「默认 30 秒」读出，
+    /// 而不是让整份配置反序列化失败、触发「备份 + 回退默认」。
+    #[serde(default = "default_auto_save_interval")]
     auto_save_interval: Option<u32>,
     spell_check: bool,
     /// 是否显示行号栏。
@@ -189,6 +206,21 @@ pub struct EditorSettings {
     /// 这个键，读回来仍是 `None`——语义闭合。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     sidebar_visible: Option<bool>,
+    /// 侧栏宽度（pt）；`None` = 用户没拖过分割条，按主题默认宽度渲染。
+    ///
+    /// # 为什么是 `Option` 而不是裸 `f32`
+    ///
+    /// 「默认宽度」的真源在主题（`Metrics::sidebar_width`），领域层不该
+    /// 把 308 这个数字抄一份进来——两处各存一个默认值，改主题尺寸时
+    /// 必然只改到一处。`None` 表达「用主题默认」，与 `sidebar_visible`
+    /// 的三态同一手法（缺字段 = 用户从未见过这个能力）。
+    ///
+    /// `#[serde(default)]`：旧配置文件没有这个字段，缺了按 `None` 读出，
+    /// 不让旧配置因缺字段而整体加载失败（同 `split_ratio` 的处理）。
+    /// `skip_serializing_if`：`None` 不写进 TOML——「没拖过」就不该在
+    /// 配置里留一个与主题默认同值的键，读回来语义才闭合。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sidebar_width: Option<f32>,
     /// 写作目标（字数）；`0` = 未设置（V11-05）。
     ///
     /// `#[serde(default)]`：**旧配置文件里没有这个字段**，缺了必须按
@@ -229,6 +261,7 @@ impl EditorSettings {
             undo_merge_window_ms: 400,
             split_ratio: 0.5,
             sidebar_visible: None,
+            sidebar_width: None,
             writing_goal: WritingGoal::default(),
             lint: LintSettings::all_enabled(),
             max_open_documents: MAX_OPEN_DOCUMENTS_DEFAULT,
@@ -248,6 +281,7 @@ impl EditorSettings {
         undo_merge_window_ms: u64,
         split_ratio: f32,
         sidebar_visible: Option<bool>,
+        sidebar_width: Option<f32>,
         writing_goal: WritingGoal,
         lint: LintSettings,
         max_open_documents: u32,
@@ -261,6 +295,7 @@ impl EditorSettings {
             undo_merge_window_ms,
             split_ratio,
             sidebar_visible,
+            sidebar_width,
             writing_goal,
             lint,
             // 原样存入：0 由 `is_valid` 拒绝（显式构造是编程错误，该响铃），
@@ -318,6 +353,15 @@ impl EditorSettings {
         self.sidebar_visible
     }
 
+    /// 用户拖拽定下的侧栏宽度（pt）；`None` = 没拖过，按主题默认宽度渲染。
+    ///
+    /// 夹紧不在领域层做：合法区间（180~560pt 与「不超过编辑区+预览区
+    /// 的 60%」）是**布局**约束，属于表现层（`AppUiState`），与
+    /// `split_ratio` 同一分工——领域只存值，读入与写入两侧各自夹紧。
+    pub const fn sidebar_width(&self) -> Option<f32> {
+        self.sidebar_width
+    }
+
     /// 设置侧栏开合，返回新的设置（值对象不可变）。
     ///
     /// 供「侧栏开合变化 → 落盘」这条链路使用：不新增第二份开合状态，
@@ -326,6 +370,18 @@ impl EditorSettings {
     pub const fn with_sidebar_visible(self, visible: bool) -> Self {
         Self {
             sidebar_visible: Some(visible),
+            ..self
+        }
+    }
+
+    /// 设置侧栏宽度，返回新的设置（值对象不可变）。
+    ///
+    /// 供「拖拽结束 → 落盘」这条链路使用：写入即代表用户定下了宽度，
+    /// 与 `with_sidebar_visible` 同构。**落成 `Some`**——拖过之后的宽度
+    /// 就是明确决定，不再跟随主题默认值变化。
+    pub const fn with_sidebar_width(self, width: f32) -> Self {
+        Self {
+            sidebar_width: Some(width),
             ..self
         }
     }

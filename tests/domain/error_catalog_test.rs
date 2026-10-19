@@ -234,8 +234,9 @@ fn repository_default_draft_methods_are_inert() {
     let repo = NoDraftRepo;
     let dir = std::env::temp_dir().join("rustmark-prop-default-drafts");
     let id = DocumentId::new();
-    assert!(repo.save_draft(&dir, id, "内容").is_ok());
+    assert!(repo.save_draft(&dir, id, "内容", None).is_ok());
     assert!(repo.load_draft(&dir, id).unwrap().is_none());
+    assert!(repo.load_draft_path(&dir, id).unwrap().is_none());
     assert!(repo.clear_draft(&dir, id).is_ok());
     assert!(repo.list_drafts(&dir).unwrap().is_empty());
 }

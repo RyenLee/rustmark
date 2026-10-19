@@ -283,14 +283,21 @@ impl EditorApp {
         }
     }
 
-    /// 自动保存节拍（DEF-02 修复）。
+    /// 自动保存节拍（DEF-02 修复；问题 068 补「到期帧」调度）。
     ///
     /// 读出当前「自动保存间隔」，询问计时器哪些文档已空闲达间隔，
     /// 为到期文档写入草稿。空转极廉价——未到期时 `due` 立即返回空列表，不落盘。
     ///
     /// 计时器的输入来自 `EventSubscribers` 订阅的 `TextModified` 事件
     /// （在 `bootstrap` 装配阶段接线），故**只有真正编辑过的脏文档**才会进入到期队列。
-    pub(super) fn run_autosave(&mut self) {
+    ///
+    /// # 为什么必须 `request_repaint_after`（问题 068 根因）
+    ///
+    /// egui 是**事件驱动重绘**：没有输入事件就不产生新帧。本方法挂在帧循环里，
+    /// 用户停止输入后它就不再被调用——间隔到期也无人执行，自动保存表现为
+    /// 「完全不生效」（只有碰巧动一下鼠标才顺带补写）。因此只要还有文档在
+    /// 计时，就向 egui 预约「剩余时长后的一帧」，到期时刻必定有帧跑到这里。
+    pub(super) fn run_autosave(&mut self, ctx: &egui::Context) {
         let interval = self
             .services
             .preferences
@@ -303,17 +310,29 @@ impl EditorApp {
         if secs == 0 {
             return; // 0 表示「关闭自动保存」
         }
+        let interval_ms = secs as u64 * 1000;
         let now = self.services.markdown.now();
-        let due = self
+        let due = self.services.auto_save_tracker.due(now, interval_ms);
+        if !due.is_empty() {
+            let drafts_dir = self.services.drafts_dir.clone();
+            for id in due {
+                // 失败不再静默吞掉（问题 068）：草稿是崩溃恢复的唯一凭据，
+                // 写失败还不告知，用户既没有草稿也没有任何线索。
+                if let Err(e) = self.services.documents.save_draft(&drafts_dir, id) {
+                    self.set_status_error(&format!("自动保存失败：{e}"));
+                }
+            }
+        }
+        // 为「下一次到期」安排一帧（问题 068）：`due` 已取走到期文档，
+        // 剩余文档按各自的记录时刻算出最近的到期点。没有在计时的文档时
+        // 返回 `None`，不安排（下一次击键的帧自然会重新调度）。
+        if let Some(remaining_ms) = self
             .services
             .auto_save_tracker
-            .due(now, (secs as u64) * 1000);
-        if due.is_empty() {
-            return;
-        }
-        let drafts_dir = self.services.drafts_dir.clone();
-        for id in due {
-            let _ = self.services.documents.save_draft(&drafts_dir, id);
+            .next_due_in(now, interval_ms)
+        {
+            // 0ms 也至少等一帧的节奏，避免同一帧内反复请求立刻重绘。
+            ctx.request_repaint_after(std::time::Duration::from_millis(remaining_ms.max(1)));
         }
     }
 

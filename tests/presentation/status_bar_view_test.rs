@@ -505,6 +505,7 @@ fn set_writing_goal(app: &mut EditorApp, goal: u32) {
                 show_line_numbers: view.show_line_numbers,
                 split_ratio: view.split_ratio,
                 sidebar_visible: Some(false),
+                sidebar_width: None,
                 writing_goal: goal,
                 lint: view.lint,
                 max_open_documents: view.max_open_documents,

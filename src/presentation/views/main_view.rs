@@ -12,11 +12,19 @@
 //!   路径面包屑（tabbar）
 //!   编辑区工具栏（编辑区顶部，见 `editor_view`）
 //!   statusbar（底部）
-//!   sidebar（左侧 240px）
+//!   sidebar（左侧，宽度可拖拽，默认取 Metrics::sidebar_width）
+//!   sidebar divider（左侧，4px）← 必须是 left，贴侧栏右缘
 //!   editor（左侧，按比例）
 //!   divider（左侧，4px）← 必须是 left，不是 right
 //!   central（= 预览区，吃掉剩余全部）
 //! ```
+//!
+//! # 两条分割条的分工
+//!
+//! 侧栏分割条（`rustmark.sidebar.divider`）调**侧栏宽度**（像素），
+//! 编辑↔预览分割条（`rustmark.divider`）调**分割比例**。两者同构：
+//! 4px 视觉宽 + 2× 命中区 + 悬停光标 + 悬停/拖拽微高亮；侧栏那条
+//! 额外支持双击复位到主题默认宽度。
 //!
 //! # 垂直预算为什么统一从Metrics 取
 //!
@@ -37,9 +45,11 @@ use crate::presentation::theme::builtin::Metrics;
 
 /// 分割条的**视觉**宽度（来自 Metrics）与**命中**宽度之比。
 ///
-/// 命中区比视觉宽度宽一倍：4px 对鼠标来说太窄，几乎点不中。
+/// 命中区是视觉宽度的两倍（4px → 8px）：4px 对鼠标来说太窄，几乎点不中。
 /// 用户抱怨「分割条拖不动」十有八九是这个原因，而不是逻辑坏了。
-const DIVIDER_HIT_SCALE: f32 = 1.5;
+/// 两侧各探出的 2px 落在相邻面板的默认内边距里（`Frame::side_top_panel`
+/// 自带 `Margin::symmetric(8, 2)`），抢不到相邻面板的交互。
+const DIVIDER_HIT_SCALE: f32 = 2.0;
 
 /// 主视图入口：由 `eframe::App::ui` 每帧调用一次。
 ///
@@ -54,6 +64,11 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
     // 与 `persist_split_ratio` 同一手法（都在主视图帧末统一落盘，而不是在
     // 每个切换入口各写一遍——入口有四条以上，漏一个是静默失效）。
     app.persist_sidebar_visibility();
+    // 帧末：侧栏宽度**变了就落盘**（问题 067）。拖拽期间宽度每帧都在变，
+    // 由 `persist_sidebar_width` 内部的 `sidebar_dragging` 门控跳过，
+    // 松手那一帧自然落盘一次；双击复位与设置页「恢复本组默认」不走
+    // 拖拽，同样在这一处被捕获（入口逐个写必漏，062 的教训）。
+    app.persist_sidebar_width();
 }
 
 /// 绘制三栏布局（[`show`] 的实现体；单独成函数只为让帧末的落盘
@@ -82,15 +97,22 @@ fn draw(app: &mut EditorApp, ui: &mut Ui) {
         crate::presentation::views::status_bar_view::show(app, ui);
     }
 
-    // —— 左侧：侧栏（专注模式下整体隐藏）——
+    // —— 左侧：侧栏 + 侧栏分割条（专注模式下整体隐藏）——
     let sidebar_on = app.ui.sidebar_visible && !app.ui.focus_mode;
     if sidebar_on {
-        crate::presentation::views::sidebar_view::show(app, ui);
+        // 生效宽必须在侧栏面板**之前**算：它按「整个主体带宽度」做动态
+        // 夹紧（不超过编辑区+预览区的 60%），而面板一开，可用宽就被
+        // 切掉侧栏那一份，再也量不到总数。
+        let total = ui.available_rect_before_wrap().width();
+        let width = app.ui.effective_sidebar_width(total, metrics.divider_width);
+        crate::presentation::views::sidebar_view::show(app, ui, width);
+        render_sidebar_divider(app, ui, metrics, width);
     }
 
     // —— 主体：编辑区 + 分割条 + 预览 ——
-    // 此处 `available_rect_before_wrap` 已经扣掉上面所有 Panel，**不要再减侧栏宽度**——
-    // 侧栏自己开了 Panel，再减一次会让编辑区凭空窄 240px。
+    // 此处 `available_rect_before_wrap` 已经扣掉上面所有 Panel（含侧栏
+    // 分割条），**不要再减侧栏宽度**——侧栏自己开了 Panel，再减一次
+    // 会让编辑区凭空窄一截。
     let body_width = ui.available_rect_before_wrap().width();
     if body_width <= 0.0 {
         // 首帧布局未完成时宽度为 0。此时直接跳过：强行用 0 宽做除法
@@ -189,13 +211,18 @@ fn render_split(
         // 矩形、什么都画不出来（无头取证实测 `Rect [x..x]`）。
         .frame(egui::Frame::new().inner_margin(0))
         .show(ui, |ui| {
-            paint_divider(ui, metrics);
             let rect = ui.max_rect();
             let hit = egui::Rect::from_center_size(
                 rect.center(),
                 egui::vec2(divider_w * DIVIDER_HIT_SCALE, rect.height()),
             );
-            let grab = ui.interact(hit, ui.scope_id().with("grab"), egui::Sense::drag());
+            // 先交互再上色：颜色要反映**本帧**的悬停 / 拖拽态（微高亮），
+            // 响应算出来之前画只能是静止色。
+            let grab = ui
+                .interact(hit, ui.scope_id().with("grab"), egui::Sense::drag())
+                .on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
+            ui.painter()
+                .rect_filled(rect, egui::CornerRadius::ZERO, divider_color(ui, &grab));
             app.ui.split_dragging = grab.dragged();
             if grab.dragged() {
                 // 每帧只累加本帧位移：`ratio` 是**上一帧写回后**的值，
@@ -249,17 +276,76 @@ fn render_split(
     crate::presentation::views::scroll_sync::apply(app, now_ms);
 }
 
-/// 绘制分割条本体。
-fn paint_divider(ui: &mut Ui, metrics: Metrics) {
-    let rect = ui.max_rect();
-    ui.painter()
-        .rect_filled(rect, egui::CornerRadius::ZERO, theme_border(ui, metrics));
+/// 渲染侧栏分割条：侧栏右缘的 4px 拖拽柄（问题 067）。
+///
+/// 与编辑区↔预览区的分割条同构（同一条「贴左缘」铁律：必须是
+/// `Panel::left`、紧贴侧栏右侧；写成 `right` 会被推到窗口最右缘），
+/// 差别只在拖拽数学：那条除 `body_width` 得比例，这条加指针横移得
+/// 像素宽。另多一个能力：**双击复位**到主题默认宽度。
+fn render_sidebar_divider(app: &mut EditorApp, ui: &mut Ui, metrics: Metrics, width: f32) {
+    let divider_w = metrics.divider_width;
+    // 拖拽从**生效宽**起算，而不是 `AppUiState` 里的用户值：生效宽被
+    // 动态上界夹住时（窄窗口），用户值可能更大，从它起算会让分割条
+    // 「拖了不动」——要等用户值跌回上界以下才恢复跟手。从生效宽起算
+    // 则分割条永远跟手，只在硬边界处停住（与分割比例的夹紧同感）。
+    let mut next_width = width;
+    egui::Panel::left("rustmark.sidebar.divider")
+        .exact_size(divider_w)
+        .resizable(false)
+        .show_separator_line(false)
+        // 边距必须**归零**：默认面板 frame 自带 `Margin::symmetric(8, 2)`，
+        // 4pt 宽会被撑成约 16pt，把编辑区推后、缝隙里露出清屏色（黑）
+        // ——与 `rustmark.divider` 同一处坑（#039），写法照抄。
+        .frame(egui::Frame::new().inner_margin(0))
+        .show(ui, |ui| {
+            let rect = ui.max_rect();
+            let hit = egui::Rect::from_center_size(
+                rect.center(),
+                egui::vec2(divider_w * DIVIDER_HIT_SCALE, rect.height()),
+            );
+            // `click` 与 `drag` 并集：双击复位要 `double_clicked()`，
+            // 而它要求 sense 含 click（纯 drag sense 下恒为 false）。
+            // 单击本身不做事——同层重叠控件都会收到点击，不会抢走
+            // 相邻面板左缘的交互（命中区探出的 2px 落在面板内边距里）。
+            let grab = ui
+                .interact(
+                    hit,
+                    ui.scope_id().with("grab"),
+                    egui::Sense::drag().union(egui::Sense::click()),
+                )
+                .on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
+            ui.painter()
+                .rect_filled(rect, egui::CornerRadius::ZERO, divider_color(ui, &grab));
+            app.ui.sidebar_dragging = grab.dragged();
+            if grab.dragged() {
+                // 每帧只累加本帧位移：`width` 是**上一帧写回后**的生效值，
+                // 跨帧累加因此天然成立（与分割比例同一手法）。
+                let delta = ui.input(|i| i.pointer.delta()).x;
+                next_width = width + delta;
+            }
+            if grab.double_clicked() {
+                // 双击复位到主题默认宽度（`set_sidebar_width` 会夹紧，
+                // 主题默认值越界时也不会破）。
+                next_width = app.theme().metrics.sidebar_width;
+            }
+        });
+    if (next_width - width).abs() > f32::EPSILON {
+        app.ui.set_sidebar_width(next_width);
+    }
 }
 
-/// 分割条颜色取自主题边框 token。
+/// 分割条颜色：静止 = 主题边框 token；悬停 / 拖拽 = egui 控件态描边。
 ///
-/// 抽成函数而非内联取值，是为了让「分割条颜色来自主题」可被 grep 到——
-/// 将来要做「拖拽时高亮分割条」时只有一个地方要改。
-fn theme_border(ui: &Ui, _metrics: Metrics) -> egui::Color32 {
-    ui.visuals().widgets.noninteractive.bg_stroke.color
+/// 抽成函数而非内联取值，是为了让「分割条颜色来自主题」可被 grep 到，
+/// 且两条分割条共用同一套状态色语言——悬停微亮、拖拽更亮，用户因此
+/// 看得见「这里是能拖的」（可发现性，问题 067 的顺手项）。
+fn divider_color(ui: &Ui, response: &egui::Response) -> egui::Color32 {
+    let widgets = &ui.visuals().widgets;
+    if response.dragged() {
+        widgets.active.bg_stroke.color
+    } else if response.hovered() {
+        widgets.hovered.bg_stroke.color
+    } else {
+        widgets.noninteractive.bg_stroke.color
+    }
 }

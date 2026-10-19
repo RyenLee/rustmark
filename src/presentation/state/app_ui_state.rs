@@ -71,6 +71,23 @@ pub const SPLIT_MIN: f32 = 0.2;
 /// 分割比例上界。
 pub const SPLIT_MAX: f32 = 0.8;
 
+/// 侧栏宽度的静态下界（pt）。
+///
+/// 再窄活动栏（48pt）+ 内容面板就放不下任何东西，文件树一行都显示不全。
+pub const SIDEBAR_MIN: f32 = 180.0;
+/// 侧栏宽度的静态上界（pt）。
+///
+/// 再宽侧栏自己就成了主角，编辑区被压到角落——且宽侧栏里并没有更多
+/// 信息可放（树 / 大纲 / 搜索都是纵向列表）。
+pub const SIDEBAR_MAX: f32 = 560.0;
+/// 侧栏宽度占「编辑区 + 预览区」的比例上界。
+///
+/// 静态上界管不住**窄窗口**：1280pt 窗口下 560pt 侧栏还剩 716pt 主体，
+/// 而 800pt 窗口下同样 560pt 只剩 236pt——编辑区被吃到几乎为零。
+/// 故渲染时再按主体区宽度夹一次：`sw ≤ 0.6 × body`，
+/// 即 `sw ≤ 0.6/(1+0.6) × (total − divider)`。
+pub const SIDEBAR_BODY_SHARE_MAX: f32 = 0.6;
+
 /// 应用级 UI 状态。
 #[derive(Debug)]
 pub struct AppUiState {
@@ -89,6 +106,19 @@ pub struct AppUiState {
     /// 用于在「拖拽结束」那一刻把 `split_ratio` 落盘到设置：
     /// 每帧都写配置文件太频繁，只在 `dragging: true → false` 的跳变时写一次。
     pub split_dragging: bool,
+    /// 侧栏宽度（pt；用户拖拽定下的值，静态夹紧在 [`SIDEBAR_MIN`]~[`SIDEBAR_MAX`]）。
+    ///
+    /// 初始值取主题默认宽度（`Metrics::sidebar_width`），启动时被持久化
+    /// 配置覆盖（见 `EditorApp::new`）。**渲染用的是
+    /// [`Self::effective_sidebar_width`]**——本字段是「用户意图」，
+    /// 生效宽还会按窗口宽度做一次动态夹紧，两者在窄窗口下不相等。
+    pub sidebar_width: f32,
+    /// 本帧侧栏分割条是否正在被拖拽（**瞬态**，不持久化）。
+    ///
+    /// 作用与 `split_dragging` 对称但目的相反：那里用于「松手即落盘」，
+    /// 这里用于「拖拽中**不**落盘」——宽度每帧都在变，60fps 写配置文件
+    /// 正是 `persist_split_ratio` 要避免的（见 `persist_sidebar_width`）。
+    pub sidebar_dragging: bool,
     /// 专注 / 阅读模式：隐藏侧栏 / 工具栏 / 状态栏。
     ///
     /// 注意原型 A-27 要求「`Esc` 退出，浮动退出按钮」——
@@ -143,6 +173,10 @@ impl AppUiState {
             status_bar_visible: true,
             split_ratio: 0.5,
             split_dragging: false,
+            // 主题默认宽度是「没拖过」时的渲染值；持久化配置（若有）
+            // 在 `EditorApp::new` 里覆盖它。
+            sidebar_width: theme.metrics.sidebar_width,
+            sidebar_dragging: false,
             focus_mode: false,
             active_tab: 0,
             tab_count: 0,
@@ -202,6 +236,33 @@ impl AppUiState {
     /// 设置分割比例（自动夹紧到合法区间）。
     pub fn set_split_ratio(&mut self, ratio: f32) {
         self.split_ratio = ratio.clamp(SPLIT_MIN, SPLIT_MAX);
+    }
+
+    /// 设置侧栏宽度（自动夹紧到静态区间 [`SIDEBAR_MIN`]~[`SIDEBAR_MAX`]）。
+    ///
+    /// 只做**静态**夹紧：动态上界（不超过主体区的
+    /// [`SIDEBAR_BODY_SHARE_MAX`]）依赖当帧窗口宽度，由
+    /// [`Self::effective_sidebar_width`] 在渲染时算——存的值因此是
+    /// 「用户意图」，窗口放大后能重新显形（例：窄窗里拖到 400，宽屏
+    /// 上若存的是 560 就还是 560）。
+    pub fn set_sidebar_width(&mut self, width: f32) {
+        self.sidebar_width = width.clamp(SIDEBAR_MIN, SIDEBAR_MAX);
+    }
+
+    /// 侧栏的**生效**宽度：用户值再按窗口宽度做一次动态夹紧。
+    ///
+    /// `total_width` 是侧栏绘制前整个主体带的宽度（顶栏 / 状态栏已切走），
+    /// `divider_width` 是侧栏分割条宽度。约束 `sw ≤ 0.6 × body` 展开即
+    /// `sw ≤ 0.6/(1+0.6) × (total − divider)`。
+    ///
+    /// 极窄窗口下动态上界可能低于静态下界（如 400pt 窗口算出 148pt）：
+    /// 此时以下界为准——侧栏被压到放不下内容比「除法给出负宽」好，
+    /// 且那种窗口本就不在支持范围内（验收基线是 1280×800）。
+    pub fn effective_sidebar_width(&self, total_width: f32, divider_width: f32) -> f32 {
+        let dynamic_max =
+            SIDEBAR_BODY_SHARE_MAX / (1.0 + SIDEBAR_BODY_SHARE_MAX) * (total_width - divider_width);
+        let upper = dynamic_max.max(SIDEBAR_MIN);
+        self.sidebar_width.clamp(SIDEBAR_MIN, upper)
     }
 
     /// 编辑区宽度占比。

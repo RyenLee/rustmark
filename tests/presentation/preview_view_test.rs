@@ -228,14 +228,24 @@ fn overflowing_columns_keep_a_floor_and_favor_long_content() {
     );
 }
 
-/// 退化输入：空表返回空分配；窗口极窄时全部压到保底宽度（宁可溢出不可挤没）。
+/// 退化输入：空表返回空分配；窗口极窄时**均分预算**而不是溢出（问题 068）。
 #[test]
 fn table_distribution_degenerate_inputs_are_handled() {
     assert!(table_column_distribution(&[], 200.0).is_empty());
 
-    // 可用宽减去列间距后连两列保底都给不起 → 全部取保底。
+    // 可用宽减去列间距后连两列保底都给不起 → 均分预算，总和仍恰为可用宽。
+    // 旧实现返回 `MIN × 列数`，总宽超出可用宽——溢出会膨胀 ScrollArea 的
+    // 内容宽，把后续所有块的可用宽一起带偏（问题 068 的传播源）。
     let narrow = table_column_distribution(&[500.0, 600.0], 50.0);
-    assert_eq!(narrow, vec![TABLE_MIN_COL_W, TABLE_MIN_COL_W]);
+    let narrow_total: f32 = narrow.iter().sum::<f32>() + TABLE_COL_GAP * (narrow.len() - 1) as f32;
+    assert!(
+        (narrow_total - 50.0).abs() < 0.5,
+        "极窄窗口应均分预算且不溢出：{narrow:?} 总计 {narrow_total}"
+    );
+    assert!(
+        narrow.iter().all(|w| *w >= 1.0),
+        "每列保底 1pt 防零宽：{narrow:?}"
+    );
 
     // 全空表（所有列内容都为空）：按均分处理，不得除零 NaN。
     let empty = table_column_distribution(&[0.0, 0.0, 0.0], 300.0);
@@ -243,6 +253,21 @@ fn table_distribution_degenerate_inputs_are_handled() {
     assert!(
         (total - 300.0).abs() < 0.5 && empty.iter().all(|w| w.is_finite()),
         "全空表应均分可用宽且有限：{empty:?}"
+    );
+}
+
+/// 关闭自动换行（`available = INFINITY`）：不压缩、不摊满，按自然宽排开。
+///
+/// 旧实现把「放得下」分支的富余摊分直接用于 `INFINITY`，每列都被分到
+/// 无穷宽。现在关闭换行 = 自然宽 + 预览区横向滚动条，与代码块同一行为。
+#[test]
+fn infinite_available_keeps_natural_widths_without_expanding() {
+    let natural = [100.0, 50.0];
+    let widths = table_column_distribution(&natural, f32::INFINITY);
+    assert_eq!(
+        widths,
+        vec![100.0 + 2.0 * TABLE_CELL_PAD, 50.0 + 2.0 * TABLE_CELL_PAD],
+        "关闭换行时每列 = 自然宽 + 内边距，不摊满也不压缩"
     );
 }
 
@@ -1598,5 +1623,102 @@ fn remote_image_failure_settles_into_error_placeholder() {
     assert!(
         settled.error.is_some(),
         "失败必须落成错误占位文案，而非无声消失"
+    );
+}
+
+// ============================================================================
+// 问题 068：表格宽度独立计算（第一张表不得污染后续块）
+// ============================================================================
+
+/// 问题 068 回归：第一张表（列多到触发旧「保底溢出」分支）不得把预览区
+/// 内容宽撑出视口，后续表格也不得跟着按膨胀宽排布。
+///
+/// # 根因
+///
+/// 旧实现两处叠加：
+/// 1. `table_column_distribution` 在「预算连每列保底都给不起」时返回
+///    `MIN × 列数`，总宽**超出视口**（宁可溢出）；
+/// 2. 溢出的块把 `ScrollArea` 内容 `Ui` 的 `max_rect` 向右撑大（横向滚动条
+///    的实现机制），此后所有块的 `ui.available_width()` 都返回膨胀后的宽度
+///    ——第二张表拿到膨胀宽分配列宽，跟着一起溢出屏幕。
+///
+/// 修复后：块级 `set_max_width(视口宽)` + 逐帧开头捕获的视口宽基准 +
+/// 极窄预算均分。开启自动换行时任何块都超不出视口。
+#[test]
+fn the_first_table_overflow_does_not_infect_later_tables() {
+    // 表 1：20 列——旧实现的「保底分支」返回 20×64 + 间距 ≈ 1432pt，
+    // 在 1280 宽的预览里必然溢出。
+    let mut wide = String::from("|");
+    for i in 0..20 {
+        wide.push_str(&format!(" 列{i:02} |"));
+    }
+    wide.push_str("\n|");
+    for _ in 0..20 {
+        wide.push_str(" --- |");
+    }
+    wide.push_str("\n|");
+    for i in 0..20 {
+        wide.push_str(&format!(" 数据{i:02} |"));
+    }
+    wide.push('\n');
+    // 表 2：两列的普通表——修复前它按膨胀宽摊满，文字被画到视口之外。
+    let doc = format!("{wide}\n| 只有 | 两列 |\n| --- | --- |\n| 甲 | 乙 |\n");
+
+    let (_dir, mut app) = app_with(&doc);
+    let ctx = egui::Context::default();
+    let input = egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(1280.0, 800.0),
+        )),
+        ..Default::default()
+    };
+    crate::support::run_ui(&ctx, input.clone(), |_| {}); // 装载字库
+
+    let mut texts: Vec<(egui::Rect, String)> = Vec::new();
+    for _ in 0..3 {
+        let out = crate::support::run_ui(&ctx, input.clone(), |ui| {
+            rustmark::presentation::theme::mapper::apply(ui.ctx(), &app.ui.theme);
+            egui::CentralPanel::default().show(ui, |ui| {
+                rustmark::presentation::views::preview_view::show(&mut app, ui);
+            });
+        });
+        texts.clear();
+        fn walk(s: &egui::epaint::Shape, t: &mut Vec<(egui::Rect, String)>) {
+            match s {
+                egui::epaint::Shape::Text(x) => {
+                    t.push((x.visual_bounding_rect(), x.galley.text().to_string()))
+                }
+                egui::epaint::Shape::Vec(v) => v.iter().for_each(|y| walk(y, t)),
+                _ => {}
+            }
+        }
+        for clipped in &out.shapes {
+            walk(&clipped.shape, &mut texts);
+        }
+    }
+
+    let joined = texts
+        .iter()
+        .map(|(_, t)| t.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(joined.contains("数据19"), "宽表应已渲染出最末列：{joined}");
+    assert!(joined.contains('乙'), "后续两列表格应已渲染：{joined}");
+
+    let overflow: Vec<(String, f32, egui::Rect)> = texts
+        .iter()
+        .filter(|(r, _)| r.right() > 1150.0)
+        .map(|(r, t)| (t.clone(), r.right(), *r))
+        .collect();
+    eprintln!("[dump] texts right>1150: {overflow:?}");
+    let overflow2: Vec<(String, f32)> = overflow
+        .iter()
+        .filter(|(_, r, _)| *r > 1281.0)
+        .map(|(t, r, _)| (t.clone(), *r))
+        .collect();
+    assert!(
+        overflow2.is_empty(),
+        "开启自动换行时任何文字都不得画到视口（1280）之外：{overflow2:?}"
     );
 }

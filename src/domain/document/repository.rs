@@ -85,6 +85,10 @@ pub trait DocumentRepository: Send + Sync {
 
     /// 把未保存草稿写到 `drafts_dir` 下的 `<doc_id>.draft`（异常退出后可恢复，需求 §4.3）。
     ///
+    /// `path` 为 `Some` 时**同时**写旁车文件 `<doc_id>.draft.path`：草稿要连
+    /// 文档身份一起存，否则恢复出来的文档一律是「未命名」，标签条丢失原始
+    /// 文件名（问题 069）。未命名文档（从未保存过）传 `None`，不写旁车。
+    ///
     /// 默认实现为空操作：**仅真实文件系统仓储需要持久化草稿**，
     /// 测试替身（`InMemory` / `Failing`）继承此默认即可，不必各自实现。
     /// 真实实现见 `infrastructure::persistence::FsDocumentRepository`。
@@ -93,12 +97,25 @@ pub trait DocumentRepository: Send + Sync {
         _drafts_dir: &Path,
         _id: DocumentId,
         _content: &str,
+        _path: Option<&FilePath>,
     ) -> Result<(), AppError> {
         Ok(())
     }
 
     /// 读取草稿；不存在时返回 `None`（默认实现）。
     fn load_draft(&self, _drafts_dir: &Path, _id: DocumentId) -> Result<Option<String>, AppError> {
+        Ok(None)
+    }
+
+    /// 读取草稿旁车文件里记的文档路径（问题 069）；不存在返回 `None`（默认实现）。
+    ///
+    /// 与 [`Self::load_draft`] 分开而不是塞进内容文件：草稿正文是用户数据，
+    /// 混入路径头会让「读回内容」多一层解析，且内容本身可能含任意字节。
+    fn load_draft_path(
+        &self,
+        _drafts_dir: &Path,
+        _id: DocumentId,
+    ) -> Result<Option<FilePath>, AppError> {
         Ok(None)
     }
 

@@ -410,7 +410,7 @@ fn draft_roundtrips_and_clears() {
         "尚无草稿时应返回 None 而非报错"
     );
 
-    repo.save_draft(&drafts, doc_id, "未保存的草稿内容")
+    repo.save_draft(&drafts, doc_id, "未保存的草稿内容", None)
         .expect("写草稿应成功");
     assert_eq!(
         repo.load_draft(&drafts, doc_id).expect("读草稿应成功"),
@@ -422,6 +422,41 @@ fn draft_roundtrips_and_clears() {
     // 幂等：重复清理不应报错。
     repo.clear_draft(&drafts, doc_id)
         .expect("重复清理应按成功处理");
+}
+
+/// 草稿旁车文件（问题 069）：路径随草稿一起落盘、读回、清除。
+///
+/// 只存内容的草稿恢复后一律是「未命名」——标签条丢失原始文件名。
+/// 旁车 `<doc_id>.draft.path` 把文档身份一起存下来，恢复时据此还原。
+#[test]
+fn draft_path_sidecar_roundtrips_and_clears() {
+    let dir = TempDir::new("doc-draft-path");
+    let repo = FsDocumentRepository::new();
+    let drafts = dir.join("drafts");
+    let doc_id = DocumentId::new();
+    let path = fp(&dir.join("notes").join("readme.md"));
+
+    // 无旁车时读路径返回 None（未命名文档的草稿）。
+    assert_eq!(repo.load_draft_path(&drafts, doc_id).unwrap(), None);
+
+    // 带路径写草稿：内容与旁车双双落盘。
+    repo.save_draft(&drafts, doc_id, "草稿正文", Some(&path))
+        .expect("写草稿应成功");
+    assert_eq!(
+        repo.load_draft_path(&drafts, doc_id).expect("读旁车应成功"),
+        Some(path.clone()),
+        "旁车应记下文档路径，恢复后标签条才能显示原始文件名"
+    );
+    // 内容不受旁车影响，仍原样读回。
+    assert_eq!(
+        repo.load_draft(&drafts, doc_id).expect("读草稿应成功"),
+        Some("草稿正文".to_string())
+    );
+
+    // 清草稿应连旁车一起消失（否则磁盘上留下孤儿文件）。
+    repo.clear_draft(&drafts, doc_id).expect("清草稿应成功");
+    assert_eq!(repo.load_draft_path(&drafts, doc_id).unwrap(), None);
+    assert_eq!(repo.load_draft(&drafts, doc_id).unwrap(), None);
 }
 
 #[test]

@@ -67,6 +67,8 @@ fn customized() -> Preferences {
         800,
         0.5,
         Some(false),
+        // 侧栏宽度（问题 067）：非默认值，往返必须原样带回。
+        Some(420.0),
         WritingGoal::new(1200),
         rustmark::domain::preferences::value_objects::LintSettings::all_enabled(),
         9,
@@ -101,6 +103,11 @@ fn save_then_load_roundtrips_exactly() {
     assert_eq!(loaded.theme().font_family(), "JetBrains Mono");
     assert!(loaded.editor().spell_check(), "布尔值应被保留");
     assert_eq!(loaded.editor().auto_save_interval(), Some(60));
+    assert_eq!(
+        loaded.editor().sidebar_width(),
+        Some(420.0),
+        "侧栏宽度应被保留（问题 067）"
+    );
 }
 
 #[test]
@@ -249,6 +256,7 @@ fn concurrent_style_repeated_saves_keep_file_valid() {
             400,
             0.5,
             Some(false),
+            None,
             WritingGoal::new(0),
             rustmark::domain::preferences::value_objects::LintSettings::all_enabled(),
             7,
@@ -301,6 +309,82 @@ fn preferences_without_sidebar_visible_load_as_collapsed() {
     );
 }
 
+/// **旧配置文件**（没有 `sidebar_width` 字段）必须按「没拖过」读出
+/// （`None` = 跟主题默认宽度），而不是加载失败或锁死成一个具体宽度
+/// （问题 067；与上一条 `sidebar_visible` 同源）。
+#[test]
+fn preferences_without_sidebar_width_load_as_theme_default() {
+    let dir = TempDir::new("sidebar-width-legacy");
+    let repo = repo_in(&dir);
+
+    // 先存一份**带**宽度的配置，再把那一行删掉，模拟老版本写下的文件。
+    let mut prefs = Preferences::default_preferences();
+    prefs
+        .set_editor(
+            EditorSettings::default_settings()
+                .with_sidebar_visible(true)
+                .with_sidebar_width(420.0),
+        )
+        .expect("合法设置应可写入");
+    repo.save(&prefs).expect("保存应成功");
+    let path = dir.join("settings.toml");
+    let text = fs::read_to_string(&path).expect("配置应可读");
+    let stripped: String = text
+        .lines()
+        .filter(|line| !line.contains("sidebar_width"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert_ne!(stripped, text, "应确实删掉了 sidebar_width 那一行");
+    fs::write(&path, stripped).expect("回写应成功");
+
+    let loaded = repo.load().expect("旧配置应能加载（缺字段不报错）");
+    assert_eq!(
+        loaded.editor().sidebar_width(),
+        None,
+        "缺字段应按「没拖过」读出，而不是 Some(某个宽度)——\n        那会把用户锁死在一个他从未选过的宽度上"
+    );
+    assert!(
+        dir.backups().is_empty(),
+        "缺字段不该触发「备份 + 回退默认」——那会丢掉其余设置"
+    );
+}
+
+/// 旧配置缺 `auto_save_interval` 字段时按默认「30 秒」读出，而不是让整份
+/// 配置反序列化失败、触发「备份 + 回退默认」（问题 068）。
+///
+/// 该字段此前没有 serde 缺省：TOML 对「缺字段」直接报错，仓储的处理是
+/// 备份原文件 + 整体回退默认——用户其余全部设置一起作废。
+#[test]
+fn preferences_without_auto_save_interval_load_with_the_default_interval() {
+    let dir = TempDir::new("auto-save-legacy");
+    let repo = repo_in(&dir);
+
+    // 先存一份默认配置（含 auto_save_interval = 30），再把那一行删掉，
+    // 模拟旧版本写下的文件 / 被外部工具弄丢一行的文件。
+    let prefs = Preferences::default_preferences();
+    repo.save(&prefs).expect("保存应成功");
+    let path = dir.join("settings.toml");
+    let text = fs::read_to_string(&path).expect("配置应可读");
+    let stripped: String = text
+        .lines()
+        .filter(|line| !line.contains("auto_save_interval"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert_ne!(stripped, text, "应确实删掉了 auto_save_interval 那一行");
+    fs::write(&path, stripped).expect("回写应成功");
+
+    let loaded = repo.load().expect("旧配置应能加载（缺字段不报错）");
+    assert_eq!(
+        loaded.editor().auto_save_interval(),
+        Some(30),
+        "缺字段应按默认 30 秒读出——自动保存默认开启"
+    );
+    assert!(
+        dir.backups().is_empty(),
+        "缺字段不该触发「备份 + 回退默认」——那会丢掉其余设置"
+    );
+}
+
 // ============================================================================
 // V11-08 · 格式检查（lint）设置的持久化
 // ============================================================================
@@ -323,6 +407,7 @@ fn lint_rule_choices_survive_a_toml_round_trip() {
         400,
         0.5,
         Some(false),
+        None,
         WritingGoal::new(0),
         LintSettings {
             heading_jump: false,
@@ -399,6 +484,7 @@ fn prefs_with_custom_syntax(syn_heading: Option<&str>) -> Preferences {
         400,
         0.5,
         Some(false),
+        None,
         WritingGoal::new(0),
         rustmark::domain::preferences::value_objects::LintSettings::all_enabled(),
         3,

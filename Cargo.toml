@@ -92,7 +92,7 @@ rfd = "0.17.2"
 
 # --- 配置与序列化 ---
 serde = { version = "1", features = ["derive"] }
-toml = "0.9.6"
+toml = "1.1.8"
 
 # --- 错误处理 ---
 thiserror = "2"

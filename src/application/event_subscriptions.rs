@@ -83,6 +83,20 @@ impl AutoSaveTracker {
         });
         due
     }
+
+    /// 距下一个文档到期的**剩余毫秒数**；没有在追踪的文档时返回 `None`。
+    ///
+    /// 供 `run_autosave` 向 egui 安排「到期帧」（问题 068）：egui 是事件驱动
+    /// 重绘，用户停止输入后不再产生新帧，挂在其帧循环里的自动保存永远不会
+    /// 被再次执行——必须由调用方 `request_repaint_after` 这个剩余时长，
+    /// 保证到期时刻**必定有一帧**来执行保存。本方法不修改追踪状态，
+    /// `due` 之后调用拿到的是剩余文档的下一个到期点。
+    pub fn next_due_in(&self, now: Timestamp, interval_ms: u64) -> Option<u64> {
+        let map = self.last_edit.lock().ok()?;
+        map.values()
+            .map(|(_, at)| interval_ms.saturating_sub(now.elapsed_ms_since(*at)))
+            .min()
+    }
 }
 
 /// 跨上下文事件订阅装配点。
