@@ -200,6 +200,25 @@ macOS（`.dmg`）与 Linux（`.AppImage`）产物体积**本机无法构建**（
 - **`NFR-PERF-01` 状态**：**10.93 MiB，仍超 10 MB 红线 0.93 MiB**。§2.4 的四条缓解方案依旧有效，
   本次先把其中「零功能代价」的部分落地，剩余超限仍需在 v1.1 评审中决策。
 
+## 2.6 字体外置后的复测（2026-10-19，T2「字体解包」落地）
+
+> 口径同 §2.4（`cargo build --release --bin rustmark`，本机 target = x86_64-pc-windows-msvc）。
+> 本轮变更：内置字体（≈2.4 MiB）不再 `include_bytes!` 进二进制，改为随发行包以文件分发
+> （`fonts/` 目录，运行期经 `builtin_font_path` 定位），见 `src/infrastructure/fonts.rs` 与三个打包脚本。
+
+| 项 | 实测 | 相对改前 | 结论 |
+|---|---|---|---|
+| **release 文件总大小** | **11,892,736 bytes = 11.34 MiB** | **−2.34 MiB**（改前 13.68 MiB） | 字体已移出二进制；仍越红线 1.34 MiB（见下） |
+
+- **改前基线修正**：§2.5 的 10.93 MiB 是 10-14 的数，**已被 egui 0.37 / wgpu 30 升级批次推高到
+  13.68 MiB**（`docs/logs/问题记录1.txt` 的 CRITICAL-2 已登记、尚未归因）。故字体外置的实际收益是
+  **13.68 → 11.34 MiB（−2.34 MiB）**，而非此前按 10.93 预估的「→ 8.6 MiB」。
+- **`NFR-PERF-01` 状态**：**11.34 MiB，仍超 10 MB 红线 1.34 MiB**。字体这 ~2.4 MiB 是**零功能代价**省下的；
+  剩余超限来自 egui 0.37 / wgpu 30 升级（≈+2.5 MiB），与本次无关，需另行 `cargo bloat` 归因后决策
+  （§2.4 方案 3「TLS 换 native-tls」可再省 ≈1 MiB，但不足以单独填平）。
+- **打包门禁注意**：字体仍随包分发（zip/dmg/AppImage 内含 `fonts/` 目录），「安装包体积」口径下字体
+  依然计重；本次只减 **exe**，不改变「包内字体字节总量」。纯 exe 口径的红线达成情况如上表。
+
 ## 3. 启动耗时分解表
 
 > 复现：`RUSTMARK_STARTUP_TIMING=1 ./rustmark.exe`（release），stderr 输出里程碑。

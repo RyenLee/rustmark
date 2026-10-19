@@ -44,6 +44,9 @@ $staging = "dist/staging"
 if (Test-Path $staging) { Remove-Item -Recurse -Force $staging }
 New-Item -ItemType Directory -Path $staging | Out-Null
 Copy-Item $exe "$staging/rustmark.exe"
+# 内置字体随包分发（体积红线 NFR-PERF-01：字体不进 exe，改为 `fonts/` 目录
+# 独立成文件，运行期由 exe 旁的 `fonts/` 读取）。连同许可证一并打包。
+Copy-Item -Path "assets/fonts" -Destination "$staging/fonts" -Recurse
 @"
 rustmark v$Version（Windows 便携版）
 

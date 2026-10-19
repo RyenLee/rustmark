@@ -39,6 +39,9 @@ stage="dist/rustmark-v$version-linux-x64"
 rm -rf "$stage" "dist/rustmark-v$version-linux-x64.tar.gz"
 mkdir -p "$stage"
 cp "$exe" "$stage/rustmark"
+# 内置字体随包分发（体积红线：字体不进二进制，改为 exe 旁的 `fonts/` 目录）。
+mkdir -p "$stage/fonts"
+cp assets/fonts/* "$stage/fonts/"
 cat > "$stage/README.txt" <<EOF
 rustmark v$version（Linux）
 
@@ -53,6 +56,9 @@ appdir="dist/AppDir"
 rm -rf "$appdir"
 mkdir -p "$appdir/usr/bin" "$appdir/usr/share/applications"
 cp "$exe" "$appdir/usr/bin/rustmark"
+# 内置字体随包分发（exe 旁 `fonts/`；AppImage 挂载点在运行期经 `current_exe` 定位）。
+mkdir -p "$appdir/usr/bin/fonts"
+cp assets/fonts/* "$appdir/usr/bin/fonts/"
 
 cat > "$appdir/usr/share/applications/rustmark.desktop" <<DESKTOP
 [Desktop Entry]

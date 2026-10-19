@@ -70,6 +70,12 @@ if [ -f assets/icon.icns ]; then
     /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string AppIcon" "$app/Contents/Info.plist"
 fi
 
+# 内置字体随包分发（体积红线：字体不进二进制，改为 exe 旁的 `fonts/` 目录，
+# 运行期按 `current_exe` 定位读取）。连同许可证一并打入 bundle（须在签名前，
+# 使字体文件被 codesign 覆盖）。
+mkdir -p "$app/Contents/MacOS/fonts"
+cp assets/fonts/* "$app/Contents/MacOS/fonts/"
+
 # —— 签名（hardened runtime；无证书时 ad-hoc）——
 identity="${CERT_IDENTITY:-}"
 if [ -n "$identity" ]; then

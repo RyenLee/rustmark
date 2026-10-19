@@ -157,33 +157,47 @@ struct FontSource {
     key: String,
     /// 下拉显示名（字体文件名去扩展名 / 内置字体名）。
     display_name: String,
-    /// 字体字节的来源（磁盘路径或随仓库分发的内置资产）。
-    bytes: FontBytes,
-}
-
-/// 字体字节的来源。
-///
-/// 区分两者是因为内置资产**没有路径**（`include_bytes!` 直接进二进制），
-/// 而「只做存在性检查、不读内容」的旧约定只对磁盘候选成立。
-enum FontBytes {
-    /// 磁盘路径（项目 `fonts/` 目录或系统字体目录）。
-    Path(PathBuf),
-    /// 随仓库分发的内置资产（`assets/fonts/`，经 `include_bytes!` 编译进程序）。
-    Static(&'static [u8]),
+    /// 字体文件路径（内置 `fonts/`、项目 `fonts/` 目录或系统字体目录）。
+    ///
+    /// 内置字体不再 `include_bytes!` 进二进制（体积红线 NFR-PERF-01），
+    /// 改为随发行包以文件形式分发（见 [`builtin_font_path`]），
+    /// 故此处统一为磁盘路径、只做「存在性检查」。
+    path: PathBuf,
 }
 
 impl FontSource {
     /// 取出字体字节并包装成 egui 的 `FontData`；读不通返回 `None`。
-    ///
-    /// 内置资产走 [`FontData::from_static`]（零拷贝），磁盘候选读文件。
     fn font_data(&self) -> Option<Arc<FontData>> {
-        match &self.bytes {
-            FontBytes::Path(path) => std::fs::read(path)
-                .ok()
-                .map(|bytes| Arc::new(FontData::from_owned(bytes))),
-            FontBytes::Static(bytes) => Some(Arc::new(FontData::from_static(bytes))),
-        }
+        std::fs::read(&self.path)
+            .ok()
+            .map(|bytes| Arc::new(FontData::from_owned(bytes)))
     }
+}
+
+/// 定位一个内置字体文件，返回可读的路径；找不到返回 `None`。
+///
+/// 按顺序查找（先到先得）：
+/// 1. 可执行文件旁的 `fonts/`（安装态：随发行包分发的字体）；
+/// 2. 当前工作目录的 `fonts/`（开发态：`cargo run` 的工作目录即项目根）；
+/// 3. 编译期清单目录下的 `assets/fonts/`（开发 / 测试态：源码树）。
+///
+/// 内置字体随发行包分发，缺失时降级为「下拉里少一项 / 数学符号或裸机
+/// 中文回落到系统字体」，不阻断启动（`font_definitions` 的调用方只依据
+/// `cjk_source.is_none()` 记一条警告）。
+fn builtin_font_path(file: &str) -> Option<PathBuf> {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        dirs.push(dir.join("fonts"));
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        dirs.push(cwd.join("fonts"));
+    }
+    // `env!` 在编译期展开为清单目录；发行包在用户机器上不存在该路径，
+    // 但它是最后兜底、只在文件真存在时命中，因此无副作用。
+    dirs.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/fonts"));
+    dirs.into_iter().map(|d| d.join(file)).find(|p| p.is_file())
 }
 
 /// 随仓库分发的内置等宽字体（`assets/fonts/`，许可证见同目录 `Fonts-LICENSE.txt`）。
@@ -206,32 +220,39 @@ impl FontSource {
 ///
 /// 用户机器上恰好装了同名字体时，内置那份赢（内容相同、来源确定），
 /// 避免下拉里出现两个重复项——见 [`discover_font_sources`]。
-const BUILTIN_EDITOR_FONTS: &[(&str, &str, &[u8])] = &[
+///
+/// # 为什么是文件名而非字节
+///
+/// 体积红线（`NFR-PERF-01`）下，内置字体**不再 `include_bytes!` 进二进制**，
+/// 而是随发行包以文件分发（`metrics.md §2.4` 方案 1）。第三列是文件名，
+/// 运行期经 [`builtin_font_path`] 定位、按需读取。
+const BUILTIN_EDITOR_FONTS: &[(&str, &str, &str)] = &[
     (
         "builtin:JetBrains Mono",
         "JetBrains Mono",
-        include_bytes!("../../assets/fonts/JetBrainsMono-Regular.ttf"),
+        "JetBrainsMono-Regular.ttf",
     ),
-    (
-        "builtin:Fira Code",
-        "Fira Code",
-        include_bytes!("../../assets/fonts/FiraCode-Regular.ttf"),
-    ),
+    ("builtin:Fira Code", "Fira Code", "FiraCode-Regular.ttf"),
     (
         "builtin:IBM Plex Mono",
         "IBM Plex Mono",
-        include_bytes!("../../assets/fonts/IBMPlexMono-Regular.ttf"),
+        "IBMPlexMono-Regular.ttf",
     ),
 ];
 
 /// 内置等宽字体清单（顺序即下拉顺序，按「综合口碑」排）。
+///
+/// 只收录**文件可解析**的项：发行包里缺了某个字体文件时，该字体
+/// 既不登记进 `font_data`，也不出现在下拉里（避免「选了却没生效」）。
 fn builtin_editor_fonts() -> Vec<FontSource> {
     BUILTIN_EDITOR_FONTS
         .iter()
-        .map(|(key, name, bytes)| FontSource {
-            key: (*key).to_string(),
-            display_name: (*name).to_string(),
-            bytes: FontBytes::Static(bytes),
+        .filter_map(|(key, name, file)| {
+            builtin_font_path(file).map(|path| FontSource {
+                key: (*key).to_string(),
+                display_name: (*name).to_string(),
+                path,
+            })
         })
         .collect()
 }
@@ -239,7 +260,7 @@ fn builtin_editor_fonts() -> Vec<FontSource> {
 /// 发现可选的编辑区字体：内置三款打头，其后是项目 `fonts/` 目录与常见系统等宽字体。
 ///
 /// 只做**存在性**检查（不读内容、不解码）：真正读字节发生在
-/// [`font_definitions`]（内置资产在那里经 `from_static` 零拷贝登记）。
+/// [`font_definitions`]（那里经 [`FontSource::font_data`] 按需读文件）。
 fn discover_font_sources() -> Vec<FontSource> {
     let mut sources: Vec<FontSource> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -260,7 +281,7 @@ fn discover_font_sources() -> Vec<FontSource> {
             sources.push(FontSource {
                 key,
                 display_name: name,
-                bytes: FontBytes::Path(path),
+                path,
             });
         }
     }
@@ -489,16 +510,25 @@ pub fn extend_with_cjk(definitions: &mut FontDefinitions, bytes: Vec<u8>) {
 ///
 /// Bitstream Vera / TeX Gyre DJV Math 许可证允许随软件再分发（须附许可证），
 /// 见 `assets/fonts/DejaVuMathTeXGyre-LICENSE.txt`。
-const MATH_FALLBACK_TTF: &[u8] = include_bytes!("../../assets/fonts/DejaVuMathTeXGyre.ttf");
+const MATH_FALLBACK_FILE: &str = "DejaVuMathTeXGyre.ttf";
 
 /// 数学兜底字体在 `font_data` 中的键名。
 pub const MATH_FALLBACK_KEY: &str = "math-fallback";
 
 /// 把内置数学兜底字体挂进两个族（位置在 CJK 之前，见 [`extend_with_cjk`] 的链图）。
+///
+/// 字体随发行包以文件分发（体积红线）：找不到或读不通时**跳过**——数学符号
+/// 缺字形只影响公式观感，不阻断启动（`font_definitions` 的调用方不因此报错）。
 fn extend_with_math_fallback(definitions: &mut FontDefinitions) {
+    let Some(path) = builtin_font_path(MATH_FALLBACK_FILE) else {
+        return;
+    };
+    let Ok(bytes) = std::fs::read(path) else {
+        return;
+    };
     definitions.font_data.insert(
         MATH_FALLBACK_KEY.to_owned(),
-        Arc::new(FontData::from_static(MATH_FALLBACK_TTF)),
+        Arc::new(FontData::from_owned(bytes)),
     );
     for family in [FontFamily::Proportional, FontFamily::Monospace] {
         definitions
@@ -543,19 +573,26 @@ pub const CJK_KEY: &str = "cjk";
 ///
 /// SIL OFL-1.1，允许随软件再分发。版权与来源见
 /// `assets/fonts/Fonts-LICENSE.txt` 第 4 节。
-const BUILTIN_CJK_TTF: &[u8] = include_bytes!("../../assets/fonts/NotoSansSC-Subset.ttf");
+const BUILTIN_CJK_FILE: &str = "NotoSansSC-Subset.ttf";
 
 /// 内置 CJK 兜底在 `font_data` 中的键名。
 pub const BUILTIN_CJK_KEY: &str = "builtin-cjk";
 
 /// 把内置 CJK 子集挂进两个族，位置在**最末**（系统 CJK 之后）。
 ///
-/// 无条件挂载：它轻量、只服务「系统什么中文字体都没有」的场景，
-/// 有系统字体时永远排在后排，不抢渲染。
+/// 无条件挂载（文件可解析时）：它轻量、只服务「系统什么中文字体都没有」
+/// 的场景，有系统字体时永远排在后排，不抢渲染。字体随发行包以文件分发
+/// （体积红线），缺失时跳过——此时裸机中文回落到系统 CJK。
 fn extend_with_builtin_cjk(definitions: &mut FontDefinitions) {
+    let Some(path) = builtin_font_path(BUILTIN_CJK_FILE) else {
+        return;
+    };
+    let Ok(bytes) = std::fs::read(path) else {
+        return;
+    };
     definitions.font_data.insert(
         BUILTIN_CJK_KEY.to_owned(),
-        Arc::new(FontData::from_static(BUILTIN_CJK_TTF)),
+        Arc::new(FontData::from_owned(bytes)),
     );
     for family in [FontFamily::Proportional, FontFamily::Monospace] {
         definitions
@@ -889,20 +926,15 @@ mod tests {
     /// 字体发现只收录**真实存在**的字体，且键唯一（项目 fonts/ 与系统字体
     /// 可能同名，先发现者赢）。
     ///
-    /// 内置资产没有路径（`include_bytes!` 进二进制），按字节非空校验。
+    /// 内置字体已改为文件分发，同样按「路径存在」校验。
     #[test]
     fn discover_font_sources_only_returns_existing_files() {
         for source in discover_font_sources() {
-            match &source.bytes {
-                FontBytes::Path(path) => {
-                    assert!(path.is_file(), "发现了不存在的字体文件：{:?}", path)
-                }
-                FontBytes::Static(bytes) => assert!(
-                    !bytes.is_empty(),
-                    "内置字体资产不应为空：{}",
-                    source.display_name
-                ),
-            }
+            assert!(
+                source.path.is_file(),
+                "发现了不存在的字体文件：{:?}",
+                source.path
+            );
             assert!(
                 source.key.starts_with("user:") || source.key.starts_with("builtin:"),
                 "字体键应带 user:/builtin: 前缀以便与哨兵区分：{}",
