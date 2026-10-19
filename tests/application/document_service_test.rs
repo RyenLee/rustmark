@@ -660,6 +660,35 @@ fn get_stats_is_cached_until_the_document_changes() {
     );
 }
 
+/// 状态栏每帧的统计查询在**缓存命中**帧不得触发全文统计（问题 046 同类）。
+///
+/// 「未命中」等价于一次 [`compute_stats`]（rope 全文快照 + O(全文) 扫描），
+/// 与高亮 / 拼写的帧路径守卫同理：稳态帧（文本未变）应始终命中缓存，
+/// 未命中数不随帧数线性增长——一旦涨了，说明有人又把全文统计拖回了帧路径。
+#[test]
+fn stats_frame_path_never_snapshots_the_whole_document() {
+    let repo = Arc::new(InMemoryDocumentRepository::new());
+    repo.seed(fp("/docs/notes.md"), "hello world\nsecond line", None);
+    let (mut svc, _bus) = build(repo);
+    let id = svc
+        .open(OpenFileCommand {
+            path: fp("/docs/notes.md"),
+        })
+        .unwrap();
+
+    // 首次必须真算一次（那时确实要统计，取文本是正当成本）。
+    let _ = svc.get_stats(GetStatsQuery { id }).unwrap();
+    assert_eq!(svc.stats_cache_stats().1, 1, "首次查询应未命中一次");
+
+    // 稳态：文本未变的连续帧必须命中缓存，未命中数不得增长。
+    for _ in 0..5 {
+        let _ = svc.get_stats(GetStatsQuery { id }).unwrap();
+    }
+    let (hits, misses) = svc.stats_cache_stats();
+    assert_eq!(misses, 1, "缓存命中的帧不得再全文统计（未命中数应恒为 1）");
+    assert_eq!(hits, 5, "五次稳态查询应全部命中缓存");
+}
+
 #[test]
 fn undo_merge_window_from_preferences_reaches_documents() {
     // F-1 守卫：偏好设置的「撤销合并窗口」必须到达文档的撤销栈。

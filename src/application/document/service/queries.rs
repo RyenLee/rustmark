@@ -73,6 +73,17 @@ impl DocumentAppService {
         Ok(stats)
     }
 
+    /// 统计缓存的命中 / 未命中计数（测试与调试面板用）。
+    ///
+    /// 状态栏每帧查两次字数统计；「未命中」等价于一次 [`compute_stats`]
+    /// 全文扫描（O(全文)）。据此可断言「缓存命中的帧不再全文扫描」。
+    pub fn stats_cache_stats(&self) -> (u64, u64) {
+        (
+            self.stats_cache_hits.load(Ordering::Relaxed),
+            self.stats_cache_misses.load(Ordering::Relaxed),
+        )
+    }
+
     /// 查询当前选区（无选区返回 `None`）。
     pub fn get_selection(&self, cmd: GetSelectionQuery) -> AppResult<Option<RangeView>> {
         let reg = self.lock_read()?;
