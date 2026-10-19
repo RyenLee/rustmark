@@ -291,13 +291,24 @@ impl EditorApp {
     /// 计时器的输入来自 `EventSubscribers` 订阅的 `TextModified` 事件
     /// （在 `bootstrap` 装配阶段接线），故**只有真正编辑过的脏文档**才会进入到期队列。
     ///
-    /// # 为什么必须 `request_repaint_after`（问题 068 根因）
+    /// # 为什么必须向帧循环「登记到期点」（问题 068 根因）
     ///
     /// egui 是**事件驱动重绘**：没有输入事件就不产生新帧。本方法挂在帧循环里，
     /// 用户停止输入后它就不再被调用——间隔到期也无人执行，自动保存表现为
     /// 「完全不生效」（只有碰巧动一下鼠标才顺带补写）。因此只要还有文档在
-    /// 计时，就向 egui 预约「剩余时长后的一帧」，到期时刻必定有帧跑到这里。
-    pub(super) fn run_autosave(&mut self, ctx: &egui::Context) {
+    /// 计时，就把「剩余时长后的那一刻」登记给 [`FrameScheduler`]，
+    /// 由它保证到期时刻必定有一帧跑到这里。
+    ///
+    /// 注意签名里**没有 `ctx`**：本方法不做任何预约，只登记。预约的唯一出口是
+    /// 帧末的 `flush`——把 `&egui::Context` 递给这里，就等于又开了一个
+    /// 「可以自己 request_repaint_after」的后门（T11 要收掉的正是它）。
+    ///
+    /// # 为什么是 `pub`
+    ///
+    /// 与 `apply_dialog_outcome` 同一理由：集成测试要驱动**真实登记路径**。
+    /// 若测试自己 `arm(Deadline::AutoSave, ..)`，被测的就成了 `FrameScheduler`
+    /// 而非「自动保存有没有接线」，后者才是历史上出错的地方。
+    pub fn run_autosave(&mut self) {
         let interval = self
             .services
             .preferences
@@ -323,16 +334,22 @@ impl EditorApp {
                 }
             }
         }
-        // 为「下一次到期」安排一帧（问题 068）：`due` 已取走到期文档，
-        // 剩余文档按各自的记录时刻算出最近的到期点。没有在计时的文档时
-        // 返回 `None`，不安排（下一次击键的帧自然会重新调度）。
+        // 为「下一次到期」登记到期点（问题 068 的根因；T11 收口到统一调度）。
+        // `due` 已取走到期文档，剩余文档按各自的记录时刻算出最近的到期点；
+        // 没有在计时的文档时返回 `None`，不登记（下一次击键的帧自然会重新调度）。
+        //
+        // 这里**只登记、不预约**：`request_repaint_after` 集中由帧末的
+        // `FrameScheduler::flush` 发出。调用点自己预约是问题 068 之后
+        // 「新增定时功能就漏一次」的来源——统计/高亮/消息 TTL 三处都漏过。
         if let Some(remaining_ms) = self
             .services
             .auto_save_tracker
             .next_due_in(now, interval_ms)
         {
-            // 0ms 也至少等一帧的节奏，避免同一帧内反复请求立刻重绘。
-            ctx.request_repaint_after(std::time::Duration::from_millis(remaining_ms.max(1)));
+            self.scheduler.arm(
+                crate::app::frame::Deadline::AutoSave,
+                now.millis().saturating_add(remaining_ms),
+            );
         }
     }
 

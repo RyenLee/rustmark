@@ -228,6 +228,12 @@ pub struct EditorApp {
     line_index_cache: LineIndexCache,
     /// 状态栏字数统计的防抖节拍器（建议一 / 问题 039；见 [`StatsPace`]）。
     stats_pace: StatsPace,
+    /// 帧内到期点的统一登记与预约出口（T11；见 [`FrameScheduler`]）。
+    ///
+    /// 自动保存、统计/高亮防抖、状态栏消息 TTL 都只在这里 `arm`，
+    /// 由帧末的 `flush` 换算成**一次** `request_repaint_after`。
+    /// 散落在各处的直接预约会让「新增定时功能就漏预约」的坑反复出现。
+    scheduler: FrameScheduler,
     /// 领域编辑后需要把 egui 光标重设到的**字符**位置 `(cursor, anchor)`。
     ///
     /// egui 的 `TextEdit` 在内部记一套光标状态；领域命令改了文本后，
@@ -446,6 +452,7 @@ impl EditorApp {
             line_index_cache: std::cell::RefCell::new(None),
             // 首次见某篇文档要立刻算（避免开文先显 0），故默认空、惰性填充。
             stats_pace: StatsPace::default(),
+            scheduler: FrameScheduler::default(),
             pending_cursor: None,
             clear_undoer_next: false,
             ime_composing: false,
@@ -506,10 +513,12 @@ mod files;
 mod find;
 mod outline;
 mod recovery;
+mod scheduler;
 mod settings;
 mod tabs;
 mod workspace;
 pub(crate) use drag_drop::classify_dropped;
+pub(crate) use scheduler::{Deadline, FrameScheduler};
 
 // ————————————————————————————————————————————————————————————
 // eframe::App 主循环与启动入口（留在 facade，跨多个子文件方法调用）
@@ -529,6 +538,10 @@ impl eframe::App for EditorApp {
         // 因为绘制阶段要的可变 `ui` 与这里的不可变 `ctx` 借用冲突。
         {
             let ctx = ui.ctx();
+
+            // 0) 帧首清空到期点登记表（T11）。必须在任何 `arm` 之前：
+            //    到期点是本帧依据当前状态重新算出的，不是跨帧状态。
+            self.scheduler.begin(self.services.markdown.now().millis());
 
             // 1) 「跟随系统」在主题落地**之前**刷新：本帧必须用最终主题画，
             //    否则系统外观变化的那一帧会闪一下旧配色。
@@ -570,7 +583,15 @@ impl eframe::App for EditorApp {
             // 3.5) 自动保存（DEF-02 修复；问题 068 补「到期帧」调度）：
             //      周期把脏文档写入草稿，崩溃后可恢复；没有输入事件时由
             //      `request_repaint_after` 保证到期时刻仍有一帧来执行。
-            self.run_autosave(ctx);
+            self.run_autosave();
+
+            // 3.6) 高亮的「到期帧」（T11）：`highlight` 在防抖窗口内返回空片段，
+            //      必须有人在窗口到期时再跑一帧才补得上颜色。编辑器失焦后没有
+            //      光标闪烁兜底，缺这行语法色会一直停在无色状态。
+            //      到期点由 `HighlightPace` 给出（只统计「还没算完」的文档）。
+            if let Some(due_ms) = self.services.markdown.highlight_next_due_in() {
+                self.scheduler.arm(Deadline::HighlightDebounce, due_ms);
+            }
         }
 
         // 4) 绘制。视图层在 S6-02~S6-11 逐步接入。
@@ -578,6 +599,11 @@ impl eframe::App for EditorApp {
         // 侧栏开合的落盘在主视图帧末完成（见 `main_view::show`）——
         // 那里才是「本帧所有点击都处理完」的位置。
         crate::presentation::views::main_view::show(self, ui);
+
+        // 4.1) 帧末统一预约（T11）：本帧所有 `arm` 过的到期点在此换算成
+        //      **一次** `request_repaint_after`。位置必须在 `main_view::show`
+        //      之后——状态栏的统计防抖与消息 TTL 是在绘制阶段登记的。
+        self.scheduler.flush(ui.ctx());
 
         // 4.5) 草稿恢复提示（DEF-02）：启动发现遗留草稿时居中提示。
         {
@@ -651,6 +677,27 @@ pub fn run(services: Services) -> eframe::Result {
 /// 该告警默认可见；`RUST_LOG` 可调级别。**仅在失败时出声**——
 /// 正常启动（找得到中文字体时）没有任何输出。
 impl EditorApp {
+    /// 登记状态栏消息的 TTL 到期点（T11）。
+    ///
+    /// 由状态栏视图在**取出未过期消息之后**调用——那一刻它才知道消息还剩多久。
+    /// 做成方法而不是把 `scheduler` 字段开给视图：`arm` 是帧内可以开放的动作，
+    /// `flush` 不是，字段私有才能保证「预约只有一个出口」。
+    ///
+    /// 消息槽为空时是空操作：没有消息就没有要叫醒的时刻。
+    pub(crate) fn arm_status_message_deadline(&mut self) {
+        if let Some(expires_at) = self.status_bar.message.as_ref().map(|m| m.expires_at) {
+            self.scheduler.arm(Deadline::StatusMessage, expires_at);
+        }
+    }
+
+    /// 本帧已登记的到期点 `(短名, 到期毫秒)`（测试与调试用）。
+    ///
+    /// 存在理由与 `highlight_pace_snapshot` 同类：回答「这个定时功能到底有没有
+    /// 接进帧循环」。没有它，只能靠真机等 150ms 看字色有没有恢复来间接推断。
+    pub fn scheduled_deadlines(&self) -> Vec<(&'static str, u64)> {
+        self.scheduler.entries()
+    }
+
     /// 确保 egui 里装的是当前选中的编辑区字体；**没变就不动**。
     ///
     /// 每帧调用（`update` 开头与启动各一次）：内部只做一次字符串比对，

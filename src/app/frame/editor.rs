@@ -190,6 +190,16 @@ impl EditorApp {
             self.stats_pace.cached = Some(stats.clone());
             Some(stats)
         } else {
+            // 登记「窗口到期」这一刻（T11）：没有它，用户停手后不再有新帧，
+            // 字数会一直停在上一次的值，直到碰巧动一下鼠标。编辑器失焦时
+            // 连光标闪烁的兜底帧也没有，缺陷会一直可见。
+            self.scheduler.arm(
+                super::Deadline::StatsDebounce,
+                self.stats_pace
+                    .last_change_at
+                    .millis()
+                    .saturating_add(super::STATS_DEBOUNCE_MS),
+            );
             self.stats_pace.cached.clone()
         }
     }

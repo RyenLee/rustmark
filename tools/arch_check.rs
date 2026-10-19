@@ -61,8 +61,7 @@ const PRESENTATION_FORBIDDEN: &[&str] = &["crate::domain", "crate::infrastructur
 /// 而那正是最需要守卫的时刻。
 const PRESENTATION_STATE_FORBIDDEN: &[&str] = &["crate::domain::document"];
 
-const SHARED_FORBIDDEN: &[&str] = &[
-    "egui",
+const SHARED_FORBIDDEN: &[&str] = &[    "egui",
     "eframe",
     "rfd",
     "syntect",
@@ -72,6 +71,21 @@ const SHARED_FORBIDDEN: &[&str] = &[
     "crate::infrastructure",
     "crate::presentation",
 ];
+
+/// 定时任务「到期帧」预约的唯一出口（T11 / ADR-009）。
+///
+/// # 为什么这是一条架构规则，而不是编码风格
+///
+/// egui 是**事件驱动重绘**：没有输入、没有动画时不产生新帧。任何「等 X 毫秒
+/// 后再做一件事」的逻辑，都必须有人在那个时刻预约一帧，否则功能静默失效
+/// （问题 068：自动保存完全不生效）。历史上这个预约是**逐处手写**的，
+/// 于是统计防抖、高亮补算、消息 TTL 三处都漏了，只靠编辑区光标闪烁兜底。
+///
+/// 现在只在 `FrameScheduler::flush` 里预约，调用点只 `arm` 到期点。
+/// 这里用文本扫描守住它：若哪天有人在别处直接写 `request_repaint_after`，
+/// 「漏预约」的坑就会以完全相同的形式回来，而它不产生编译错误、单测也未必覆盖。
+const REPAINT_RESERVATION: &str = "request_repaint_after";
+const REPAINT_RESERVATION_HOME: &str = "app/frame/scheduler.rs";
 
 /// 取某层的禁用前缀。
 ///
@@ -170,6 +184,23 @@ pub fn scan(src_root: &Path) -> Vec<Violation> {
         for (idx, raw_line) in content.lines().enumerate() {
             let line_no = idx + 1;
             let line = raw_line.trim();
+
+            // 定时任务的帧预约只允许一个出口（T11 / ADR-009）。
+            // 先剥掉行尾注释：文档里大段解释「为什么不能自己预约」时会出现这个词。
+            let code = line.split("//").next().unwrap_or(line);
+            if code.contains(REPAINT_RESERVATION)
+                && !rel.ends_with(REPAINT_RESERVATION_HOME)
+            {
+                violations.push(Violation {
+                    file: rel.clone(),
+                    line: line_no,
+                    detail: format!(
+                        "定时任务的帧预约必须走 FrameScheduler（{REPAINT_RESERVATION} 只允许出现在 \
+                         {REPAINT_RESERVATION_HOME}）：调用点只 `arm` 到期点，否则「新增定时功能\
+                         就漏预约」的老问题会原样复发"
+                    ),
+                });
+            }
 
             // 领域层禁止向 stdout 直接输出
             if layer == "domain" && line.contains("println!") && !line.starts_with("//") {

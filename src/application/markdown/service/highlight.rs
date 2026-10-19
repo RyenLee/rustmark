@@ -141,6 +141,15 @@ impl MarkdownAppService {
         lock_or_recover(&self.highlight_pace).snapshot()
     }
 
+    /// 高亮防抖的**下一个到期点**（绝对毫秒）；没有文档在等补算时返回 `None`。
+    ///
+    /// 供帧循环登记「到期帧」（T11）：[`Self::highlight`] 在防抖窗口内返回空片段，
+    /// 必须有人在窗口到期时再跑一帧才补得上颜色。事件驱动重绘下没有输入就没有帧，
+    /// 编辑器失焦后连光标闪烁的兜底也没有——缺了这条，语法色会一直停在无色状态。
+    pub fn highlight_next_due_in(&self) -> Option<u64> {
+        lock_or_recover(&self.highlight_pace).next_deadline(self.policy.interval_ms())
+    }
+
     /// 高亮一段独立文本（预览区的代码块）。
     ///
     /// 走的是与编辑区同一个 `SyntaxHighlighter`，故「预览里的代码配色」

@@ -148,9 +148,24 @@ impl HighlightCache {
 /// 再等 150ms 只会看到一段「先无色、再上色」的闪烁。
 #[derive(Default)]
 pub struct HighlightPace {
-    /// 文档 ID → (上次见到的版本, 上次见到它的时刻)。
-    seen: HashMap<DocumentId, (u64, Timestamp)>,
+    /// 文档 ID → 该文档的防抖状态。
+    seen: HashMap<DocumentId, PaceEntry>,
     capacity: usize,
+}
+
+/// 单篇文档的防抖状态。
+#[derive(Clone, Copy, Debug)]
+struct PaceEntry {
+    /// 上次见到的版本。
+    revision: u64,
+    /// 上次见到**变化**的时刻（防抖窗口的起点，不是「算完」的时刻）。
+    at: Timestamp,
+    /// 该文档是否还没算到当前版本（正在等窗口到期）。
+    ///
+    /// 缺了这个标记，[`HighlightPace::next_deadline`] 无法区分「已算完、窗口早过了」
+    /// 与「还没算、正等窗口」——前者会算出一个过去的时刻，被帧循环钳成 1ms，
+    /// 于是静止的应用变成每帧重绘的忙循环。
+    pending: bool,
 }
 
 impl HighlightPace {
@@ -174,17 +189,35 @@ impl HighlightPace {
         now: Timestamp,
         interval_ms: u64,
     ) -> bool {
-        match self.seen.get(&id) {
-            None => {
-                self.remember(id, revision, now);
-                true
-            }
-            Some((rev, _)) if *rev != revision => {
-                self.remember(id, revision, now);
-                false
-            }
-            Some((_, at)) => now.elapsed_ms_since(*at) >= interval_ms,
+        let Some(entry) = self.seen.get_mut(&id) else {
+            self.remember(id, revision, now, false);
+            return true;
+        };
+        if entry.revision != revision {
+            entry.revision = revision;
+            entry.at = now;
+            entry.pending = true;
+            return false;
         }
+        // 版本没变：窗口够了就收口（`pending` 清零），否则继续等。
+        entry.pending = now.elapsed_ms_since(entry.at) < interval_ms;
+        !entry.pending
+    }
+
+    /// 距下一次「需要补算」的绝对毫秒时刻；没有文档在等补算时返回 `None`。
+    ///
+    /// 供帧循环登记到期帧（T11）：`settled` 返回 `false` 时本帧不上色，
+    /// 若没人保证窗口到期时再跑一帧，语法色会一直停在无色状态——
+    /// 编辑区聚焦时靠光标闪烁（每 0.5s）偶然补上，失焦后就是永久无色。
+    ///
+    /// 只统计 `pending` 的文档：已算完的文档窗口早已过去，把它们算进来会得到
+    /// 一个过去的时刻，反而让应用每帧都被叫醒。
+    pub fn next_deadline(&self, interval_ms: u64) -> Option<u64> {
+        self.seen
+            .values()
+            .filter(|entry| entry.pending)
+            .map(|entry| entry.at.millis().saturating_add(interval_ms))
+            .min()
     }
 
     /// 登记「本帧见到该文档」。
@@ -193,14 +226,21 @@ impl HighlightPace {
     /// 这是刻意为之：本表只存「版本 + 时刻」这类廉价 pacing 元数据，误淘汰的代价
     /// 至多是该文档下次编辑时被当成「首次见到」而**多上色一次**（保守降级，既非
     /// 重算尖峰、也非陈旧显示）。若哪天这里也改存昂贵产物，再改为与缓存一致的 LRU。
-    fn remember(&mut self, id: DocumentId, revision: u64, now: Timestamp) {
+    fn remember(&mut self, id: DocumentId, revision: u64, now: Timestamp, pending: bool) {
         if self.seen.len() >= self.capacity
             && !self.seen.contains_key(&id)
             && let Some(&old) = self.seen.keys().next()
         {
             self.seen.remove(&old);
         }
-        self.seen.insert(id, (revision, now));
+        self.seen.insert(
+            id,
+            PaceEntry {
+                revision,
+                at: now,
+                pending,
+            },
+        );
     }
 
     /// 已登记的文档数（测试用）。
@@ -220,7 +260,7 @@ impl HighlightPace {
     pub fn snapshot(&self) -> Vec<(DocumentId, u64, u64)> {
         self.seen
             .iter()
-            .map(|(id, (rev, at))| (*id, *rev, at.millis()))
+            .map(|(id, entry)| (*id, entry.revision, entry.at.millis()))
             .collect()
     }
 }

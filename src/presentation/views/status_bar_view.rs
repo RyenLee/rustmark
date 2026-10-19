@@ -85,6 +85,10 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
     // 否则一条 3 天前就该消失的错误会一直画着。
     let now_ms = app.services.markdown.now().millis();
     let message = app.status_bar.take_message(now_ms);
+    // 消息 TTL 的到期点交给帧末统一定时（T11）：状态栏是唯一知道
+    // 「这条消息还剩多久」的地方。缺了它，用户停手后不会再有帧，
+    // 一条 4 秒该消失的提示会一直挂在状态栏上。
+    app.arm_status_message_deadline();
     egui::Panel::bottom("rustmark.statusbar")
         .exact_size(height)
         .show(ui, |ui| draw(app, ui, message, stats));

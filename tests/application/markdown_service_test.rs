@@ -800,6 +800,56 @@ fn highlight_recomputes_once_after_typing_settles() {
     );
 }
 
+/// 防抖窗口内必须报出「到期点」，窗口一过就消失（T11）。
+///
+/// # 这条判据防的是什么
+///
+/// `highlight` 在窗口内返回**空片段**（不上色），要靠「窗口到期时再来一帧」
+/// 才补得上。编辑器聚焦时有光标闪烁（每 0.5s）偶然兜住，一旦失焦就没有任何帧——
+/// 语法色会永久停在无色状态。帧循环据此登记到期帧，所以这里要钉住：
+/// 1. 有等待中的窗口时**必须**给值；
+/// 2. 窗口一过**必须**消失——留着会算出一个过去的时刻，把静止应用变成每帧重绘。
+#[test]
+fn highlight_reports_a_deadline_only_while_a_window_is_open() {
+    let f = build(vec![], vec![span(0, 2, SpanStyle::Keyword)]);
+    let doc_id = DocumentId::new();
+    f.provider.insert(doc_id, "fn a", 0, Some(fp("/d/a.md")));
+
+    let q = || HighlightQuery {
+        doc_id,
+        range: TextRange::new(ByteOffset::new(0), ByteOffset::new(4)),
+        lang: Some("markdown".to_string()),
+    };
+    let interval = f.service.policy().interval_ms();
+
+    // 首次见：立刻上色，没有等待中的窗口。
+    let _ = f.service.highlight(q()).expect("高亮应成功");
+    assert_eq!(
+        f.service.highlight_next_due_in(),
+        None,
+        "刚上过色，不应有待补算窗口（否则帧循环会为一个过去时刻反复叫醒自己）"
+    );
+
+    // 敲一下：版本变了 → 本帧不上色 → 到期点 = 本次变化时刻 + 窗口。
+    f.provider.insert(doc_id, "fn ab", 1, Some(fp("/d/a.md")));
+    f.clock.set(1_000);
+    let _ = f.service.highlight(q()).expect("高亮应成功");
+    assert_eq!(
+        f.service.highlight_next_due_in(),
+        Some(1_000 + interval),
+        "窗口内必须报出到期点 —— 缺了它，编辑器失焦后语法色不会自己恢复"
+    );
+
+    // 窗口到期后重算：到期点必须消失。
+    f.clock.set(1_000 + interval);
+    let _ = f.service.highlight(q()).expect("高亮应成功");
+    assert_eq!(
+        f.service.highlight_next_due_in(),
+        None,
+        "已算完却仍报到期点：帧循环会每帧都被一个过去的时刻叫醒（忙循环）"
+    );
+}
+
 /// 切回另一篇文档时防抖不应误伤：**首次见**该文档要立刻上色。
 #[test]
 fn highlight_skips_debounce_for_a_newly_seen_document() {
