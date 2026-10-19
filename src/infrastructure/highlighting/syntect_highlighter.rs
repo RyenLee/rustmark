@@ -38,9 +38,11 @@ use syntect::highlighting::ScopeSelectors;
 use syntect::parsing::{ParseState, Scope, ScopeStack, SyntaxReference, SyntaxSet};
 
 use crate::domain::markdown::errors::HighlightError;
-use crate::domain::markdown::services::SyntaxHighlighter;
+use crate::domain::markdown::services::{HighlightSession, SyntaxHighlighter};
 use crate::domain::markdown::value_objects::{SpanStyle, SyntaxSpan};
 use crate::shared::geometry::{ByteOffset, TextRange};
+
+use super::incremental::SyntectSession;
 
 /// 原型 `CodeDialog.vue` 的 20 种语言 ↔ syntect 语法名映射。
 ///
@@ -346,6 +348,14 @@ impl SyntaxHighlighter for SyntectHighlighter {
 
     fn supports(&self, lang: &str) -> bool {
         self.resolve(lang).is_some()
+    }
+
+    /// 增量会话：编辑区连续编辑时只重解变更行（见 [`SyntectSession`]）。
+    ///
+    /// 返回会话而非直接开算：会话是空的，第一次 `advance` 才做全量，
+    /// 调用方不必为「创建会话」多付一次全文解析。
+    fn start_session(&self) -> Option<Box<dyn HighlightSession>> {
+        Some(Box::new(SyntectSession::new()))
     }
 }
 

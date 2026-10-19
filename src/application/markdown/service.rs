@@ -37,9 +37,13 @@ mod spell;
 mod spell_cache;
 mod view_mapper;
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use crate::domain::markdown::services::{MarkdownParser, SpellChecker, SyntaxHighlighter};
+use crate::domain::markdown::services::{
+    HighlightSession, MarkdownParser, SpellChecker, SyntaxHighlighter,
+};
+use crate::shared::ids::DocumentId;
 use crate::shared::time::{Clock, Timestamp};
 
 use crate::application::document::DocumentContentProvider;
@@ -95,6 +99,12 @@ pub struct MarkdownAppService {
     highlight_cache: Arc<Mutex<HighlightCache>>,
     /// 高亮防抖的计时表（OPT-011 ①）。
     highlight_pace: Arc<Mutex<HighlightPace>>,
+    /// 文档 → 增量高亮会话（`FR-03` / OPT-011 复议）。
+    ///
+    /// 命中 [`HighlightCache`] 时不碰这把锁；只有「真要重算」才取。
+    /// 与缓存不同，会话**不按 range 分键**：它维护的是全文解析状态，
+    /// 与调用方当前想看哪一段无关。
+    highlight_sessions: Arc<Mutex<HashMap<DocumentId, Box<dyn HighlightSession>>>>,
     /// 拼写检查器；`None` 表示未注入 → 拼写检查整体降级为「不检查」。
     ///
     /// 用 `Option` 而非必填，理由与`SpellCheckError` 不进 `AppError` 一致：
@@ -123,6 +133,7 @@ impl MarkdownAppService {
             cache,
             highlight_cache: Arc::new(Mutex::new(HighlightCache::new(HIGHLIGHT_CACHE_CAPACITY))),
             highlight_pace: Arc::new(Mutex::new(HighlightPace::new(HIGHLIGHT_CACHE_CAPACITY))),
+            highlight_sessions: Arc::new(Mutex::new(HashMap::new())),
             spell: None,
             spell_cache: Arc::new(Mutex::new(SpellCache::new(HIGHLIGHT_CACHE_CAPACITY))),
         }
@@ -179,16 +190,20 @@ impl MarkdownAppService {
         let mut cache = lock_or_recover(&self.cache);
         let mut hl = lock_or_recover(&self.highlight_cache);
         let mut spell = lock_or_recover(&self.spell_cache);
+        let mut sessions = lock_or_recover(&self.highlight_sessions);
         match cmd.doc_id {
             Some(id) => {
                 cache.invalidate(id);
                 hl.invalidate(id);
                 spell.invalidate(id);
+                // 会话持有整篇文本与检查点，文档关闭时必须一并释放（G2 同类问题）。
+                sessions.remove(&id);
             }
             None => {
                 cache.invalidate_all();
                 hl.invalidate_all();
                 spell.invalidate_all();
+                sessions.clear();
             }
         }
     }

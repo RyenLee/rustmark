@@ -76,13 +76,38 @@ impl MarkdownAppService {
         }
         // 走到这里才真的要解析，此时取全文（每击键一次，不是每帧一次）。
         let (content, _) = self.fetch(cmd.doc_id)?;
-        let spans = self
-            .highlighter
-            .highlight_range(&content, cmd.range, cmd.lang.as_deref())
-            .map_err(AppError::from)?;
+        // 优先走增量会话：同一文档连续编辑时只重解变更行（OPT-011 复议）。
+        // 不支持增量的实现（含测试替身）回退到 `highlight_range`，行为等价。
+        let (raw, pre_clipped) = {
+            let mut sessions = lock_or_recover(&self.highlight_sessions);
+            if let Some(session) = sessions.get_mut(&cmd.doc_id) {
+                (
+                    session
+                        .advance(&content, cmd.lang.as_deref())
+                        .map_err(AppError::from)?,
+                    false,
+                )
+            } else if let Some(mut session) = self.highlighter.start_session() {
+                // 会话是空的：首次 advance 即全量，不会重复解析一遍。
+                let spans = session
+                    .advance(&content, cmd.lang.as_deref())
+                    .map_err(AppError::from)?;
+                sessions.insert(cmd.doc_id, session);
+                (spans, false)
+            } else {
+                (
+                    self.highlighter
+                        .highlight_range(&content, cmd.range, cmd.lang.as_deref())
+                        .map_err(AppError::from)?,
+                    true,
+                )
+            }
+        };
         let spans: Arc<Vec<SpanView>> = Arc::new(
-            spans
-                .iter()
+            raw.into_iter()
+                // 会话产出的是**全文**片段，这里按 `range` 裁剪，
+                // 与 `highlight_range` 的裁剪语义对齐：相交即输出整段。
+                .filter(|span| pre_clipped || span.range().intersects(cmd.range))
                 .map(|span| SpanView {
                     range: RangeView::new(span.range().start().value(), span.range().end().value()),
                     style: span_style_str(span.style()),

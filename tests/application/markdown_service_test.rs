@@ -1251,3 +1251,168 @@ fn highlight_cache_holds_at_least_the_max_open_documents() {
         );
     }
 }
+
+// ============================================================================
+// 增量高亮接线（OPT-011 复议）
+// ============================================================================
+
+/// 支持增量会话的假高亮器：分别记录「开新会话」「喂新文本」「走全量接口」的次数。
+///
+/// 用它而不是真实 syntect，是为了把断言钉在**接线**上：真实实现里
+/// 「这一帧到底走没走增量」只能靠耗时间接推断，这里直接数调用次数。
+struct SessionRecordingHighlighter {
+    starts: Mutex<usize>,
+    advances: Arc<Mutex<Vec<usize>>>,
+    full_calls: Mutex<usize>,
+    spans: Vec<rustmark::domain::markdown::value_objects::SyntaxSpan>,
+}
+
+impl SessionRecordingHighlighter {
+    fn new(spans: Vec<rustmark::domain::markdown::value_objects::SyntaxSpan>) -> Self {
+        Self {
+            starts: Mutex::new(0),
+            advances: Arc::new(Mutex::new(Vec::new())),
+            full_calls: Mutex::new(0),
+            spans,
+        }
+    }
+
+    fn starts(&self) -> usize {
+        *self.starts.lock().unwrap()
+    }
+
+    /// 每次 `advance` 收到的文本字节数（按调用顺序）。
+    fn advances(&self) -> Vec<usize> {
+        self.advances.lock().unwrap().clone()
+    }
+
+    fn full_calls(&self) -> usize {
+        *self.full_calls.lock().unwrap()
+    }
+}
+
+struct RecordingSession {
+    advances: Arc<Mutex<Vec<usize>>>,
+    spans: Vec<rustmark::domain::markdown::value_objects::SyntaxSpan>,
+}
+
+impl rustmark::domain::markdown::services::HighlightSession for RecordingSession {
+    fn advance(
+        &mut self,
+        text: &str,
+        _lang: Option<&str>,
+    ) -> Result<
+        Vec<rustmark::domain::markdown::value_objects::SyntaxSpan>,
+        rustmark::domain::markdown::errors::HighlightError,
+    > {
+        self.advances.lock().unwrap().push(text.len());
+        Ok(self.spans.clone())
+    }
+}
+
+impl rustmark::domain::markdown::services::SyntaxHighlighter for SessionRecordingHighlighter {
+    fn highlight(
+        &self,
+        _text: &str,
+        _lang: Option<&str>,
+    ) -> Result<
+        Vec<rustmark::domain::markdown::value_objects::SyntaxSpan>,
+        rustmark::domain::markdown::errors::HighlightError,
+    > {
+        *self.full_calls.lock().unwrap() += 1;
+        Ok(self.spans.clone())
+    }
+
+    fn highlight_range(
+        &self,
+        _text: &str,
+        _range: TextRange,
+        _lang: Option<&str>,
+    ) -> Result<
+        Vec<rustmark::domain::markdown::value_objects::SyntaxSpan>,
+        rustmark::domain::markdown::errors::HighlightError,
+    > {
+        *self.full_calls.lock().unwrap() += 1;
+        Ok(self.spans.clone())
+    }
+
+    fn supports(&self, _lang: &str) -> bool {
+        true
+    }
+
+    fn start_session(
+        &self,
+    ) -> Option<Box<dyn rustmark::domain::markdown::services::HighlightSession>> {
+        *self.starts.lock().unwrap() += 1;
+        Some(Box::new(RecordingSession {
+            advances: Arc::clone(&self.advances),
+            spans: self.spans.clone(),
+        }))
+    }
+}
+
+/// 同一文档跨版本复用会话；清缓存后重建。
+///
+/// 这条用例钉的是**接线**而非算法（算法对拍在
+/// `infrastructure::highlighting::incremental` 的单测里）：服务层必须
+/// ① 首次用会话拿到结果（不再额外调全量接口），② 版本变化后复用同一个
+/// 会话，③ 关文档清缓存时把会话一起释放。
+#[test]
+fn highlight_reuses_incremental_session_across_revisions() {
+    let parser = Arc::new(FakeMarkdownParser::new(vec![]));
+    let highlighter = Arc::new(SessionRecordingHighlighter::new(vec![span(
+        0,
+        2,
+        SpanStyle::Keyword,
+    )]));
+    let provider = Arc::new(FakeDocumentContentProvider::new());
+    let clock = Arc::new(FakeClock::new(0));
+    let service = MarkdownAppService::new(
+        parser,
+        highlighter.clone(),
+        provider.clone(),
+        clock.clone(),
+        DebouncePolicy::new(150),
+        Arc::new(Mutex::new(RenderCache::new(RENDER_CACHE_CAPACITY))),
+    );
+    let doc_id = DocumentId::new();
+    provider.insert(doc_id, "fn a", 0, Some(fp("/d/a.md")));
+
+    let q = || HighlightQuery {
+        doc_id,
+        range: TextRange::new(ByteOffset::new(0), ByteOffset::new(4)),
+        lang: Some("markdown".to_string()),
+    };
+
+    // 首次：新建会话，由它的第一次 advance 完成全量，不额外调全量接口。
+    let first = service.highlight(q()).expect("高亮应成功");
+    assert_eq!(first.len(), 1);
+    assert_eq!(highlighter.starts(), 1);
+    assert_eq!(highlighter.advances(), vec![4]);
+    assert_eq!(
+        highlighter.full_calls(),
+        0,
+        "首次应由会话的 advance 完成，不得再调一次全量接口（否则白解析两遍）"
+    );
+
+    // 版本变化：防抖期内返回空，也不碰会话。
+    provider.insert(doc_id, "fn b", 1, Some(fp("/d/a.md")));
+    let deferred = service.highlight(q()).expect("高亮应成功");
+    assert!(deferred.is_empty(), "防抖期内应返回空片段");
+    assert_eq!(highlighter.advances().len(), 1, "防抖期不得喂会话");
+
+    // 静止后：复用同一会话，而不是重建。
+    clock.set(400);
+    let _ = service.highlight(q()).expect("高亮应成功");
+    assert_eq!(highlighter.starts(), 1, "跨版本应复用同一个会话");
+    assert_eq!(highlighter.advances(), vec![4, 4]);
+
+    // 关文档清缓存：会话持有整篇文本，必须一并释放。
+    service.clear_cache(ClearCacheCommand {
+        doc_id: Some(doc_id),
+    });
+    clock.set(600);
+    let _ = service.highlight(q()).expect("高亮应成功");
+    assert_eq!(highlighter.starts(), 2, "清缓存后应重建会话");
+    assert_eq!(highlighter.advances().len(), 3);
+}

@@ -22,6 +22,37 @@ pub trait MarkdownParser: Send + Sync {
     fn parse(&self, text: &str) -> Result<Vec<RenderedBlock>, ParseError>;
 }
 
+/// 增量高亮会话（`FR-03` / OPT-011 复议）。
+///
+/// 由 [`SyntaxHighlighter::start_session`] 创建，生命周期与「一篇文档的
+/// 高亮结果」对齐：同一份文本连续喂入时，实现可比对上次文本、只重解
+/// 变更区间，而不是每次 O(全文)。
+///
+/// # 为什么接口只有一个 `advance(text, lang)`
+///
+/// **变更区间由实现自己算**。它本就持有上次文本，一次公共前后缀比对即可
+/// 得到变更区间；若让调用方传，调用方就得再存一份上次全文（内存翻倍），
+/// 而且一旦传错区间，高亮结果会与文本静默不符——这种错误既难在类型上
+/// 防范，也难在测试里发现。
+///
+/// # 实现约束
+///
+/// - 会话不是线程安全的，调用方须独占持有（本项目由服务层用互斥锁保护）；
+/// - `advance` 返回的片段区间相对 `text` 起点，语义与
+///   [`SyntaxHighlighter::highlight`] 一致（**不裁剪**）。
+pub trait HighlightSession: Send {
+    /// 喂入新全文并返回高亮片段。
+    ///
+    /// - 文本与上次相同时应直接返回上次结果（O(1)）；
+    /// - `lang` 变化时应重建（旧状态的语法上下文不再有效）；
+    /// - 无法安全复用时必须退化为全量——**宁可慢，不可错**。
+    fn advance(
+        &mut self,
+        text: &str,
+        lang: Option<&str>,
+    ) -> Result<Vec<SyntaxSpan>, HighlightError>;
+}
+
 /// 语法高亮器（用于**编辑器内的代码块**与预览）。
 pub trait SyntaxHighlighter: Send + Sync {
     /// 高亮整段文本；`lang` 为 `None` 时按纯文本处理（不报错）。
@@ -40,6 +71,18 @@ pub trait SyntaxHighlighter: Send + Sync {
 
     /// 该语言是否受支持；不支持时调用方应降级为纯文本而不是报错。
     fn supports(&self, lang: &str) -> bool;
+
+    /// 开启一个增量高亮会话；`None` 表示该实现不支持增量。
+    ///
+    /// # 为什么给默认实现
+    ///
+    /// 这是一个**可选能力**：不支持增量的实现照常走 [`Self::highlight`] /
+    /// [`Self::highlight_range`]，行为完全等价（只是慢）。给默认 `None` 而不是
+    /// 必填方法，让既有实现（尤其是测试替身）无需改动即可继续工作——
+    /// 否则每加一个可选能力都要改一圈 fake。
+    fn start_session(&self) -> Option<Box<dyn HighlightSession>> {
+        None
+    }
 }
 
 /// 块 ↔ 偏移映射（**无状态纯函数**，供 `FR-02` 滚动同步使用）。

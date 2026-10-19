@@ -41,6 +41,7 @@ use syntect::easy::ScopeRangeIterator;
 use syntect::parsing::{ParseState, Scope, ScopeStack, SyntaxReference, SyntaxSet};
 
 use crate::domain::markdown::errors::HighlightError;
+use crate::domain::markdown::services::HighlightSession;
 use crate::domain::markdown::value_objects::{SpanStyle, SyntaxSpan};
 use crate::shared::geometry::{ByteOffset, TextRange};
 
@@ -467,6 +468,69 @@ impl SyntectSession {
         self.checkpoints.clear();
         self.spans.clear();
     }
+}
+
+impl HighlightSession for SyntectSession {
+    fn advance(
+        &mut self,
+        text: &str,
+        lang: Option<&str>,
+    ) -> Result<Vec<SyntaxSpan>, HighlightError> {
+        // 文本与语言都没变：同一 revision 下换 clip 的重复查询，直接复用。
+        let lang_key = lang.map(|value| value.trim().to_ascii_lowercase());
+        if text == self.text && self.lang == lang_key {
+            return Ok(self.spans.clone());
+        }
+        // 文本变了才值得比对；语言变了但文本没变时 changed 为 None（全量重建）。
+        let changed = (text != self.text).then(|| changed_range(&self.text, text));
+        self.highlight(text, lang, changed)
+    }
+}
+
+/// 用「公共前缀 + 公共后缀」求新文本坐标下的变更区间。
+///
+/// # 为什么不用真正的 diff
+///
+/// 高亮只需要「哪一段可能影响语法状态」，不需要最小编辑脚本。公共前后缀
+/// 给出的是**包含所有变更的最小连续区间**：区间外逐字节相同，正是增量
+/// 恢复所需的全部前提；区间内哪怕有未变的片段，也只是多解几行。
+///
+/// 多光标 / 撤销这类「两处都变」的编辑会得到一个横跨两处的区间——最坏
+/// 退化为全量，正确性不受影响。
+///
+/// # UTF-8 边界
+///
+/// 前缀/后缀是按**字节**比对的，可能落在多字节字符中间。此时向前/向后
+/// 收缩到最近的 char boundary，把这个字符整体算进变更区（区间只能变大，
+/// 不会切在字符中间导致后续切片 panic）。
+fn changed_range(old: &str, new: &str) -> TextRange {
+    let old_bytes = old.as_bytes();
+    let new_bytes = new.as_bytes();
+
+    let mut prefix = 0usize;
+    let prefix_limit = old_bytes.len().min(new_bytes.len());
+    while prefix < prefix_limit && old_bytes[prefix] == new_bytes[prefix] {
+        prefix += 1;
+    }
+    while prefix > 0 && !new.is_char_boundary(prefix) {
+        prefix -= 1;
+    }
+
+    let mut suffix = 0usize;
+    let suffix_limit = (old_bytes.len() - prefix).min(new_bytes.len() - prefix);
+    while suffix < suffix_limit
+        && old_bytes[old_bytes.len() - 1 - suffix] == new_bytes[new_bytes.len() - 1 - suffix]
+    {
+        suffix += 1;
+    }
+    while suffix > 0 && !new.is_char_boundary(new_bytes.len() - suffix) {
+        suffix -= 1;
+    }
+
+    TextRange::new(
+        ByteOffset::new(prefix),
+        ByteOffset::new(new_bytes.len() - suffix),
+    )
 }
 
 /// 追加一个整体平移 `delta` 的旧片段。
