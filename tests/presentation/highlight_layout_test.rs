@@ -734,3 +734,174 @@ fn inserting_a_line_in_the_middle_keeps_surrounding_lines() {
         stats.reshaped_lines
     );
 }
+
+// ============================================================================
+// 单行编辑「原地补丁」快路径（A1-4）
+// ============================================================================
+
+/// 快路径必须与「清空缓存后全量重建」逐行等价。
+///
+/// # 为什么这条是快路径的**验收主证据**
+///
+/// 快路径直接改写上一版整篇 `Galley` 的 `rows` 切片、顶点数与 `job.text`，
+/// 拼错一格不会有任何报错，只会表现为「光标偏一点」「少画一行」这类
+/// 肉眼几乎看不出的错位。因此每条用例都比两样东西：
+///
+/// 1. `assert_rows_equivalent`：行数 / 每行字形内容 / 换行标记；
+/// 2. `galley.text()`：整篇缓存的全文键，也是 `TextEdit` 算光标的依据。
+///
+/// 等长替换（不改变行数与字节长度）→ span 的绝对坐标仍然有效，
+/// 于是这条用例同时覆盖「补丁行带语法着色」的情形。
+#[test]
+fn single_line_patch_matches_full_rebuild() {
+    let ctx = test_ctx();
+    let theme = Theme::dark();
+    let wrap = 260.0; // 故意窄：让长行折成多条视觉行
+
+    let mut text = String::from(
+        "# 标题一行\n\
+         \n\
+         第一段正文，包含中文与 ascii 混排。\n\
+         \n\
+         - 列表项一\n\
+         - 列表项二\n\
+         \n\
+         这一行足够长，用来验证软换行下的补丁路径是否仍然与全量重建等价：\
+         它必须折成多条视觉行，且每一行的字形内容都要逐字对上。\n\
+         \n\
+         最后一行没有换行符",
+    );
+    // 覆盖首行、正文、长段（折行）、末行四处着色。
+    let spans = vec![
+        span(0, 4, "keyword"),
+        span(20, 40, "string"),
+        span(120, 200, "comment"),
+        span(300, 330, "number"),
+    ];
+
+    highlight_layout(&ctx, &theme, &text, Some(&spans), wrap);
+
+    // 等长替换：每个元素是 (旧片段, 新片段)，两者字节长度必须一致。
+    let edits: [(&str, &str); 5] = [
+        ("标题一行", "标题二行"),         // 首行
+        ("第一段正文", "第二段正文"),     // 正文首行
+        ("列表项一", "列表项甲"),         // 中间行
+        ("折成多条视觉", "折成多行视觉"), // 长段（折行区）内
+        ("最后一行", "末尾一行"),         // 末行（无尾随换行）
+    ];
+
+    for (i, (old, new)) in edits.iter().enumerate() {
+        assert_eq!(old.len(), new.len(), "等长替换前提被破坏：{old} → {new}");
+        let at = text
+            .find(old)
+            .unwrap_or_else(|| panic!("样本里找不到「{old}」"));
+        let mut next = text.clone();
+        next.replace_range(at..at + old.len(), new);
+
+        let fast = highlight_layout(&ctx, &theme, &next, Some(&spans), wrap);
+        let stats = last_highlight_stats();
+        assert!(
+            stats.patched,
+            "第 {i} 次编辑（{old} → {new}）应走原地补丁快路径，实际 reshaped={} cached={}",
+            stats.reshaped_lines, stats.cached_lines
+        );
+
+        // 参照组：清空全部缓存后从零排一遍。
+        clear_highlight_caches();
+        let slow = highlight_layout(&ctx, &theme, &next, Some(&spans), wrap);
+
+        assert_rows_equivalent(&fast, &slow, &format!("第 {i} 次编辑（{old} → {new}）"));
+        assert_eq!(
+            fast.text(),
+            next.as_str(),
+            "第 {i} 次编辑后 galley.text() 与正文不一致（整篇缓存键会永久失效）"
+        );
+        assert_eq!(
+            fast.num_vertices, slow.num_vertices,
+            "第 {i} 次编辑后顶点数不一致（补丁的增量记账错了）"
+        );
+        assert_eq!(
+            fast.num_indices, slow.num_indices,
+            "第 {i} 次编辑后索引数不一致"
+        );
+        // `rect` 决定滚动范围与 `TextEdit` 的期望尺寸：宽了会多出横向滚动条，
+        // 窄了会裁掉内容。快路径按「最宽行 × 总高」重建，这里逐项对上。
+        assert!(
+            (fast.rect.width() - slow.rect.width()).abs() < 0.5
+                && (fast.rect.height() - slow.rect.height()).abs() < 0.5,
+            "第 {i} 次编辑后 rect 不一致：补丁 {:?} vs 全量 {:?}",
+            fast.rect,
+            slow.rect
+        );
+
+        // `slow` 已经用 `next` 重新暖好了缓存，下一轮从它继续。
+        text = next;
+    }
+}
+
+/// 插入 / 删除字符（长度变化、后续 span 坐标整体平移）同样必须等价。
+///
+/// 这类编辑会让补丁行的字节长度变化：`job.text` 用 `replace_range` 就地改，
+/// 行内容用 `clear + push_str` 复用分配——两条都可能写错位置。
+#[test]
+fn single_line_patch_handles_insert_and_delete() {
+    let ctx = test_ctx();
+    let theme = Theme::dark();
+    let wrap = 600.0;
+
+    let mut text = String::from("第一行\n第二行内容\n第三行\n第四行结束");
+    highlight_layout(&ctx, &theme, &text, None, wrap);
+
+    let edits: [(&str, &str); 4] = [
+        ("第二行", "第二行（已改）"),   // 行内插入
+        ("（已改）", ""),               // 再删掉
+        ("第三行\n", ""),               // 删除整行（含换行）→ 行数变化，必须退回全量
+        ("第四行结束", "第四行结束！"), // 末行追加
+    ];
+
+    for (i, (old, new)) in edits.iter().enumerate() {
+        let at = text
+            .find(old)
+            .unwrap_or_else(|| panic!("样本里找不到「{old}」"));
+        let mut next = text.clone();
+        next.replace_range(at..at + old.len(), new);
+
+        let fast = highlight_layout(&ctx, &theme, &next, None, wrap);
+        clear_highlight_caches();
+        let slow = highlight_layout(&ctx, &theme, &next, None, wrap);
+
+        assert_rows_equivalent(&fast, &slow, &format!("第 {i} 次编辑（{old} → {new}）"));
+        assert_eq!(fast.text(), next.as_str(), "第 {i} 次编辑后全文键不一致");
+
+        text = next;
+    }
+}
+
+/// 折行数变化时必须**放弃**补丁、退回全量重建（否则后续行整体错位）。
+///
+/// 这里把一行不断加长到跨过折行宽度：跨过的那一步 `rows.len()` 变了，
+/// 快路径必须拒绝，而结果仍要与全量重建一致。
+#[test]
+fn patch_declines_when_wrapping_changes() {
+    let ctx = test_ctx();
+    let theme = Theme::dark();
+    let wrap = 120.0;
+
+    let mut text = String::from("这一行会被不断加长，直到折行\n第二行");
+    highlight_layout(&ctx, &theme, &text, None, wrap);
+
+    for step in 0..12 {
+        // 在首行末尾插入一个汉字，逐步逼近并跨过折行宽度。
+        let at = text.find('\n').unwrap();
+        let mut next = text.clone();
+        next.insert(at, '长');
+        let _ = step;
+
+        let fast = highlight_layout(&ctx, &theme, &next, None, wrap);
+        clear_highlight_caches();
+        let slow = highlight_layout(&ctx, &theme, &next, None, wrap);
+
+        assert_rows_equivalent(&fast, &slow, "逐步加长首行");
+        text = next;
+    }
+}

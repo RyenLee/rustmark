@@ -13,6 +13,7 @@ mod editor_view_test;
 mod enter_ime_test;
 mod export_view_test;
 mod find_replace_view_test;
+mod highlight_layout_bench;
 mod highlight_layout_test;
 mod preview_border_test;
 // S8-05 高亮性能基线（必须 release 下跑，见文件内说明）。

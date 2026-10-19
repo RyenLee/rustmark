@@ -2,11 +2,12 @@
 
 use std::sync::Arc;
 
-use egui::text::TextWrapping;
+use egui::emath::GuiRounding;
+use egui::text::{ByteIndex, TextWrapping};
 
 use super::highlight_cache::{
-    LARGE_FILE_BYTES, LAST_STATS, LINE_LAYOUT, LineLayout, WHOLE_CACHE, atlas_token,
-    build_line_job, editor_metrics_signature,
+    HighlightStats, LARGE_FILE_BYTES, LAST_STATS, LINE_LAYOUT, LineLayout, WHOLE_CACHE,
+    atlas_token, build_line_job, editor_metrics_signature,
 };
 use super::*;
 use crate::application::dto::{RangeView, SpanView};
@@ -166,6 +167,54 @@ pub fn highlight_layout_with_find(
         reusable.then(|| std::mem::take(&mut *c))
     });
 
+    // 2) 快路径：单行编辑时在上一版整篇 `Galley` 上**原地打补丁**。
+    //
+    // 走到这里说明整篇缓存已经 miss（文本变了），但「改一行」与「换一篇」的成本
+    // 差着三个数量级：前者只需重排那一行、替换它在旧 Galley 里的 rows 切片；
+    // 后者要拆行 + 差分 + 逐行遍历 + `concat` 全部 58k 行。
+    // 1MB 实测后者 4.08ms，其中 3.0ms 是与「改了几行」无关的固定动作（§3.2.13）。
+    //
+    // 前置条件不成立（插入/删除换行、折行数变化、整篇替换……）就原样退回下面的
+    // 全量重建——**正确性不依赖本路径是否命中**，它只是同一语义的更快实现。
+    let mut previous = previous;
+    let prev_whole: Option<Arc<egui::Galley>> = if previous.is_some() {
+        // 整篇缓存与行布局同键同生命周期，且本帧必然覆盖它，故直接取走。
+        // 少这一个 `Arc` 引用，下面才有机会 `try_unwrap` 出独占的 `Galley` 原地改写。
+        WHOLE_CACHE.with(|c| c.borrow_mut().take().map(|entry| entry.2))
+    } else {
+        None
+    };
+    if let (Some(prev), Some(whole)) = (previous.as_mut(), prev_whole) {
+        // `try_unwrap` 失败说明上一帧的 Galley 仍被别处持有（`TextEdit` 的
+        // `TextEditOutput` 尚未释放）：退化为一次克隆（58k 个 `Arc` 克隆），
+        // 仍比整篇重建便宜。
+        let base = Arc::try_unwrap(whole).unwrap_or_else(|arc| (*arc).clone());
+        let input = PatchInput {
+            ctx,
+            theme,
+            text,
+            spans: if large { &[] } else { spans.unwrap_or(&[]) },
+            find,
+            wrap_width,
+        };
+        if let Some((galley, stats)) = try_patch_single_line(&input, prev, base) {
+            LINE_LAYOUT.with(|c| *c.borrow_mut() = std::mem::take(prev));
+            WHOLE_CACHE.with(|c| {
+                *c.borrow_mut() = Some((
+                    sig,
+                    wrap_width,
+                    galley.clone(),
+                    find_sig,
+                    colored,
+                    metrics,
+                    atlas,
+                ));
+            });
+            LAST_STATS.with(|s| *s.borrow_mut() = stats);
+            return galley;
+        }
+    }
+
     // 上一版每行的内容与 Galley。
     //
     // `old_lines` 多包一层 `Option` 是为了下面能**移动**取走被复用的那一行
@@ -175,7 +224,6 @@ pub fn highlight_layout_with_find(
         Some(p) => (p.lines.into_iter().map(Some).collect(), p.galleys),
         None => (Vec::new(), Vec::new()),
     };
-
     // 拆行：`split('\n')` 天然保留末尾空行语义（"a\nb\n" → ["a","b",""]），
     // 与 `concat` 的换行补齐一致。
     //
@@ -244,6 +292,13 @@ pub fn highlight_layout_with_find(
     };
 
     let mut line_galleys: Vec<Arc<egui::Galley>> = Vec::with_capacity(lines.len());
+    // 逻辑行 → 整篇 `rows` 下标（末尾追加总行数）；单行编辑快路径据此定位切片。
+    let mut row_starts: Vec<u32> = Vec::with_capacity(lines.len() + 1);
+    let mut row_cursor = 0u32;
+    row_starts.push(0);
+    // 最宽行：整篇 `rect.width()` 由它决定（见 `LineLayout::widest_line`）。
+    let mut widest_line = 0usize;
+    let mut max_line_width = 0.0f32;
     // 新版每行的内容。所有权策略见循环内「行内容的所有权」一段（问题 052）。
     let mut new_lines: Vec<String> = Vec::with_capacity(lines.len());
     let mut stats = HighlightStats {
@@ -333,6 +388,14 @@ pub fn highlight_layout_with_find(
                 stats.reshaped_lines += 1;
             }
         }
+        if let Some(g) = line_galleys.last() {
+            row_cursor += g.rows.len() as u32;
+            if g.rect.width() > max_line_width {
+                max_line_width = g.rect.width();
+                widest_line = line_galleys.len() - 1;
+            }
+        }
+        row_starts.push(row_cursor);
     }
 
     // 2) 拼回整文档 Galley：`job.text` 写全本（保证双击选词 / 三击选行基于全文），
@@ -380,6 +443,8 @@ pub fn highlight_layout_with_find(
         let mut c = c.borrow_mut();
         c.lines = new_lines;
         c.galleys = line_galleys;
+        c.row_starts = row_starts;
+        c.widest_line = widest_line;
         c.sig = sig;
         c.wrap = wrap_width;
         c.find_sig = find_sig;
@@ -403,6 +468,306 @@ pub fn highlight_layout_with_find(
         ));
     });
     LAST_STATS.with(|s| *s.borrow_mut() = stats);
-
     combined
+}
+
+// ============================================================================
+// 单行编辑快路径（A1-4）
+// ============================================================================
+
+/// 两段字节序列的公共前缀长度。
+///
+/// 按 `u64` 分组比较：1MB 全等前缀约 0.1ms，而逐字节循环要 1ms 量级
+/// （LLVM 未必把 `zip` 向量化成 memcmp）。
+fn common_prefix_len(a: &[u8], b: &[u8]) -> usize {
+    let n = a.len().min(b.len());
+    let mut i = 0;
+    while i + 8 <= n {
+        // `i + 8 <= n <= 两段长度` ⇒ 切片必为 8 字节；`unwrap_or_default` 只是
+        // 给「万一被改坏」留一个不 panic 的退路（本项目 `panic = "abort"`）。
+        let x = u64::from_ne_bytes(a[i..i + 8].try_into().unwrap_or_default());
+        let y = u64::from_ne_bytes(b[i..i + 8].try_into().unwrap_or_default());
+        if x != y {
+            break;
+        }
+        i += 8;
+    }
+    while i < n && a[i] == b[i] {
+        i += 1;
+    }
+    i
+}
+
+/// 两段字节序列的公共后缀长度（从末尾往前比，同样 8 字节一组）。
+fn common_suffix_len(a: &[u8], b: &[u8]) -> usize {
+    let n = a.len().min(b.len());
+    let mut i = 0;
+    while i + 8 <= n {
+        let ea = a.len() - i - 8;
+        let eb = b.len() - i - 8;
+        let x = u64::from_ne_bytes(a[ea..ea + 8].try_into().unwrap_or_default());
+        let y = u64::from_ne_bytes(b[eb..eb + 8].try_into().unwrap_or_default());
+        if x != y {
+            break;
+        }
+        i += 8;
+    }
+    while i < n && a[a.len() - 1 - i] == b[b.len() - 1 - i] {
+        i += 1;
+    }
+    i
+}
+
+/// 新旧文本的差异边界 `(公共前缀长, 公共后缀长)`，两端都吸附到字符边界。
+///
+/// 必须吸附：两段 UTF-8 的公共前缀可能停在某个多字节字符的中间
+/// （如 `é` = C3 A9 与 `è` = C3 A8 共享首字节 C3），此时按字节切会 panic。
+fn diff_bounds(old: &str, new: &str) -> (usize, usize) {
+    let mut prefix = common_prefix_len(old.as_bytes(), new.as_bytes());
+    while prefix > 0 && !(old.is_char_boundary(prefix) && new.is_char_boundary(prefix)) {
+        prefix -= 1;
+    }
+    let mut suffix = common_suffix_len(&old.as_bytes()[prefix..], &new.as_bytes()[prefix..]);
+    while suffix > 0
+        && !(old.is_char_boundary(old.len() - suffix) && new.is_char_boundary(new.len() - suffix))
+    {
+        suffix -= 1;
+    }
+    (prefix, suffix)
+}
+
+/// 快路径的排版输入（打包成一个结构体，避免 8 参数签名）。
+struct PatchInput<'a> {
+    ctx: &'a egui::Context,
+    theme: &'a Theme,
+    text: &'a str,
+    spans: &'a [SpanView],
+    find: Option<&'a [FindMark]>,
+    wrap_width: f32,
+}
+
+/// 单行编辑的**原地补丁**快路径。
+///
+/// # 做什么
+///
+/// 文本只改了某一行时，不必拆行 + 差分 + 逐行遍历 + `concat` 整篇：
+/// 只需把那一行重排，再把它在上一版整篇 `Galley::rows` 里的切片换掉，
+/// 并修正 `num_vertices` / `num_indices` / `rect` / `mesh_bounds` / `job.text`。
+///
+/// # 前置条件（任一不成立即返回 `None`，调用方退回全量重建）
+///
+/// 1. 变更区内**没有换行**——行数不变，行号映射才成立；
+/// 2. 变更行重排后的**视觉行数与上一版相同**——否则后续所有行的 y 偏移
+///    要整体平移（软换行也会让一个逻辑行占多行），本路径不处理；
+/// 3. 行布局的 `row_starts` 与整篇 `rows` 长度自洽。
+///
+/// # 为什么**不修改任何状态就返回 `None`**
+///
+/// 所有判定都在改 `prev` / `base` 之前完成。调用方在 `None` 时会拿同一个
+/// `prev` 继续走全量重建，若快路径中途留了一半改动，重建出来的就是混合态。
+///
+/// # 已知取舍
+///
+/// - `rect` 按「各行宽度的最大值 × 总高」**精确重建**（行高由前置条件保证不变），
+///   不做并集——否则删长短行后横向滚动条回不去。
+/// - `mesh_bounds` 取并集（只增不减）：它只用于剔除，偏大是安全的；
+///   精确重算是 O(全部视觉行)，与快路径的目的相悖。
+/// - `Galley::intrinsic_size` 是 `pub(crate)`，外部改不了，保持旧值。
+///   全仓只有 `egui` 的 atomics 会读它，`TextEdit` 不读，故无副作用。
+fn try_patch_single_line(
+    input: &PatchInput<'_>,
+    prev: &mut LineLayout,
+    base: egui::Galley,
+) -> Option<(Arc<egui::Galley>, HighlightStats)> {
+    let PatchInput {
+        ctx,
+        theme,
+        text,
+        spans,
+        find,
+        wrap_width,
+    } = *input;
+    // ---- 前置条件 3：行布局与整篇 rows 自洽 ----
+    let line_count = prev.lines.len();
+    if line_count == 0
+        || prev.galleys.len() != line_count
+        || prev.row_starts.len() != line_count + 1
+        || *prev.row_starts.last()? as usize != base.rows.len()
+    {
+        return None;
+    }
+
+    // ---- 前置条件 1：变更区不跨行 ----
+    let (old_len, old_ls, old_le, new_ls, new_le, line_idx) = {
+        let old = base.text();
+        let old_len = old.len();
+        let (prefix, suffix) = diff_bounds(old, text);
+        if prefix == old_len && prefix == text.len() {
+            return None; // 文本没变：本来不该走到这里
+        }
+        let old_end = old_len - suffix;
+        let new_end = text.len() - suffix;
+        if old[prefix..old_end].contains('\n') || text[prefix..new_end].contains('\n') {
+            return None; // 增删了换行：行数/行号变了
+        }
+        let old_ls = old[..prefix].rfind('\n').map_or(0, |i| i + 1);
+        let new_ls = text[..prefix].rfind('\n').map_or(0, |i| i + 1);
+        if old_ls != new_ls {
+            return None; // 前缀相同 ⇒ 两者必然相等；纯防御
+        }
+        let old_le = old[old_end..].find('\n').map_or(old_len, |i| old_end + i);
+        let new_le = text[new_end..]
+            .find('\n')
+            .map_or(text.len(), |i| new_end + i);
+        let line_idx = text[..new_ls].matches('\n').count();
+        (old_len, old_ls, old_le, new_ls, new_le, line_idx)
+    };
+    if line_idx >= line_count {
+        return None;
+    }
+
+    // ---- 重排这一行（其余行不动）----
+    let line = &text[new_ls..new_le];
+    let mut line_spans: Vec<SpanView> = Vec::new();
+    for s in spans {
+        if s.range.start < s.range.end && s.range.start < new_le && s.range.end > new_ls {
+            let start = s.range.start.max(new_ls) - new_ls;
+            let end = s.range.end.min(new_le) - new_ls;
+            if start < end {
+                line_spans.push(SpanView {
+                    range: RangeView::new(start, end),
+                    style: s.style.clone(),
+                    url: None,
+                });
+            }
+        }
+    }
+    line_spans.sort_by_key(|s| s.range.start);
+
+    let mut line_bgs: Vec<(usize, usize, bool)> = Vec::new();
+    if let Some(marks) = find {
+        for m in marks {
+            let s = m.start.max(new_ls);
+            let e = m.end.min(new_le);
+            if s < e {
+                line_bgs.push((s - new_ls, e - new_ls, m.current));
+            }
+        }
+    }
+
+    let job = build_line_job(theme, line, &line_spans, &line_bgs, wrap_width);
+    let new_line_galley = ctx.fonts_mut(|f| f.layout_job(job));
+
+    // ---- 前置条件 2：折行数与行高都不变 ----
+    //
+    // 折行数变了 → 后续行的 y 偏移要整体平移；行高变了（例如插入 emoji 命中
+    // 更高的兜底字体）→ 同样会把后面的行顶歪。两者本路径都不处理。
+    let row_start = prev.row_starts[line_idx] as usize;
+    let row_end = prev.row_starts[line_idx + 1] as usize;
+    let old_line_galley = Arc::clone(&prev.galleys[line_idx]);
+    if row_end - row_start != new_line_galley.rows.len()
+        || (new_line_galley.rect.height() - old_line_galley.rect.height()).abs() > 0.01
+    {
+        return None;
+    }
+
+    // ==== 以下开始修改；到这一步所有前置条件都已成立 ====
+    let mut base = base;
+    let y0 = base.rows[row_start].pos.y;
+    let ppp = base.pixels_per_point;
+    let is_last_line = line_idx + 1 == line_count;
+    let mut mesh_bounds = base.mesh_bounds;
+
+    for (k, placed) in new_line_galley.rows.iter().enumerate() {
+        // `concat` 的定位公式：子 Galley 的相对坐标 + 该行的累计 y，再按像素取整。
+        let pos = (placed.pos + egui::vec2(0.0, y0)).round_to_pixels(ppp);
+        // `concat` 会给「某行的最后一条视觉行」补换行标记（末行除外）。
+        let mut ends_with_newline = placed.ends_with_newline;
+        if k + 1 == new_line_galley.rows.len() {
+            ends_with_newline |= !is_last_line;
+        }
+        mesh_bounds |= placed.visuals.mesh_bounds.translate(pos.to_vec2());
+        base.rows[row_start + k] = egui::epaint::text::PlacedRow {
+            pos,
+            row: Arc::clone(&placed.row),
+            ends_with_newline,
+        };
+    }
+
+    // 行内容复用原有分配（`clear` + `push_str`），不产生新的 `String`。
+    prev.lines[line_idx].clear();
+    prev.lines[line_idx].push_str(line);
+    prev.galleys[line_idx] = Arc::clone(&new_line_galley);
+
+    // 整篇 `rect` = 「各行宽度的最大值 × 总高」（行高已由前置条件保证不变）。
+    // 只有「改的就是最宽行」或「新行更宽」时才需要重扫；重扫是 O(行数)，
+    // 但只在缩短最宽行时发生，日常连续输入走不到。
+    let width = if line_idx == prev.widest_line || new_line_galley.rect.width() >= base.rect.width()
+    {
+        let mut best = (0.0f32, 0usize);
+        for (i, g) in prev.galleys.iter().enumerate() {
+            let w = g.rect.width();
+            if w > best.0 {
+                best = (w, i);
+            }
+        }
+        prev.widest_line = best.1;
+        best.0
+    } else {
+        base.rect.width()
+    };
+    base.rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, base.rect.height()));
+
+    let vertices = base.num_vertices as isize - old_line_galley.num_vertices as isize
+        + new_line_galley.num_vertices as isize;
+    let indices = base.num_indices as isize - old_line_galley.num_indices as isize
+        + new_line_galley.num_indices as isize;
+    base.num_vertices = vertices.max(0) as usize;
+    base.num_indices = indices.max(0) as usize;
+    base.mesh_bounds = mesh_bounds;
+
+    // `job.text` 必须与正文同步：`Galley::text()` 既是整篇缓存的全文键，
+    // 也是 `TextEdit` 算光标 / 选区的依据。
+    //
+    // 独占且只有一段时**就地替换那一段**（O(尾部位移)），不重建整份 1MB 字符串；
+    // 拿不到独占（上一帧的 Galley 还被别处持有）才退回「重建 job」。
+    let patched_job = match Arc::get_mut(&mut base.job) {
+        Some(job)
+            if job.sections.len() == 1
+                && job.sections[0].byte_range == (ByteIndex(0)..ByteIndex(old_len)) =>
+        {
+            job.text.replace_range(old_ls..old_le, line);
+            job.sections[0].byte_range = ByteIndex(0)..ByteIndex(job.text.len());
+            true
+        }
+        _ => false,
+    };
+    if !patched_job {
+        let mut job = egui::text::LayoutJob {
+            wrap: TextWrapping {
+                max_width: if wrap_width > 0.0 {
+                    wrap_width
+                } else {
+                    f32::INFINITY
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        job.append(text, 0.0, StyleMapper::new(theme).format("plain"));
+        base.job = Arc::new(job);
+    }
+
+    // 行内容复用原有分配（`clear` + `push_str`），不产生新的 `String`。
+    prev.lines[line_idx].clear();
+    prev.lines[line_idx].push_str(line);
+    prev.galleys[line_idx] = Arc::clone(&new_line_galley);
+
+    let stats = HighlightStats {
+        total_lines: line_count,
+        reshaped_lines: 1,
+        cached_lines: line_count - 1,
+        patched: true,
+    };
+    Some((Arc::new(base), stats))
 }

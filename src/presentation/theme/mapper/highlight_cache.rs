@@ -19,6 +19,11 @@ pub struct HighlightStats {
     pub reshaped_lines: usize,
     /// 本次命中行缓存的行数。
     pub cached_lines: usize,
+    /// 本次是否走了「单行编辑原地补丁」快路径（A1-4）。
+    ///
+    /// 只用于测试与调试面板：它说明这一帧是**补丁**出来的还是整篇重建的。
+    /// 两条路径的输出必须逐行等价（见 `single_line_patch_matches_full_rebuild`）。
+    pub patched: bool,
 }
 
 /// 上一版交付成功的逐行排版结果（增量重排的基础）。
@@ -39,6 +44,18 @@ pub(super) struct LineLayout {
     pub(super) lines: Vec<String>,
     /// 上一版每行的 Galley。
     pub(super) galleys: Vec<Arc<egui::Galley>>,
+    /// 上一版每行在**整篇 Galley `rows`** 中的起始下标（末尾追加总行数）。
+    ///
+    /// 单行编辑快路径靠它把「第 i 行」直接映射到 `rows` 的切片：软换行会让
+    /// 一个逻辑行占多个视觉行，故不能用行号直接当 `rows` 下标。
+    /// 长度恒为 `galleys.len() + 1`；与 `galleys` 不一致即视为不可用。
+    pub(super) row_starts: Vec<u32>,
+    /// 最宽的那一行在 `galleys` 中的下标（`Galley::rect.width` 的来源）。
+    ///
+    /// 整篇 `rect` 等于「各行 `rect.width()` 的最大值 × 总高」。快路径改了一行后，
+    /// 只有「改的正是最宽行」或「新行更宽」时才需要重扫；其余情况宽度不变。
+    /// 没有它就只能取并集（只增不减），删长短行后横向滚动条会回不去。
+    pub(super) widest_line: usize,
     /// 上一版所用的主题签名。
     pub(super) sig: Option<[u8; 4]>,
     /// 上一版所用的换行宽度。
