@@ -5,6 +5,7 @@ use egui::{RichText, ScrollArea, Ui};
 use crate::app::frame::EditorApp;
 use crate::presentation::state::sidebar_ui_state::{NameEdit, TreeRow, tree_rows};
 use crate::presentation::theme::builtin::Theme;
+use crate::presentation::widgets;
 
 use super::*;
 
@@ -140,47 +141,39 @@ fn file_row(
     let menu_open = app.sidebar.menu_is_for(&row.path);
     // 目录没有「格式」可言（双击是展开/收起），故只对文件做白名单判定。
     let openable = row.is_directory || app.can_open_as_text(&row.path);
-    // 整行必须显式带 `Sense::click()`：`ui.horizontal` 的子 Ui 默认 sense 是
-    // **hover**（`UiBuilder::sense` 默认值），其 `Response` 的 `clicked()` /
-    // `secondary_clicked()` 恒为 false——症状是「文件树点击与右键均无响应」
-    // （问题 1）。右键同属 click 大类，一个 sense 同时覆盖。
+    // 整行可点（含右键）由 `widgets::row::clickable_row` 保证：行内容由
+    // 箭头、图标、文件名等多段 `Ui` 拼成，默认只有 hover sense，会盖在
+    // 行交互之上、吞掉点击（问题 1：文件树点击与右键均无响应）。
+    // 右键同属 click 大类，一个 sense 同时覆盖。
     let mut icon_rect = egui::Rect::NOTHING;
-    let row_response = ui
-        .horizontal(|ui| {
-            // 缩进 + 树导引线占位：每一级缩进等宽，导引线画在级边界上。
-            ui.add_space(ROW_PAD + row.depth as f32 * INDENT_STEP);
-            // 目录的展开箭头占固定宽度，文件留同样的空位——
-            // 否则同级文件与目录的图标会左右错开，扫视时很难对齐。
-            let (arrow, _) =
-                ui.allocate_exact_size(egui::vec2(ARROW_W, ROW_HEIGHT), egui::Sense::hover());
-            let _ = arrow;
-            // 图标列：目录画文件夹、文件画页面（向量，见 [`file_row`] 文档）。
-            let (icon, _) =
-                ui.allocate_exact_size(egui::vec2(ICON_W, ROW_HEIGHT), egui::Sense::hover());
-            icon_rect = icon;
-            ui.add_space(ICON_GAP);
-            // 文件名同样截断：与大纲同一缺陷类，长文件名会撑出侧栏。
-            //
-            // 文字色三分（问题 045）：白名单外的文件用次要色——与导出浮窗里
-            // 「暂未开放」的格式同一种表达（`export_view::format_row`），
-            // 用户扫一眼就知道这一项不能打开，不必先双击一次才知道。
-            // 选中态一律用 `theme.text_primary`：全仓纪律（037 / 039）——
-            // 选中底色在用户自定义主题里可以是实色强调蓝，强调色文字压上去
-            // 会糊成一片。
-            let name_color = if is_selected || openable {
-                theme.text_primary
-            } else {
-                theme.text_secondary
-            };
-            ui.add(egui::Label::new(RichText::new(&row.name).color(name_color)).truncate());
-        })
-        .response;
-    // 整行显式声明 `Sense::click()`：行内容由箭头、图标、文件名等多段 `Ui`
-    // 拼成，它们默认只有 hover sense，会盖在行交互之上、吞掉点击（与大纲行
-    // 同款缺陷）。用 `ui.interact` 在整行矩形上挂 click-sense 命中区——位于
-    // 内容之上，点击稳稳落到行上（问题 1：文件树点击与右键无响应）。
-    let row_id = ui.scope_id().with(("rustmark.file.row", &row.path));
-    let response = ui.interact(row_response.rect, row_id, egui::Sense::click());
+    let (response, _) = widgets::row::clickable_row(ui, ("rustmark.file.row", &row.path), |ui| {
+        // 缩进 + 树导引线占位：每一级缩进等宽，导引线画在级边界上。
+        ui.add_space(ROW_PAD + row.depth as f32 * INDENT_STEP);
+        // 目录的展开箭头占固定宽度，文件留同样的空位——
+        // 否则同级文件与目录的图标会左右错开，扫视时很难对齐。
+        let (arrow, _) =
+            ui.allocate_exact_size(egui::vec2(ARROW_W, ROW_HEIGHT), egui::Sense::hover());
+        let _ = arrow;
+        // 图标列：目录画文件夹、文件画页面（向量，见 [`file_row`] 文档）。
+        let (icon, _) =
+            ui.allocate_exact_size(egui::vec2(ICON_W, ROW_HEIGHT), egui::Sense::hover());
+        icon_rect = icon;
+        ui.add_space(ICON_GAP);
+        // 文件名同样截断：与大纲同一缺陷类，长文件名会撑出侧栏。
+        //
+        // 文字色三分（问题 045）：白名单外的文件用次要色——与导出浮窗里
+        // 「暂未开放」的格式同一种表达（`export_view::format_row`），
+        // 用户扫一眼就知道这一项不能打开，不必先双击一次才知道。
+        // 选中态一律用 `theme.text_primary`：全仓纪律（037 / 039）——
+        // 选中底色在用户自定义主题里可以是实色强调蓝，强调色文字压上去
+        // 会糊成一片。
+        let name_color = if is_selected || openable {
+            theme.text_primary
+        } else {
+            theme.text_secondary
+        };
+        ui.add(egui::Label::new(RichText::new(&row.name).color(name_color)).truncate());
+    });
     // 白名单外的行挂一句悬停说明：置灰只表达了「不能用」，说不清「为什么」。
     // 文案取自应用层（[`EditorApp::unsupported_format_notice`]）——
     // 与双击时报到状态栏的是**同一句**，不会出现两种说法。

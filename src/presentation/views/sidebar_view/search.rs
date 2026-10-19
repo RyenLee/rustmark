@@ -8,6 +8,7 @@ use crate::presentation::state::sidebar_ui_state::{
     SEARCH_SCOPES, SEARCH_TOGGLES, SearchGroup, SearchScope,
 };
 use crate::presentation::theme::builtin::Theme;
+use crate::presentation::widgets;
 
 use super::files::display_name;
 use super::*;
@@ -219,27 +220,27 @@ fn hit_row(
     snippet: &str,
     highlight: (usize, usize),
 ) -> egui::Response {
-    // 整行显式声明 `Sense::click()`：行号 + 命中片段两段 `Ui` 默认只有 hover
-    // sense，会盖在行交互之上、吞掉点击（与大纲行同款缺陷）。先 `ui.horizontal`
-    // 排出内容取回整行矩形，再用 `ui.interact` 挂 click-sense 命中区。
-    let row_response = ui
-        .horizontal(|ui| {
+    // 整行可点由 `widgets::row::clickable_row` 保证：行号 + 片段两段 `Ui`
+    // 默认只有 hover sense，会盖在行交互之上、吞掉点击（问题 1）。
+    let (response, _) = widgets::row::clickable_row(
+        ui,
+        (
+            "rustmark.search.hit",
+            &group.path,
+            line,
+            snippet,
+            highlight.0,
+            highlight.1,
+        ),
+        |ui| {
             ui.add_space(ROW_PAD);
             ui.weak(format!("{}", line + 1));
             // 片段占「剩余宽」并截断；它自己是一个 galley，截断一次即可
             // （见 [`hit_row`] 上面对缺陷类 033 的说明）。
             ui.add(egui::Label::new(snippet_job(ui, theme, snippet, highlight)).truncate());
-        })
-        .response;
-    let row_id = ui.scope_id().with((
-        "rustmark.search.hit",
-        &group.path,
-        line,
-        snippet,
-        highlight.0,
-        highlight.1,
-    ));
-    ui.interact(row_response.rect, row_id, egui::Sense::click())
+        },
+    );
+    response
 }
 
 /// 命中片段按字节区间切分（DTO 的 `highlight` 是**字符**下标，见

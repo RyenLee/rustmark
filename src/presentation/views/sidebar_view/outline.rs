@@ -4,6 +4,7 @@ use egui::{Align, Layout, RichText, ScrollArea, Ui};
 
 use crate::app::frame::EditorApp;
 use crate::presentation::theme::builtin::Theme;
+use crate::presentation::widgets;
 
 use super::*;
 
@@ -49,51 +50,29 @@ pub(super) fn outline_tab(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
                 } else {
                     theme.text_primary
                 });
-                // 整行显式声明 `Sense::click()`：行内容由 `# 标题` 文本、行号等多段
-                // `Ui` 拼成，它们默认只有 hover sense，会盖在行交互之上、吞掉点击
-                // （`clicked()` 恒为 false → 「大纲条目点了没反应」）。
-                // 先 `ui.horizontal` 排出内容并取回整行矩形，再用 `ui.interact`
-                // 在同一矩形上挂一个 click-sense 命中区——它在绘制顺序上位于
-                // 内容之上，点击稳稳落到行上；与文件树 `file_row` 同款做法。
-                let row_response = ui
-                    .horizontal(|ui| {
+                // 「整行可点」与「限宽省略」两条不变式都由 `widgets` 承担：
+                // 前者保证行内容（多段 hover sense）不吞掉点击，后者保证段高
+                // 跟随行首实测值而不是 0（问题 065 的错位根因）。
+                let (response, _) = widgets::row::clickable_row(
+                    ui,
+                    ("rustmark.outline.row", item.line, &item.text),
+                    |ui| {
                         ui.add_space(ROW_PAD + (item.level.saturating_sub(1)) as f32 * INDENT_STEP);
                         let hash = ui.label(
                             RichText::new("#".repeat(item.level as usize))
                                 .color(theme.text_secondary),
                         );
-                        // 标题占「剩余宽 − 行号预留」并**截断**：过长的标题不再把
-                        // 固定宽的侧栏撑出一条不可见的黑边（SidePanel 是
-                        // `exact_width`，溢出内容只会被裁掉）。
-                        let avail = (ui.available_width() - OUTLINE_LINE_NO_W).max(0.0);
-                        // 子 Ui 的高度**必须是行高**（取 `#` 标签的实测高度），
-                        // 不能传 0：`allocate_ui_with_layout` 的 `desired_size`
-                        // 会被外层行的 Center 交叉对齐填满成行高
-                        // （`Layout::next_frame_ignore_wrap`），0 高的子矩形
-                        // 于是落在**行垂直中点**；其中的标题再按 egui 的
-                        // 「横向布局不向上越界」规则（`frame_rect.top() <
-                        // cursor.top()` 时整体下推）被压到中点之下——标题比
-                        // `#` 低半个行高（探针实测 8.5pt，用户截图即此），
-                        // 且右端的行号也被 0 高子矩形带偏 3.5pt。
-                        // 传行高后子矩形与行重合，三段自然同一水平线。
-                        ui.allocate_ui_with_layout(
-                            egui::vec2(avail, hash.rect.height()),
-                            Layout::left_to_right(Align::Center),
-                            |ui| {
-                                ui.add(egui::Label::new(text).truncate());
-                            },
-                        );
+                        // 标题占「剩余宽 − 行号预留」并截断：过长的标题不再把
+                        // 固定宽的侧栏撑出黑边（SidePanel 是 `exact_width`，
+                        // 溢出内容只会被裁掉）。
+                        widgets::text::elided_segment(ui, hash.rect, OUTLINE_LINE_NO_W, text);
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             // `item.line` 是 0-based（与源码偏移同源），状态栏与用户数行
                             // 都按 1-based，故显示时 +1，使大纲行号与正文行号对齐（#12）。
                             ui.weak((item.line + 1).to_string());
                         });
-                    })
-                    .response;
-                let row_id = ui
-                    .scope_id()
-                    .with(("rustmark.outline.row", item.line, &item.text));
-                let response = ui.interact(row_response.rect, row_id, egui::Sense::click());
+                    },
+                );
                 if response.clicked() {
                     app.sidebar.outline_selected = Some(item.text.clone());
                     jump = Some(item.line);
