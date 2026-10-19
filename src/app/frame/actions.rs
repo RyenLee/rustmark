@@ -76,111 +76,33 @@ impl EditorApp {
     /// 三个入口（菜单 / 快捷键 / 命令面板）**全部**汇聚到这里，
     /// 因此不可能出现「菜单里有的操作，快捷键触发的结果不一样」。
     ///
-    /// 未接线动作用 `_ => {}` 兜底而非 `unreachable!()`：
-    /// 动作表先于视图实现（动作表有 60 项，视图分批落地），
-    /// 若在这里 panic，用户按下任何尚未接线的快捷键都会**直接丢掉窗口**。
+    /// # 分发方式：路由表 + 薄分发器（T6）
+    ///
+    /// 原实现是 46 分支的 `match` + `_ => {}` 兜底。兜底的真正代价不是
+    /// 「多写一行」，而是**新增动作时编译器不会提醒你接线**——历史上
+    /// `Ctrl+S` / `Ctrl+N` / `Ctrl+Shift+S` / `Ctrl+H` / `Ctrl+Shift+F`
+    /// 都这样静默失效过（动作表里有、菜单里有、快捷键也注册了，
+    /// 按下去毫无反应，零报错）。
+    ///
+    /// 现在这里只剩分发，每个动作的去向在 [`action_route`] 里**穷尽声明**：
+    /// `UiAction` 每加一个变体，不同时更新那张表就**编译不过**。
+    /// 确实暂不接线的动作必须显式写 [`ActionRoute::Unbound`]。
     pub fn execute(&mut self, action: UiAction) {
-        // 浮层类动作先判：它们占 14 项，逐个写 match 分支会让下面的
-        // 布局分支被淹没。判定用两张表的**并集**（`opened_by` 与
-        // `also_opened_by`），二者都在 `Overlay` 上，不可能算出不一致的结果。
-        if let Some(overlay) = openable_overlay(action) {
-            self.open_overlay(overlay, action);
-            return;
-        }
-
-        match action {
-            // —— 文件 ——
-            // `Save` / `NewDocument` / `SaveAs` 此前落在 `_ => {}`：动作表里有、
-            // 快捷键能触发，但没有任何分支处理，`Ctrl+S` / `Ctrl+N` /
-            // `Ctrl+Shift+S` 全部静默失效。状态栏的「未保存 → 点击保存」
-            // 与欢迎页的三个主操作也走这里，故**必须**接线，
-            // 不能让各视图各写一套保存逻辑。
-            UiAction::Save => self.run_save(false),
-            UiAction::SaveAs => self.run_save(true),
-            // `SaveAll` 此前落在 `_ => {}`：动作表里有、菜单里有、快捷键
-            // （`Ctrl+Alt+S`）也注册了，但没有任何分支处理——点「保存全部」
-            // 毫无反应，与 `Ctrl+S` 当年同款缺陷。三入口（菜单 / 快捷键 /
-            // 命令面板）都汇聚到本方法，故在此接线即全覆盖。
-            UiAction::SaveAll => self.save_all_documents(),
-            UiAction::NewDocument => self.run_new_document(),
-            // 「打开文件夹」：请求工作区目录选择（后台对话框），结果由
-            // `apply_dialog_outcome` 扫盘装载。入口从侧栏上移到「文件」菜单后，
-            // 菜单 / 命令面板仍共用这一条路径（三入口一致）。
-            UiAction::OpenFolder => self.request_dialog(PendingDialog::PickFolder),
-            // `OpenDocument` **故意不在这里**：`Ctrl+O` 是快速打开浮层的
-            // 开启动作（`Overlay::QuickOpen.opened_by`），已经被上面的
-            // `openable_overlay` 分支拦走。若在此再写一个 `request_dialog`，
-            // 它永远不可达——一段**读起来像接线、实际是死代码**的分支，
-            // 比没有分支更容易误导（它会让「Ctrl+O 打不开文件」这件事
-            // 看起来已经处理过了）。系统文件对话框的入口在快速打开
-            // 面板内的「浏览本机文件…」按钮。
-            // —— 布局 ——
-            UiAction::ToggleSidebar => self.ui.toggle_sidebar(),
-            UiAction::TogglePreview => self.ui.toggle_preview(),
-            UiAction::ToggleStatusbar => self.ui.toggle_statusbar(),
-            UiAction::ToggleOutline => self.ui.toggle_sidebar_tab(SidebarTab::Outline),
-            // `FindInFiles`（Ctrl+Shift+F，全局「在文件中查找」）此前落在 `_ => {}`：
-            // 动作表里有、快捷键能触发，但没有任何分支处理，于是按下去毫无反应。
-            // 它**不**打开浮层——全局搜索是侧栏的 Search 标签，故直接切到该标签
-            // 并展开侧栏，与 `ToggleOutline` 同一思路。
-            UiAction::FindInFiles => {
-                self.ui.toggle_sidebar_tab(SidebarTab::Search);
+        match action_route(action) {
+            // 浮层类：具体打开哪个浮层由 `Overlay::opened_by` /
+            // `also_opened_by` 唯一确定，不在这张表里重复登记——
+            // 两处事实必然漂移，而不一致的症状正是「某个动作静默失效」。
+            ActionRoute::Overlay => {
+                if let Some(overlay) = openable_overlay(action) {
+                    self.open_overlay(overlay, action);
+                }
             }
-            UiAction::ToggleFocusMode => self.ui.toggle_focus_mode(),
-            // —— 标签 ——
-            UiAction::CloseTab => self.close_active_tab(),
-            UiAction::NextTab => self.cycle_document(1),
-            UiAction::PrevTab => self.cycle_document(-1),
-            UiAction::GotoTab1 => self.goto_document(1),
-            UiAction::GotoTab2 => self.goto_document(2),
-            UiAction::GotoTab3 => self.goto_document(3),
-            UiAction::GotoTab4 => self.goto_document(4),
-            UiAction::GotoTab5 => self.goto_document(5),
-            UiAction::GotoTab6 => self.goto_document(6),
-            UiAction::GotoTab7 => self.goto_document(7),
-            UiAction::GotoTab8 => self.goto_document(8),
-            UiAction::GotoTab9 => self.goto_document(9),
-            // —— 主题 ——
-            UiAction::ToggleTheme => self.cycle_theme(),
-            // —— 编辑（领域权威：撤销/重做走领域，不走 egui 内置）——
-            UiAction::Undo => self.undo_edit(),
-            UiAction::Redo => self.redo_edit(),
-            UiAction::Indent => self.indent_selection(),
-            UiAction::Outdent => self.outdent_selection(),
-            UiAction::MoveLineUp => self.move_line(-1),
-            UiAction::MoveLineDown => self.move_line(1),
-            // —— 格式（S6-07）——
-            // 全部汇入 `apply_format`：三入口（工具栏 / 快捷键 / 命令面板）
-            // 都经由 `execute` 落到这里，故行为**按构造**一致，
-            // 不依赖「记得三处都写对」。
-            UiAction::Bold
-            | UiAction::Italic
-            | UiAction::Strikethrough
-            | UiAction::InlineCode
-            | UiAction::InsertLink
-            | UiAction::CodeBlock
-            | UiAction::InsertTable
-            | UiAction::ToggleQuote
-            | UiAction::ToggleList
-            | UiAction::ToggleOrderedList
-            | UiAction::PromoteHeading
-            | UiAction::DemoteHeading
-            | UiAction::ToggleTask => self.apply_format(action),
-            // —— 关闭浮层 ——
-            // Esc 的仲裁点在浮层状态里：先给浮层一次机会关自己，
-            // 没有浮层可关时才退出专注模式。否则 Esc 会「关掉对话框顺便
-            // 把专注模式也退掉」——一次按键做两件事几乎总是 bug。
-            UiAction::CloseOverlay if self.dialog.is_open(Overlay::Settings) => {
-                // Esc 语义 = 取消：与面板上的「取消」按钮、与标题栏 × 一致。
-                self.cancel_settings();
-            }
-            UiAction::CloseOverlay if self.dialog.close_top().is_none() => {
-                self.ui.exit_focus_mode();
-            }
-            // 有浮层被关掉时落到这里：什么都不做。
-            UiAction::CloseOverlay => {}
-            // —— 其余动作在对应子任务中接线 ——
-            _ => {}
+            // 格式类：`apply_format` 自己按 action 分派 `FormatKind`。
+            ActionRoute::Format => self.apply_format(action),
+            ActionRoute::GotoTab(index) => self.goto_document(index),
+            ActionRoute::Handler(handler) => handler(self),
+            // 显式声明的「暂不接线」，见 `action_route` 末尾的说明。
+            ActionRoute::Unbound => {}
         }
     }
 
@@ -256,4 +178,275 @@ pub(super) fn openable_overlay(action: UiAction) -> Option<Overlay> {
     Overlay::ALL.iter().copied().find(|overlay| {
         overlay.opened_by() == Some(action) || overlay.also_opened_by() == Some(action)
     })
+}
+
+// ============================================================================
+// 动作路由表（T6）
+// ============================================================================
+
+/// 一个动作的去向。
+enum ActionRoute {
+    /// 浮层类动作：具体打开哪个浮层由 `Overlay::opened_by` /
+    /// `also_opened_by` 唯一确定，本表**不重复登记**——两处事实必然漂移，
+    /// 而不一致的症状正是「某个动作静默失效」。
+    Overlay,
+    /// 格式类动作：统一交 [`EditorApp::apply_format`]，它自己按 action
+    /// 分派 `FormatKind`。
+    Format,
+    /// 标签跳转（`Ctrl+1..9`）。
+    GotoTab(usize),
+    /// 单一处理器（统一签名的 trampoline）。
+    Handler(fn(&mut EditorApp)),
+    /// 动作表里有、但**尚未接线**。
+    Unbound,
+}
+
+/// 动作 → 去向。
+///
+/// # 这张表**故意不写 `_ =>` 兜底**
+///
+/// 它的唯一价值就是「新增 `UiAction` 变体时编译失败，逼你选一个去向」。
+/// 一旦写了兜底，漏接线的动作会重新退化成静默失效——那正是本表要根除的
+/// 缺陷类型（历史上 `Ctrl+S` / `Ctrl+H` / `Ctrl+Shift+F` 都这样丢过）。
+fn action_route(action: UiAction) -> ActionRoute {
+    use UiAction as A;
+    match action {
+        // —— 浮层（11）——
+        A::OpenDocument
+        | A::Find
+        | A::Replace
+        | A::OpenSettings
+        | A::Export
+        | A::ShortcutOverview
+        | A::About
+        | A::DocumentStats
+        | A::CommandPalette
+        | A::InsertSymbol
+        | A::CompareDiff => ActionRoute::Overlay,
+
+        // —— 文件 ——
+        A::Save => ActionRoute::Handler(route_save),
+        A::SaveAs => ActionRoute::Handler(route_save_as),
+        A::SaveAll => ActionRoute::Handler(route_save_all),
+        A::NewDocument => ActionRoute::Handler(route_new_document),
+        A::OpenFolder => ActionRoute::Handler(route_open_folder),
+        A::CloseTab => ActionRoute::Handler(route_close_tab),
+
+        // —— 编辑 ——
+        A::Undo => ActionRoute::Handler(route_undo),
+        A::Redo => ActionRoute::Handler(route_redo),
+        A::FindInFiles => ActionRoute::Handler(route_find_in_files),
+        A::Indent => ActionRoute::Handler(route_indent),
+        A::Outdent => ActionRoute::Handler(route_outdent),
+        A::MoveLineUp => ActionRoute::Handler(route_move_line_up),
+        A::MoveLineDown => ActionRoute::Handler(route_move_line_down),
+
+        // —— 格式（13）——
+        A::Bold
+        | A::Italic
+        | A::Strikethrough
+        | A::InlineCode
+        | A::InsertLink
+        | A::CodeBlock
+        | A::InsertTable
+        | A::ToggleQuote
+        | A::ToggleList
+        | A::ToggleOrderedList
+        | A::PromoteHeading
+        | A::DemoteHeading
+        | A::ToggleTask => ActionRoute::Format,
+
+        // —— 视图 / 布局 ——
+        A::ToggleSidebar => ActionRoute::Handler(route_toggle_sidebar),
+        A::TogglePreview => ActionRoute::Handler(route_toggle_preview),
+        A::ToggleStatusbar => ActionRoute::Handler(route_toggle_statusbar),
+        A::ToggleOutline => ActionRoute::Handler(route_toggle_outline),
+        A::ToggleFocusMode => ActionRoute::Handler(route_toggle_focus_mode),
+        A::CloseOverlay => ActionRoute::Handler(route_close_overlay),
+        A::ToggleTheme => ActionRoute::Handler(route_toggle_theme),
+
+        // —— 标签 ——
+        A::NextTab => ActionRoute::Handler(route_next_tab),
+        A::PrevTab => ActionRoute::Handler(route_prev_tab),
+        A::GotoTab1 => ActionRoute::GotoTab(1),
+        A::GotoTab2 => ActionRoute::GotoTab(2),
+        A::GotoTab3 => ActionRoute::GotoTab(3),
+        A::GotoTab4 => ActionRoute::GotoTab(4),
+        A::GotoTab5 => ActionRoute::GotoTab(5),
+        A::GotoTab6 => ActionRoute::GotoTab(6),
+        A::GotoTab7 => ActionRoute::GotoTab(7),
+        A::GotoTab8 => ActionRoute::GotoTab(8),
+        A::GotoTab9 => ActionRoute::GotoTab(9),
+
+        // —— 显式未接线 ——
+        //
+        // 这两项在动作表 / 菜单 / 快捷键里都存在，但没有任何执行逻辑。
+        // 改造前它们落进 `_ => {}`：菜单项可点、快捷键能按，什么也不发生，
+        // 且零报错。现在显式声明，接线时编译器会强制把这里改成 Handler。
+        //
+        // - `Revert`（还原修改）：需要应用层提供「从磁盘重新加载」用例；
+        // - `InsertImage`（插入图片）：需要「选文件 → 插入 `![]()`」的流程。
+        A::Revert | A::InsertImage => ActionRoute::Unbound,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 处理器 trampoline
+//
+// 统一签名 `fn(&mut EditorApp)`：路由表存函数指针而不是闭包——闭包捕获
+// 环境后是匿名类型，写不进枚举字段。每个函数只有一两行，名字即语义；
+// 搜 `route_save` 能同时命中路由与实现。
+// ---------------------------------------------------------------------------
+
+fn route_save(app: &mut EditorApp) {
+    app.run_save(false);
+}
+
+fn route_save_as(app: &mut EditorApp) {
+    app.run_save(true);
+}
+
+fn route_save_all(app: &mut EditorApp) {
+    app.save_all_documents();
+}
+
+fn route_new_document(app: &mut EditorApp) {
+    app.run_new_document();
+}
+
+/// 「打开文件夹」：请求工作区目录选择（后台对话框），结果由
+/// `apply_dialog_outcome` 扫盘装载。入口从侧栏上移到「文件」菜单后，
+/// 菜单 / 命令面板仍共用这一条路径（三入口一致）。
+fn route_open_folder(app: &mut EditorApp) {
+    app.request_dialog(PendingDialog::PickFolder);
+}
+
+fn route_close_tab(app: &mut EditorApp) {
+    app.close_active_tab();
+}
+
+fn route_undo(app: &mut EditorApp) {
+    app.undo_edit();
+}
+
+fn route_redo(app: &mut EditorApp) {
+    app.redo_edit();
+}
+
+/// 全局「在文件中查找」：**不打开浮层**——全局搜索是侧栏的 Search 标签，
+/// 直接切到该标签并展开侧栏，与 `ToggleOutline` 同一思路。
+fn route_find_in_files(app: &mut EditorApp) {
+    app.ui.toggle_sidebar_tab(SidebarTab::Search);
+}
+
+fn route_indent(app: &mut EditorApp) {
+    app.indent_selection();
+}
+
+fn route_outdent(app: &mut EditorApp) {
+    app.outdent_selection();
+}
+
+fn route_move_line_up(app: &mut EditorApp) {
+    app.move_line(-1);
+}
+
+fn route_move_line_down(app: &mut EditorApp) {
+    app.move_line(1);
+}
+
+fn route_toggle_sidebar(app: &mut EditorApp) {
+    app.ui.toggle_sidebar();
+}
+
+fn route_toggle_preview(app: &mut EditorApp) {
+    app.ui.toggle_preview();
+}
+
+fn route_toggle_statusbar(app: &mut EditorApp) {
+    app.ui.toggle_statusbar();
+}
+
+fn route_toggle_outline(app: &mut EditorApp) {
+    app.ui.toggle_sidebar_tab(SidebarTab::Outline);
+}
+
+fn route_toggle_focus_mode(app: &mut EditorApp) {
+    app.ui.toggle_focus_mode();
+}
+
+fn route_toggle_theme(app: &mut EditorApp) {
+    app.cycle_theme();
+}
+
+fn route_next_tab(app: &mut EditorApp) {
+    app.cycle_document(1);
+}
+
+fn route_prev_tab(app: &mut EditorApp) {
+    app.cycle_document(-1);
+}
+
+/// Esc 的仲裁点在浮层状态里：先给浮层一次机会关自己，没有浮层可关时
+/// 才退出专注模式。否则 Esc 会「关掉对话框顺便把专注模式也退掉」——
+/// 一次按键做两件事几乎总是 bug。
+fn route_close_overlay(app: &mut EditorApp) {
+    if app.dialog.is_open(Overlay::Settings) {
+        // Esc 语义 = 取消：与面板上的「取消」按钮、与标题栏 × 一致。
+        app.cancel_settings();
+    } else if app.dialog.close_top().is_none() {
+        app.ui.exit_focus_mode();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 路由表与浮层表必须描述同一件事。
+    ///
+    /// 两边各自维护一份「哪些动作打开浮层」就会漂移：漏的那一项在
+    /// `execute` 里既不被浮层分支拦走、也没有 Handler，最终落进 Unbound
+    /// 静默失效——S6-07 的 `Ctrl+H` 就是这么丢的。
+    #[test]
+    fn route_table_agrees_with_overlay_table() {
+        for &action in UiAction::ALL {
+            let routed_as_overlay = matches!(action_route(action), ActionRoute::Overlay);
+            let opens_overlay = openable_overlay(action).is_some();
+            assert_eq!(
+                routed_as_overlay, opens_overlay,
+                "动作 {action:?} 的路由（overlay={routed_as_overlay}）与 \
+                 Overlay::opened_by/also_opened_by（overlay={opens_overlay}）不一致"
+            );
+        }
+    }
+
+    /// 「未接线」必须是一份**显式清单**，不能悄悄变长。
+    ///
+    /// 这条断言的作用不是禁止新增 Unbound，而是让每一次新增都必须在
+    /// 测试里改一行——提交 diff 里就能看见「又有一个动作没接线」。
+    #[test]
+    fn unbound_actions_are_explicit() {
+        let unbound: Vec<UiAction> = UiAction::ALL
+            .iter()
+            .copied()
+            .filter(|&action| matches!(action_route(action), ActionRoute::Unbound))
+            .collect();
+        assert_eq!(
+            unbound,
+            vec![UiAction::Revert, UiAction::InsertImage],
+            "未接线动作清单变了：新增 Unbound 时必须同步更新本断言，\
+             并在提交说明里交代为什么暂不接线"
+        );
+    }
+
+    /// 每个动作都必须有去向，且 `Unbound` 之外的分支都能真正执行。
+    ///
+    /// 穷尽性本身由编译器保证（`action_route` 没有 `_` 兜底）；
+    /// 这里额外钉住「`UiAction::ALL` 与枚举变体同步」——`ALL` 漏登记
+    /// 会让命令面板少一项，而它不会报错。
+    #[test]
+    fn every_action_is_routed() {
+        assert_eq!(UiAction::ALL.len(), 57, "UiAction::ALL 与枚举变体数不一致");
+    }
 }
