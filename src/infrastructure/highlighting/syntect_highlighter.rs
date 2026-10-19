@@ -35,7 +35,7 @@ use std::sync::OnceLock;
 
 use syntect::easy::ScopeRangeIterator;
 use syntect::highlighting::ScopeSelectors;
-use syntect::parsing::{ParseState, Scope, ScopeStack, SyntaxSet};
+use syntect::parsing::{ParseState, Scope, ScopeStack, SyntaxReference, SyntaxSet};
 
 use crate::domain::markdown::errors::HighlightError;
 use crate::domain::markdown::services::SyntaxHighlighter;
@@ -169,6 +169,38 @@ fn style_selectors() -> &'static [(SpanStyle, ScopeSelectors)] {
     })
 }
 
+/// 全局唯一的语法集（含内嵌 packdump 解压，进程内只做一次）。
+///
+/// 从 [`SyntectHighlighter::new`] 抽出来，是为了让同模块内的
+/// [`incremental::SyntectSession`](super::incremental::SyntectSession)
+/// 复用同一份实例而不是各自解压一遍。
+pub(super) fn default_syntax_set() -> &'static SyntaxSet {
+    static SYNTAXES: OnceLock<SyntaxSet> = OnceLock::new();
+    SYNTAXES.get_or_init(SyntaxSet::load_defaults_newlines)
+}
+
+/// 把语言标记解析为 syntect 语法引用。
+///
+/// 查找顺序：显式别名表 → `find_syntax_by_token`（按扩展名或大小写无关名称）。
+/// 后者让 `rs` / `py` / `tsx` 这类常见缩写也能命中，而不必穷举。
+pub(super) fn resolve_language<'a>(
+    syntaxes: &'a SyntaxSet,
+    lang: &str,
+) -> Option<&'a SyntaxReference> {
+    let key = lang.trim().to_ascii_lowercase();
+    if key.is_empty() {
+        return None;
+    }
+    if let Some((_, candidates)) = LANGUAGE_ALIASES.iter().find(|(alias, _)| *alias == key) {
+        for candidate in *candidates {
+            if let Some(found) = syntaxes.find_syntax_by_name(candidate) {
+                return Some(found);
+            }
+        }
+    }
+    syntaxes.find_syntax_by_token(&key)
+}
+
 /// 基于 syntect 的语法高亮器。
 pub struct SyntectHighlighter {
     syntaxes: &'static SyntaxSet,
@@ -189,28 +221,16 @@ impl SyntectHighlighter {
     /// 直接 `unwrap`。那是**编译期常量**，加载失败等价于「产物损坏」，
     /// 不存在运行时可恢复的路径，因此这里不额外包一层 `Result`。
     pub fn new() -> Self {
-        static SYNTAXES: OnceLock<SyntaxSet> = OnceLock::new();
-        let syntaxes = SYNTAXES.get_or_init(SyntaxSet::load_defaults_newlines);
-        Self { syntaxes }
+        Self {
+            syntaxes: default_syntax_set(),
+        }
     }
 
     /// 把语言标记解析为 syntect 语法引用。
     ///
-    /// 查找顺序：显式别名表 → `find_syntax_by_token`（按扩展名或大小写无关名称）。
-    /// 后者让 `rs` / `py` / `tsx` 这类常见缩写也能命中，而不必穷举。
-    fn resolve(&self, lang: &str) -> Option<&syntect::parsing::SyntaxReference> {
-        let key = lang.trim().to_ascii_lowercase();
-        if key.is_empty() {
-            return None;
-        }
-        if let Some((_, candidates)) = LANGUAGE_ALIASES.iter().find(|(alias, _)| *alias == key) {
-            for candidate in *candidates {
-                if let Some(found) = self.syntaxes.find_syntax_by_name(candidate) {
-                    return Some(found);
-                }
-            }
-        }
-        self.syntaxes.find_syntax_by_token(&key)
+    /// 查找顺序见 [`resolve_language`]。
+    fn resolve(&self, lang: &str) -> Option<&SyntaxReference> {
+        resolve_language(self.syntaxes, lang)
     }
 
     /// 核心实现：顺序解析全文，只输出与 `clip` 相交的片段。
@@ -334,7 +354,7 @@ impl SyntaxHighlighter for SyntectHighlighter {
 /// 遍历 [`style_selectors`]，取**第一个**命中的选择器。
 /// 正确性依赖 [`STYLE_SELECTORS`] 的顺序（具体优先），
 /// 这与 syntect 自己按主题顺序应用样式的方式一致，且顺序可被测试锁定。
-fn classify(stack: &ScopeStack) -> SpanStyle {
+pub(super) fn classify(stack: &ScopeStack) -> SpanStyle {
     let scopes = stack.as_slice();
     for (style, selector) in style_selectors() {
         if selector.does_match(scopes).is_some() {
@@ -361,7 +381,7 @@ fn classify(stack: &ScopeStack) -> SpanStyle {
 ///
 /// 重绘是逐帧按片段遍历的，一个 200 行的大纲若产生上千个零散片段
 /// 会明显增加每帧开销；而连续同语义的片段本就是冗余的。
-fn push_span(
+pub(super) fn push_span(
     spans: &mut Vec<SyntaxSpan>,
     start: usize,
     end: usize,
