@@ -338,6 +338,77 @@ UI 选格式 ──► ExportFormat（领域唯一枚举）
   - 变异验证：把 `extract_path_tokens` 改成返回空 vec → 4 条注入用例**同时变红**（证明用例有牙齿）；
   - `cargo run --bin check-arch` 仍输出 OK。
 
+##### 实施结果（2026-10-20）
+
+**已落地，但实现形态与原文有出入——原文的三处描述已被实测证伪。**
+
+| 原文描述 | 实际落地 | 原因 |
+|---|---|---|
+| 新增 `extract_path_tokens(line: &str) -> Vec<&str>`，逐行提取 | **整文件词法 + use-tree 展开**：`Lexer` 把源码切成 token 流（剔除行/块注释、字符串、raw string、字符字面量），`parse_use_tree` 把 `use` 声明展开成完整路径 | 逐行处理**根本覆盖不了跨行 `use`**——而跨行 `use` 是合法 Rust 且大量存在 |
+| 保留现有「前缀匹配」语义 | 改为**路径段前缀**匹配 | 字符串前缀会把 `crate::domainfoo` 误判成 `crate::domain`；实测这条误伤真实存在（`similar_prefix_crate_is_not_matched`） |
+| `arch-allow:` 只豁免该行写明的那个 crate | 额外加了**豁免登记表**校验：豁免未登记 → 报「豁免未登记」；该行无对应违规 → 报「豁免无效」 | 「只豁免写明的对象」仍不够：随手写一行豁免注释就能放行，等于没有豁免机制 |
+
+**实测额外发现的 8 类漏检**（原文完全未提，全部已修）：
+
+1. `pub use` / `pub(crate) use` 整类逃逸（旧实现只认「行首 `use `」）；
+2. 嵌套花括号 `use crate::{domain::x::Y}` 逃逸；
+3. 跨行 `use` 逃逸；
+4. 别名 `use egui as e;` 逃逸；
+5. 层根文件 `src/domain.rs` 逃逸（旧实现按路径首段判定，首段是 `"domain.rs"`）；
+6. `src/app/` **整层逃逸所有规则**——包括帧预约唯一出口（旧实现的 `layer_of("app/...")` 返回 `""`，扫描函数在**所有**检查之前就 `continue` 掉了）；
+7. `crate::app` 在任何层的禁止清单里**都不存在**——组合根可被下层反向依赖；
+8. `print!`（无 `ln`）漏网；`eprintln!` 被当成 `println!` 报错（文案不准）。
+
+**另修 3 处实现缺陷**（原重写版自身的问题，均由本轮新写的注入用例暴露）：
+
+- **行号恒为 `:1`**：裸换行走 catch-all 分支时用 `self.pos += len` 跳过，未计入行号 → 所有违规都报第 1 行；
+- **块注释嵌套深度差一**：`depth` 从 0 起算（开头的 `/*` 已被消费却没计数）→ 遇到第一个 `*/` 时 `usize` 下溢 panic，且注释**之后**的代码会被整段吞掉；
+- **空白被当成 token**：catch-all 把空格也 push 进 token 流 → `use` 与被导入项之间多出一个 `Other` → `parse_use_tree` 读到「`use` 后面不是标识符」→ **整条 `use` 声明静默漏检**。
+
+**一处「不可一刀切」的设计**：`crate::app` 禁令**不能**全层平推。实测 54 个表现层文件依赖 `crate::app::frame::EditorApp`（组合根把状态句柄交给视图，是既定模式）。一刀切禁掉 = 造一条没人能遵守的规则 → 例外蔓延成惯例 → 连真正要拦的反向依赖也一起淹掉。故改为**更窄豁免前缀**：表现层放行 `crate::app::frame`，但 `crate::app::bootstrap` / `crash_log` / `dialog_runner` / `startup_timing` 仍被拦。
+
+**顺带清理**：删除死代码 `signature()` / `file_stamp()`（`build.rs` 从未调用，且与「已移除内部缓存」的文档记载自相矛盾）；报告格式收敛到单一来源 `format_report`，`build.rs` 与 `check-arch` bin 共用。
+
+**顺带修掉的第 4 个不合理点：规则真源不入库（CI 死锁）**
+
+引入「豁免登记表」后暴露：`tools/arch_check.rs` 的 `load_registry` 要读
+`<manifest>/.agent/architecture.md`——而**整个 `.agent/` 目录在 `.gitignore` 里**
+（第 26 行，理由是「本地运行时/智能体数据，含本机绝对路径」）。后果有两条：
+
+1. **CI 上豁免机制必然失效**：`.github/workflows/ci.yml` 跑 `cargo run --bin check-arch`，
+   CI 机器上没有 `.agent/architecture.md` → 登记表读不到 → 任何 `arch-allow:` 都报
+   「豁免未登记」→ **且无法通过提交修复**（改的是本地那份，CI 读不到）；
+2. **规则随代码失传**：这份文档被 `src/` 下 10+ 个模块的 doc 注释、`CONTRIBUTING.md`、
+   `docs/01`、`docs/02`、ADR 引用，是**代码契约**；拿到代码的人却拿不到它。
+
+实测 `.agent/architecture.md` **不含任何本机绝对路径**——gitignore 给它的理由对它不成立。
+
+处置：把真源迁到 **`docs/architecture-constraints.md`**（入库），`.agent/architecture.md`
+改为一行指针；全仓 20 个文件、26 处引用同步更新（含 `src/` 下 10 个模块的 doc 注释）。
+「一个事实一个家」得以保持：规则正文只有一份，且**必须随代码走**。
+
+
+**用例与变异验证**：原计划 4 条注入用例 → 实际 **45 条**（`tests/arch_violation_fixture.rs`），按「注入必报 / 注入不报 / 豁免三态 / 词法层」分节。变异验证 **10 轮**，逐条确认用例不是恒绿：
+
+| 变异 | 变红的用例数 |
+|---|---|
+| A 候选收集整体失能 | 23 |
+| B `use` 声明不展开路径 | 12 |
+| C 路径匹配退回字符串前缀 | 3 |
+| D `layer_of` 不剥 `.rs` | 1 |
+| E 帧预约检查放过 `app/` | 1 |
+| F 表现层不再放行 `crate::app::frame` | 2 |
+| G 豁免退回「整行放行」 | 1 |
+| H 打印宏只认 `println!` | 2 |
+| I 豁免登记表校验失效 | 1 |
+| J 过时豁免不报 | 2 |
+
+> 值得记一笔：变异 A（校验器完全失能）下，**「真实工程零违规」那两条守卫用例仍然绿**。
+> 「零违规守卫」单独用是不够的——它证明不了校验器还在工作。必须配合注入用例。
+
+**范围外**：R-01 原文提到的 `std::process` 未加入 `SHARED_FORBIDDEN`（那是 R-03 的内容，顺序约束不变）。
+
+
 #### R-02 · `tests/` 纳入架构扫描 + 扩充 fixture
 
 - **改造内容**：`arch_check::scan()` 增加一个可选的「额外根目录」参数（`scan(src_root)` 保持签名不变以免破坏 `build.rs` 调用，新增 `scan_with_tests(src_root, tests_root)`），把 `tests/` 纳入扫描。`tests/` 的层级判定放宽：测试可以引用任何层（测试是**消费者**，不是层），但**禁止** `tests/` 里出现 `use crate::domain::…` 这类**以为在测库内部**的写法——实际现状是 `tests/` 对 domain/infrastructure 引用数 = 0，规则是「防止测试绕过公开 API 偷看内部」。
@@ -462,7 +533,7 @@ UI 选格式 ──► ExportFormat（领域唯一枚举）
      `tools/arch_check.rs` 的 `PRESENTATION_FORBIDDEN = ["crate::domain", "crate::infrastructure"]`
      **直接冲突**——照原文做，`check-arch` 立刻变红。
      导出格式被**三方**需要（领域：任务选项校验；表现：对话框单选组与提交 id；
-     基础设施：导出器路由），而 `.agent/architecture.md` §4 规定
+     基础设施：导出器路由），而 `docs/architecture-constraints.md` §4 规定
      表现层不得依赖 `domain`、基础设施层不得依赖 `application`——
      **三方共同的依赖点只有 `shared`**。
      故真源下沉 `shared::export_format`，`domain::export::value_objects`
@@ -589,7 +660,7 @@ UI 选格式 ──► ExportFormat（领域唯一枚举）
 
 1. **真源落 `shared` 而非 `domain`**（**偏离原文**）：原文说「保留领域
    `ThemeKind` 为唯一真源」，但**表现层不得依赖领域**
-   （`.agent/architecture.md` §4；`check-arch` 的
+   （`docs/architecture-constraints.md` §4；`check-arch` 的
    `PRESENTATION_FORBIDDEN` 拦 `crate::domain`），而主题种类是三方
    （领域 / 应用 / 表现）共同需要的 → 真源落在 `shared::theme::ThemeKind`，
    领域侧以 `pub use` 转出（公开路径
@@ -706,12 +777,12 @@ UI 选格式 ──► ExportFormat（领域唯一枚举）
 #### R-13 · 表现层内部依赖规则（`views` ↔ `state`）
 
 - **改造内容**：明确并**机械守卫**表现层内部方向：`views/` 可读 `state/`，`state/` **不得**依赖 `views/`；`rich/` 不得依赖 `views/` / `state/` / `theme/` / `widgets/`（ADR-007 已有编译期保障，本项把它**机械化**）。同时规定 `widgets/` 与 `icons.rs` 不得依赖 `views/`。
-- **涉及文件**：`tools/arch_check.rs`（`layer_of` 增细粒度：`presentation/views`、`presentation/state`、`presentation/rich`、`presentation/widgets`）、`.agent/architecture.md` §4（登记）、`docs/adr/ADR-010`（记录）
+- **涉及文件**：`tools/arch_check.rs`（`layer_of` 增细粒度：`presentation/views`、`presentation/state`、`presentation/rich`、`presentation/widgets`）、`docs/architecture-constraints.md` §4（登记）、`docs/adr/ADR-010`（记录）
 - **影响范围**：`presentation` 内部 123 文件的依赖方向；当前预期 0 违规（实测 `rich/` 零外部依赖 ✓）。
 - **依赖关系**：**依赖 R-01**（token 匹配）。**不依赖 R-12**（两者是各自独立的守卫项）→ 本项可在 M3 内独立完成。
 - **风险点**：
   - `views/` 里可能有**合法的**对 `state/` 内部实现的依赖（如 `state/find_replace_ui_state/pattern.rs` 的私有函数被视图调用）→ 需要先跑一次全量扫描看命中数，超预期则**放宽到具体文件**而非放弃规则；
-  - 规则粒度变细 → `layer_of` 逻辑变复杂 → 需保证 `build.rs` 的缓存签名（`signature()`）仍能正确反映变化。
+  - 规则粒度变细 → `layer_of` 逻辑变复杂 → 需保证判定对**层根文件**（`src/presentation/state.rs`、`src/presentation/views.rs`）同样生效。**注意**：本项原文提到的「`build.rs` 的缓存签名（`signature()`）」已**不成立**——`build.rs` 早已移除内部缓存（实测确认注入的违规会被静默跳过），`signature()` 是与该记载自相矛盾的死代码，已在 R-01 实施时删除。当前 `build.rs` 每次运行都**无条件全量扫描**，是否重跑由 cargo 依据 `cargo:rerun-if-changed=src` 判断。
 - **回滚方案**：规则的 `enabled` 标志置 false。
 - **验收判据**：
   - `cargo run --bin check-arch` → OK；
@@ -1034,8 +1105,8 @@ UI 选格式 ──► ExportFormat（领域唯一枚举）
 | M2 | R-07 | 2026-10-20 | 2026-10-20 | **1896** / 4 / OK | `bbcbe20`；唯一真源下沉 `shared::export_format`（**偏离原文**，理由见 §4.2 R-07「实施偏差」）；新增 17 例；变异验证：从 `ALL` 删 `Image` → 2 例红 |
 | M2 | R-08① | 2026-10-20 | 2026-10-20 | **1909** / 4 / OK | `8cdf083`；`persisted_key` 改穷举（38 `Some` + 19 `None` / 共 57 变体，**修正原文「16 个」的偏差**）；②默认键位表合一**未做**（两侧表语义不同，领域无法表达「无默认键位」，牵动 `shared`）；**修掉领域 `ActionId::all()` 漏登记 `ToggleStatusbar` 的真实缺陷**（改「显示/隐藏状态栏」键位弹「尚未映射到领域动作」）；新增 13 例；变异验证 3 轮（兜底写回 / 领域清单漏登记 → 4 例红 / 表现清单漏登记 → 3 例红） |
 | M2 | R-09 | 2026-10-20 | 2026-10-20 | **1927** / 4 / OK | `b1f951b`；主题种类收敛为唯一真源 `shared::theme`（**偏离原文**，理由见 §4.2 R-09「实施偏差」）；**六份**副本全部收敛（原文只提到三份）；**修掉 `refresh_system_theme` 恒提前返回**（跟随系统时系统外观变化不刷新）+ 契约值硬编码 3 处；新增 18 例；变异验证 2 轮（`as_str` 写错 → 2 例红 / 注入同构枚举 → 守卫红） |
-| M2 | R-10 | | | | |
-| M3 | R-01 | | | | |
+| M2 | R-10 | | | | 进行中（未提交） |
+| M3 | R-01 | 2026-10-20 | 2026-10-20 | **1958** / 4 / OK | **提前至 M2 期间实施**（R-10 被打断时插入）；判定由「行首 `use `」重写为**词法 + use-tree 展开**；实测额外发现并修掉 8 类漏检 + 3 处实现缺陷；`crate::app` 禁令改为**更窄豁免前缀**（表现层放行 `crate::app::frame`，54 个文件依赖它）；豁免机制加**登记表**校验（未登记/过时均报错）；**规则真源由 `.agent/architecture.md` 迁入 `docs/architecture-constraints.md`**（`.agent/` 整目录不入库 → CI 上豁免机制死锁）；删死代码 `signature()`/`file_stamp()`；报告格式收敛到单一来源 `format_report`；用例 13 → **45** 条；变异验证 **10 轮**（详见 §4.1 R-01「实施结果」） |
 | M3 | R-02 | | | | |
 | M3 | R-03 | | | | |
 | M3 | R-13 | | | | |
@@ -1068,7 +1139,7 @@ UI 选格式 ──► ExportFormat（领域唯一枚举）
 
 ### 6.2 目录与命名规范
 
-**目录**（沿用 `.agent/architecture.md` §7 的「禁 `mod.rs`」约定）：
+**目录**（沿用 `docs/architecture-constraints.md` §7 的「禁 `mod.rs`」约定）：
 
 ```text
 src/
