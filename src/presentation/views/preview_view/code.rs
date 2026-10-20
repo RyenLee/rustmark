@@ -3,8 +3,7 @@
 use egui::FontId;
 
 use crate::application::markdown::queries::HighlightSnippetQuery;
-use crate::presentation::theme::mapper::StyleMapper;
-use crate::shared::geometry::clamp_to_char_boundaries;
+use crate::presentation::theme::mapper::{SpanPolicy, StyleMapper, build_job};
 
 use super::*;
 
@@ -95,6 +94,12 @@ pub(super) fn draw_highlighted_code(
 ///
 /// `wrap_width` 为排版最大宽度：传入预览区可用宽度即可让代码随区域宽度折行，
 /// 不再溢出窄面板。
+///
+/// # 本函数是「预览区代码块那一侧」的薄封装
+///
+/// 切段逻辑已收敛到 [`crate::presentation::theme::mapper::build_job`]（R-10）；
+/// 本函数只负责「预览区代码块用哪套样式」——即
+/// [`StyleMapper::format`] 的颜色，但**字号与字体**换成预览区等宽字体。
 pub(super) fn highlighted_code_job(
     theme: &Theme,
     text: &str,
@@ -102,42 +107,24 @@ pub(super) fn highlighted_code_job(
     wrap_width: f32,
 ) -> egui::text::LayoutJob {
     let mapper = StyleMapper::new(theme);
-    let base = mapper.format("plain");
     let font = FontId::monospace(theme.metrics.preview_font_size);
 
-    let mut job = egui::text::LayoutJob::default();
-    // 按可用宽度折行；宽度为 0 或负时退化为不折行（单行长排）。
-    job.wrap.max_width = if wrap_width > 0.0 {
-        wrap_width
-    } else {
-        f32::INFINITY
+    // 基础样式：`plain` 的颜色 + 预览等宽字体。
+    let mut base = mapper.format("plain");
+    base.font_id = font.clone();
+    // 覆盖字体：预览区代码块一律用等宽（预览字号），
+    // 与编辑区的「等宽（编辑区字号）」只差字号。
+    let style_of = move |style: &str| {
+        let mut fmt = mapper.format(style);
+        fmt.font_id = font.clone();
+        fmt
     };
-    let mut cursor = 0usize;
-    if let Some(spans) = spans {
-        let mut sorted: Vec<_> = spans.to_vec();
-        sorted.sort_by_key(|s| s.range.start);
-        for span in &sorted {
-            // 边界吸附到字符边界（DEF-04）：span 坐标由解析器给出，与 `text`
-            // 未必同源；落在多字节字符中间时 `&text[..]` 会 panic，
-            // 而本项目 `panic = "abort"`。吸附后空区间直接跳过（少一段色而已）。
-            let Some((start, end)) =
-                clamp_to_char_boundaries(text, span.range.start, span.range.end)
-            else {
-                continue;
-            };
-            if start > cursor {
-                job.append(&text[cursor..start], 0.0, base.clone());
-            }
-            let mut fmt = mapper.format(&span.style);
-            fmt.font_id = font.clone();
-            job.append(&text[start..end], 0.0, fmt);
-            cursor = end;
-        }
-    }
-    if cursor < text.len() {
-        let mut fmt = base;
-        fmt.font_id = font;
-        job.append(&text[cursor..], 0.0, fmt);
-    }
+
+    // span 需按起点升序（统一构造器的顺序游标假定如此）。
+    let mut sorted: Vec<_> = spans.map(|s| s.to_vec()).unwrap_or_default();
+    sorted.sort_by_key(|s| s.range.start);
+
+    let policy = SpanPolicy::cursor(base, wrap_width, style_of, None);
+    let (job, _hits) = build_job(theme, text, &sorted, &policy, |_| false);
     job
 }

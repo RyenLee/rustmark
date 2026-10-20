@@ -29,9 +29,12 @@
 //! - `squiggle`：拼写错词波浪线与查找命中标记的纯几何 + 绘制。
 //! - `highlight_cache`：语法高亮两层缓存（整文档 / 逐行）、缓存签名与单行排版作业。
 //! - `highlight_layout`：逐行增量排版与整文档 `Galley` 拼接。
+//! - `span_job`：**唯一**的 span → [`egui::text::LayoutJob`] 构造器（R-10）；
+//!   编辑区 / 预览区代码块 / 预览区行内三处共用，差异由 `SpanPolicy` 显式表达。
 
 mod highlight_cache;
 mod highlight_layout;
+mod span_job;
 mod squiggle;
 
 #[cfg(test)]
@@ -42,7 +45,16 @@ pub use highlight_cache::{
     line_tops,
 };
 pub use highlight_layout::{highlight_layout, highlight_layout_with_find};
+pub use span_job::{SpanHit, SpanPolicy, build_job};
 pub use squiggle::{FindMark, SpellMark, Squiggle, paint_squiggles, squiggles_for};
+
+/// 编辑区那一侧的单行 `LayoutJob` 构造（薄封装，切段逻辑见 [`build_job`]）。
+///
+/// 只给**同 crate 内**的测试用：真帧对拍要把它与预览区代码块路径
+/// 放在同一帧里渲染并比对颜色序列，而预览区路径住在 `presentation::views`。
+/// 生产代码请走 [`highlight_layout`]（它内部会调这个）。
+#[cfg(test)]
+pub(crate) use highlight_cache::build_line_job;
 
 use egui::{Color32, TextFormat};
 
@@ -96,6 +108,7 @@ impl<'a> StyleMapper<'a> {
     /// `TextFormat::line_height` 一旦给出，epaint 就**不再**按字体度量算行高，
     /// 于是中英文混排、系统字体回退（CJK 行高天然高于等宽数字）都不会破坏等距——
     /// 这是「所有内容等高」得以成立的机制。
+    ///
     pub fn format(&self, style: &str) -> TextFormat {
         let body_size = self.theme.editor_font_size;
         let base = TextFormat {

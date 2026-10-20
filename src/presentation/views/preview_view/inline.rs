@@ -1,9 +1,10 @@
 //! 行内富文本：span → `TextFormat`、`LayoutJob` 排版与分隔符规范化。
 
-use egui::text::{CCursor, CharIndex, LayoutJob, TextFormat, TextWrapping};
+use egui::text::{CCursor, CharIndex, LayoutJob, TextFormat};
 use egui::{Align2, FontId, Pos2, Rect, Stroke, Ui, Vec2};
 
 use crate::application::dto::{RangeView, SpanView};
+use crate::presentation::theme::mapper::{SpanHit, SpanPolicy, build_job};
 use crate::presentation::views::math::{self, MathLayout};
 use crate::shared::geometry::clamp_to_char_boundaries;
 use crate::shared::system;
@@ -16,7 +17,7 @@ use super::*;
 /// `theme.editor_font_size`（编辑区设置），且带编辑区的行高——直接拿来渲染预览
 /// 会让预览字号跟随编辑区设置漂移。这里显式用预览字号族，并统一给出
 /// `line_height`，使同一段文本里的不同样式**不改变行高**（上下标变小也不撑行）。
-fn span_format(theme: &Theme, style: &str, size: f32, line_height: f32) -> TextFormat {
+pub(super) fn span_format(theme: &Theme, style: &str, size: f32, line_height: f32) -> TextFormat {
     let base = TextFormat {
         color: theme.text_primary,
         font_id: FontId::proportional(size),
@@ -216,17 +217,6 @@ pub(super) fn render_inline_text(
     ui.interact(rect, ui.scope_id().with("rinline"), sense)
 }
 
-/// 某行内片段在排版后文本里的字符区间（用于点击命中）。
-///
-/// `idx` 是片段在 `spans` 中的下标；`c0` / `c1` 是该片段在 `LayoutJob`
-/// 拼接文本中的**字符**区间（不是字节——字形遍历与字符序一致，字节会因
-/// 多字节字符错位）。
-struct SpanHit {
-    idx: usize,
-    c0: usize,
-    c1: usize,
-}
-
 /// 由排版结果与片段字符区间，算出每个可点击片段在 galley 坐标系里的矩形。
 ///
 /// 逐行求交：一段文本可能折成多行，片段矩形是这些行的并集（这正是
@@ -316,7 +306,16 @@ fn handle_span_click(
 /// 返回的 `Vec<SpanHit>` 只记录「链接 / 脚注引用」这类需要交互的片段
 /// （其余片段不记录，省去无谓的命中矩形）；字符区间相对拼接后的 job 文本，
 /// 供 [`span_rects`] 定位。
-fn build_text_job(
+///
+/// # 本函数是「预览区行内那一侧」的薄封装
+///
+/// 切段逻辑已收敛到 [`crate::presentation::theme::mapper::build_job`]（R-10）；
+/// 本函数只负责「预览区行内用哪套样式」——即 [`span_format`]
+/// （预览字号族 + 预览行高 + 行内特有样式），
+/// 以及两处**行内特有**语义：
+/// - `done_overlay`（任务项已勾选 → 整行次级色 + 删除线）；
+/// - 文本改写（math 剥分隔符、脚注引用换标号）。
+pub(super) fn build_text_job(
     theme: &Theme,
     content: &str,
     spans: &[SpanView],
@@ -330,74 +329,25 @@ fn build_text_job(
         base_style,
     } = typo;
     let base = span_format(theme, base_style, size, line_height);
-    let mut job = LayoutJob {
-        wrap: TextWrapping {
-            max_width: wrap_width.max(0.0),
-            ..Default::default()
-        },
-        ..Default::default()
+    // 样式闭包：行内样式 + （已勾选时的）完成态覆盖。
+    let style_of = |style: &str| {
+        let fmt = span_format(theme, style, size, line_height);
+        if done { done_overlay(theme, fmt) } else { fmt }
     };
-    let mut hits: Vec<SpanHit> = Vec::new();
-    let len = content.len();
-    let mut cursor = 0usize;
-    let mut char_cursor = 0usize;
-    if spans.is_empty() {
-        let mut fmt = base.clone();
-        if done {
-            fmt = done_overlay(theme, fmt);
+    // 文本改写：`math` 剥掉 `$` / `$$` 分隔符（它们是语法，不是内容），
+    // `footnote_ref` 把 `[^1]` 换成标号 `1`（否则正文里会以原始
+    // Markdown 形态显示 `[^1]`）。
+    let rewrite = |raw: &str, style: &str| -> String {
+        match style {
+            "math" => strip_math_delimiters(raw).to_string(),
+            "footnote_ref" => footnote_ref_mark(raw).to_string(),
+            _ => raw.to_string(),
         }
-        job.append(content, 0.0, fmt);
-    } else {
-        for (idx, span) in spans.iter().enumerate() {
-            // 越界 / 落在多字节字符中间的区间会被吸附或退化为空——跳过而不是崩。
-            let Some((start, end)) = clamp_to_char_boundaries(
-                content,
-                span.range.start.min(len),
-                span.range.end.min(len),
-            ) else {
-                continue;
-            };
-            let start = start.max(cursor);
-            let end = end.max(start);
-            if start > cursor {
-                let base_slice = &content[cursor..start];
-                job.append(base_slice, 0.0, base.clone());
-                char_cursor += base_slice.chars().count();
-            }
-            if end > start {
-                let mut fmt = span_format(theme, &span.style, size, line_height);
-                if done {
-                    fmt = done_overlay(theme, fmt);
-                }
-                // 行内公式剥掉 `$` / `$$` 分隔符：它们是语法，不是内容。
-                // 不剥的话预览里会显示成 `$E=mc^2$`，看起来像没解析成功。
-                // 脚注引用同理：`[^1]` 换成标号 `1`（上标小字 + 链接色），
-                // 否则正文里会以原始 Markdown 形态显示 `[^1]`。
-                let slice = match span.style.as_str() {
-                    "math" => strip_math_delimiters(&content[start..end]),
-                    "footnote_ref" => footnote_ref_mark(&content[start..end]),
-                    _ => &content[start..end],
-                };
-                let slice_chars = slice.chars().count();
-                job.append(slice, 0.0, fmt);
-                // 仅给需要交互的片段记命中区间（链接 / 脚注引用）。
-                if span.style == "link" || span.style == "footnote_ref" {
-                    hits.push(SpanHit {
-                        idx,
-                        c0: char_cursor,
-                        c1: char_cursor + slice_chars,
-                    });
-                }
-                char_cursor += slice_chars;
-            }
-            cursor = end.max(cursor);
-        }
-        if cursor < len {
-            let tail = &content[cursor..];
-            job.append(tail, 0.0, base.clone());
-        }
-    }
-    (job, hits)
+    };
+    let policy = SpanPolicy::cursor(base, wrap_width, style_of, Some(&rewrite));
+    build_job(theme, content, spans, &policy, |style| {
+        style == "link" || style == "footnote_ref"
+    })
 }
 
 // ============================================================================
@@ -672,7 +622,7 @@ fn render_with_math(
 }
 
 /// 给一个行内格式叠上「已完成」装饰（次级色 + 删除线）。
-fn done_overlay(theme: &Theme, mut fmt: TextFormat) -> TextFormat {
+pub(super) fn done_overlay(theme: &Theme, mut fmt: TextFormat) -> TextFormat {
     fmt.color = theme.text_secondary;
     fmt.strikethrough = Stroke::new(1.0_f32, theme.text_secondary);
     fmt

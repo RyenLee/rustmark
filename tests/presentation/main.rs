@@ -34,6 +34,8 @@ mod sidebar_toggle_test;
 mod sidebar_view_test;
 mod spell_menu_test;
 mod spell_squiggle_test;
+// R-10 对拍：统一构造器 vs 三套旧实现。
+mod span_job_parity_test;
 mod status_bar_view_test;
 mod tab_strip_test;
 mod textedit_cost_attribution_test;
