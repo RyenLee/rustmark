@@ -106,6 +106,41 @@ const SHARED_FORBIDDEN: &[&str] = &[
     "crate::presentation",
 ];
 
+/// 集成测试（`tests/**`）禁止的**库内部视角**前缀。
+///
+/// # 为什么测试不套用任何层的禁令
+///
+/// 测试是**消费者**，不是层：`tests/app/` 下的用例天然要同时看见四层
+/// （跨层断言只能放那儿），按 `tests/` 的目录名去套 `src/` 的层禁令
+/// 既不成立也会误判。
+///
+/// # 那这条规则拦什么
+///
+/// 拦「作者以为自己在 `src/` 里写代码」：`crate::` 在集成测试里指向的是
+/// **测试 crate 自身**，写 `use crate::domain::x::Y;` 说明心智模型错了，
+/// 正确写法是 `rustmark::domain::x::Y`（公开 API）。这类写法编译就过不了，
+/// 所以它不是「编译能过的偷看」，而是**从 `src/` 复制粘贴过来时**原样带
+/// 进来的坏味道——留着它，将来某天 `tests/support/` 里长出个同名模块
+/// 就会静默变成真的内部引用。
+///
+/// # 为什么不禁 `crate::support` 之类
+///
+/// `crate::support` / `crate::golden_fixture` 指向**测试自己的**共享模块
+/// （`tests/support/`、`tests/integration/golden_fixture.rs`），是集成测试
+/// 的正常组织方式。禁令只列**库层名**，天然放行它们。
+///
+/// 实测存量（2026-10-20）：`tests/` 下 `crate::<库层名>` 的真实引用为 **0**
+/// （`arch_violation_fixture.rs` 里出现的那些全是**字符串字面量**中的测试
+/// 数据，词法阶段即被剔除）。
+const TESTS_FORBIDDEN: &[&str] = &[
+    "crate::app",
+    "crate::domain",
+    "crate::application",
+    "crate::infrastructure",
+    "crate::shared",
+    "crate::presentation",
+];
+
 /// 定时任务「到期帧」预约的唯一出口（T11 / ADR-009）。
 ///
 /// # 为什么这是一条架构规则，而不是编码风格
@@ -153,6 +188,13 @@ enum Layer {
     App,
     /// 组合根之外的自由文件（`main.rs` / `lib.rs` / `bin/**`）：不受层级限制。
     Free,
+    /// 集成测试（`tests/**`）：**消费者**，不是层。
+    ///
+    /// 测试可以引用任何层的公开 API（`rustmark::domain::…`），但**不许**以
+    /// `crate::domain::…` 这种**库内部视角**书写——`crate::` 在集成测试里
+    /// 指的是**测试 crate 自身**，写 `crate::domain` 说明作者的心智模型是
+    /// 「我在 `src/` 里」，而那正是「绕过公开 API 偷看内部」的起点。
+    Tests,
     /// 未登记的顶层位置——**不是自由文件，是覆盖缺口**。
     ///
     /// `main.rs` / `lib.rs` / `bin/` 是约定好的自由位置；其它顶层名字
@@ -173,6 +215,7 @@ impl Layer {
             Layer::Shared => "shared",
             Layer::App => "app",
             Layer::Free => "free",
+            Layer::Tests => "tests",
             Layer::Unknown => "unknown",
         }
     }
@@ -240,6 +283,8 @@ fn forbidden_for(layer: Layer) -> Vec<&'static str> {
             v
         }
         Layer::Shared => SHARED_FORBIDDEN.to_vec(),
+        // 集成测试：只禁「库内部视角」，不套任何层的禁令（见 TESTS_FORBIDDEN）。
+        Layer::Tests => TESTS_FORBIDDEN.to_vec(),
         // 组合根 / 自由文件 / 未登记位置：没有可判的层禁令。
         // （Unknown 的「报未知层」在 `check_file` 里做——它要先于层禁令返回。）
         Layer::App | Layer::Free | Layer::Unknown => Vec::new(),
@@ -946,26 +991,77 @@ fn collect_rs_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
 }
 
 /// 扫描 `src_root` 下的全部 `.rs` 文件，返回违规列表（空表示通过）。
+///
+/// **签名保持不变**（`build.rs` 与 `check-arch` bin 之外的调用点、以及
+/// `tests/arch_violation_fixture.rs` 的既有用例都只用它）。要连 `tests/`
+/// 一起扫，用 [`scan_with_tests`]。
+///
+/// 之所以仍保留：`scan` 是「只扫 `src/`」这一口径的显式表达，fixture 的
+/// 「`scan` 不报、`scan_with_tests` 报」正是 R-02 验收判据的形状。
+#[allow(dead_code)]
 pub fn scan(src_root: &Path) -> Vec<Violation> {
+    scan_impl(src_root, None)
+}
+
+/// 扫描 `src_root` **与** `tests_root`，返回违规列表（空表示通过）。
+///
+/// # 两侧的层判定不同
+///
+/// - `src/` 走 [`layer_of`]（按目录判层，未知顶层名字报「未知层」）；
+/// - `tests/` 下**全部**文件统一判 [`Layer::Tests`]——测试是消费者不是层，
+///   且 `tests/` 的目录名（`tests/domain/`、`tests/presentation/`）是
+///   **测试目标的划分**，与 `src/` 的层毫无关系。若按目录名判层，
+///   `tests/presentation/main.rs` 会被套上表现层禁令，
+///   `tests/domain/main.rs` 会被套上领域层禁令——那是**误判**。
+///
+/// `tests/` 侧的文件在报告里带 `tests/` 前缀，与 `src/` 侧的可区分。
+pub fn scan_with_tests(src_root: &Path, tests_root: &Path) -> Vec<Violation> {
+    scan_impl(src_root, Some(tests_root))
+}
+
+fn scan_impl(src_root: &Path, tests_root: Option<&Path>) -> Vec<Violation> {
     let registry = load_registry(src_root);
+    let mut violations = Vec::new();
+
     let mut files = Vec::new();
     collect_rs_files(src_root, &mut files);
     files.sort();
 
-    let mut violations = Vec::new();
-    for path in files {
+    for path in &files {
         let rel = path
             .strip_prefix(src_root)
-            .unwrap_or(&path)
+            .unwrap_or(path)
             .to_string_lossy()
             .replace('\\', "/");
         let layer = layer_of(&rel);
-        let Ok(content) = fs::read_to_string(&path) else {
+        let Ok(content) = fs::read_to_string(path) else {
             continue;
         };
         let lexed = Lexer::new(&content).run();
         violations.extend(check_file(&rel, layer, &lexed, &registry));
     }
+
+    if let Some(tests_root) = tests_root {
+        let mut test_files = Vec::new();
+        collect_rs_files(tests_root, &mut test_files);
+        test_files.sort();
+        for path in &test_files {
+            let rel = path
+                .strip_prefix(tests_root)
+                .unwrap_or(path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            // 带 `tests/` 前缀：报告里一眼能看出违规在测试侧，
+            // 且不会与 `src/presentation/…` 之类的同名路径混淆。
+            let rel = format!("tests/{rel}");
+            let Ok(content) = fs::read_to_string(path) else {
+                continue;
+            };
+            let lexed = Lexer::new(&content).run();
+            violations.extend(check_file(&rel, Layer::Tests, &lexed, &registry));
+        }
+    }
+
     violations
 }
 
@@ -1067,7 +1163,11 @@ fn check_file(rel: &str, layer: Layer, lexed: &Lexed, registry: &Registry) -> Ve
                     used_allow[idx] = true;
                 }
                 None => {
-                    let reason = if layer == Layer::PresentationState
+                    let reason = if layer == Layer::Tests {
+                        "（集成测试是消费者不是层：引用库请写公开 API `rustmark::…`；\
+                         `crate::` 在测试里指向测试 crate 自身，写 `crate::<层名>` \
+                         说明是从 src/ 复制粘贴过来的库内部视角）"
+                    } else if layer == Layer::PresentationState
                         && PRESENTATION_STATE_FORBIDDEN.contains(&cand.banned)
                     {
                         "（UI State 只放视图状态：开关 / 滚动 / 焦点 / 临时输入；\

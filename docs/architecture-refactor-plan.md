@@ -422,6 +422,61 @@ UI 选格式 ──► ExportFormat（领域唯一枚举）
   - `cargo run --bin check-arch` 仍 OK；
   - 记录构建期耗时的前后对比数字（`cargo build` 的 `Finished in` 时间，取 3 次中位数）。
 
+##### R-02 实施结果（2026-10-20）
+
+- **新增 `scan_with_tests(src_root, tests_root)`**，`scan(src_root)` 签名保持不变
+  （方案原文要求）。两者共用 `scan_impl(src_root, Option<&Path>)`。
+- **`tests/` 侧层判定统一为 `Layer::Tests`**（新增变体），不按目录名判层：
+  `tests/domain/`、`tests/presentation/` 是**测试目标的划分**，与 `src/` 的层
+  毫无关系。若按目录名判层，`tests/presentation/main.rs` 会被套上表现层禁令、
+  `tests/domain/main.rs` 会被套上领域层禁令——那是**误判**。
+- **`TESTS_FORBIDDEN` 只列库层名**（`crate::app` / `domain` / `application` /
+  `infrastructure` / `shared` / `presentation`），天然放行 `crate::support` /
+  `crate::golden_fixture` 这类**测试自身**的共享模块——那是集成测试的正常组织
+  方式（全仓 243 处 `crate::support::…`）。若误改成禁整个 `crate::`，
+  243 处会同时误报，用例 `tests_may_reference_their_own_support_modules` 当场红。
+- **报告里 `tests/` 侧文件带 `tests/` 前缀**：与 `src/presentation/…` 等同名路径
+  可区分（否则两个 `presentation/main.rs` 在报告里无法分辨）。
+- **与层无关的通用规则照样罩住 `tests/`**：帧预约唯一出口（T11 / ADR-009）
+  在测试侧同样生效——用例 `repaint_rule_still_applies_inside_tests` 钉住。
+
+**新增守卫 8 例**（fixture 63 → 71 条）：
+
+| 用例 | 钉住什么 |
+|---|---|
+| `tests_directory_has_no_violations` | 存量守卫：真实工程连 `tests/` 一起扫必须干净 |
+| `injected_crate_layer_path_in_tests_is_detected` | **方案点名判据**：`scan` 不报、`scan_with_tests` 报（两个入口都断言） |
+| `tests_may_reference_their_own_support_modules` | `crate::support` / `crate::golden_fixture` 放行 |
+| `every_library_layer_name_is_forbidden_in_tests` | 六个库层名逐一拦（名单漏一项不报错、没人注意） |
+| `the_narrow_allow_prefix_does_not_apply_to_tests` | 表现层的 `crate::app::frame` 窄豁免**不**外溢到测试侧 |
+| `qualified_path_outside_use_is_detected_in_tests` | 非 `use` 位置的限定路径同样拦（R-01 词法能力对测试侧成立） |
+| `crate_layer_paths_inside_strings_and_comments_are_not_violations_in_tests` | 字符串/注释里的路径不是依赖（fixture 自身 41 处字符串即试金石） |
+| `repaint_rule_still_applies_inside_tests` | 帧预约规则不因测试豁免 |
+
+**变异验证 6 轮，全部捕获**（脚本 `tools/mut_arch_r02.py`，从干净基准重新生成 +
+编译失败单独识别）：
+
+| 变异 | 结果 |
+|---|---|
+| `TESTS_FORBIDDEN` 清空（tests/ 名义纳入实际不拦） | 捕获 |
+| 名单漏掉 `crate::app` | 捕获 |
+| `scan_with_tests` 退化成 `scan` | 捕获 |
+| tests 侧文件不带 `tests/` 前缀 | 捕获 |
+| Tests 层文案不给正确写法（`rustmark::…`） | 捕获 |
+| 表现层窄豁免前缀扩到 Tests 层 | 捕获 |
+
+**构建期耗时**（`cargo build` 的 `Finished in`，各 3 次取中位数；
+每轮先 `touch src/lib.rs` 强制重跑 build script，否则测不到扫描）：
+
+- 纳入前中位数 **5.84s**；纳入后中位数 **6.11s**；差值 **+0.27s（+4.6%）**。
+- 方案原文预估「扫描量增加约 35%」（指**扫描量**，非总构建耗时）——
+  实测扫描量增幅符合预期，但摊到总构建耗时上只有 4.6%。
+
+**存量摸查结论**（动手前实测，非推断）：`tests/` 下 `crate::<库层名>` 的
+**真实引用为 0**——`grep` 命中的 2 处全在文档注释里（`//!`），
+`arch_violation_fixture.rs` 里的 41 处全在字符串字面量中（词法阶段剔除）。
+故「直接纳入并失败」不会误报，无需「只报告不失败」过渡。
+
 #### R-03 · `shared/system.rs` 端口化
 
 - **改造内容**：
@@ -1224,6 +1279,9 @@ UI 选格式 ──► ExportFormat（领域唯一枚举）
   - `tests/` 注入违规能被检出；
   - `grep -rn "std::process" src/shared/` → 0；
   - `cargo run --bin check-arch` → OK。
+- **进度**：R-01 ✅（`96bb76b` + 收尾 `9d20c01`）｜R-02 ✅（2026-10-20，
+  新增 `scan_with_tests` + 8 例 + 变异 6 轮全捕获，构建耗时 +4.6%）｜
+  R-03 ⬜｜R-13 ⬜。
 
 **M4 · 用户可见缺口（3 人日）**
 
@@ -1270,7 +1328,7 @@ UI 选格式 ──► ExportFormat（领域唯一枚举）
 | M2 | R-09 | 2026-10-20 | 2026-10-20 | **1927** / 4 / OK | `b1f951b`；主题种类收敛为唯一真源 `shared::theme`（**偏离原文**，理由见 §4.2 R-09「实施偏差」）；**六份**副本全部收敛（原文只提到三份）；**修掉 `refresh_system_theme` 恒提前返回**（跟随系统时系统外观变化不刷新）+ 契约值硬编码 3 处；新增 18 例；变异验证 2 轮（`as_str` 写错 → 2 例红 / 注入同构枚举 → 守卫红） |
 | M2 | R-10 | 2026-10-20 | 2026-10-20 | **1979** / 4 / OK | `7f96b55` + `ec8926a`（拆 2 commit）；三套 span→`LayoutJob` 实现收敛为 `mapper::span_job::build_job`（差异由 `SpanPolicy` 显式参数化）；两张样式表合并为一份派发 `StyleSemantics::of`（**偏离原文**：字面「并表」会破坏字号/字体族/行高的刻意差异，改为「派发合并、度量分离」）；**修掉代码块同一行两种字号 + 重叠 span 文本重复**（8 字符 → 10/13 字符）两个真实缺陷；新增 21 例（对拍 13 + 行内 4 + 样式表 3 + 真帧 1）+ 变异验证 **19 轮**（详见 §4.2 R-10「实施结果」「实施偏差」） |
 | M3 | R-01 | 2026-10-20 | 2026-10-20 | **1958** / 4 / OK | **提前至 M2 期间实施**（R-10 被打断时插入）；判定由「行首 `use `」重写为**词法 + use-tree 展开**；实测额外发现并修掉 8 类漏检 + 3 处实现缺陷；`crate::app` 禁令改为**更窄豁免前缀**（表现层放行 `crate::app::frame`，54 个文件依赖它）；豁免机制加**登记表**校验（未登记/过时均报错）；**规则真源由 `.agent/architecture.md` 迁入 `docs/architecture-constraints.md`**（`.agent/` 整目录不入库 → CI 上豁免机制死锁）；删死代码 `signature()`/`file_stamp()`；报告格式收敛到单一来源 `format_report`；用例 13 → **45** 条；变异验证 **10 轮**（详见 §4.1 R-01「实施结果」） |
-| M3 | R-02 | | | | |
+| M3 | R-02 | 2026-10-20 | 2026-10-20 | **2005** / 4 / OK | 新增 `scan_with_tests`，`scan` 签名不变；`tests/` 侧统一判 `Layer::Tests`（**不按目录名判层**——`tests/domain/` 是测试目标划分不是层，按名判会误套禁令）；`TESTS_FORBIDDEN` 只列库层名，放行 `crate::support`（243 处）；报告带 `tests/` 前缀；帧预约规则照样罩住测试侧；新增 8 例 + 变异验证 **6 轮全捕获**；构建耗时 +0.27s（+4.6%，方案预估的 35% 指扫描量非总耗时）；存量实测 `crate::<库层名>` 真实引用 = 0（命中全在注释/字符串里） |
 | M3 | R-03 | | | | |
 | M3 | R-13 | | | | |
 | M4 | R-04 | | | | |

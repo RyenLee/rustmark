@@ -85,6 +85,278 @@ fn ui_state_modules_import_no_domain_document() {
 }
 
 // ============================================================================
+// 一之补、R-02：`tests/` 纳入扫描
+// ============================================================================
+
+/// 真实工程连 `tests/` 一起扫也必须干净（R-02 的存量守卫）。
+///
+/// # 为什么单独一条
+///
+/// `current_project_has_no_violations` 只扫 `src/`。R-02 把 `tests/` 纳进
+/// 扫描范围后，**存量是否干净必须单独守**——否则将来有人在 `tests/` 写下
+/// 库内部视角的引用，没有任何一条用例会红。
+#[test]
+fn tests_directory_has_no_violations() {
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let violations = arch_check::scan_with_tests(&manifest.join("src"), &manifest.join("tests"));
+    assert!(
+        violations.is_empty(),
+        "连 tests/ 一起扫也不应有违规，实际：{:?}",
+        described(&violations)
+    );
+}
+
+/// **R-02 的点名判据**：`tests/` 里注入 `use crate::domain::x::Y;`
+/// → `scan_with_tests` 必须报，而 `scan` 不报。
+///
+/// # 为什么两个都要断言
+///
+/// 只断言「`scan_with_tests` 报」不够：那可能是 `scan` 自己就误报了
+/// （比如把 `tests/` 也当 src 扫了）。`scan` 不报这条断言钉住「两个入口
+/// 的范围差异」正是 R-02 引入的那个参数，而不是别处行为变化。
+#[test]
+fn injected_crate_layer_path_in_tests_is_detected() {
+    let dir = tempfile::tempdir().unwrap();
+    let src_root = dir.path().join("src");
+    let tests_root = dir.path().join("tests");
+    write_fixture(&src_root, "lib.rs", "//! x\n");
+    write_fixture(
+        &tests_root,
+        "domain/main.rs",
+        "//! x\nuse crate::domain::x::Y;\n",
+    );
+
+    let src_only = arch_check::scan(&src_root);
+    assert!(
+        src_only.is_empty(),
+        "scan 只扫 src/，不应看到 tests/ 的违规，实际：{:?}",
+        described(&src_only)
+    );
+
+    let with_tests = arch_check::scan_with_tests(&src_root, &tests_root);
+    assert_eq!(
+        with_tests.len(),
+        1,
+        "scan_with_tests 应检出 tests/ 里那一处，实际：{:?}",
+        described(&with_tests)
+    );
+    let v = &with_tests[0];
+    assert!(v.file.starts_with("tests/"), "文件应带 tests/ 前缀：{v:?}");
+    assert!(v.file.ends_with("domain/main.rs"), "文件路径不对：{v:?}");
+    assert_eq!(v.line, 2, "应报告具体行号：{v:?}");
+    assert!(
+        v.detail.contains("crate::domain"),
+        "文案应点名禁用的前缀：{v:?}"
+    );
+    // 文案要能指认「这是库内部视角」——否则读者不知道正确写法是什么。
+    assert!(
+        v.detail.contains("rustmark::"),
+        "文案应给出正确写法（公开 API rustmark::…）：{v:?}"
+    );
+}
+
+/// 测试**自身**的共享模块必须放行（`tests/support/` 的组织方式）。
+///
+/// # 为什么这条是关键护栏
+///
+/// `TESTS_FORBIDDEN` 只列库层名（`crate::domain` / `crate::app` / …），
+/// 天然放行 `crate::support` / `crate::golden_fixture` 这类**测试自己**的
+/// 模块。若哪天有人「图省事」把名单改成禁整个 `crate::`，
+/// 全仓 243 处 `crate::support::…` 会同时误报——这条用例当场红。
+#[test]
+fn tests_may_reference_their_own_support_modules() {
+    let dir = tempfile::tempdir().unwrap();
+    let src_root = dir.path().join("src");
+    let tests_root = dir.path().join("tests");
+    write_fixture(&src_root, "lib.rs", "//! x\n");
+    write_fixture(
+        &tests_root,
+        "app/save_all_test.rs",
+        "//! x\nuse crate::support::fake_dialog::FakeDialog;\n\
+         use crate::golden_fixture::load_or_generate_large;\n",
+    );
+
+    let violations = arch_check::scan_with_tests(&src_root, &tests_root);
+    assert!(
+        violations.is_empty(),
+        "测试自身的 support / fixture 模块不是库内部视角，应放行。实际：{:?}",
+        described(&violations)
+    );
+}
+
+/// `tests/` 下**每个**库层名都要拦（不是只拦 `domain`）。
+///
+/// 名单漏一项的后果是「只有 `domain` 被守，其它五个库层名在测试侧
+/// 畅通无阻」——而这种放宽不产生编译错误、也没人会注意到。
+#[test]
+fn every_library_layer_name_is_forbidden_in_tests() {
+    let dir = tempfile::tempdir().unwrap();
+    let src_root = dir.path().join("src");
+    let tests_root = dir.path().join("tests");
+    write_fixture(&src_root, "lib.rs", "//! x\n");
+    let banned = [
+        "crate::app",
+        "crate::domain",
+        "crate::application",
+        "crate::infrastructure",
+        "crate::shared",
+        "crate::presentation",
+    ];
+    for (i, prefix) in banned.iter().enumerate() {
+        write_fixture(
+            &tests_root,
+            &format!("app/case_{i}.rs"),
+            &format!("//! x\nuse {prefix}::x::Y;\n"),
+        );
+    }
+
+    let violations = arch_check::scan_with_tests(&src_root, &tests_root);
+    assert_eq!(
+        violations.len(),
+        banned.len(),
+        "{} 个库层名应全部报出，实际：{:?}",
+        banned.len(),
+        described(&violations)
+    );
+    for (prefix, v) in banned.iter().zip(&violations) {
+        assert!(v.detail.contains(prefix), "应报 {prefix}，实际报的是 {v:?}");
+    }
+}
+
+/// 表现层的「更窄豁免前缀」**不**适用于 `tests/` 侧。
+///
+/// # 为什么单独一条
+///
+/// `allowed_for` 给表现层放了 `crate::app::frame`（54 个文件依赖它，
+/// 见 `tools/arch_check.rs` 的说明）。若哪天有人把 `Layer::Tests` 并进
+/// 那个 `match` 分支（「测试也要用 EditorApp 嘛」），`crate::app::frame`
+/// 在测试侧就会被放行——而那正是「测试绕进组合根私事」的口子。
+/// 变异验证钉住这一条：把 `Layer::Tests` 并进豁免分支 → 本用例红。
+#[test]
+fn the_narrow_allow_prefix_does_not_apply_to_tests() {
+    let dir = tempfile::tempdir().unwrap();
+    let src_root = dir.path().join("src");
+    let tests_root = dir.path().join("tests");
+    write_fixture(&src_root, "lib.rs", "//! x\n");
+    write_fixture(
+        &tests_root,
+        "app/frame_test.rs",
+        "//! x\nuse crate::app::frame::EditorApp;\n",
+    );
+
+    let violations = arch_check::scan_with_tests(&src_root, &tests_root);
+    assert_eq!(
+        violations.len(),
+        1,
+        "crate::app::frame 的豁免只属于表现层，测试侧不放行。实际：{:?}",
+        described(&violations)
+    );
+    assert!(
+        violations[0].detail.contains("crate::app"),
+        "{:?}",
+        violations[0]
+    );
+}
+
+/// `tests/` 下**非 `use` 位置**的限定路径也要拦。///
+/// 词法级判定的既有能力（R-01 重写后 `fn f(d: crate::domain::x::Y)`
+/// 在 `src/` 里会被报）必须对测试侧同样成立——否则测试侧就是
+/// 「只在 `use` 那一行守」的半套规则。
+#[test]
+fn qualified_path_outside_use_is_detected_in_tests() {
+    let dir = tempfile::tempdir().unwrap();
+    let src_root = dir.path().join("src");
+    let tests_root = dir.path().join("tests");
+    write_fixture(&src_root, "lib.rs", "//! x\n");
+    write_fixture(
+        &tests_root,
+        "app/qualified_test.rs",
+        "//! x\nfn f(d: crate::domain::x::Y) {}\n",
+    );
+
+    let violations = arch_check::scan_with_tests(&src_root, &tests_root);
+    assert_eq!(
+        violations.len(),
+        1,
+        "非 use 位置的限定路径也应被检出，实际：{:?}",
+        described(&violations)
+    );
+    assert!(
+        violations[0].detail.contains("crate::domain"),
+        "{:?}",
+        violations[0]
+    );
+}
+
+/// `tests/` 下的字符串字面量与注释里的 `crate::domain` **不是**违规。
+///
+/// # 为什么必须单独一条
+///
+/// `tests/arch_violation_fixture.rs` 自己就有 41 处 `crate::…`，
+/// 全部在**字符串字面量**里（本文件注入用的测试数据）。词法阶段剔除
+/// 字符串/注释是 R-01 的能力，但「tests/ 纳入扫描」让这条能力第一次
+/// 在真实工程里被大规模检验——fixture 文件自身就是最大的那块试金石。
+/// 若这条红了，说明词法对测试侧失效，全仓测试会同时挂。
+#[test]
+fn crate_layer_paths_inside_strings_and_comments_are_not_violations_in_tests() {
+    let dir = tempfile::tempdir().unwrap();
+    let src_root = dir.path().join("src");
+    let tests_root = dir.path().join("tests");
+    write_fixture(&src_root, "lib.rs", "//! x\n");
+    write_fixture(
+        &tests_root,
+        "app/literals_test.rs",
+        "//! 文档注释里提一句 crate::domain 不算引用\n\
+         fn f() {\n    \
+         let s = \"use crate::domain::x::Y;\";\n    \
+         let t = \"// use crate::app::bootstrap::X\";\n\
+         }\n",
+    );
+
+    let violations = arch_check::scan_with_tests(&src_root, &tests_root);
+    assert!(
+        violations.is_empty(),
+        "字符串与注释里的路径不是依赖，应放行。实际：{:?}",
+        described(&violations)
+    );
+}
+
+/// `tests/` 下的帧预约规则**依然生效**（T11 / ADR-009 不因测试而豁免）。
+///
+/// # 为什么测试也要守
+///
+/// 帧预约唯一出口是与层无关的通用规则（记忆里「对**所有**文件生效，
+/// 含组合根」）。测试里直接写 `request_repaint_after` 一样会造出
+/// 「看起来在测、其实绕过 scheduler」的假绿。实测 `tests/` 下该标识符
+/// 只出现在 fixture 的字符串字面量里，故存量干净。
+#[test]
+fn repaint_rule_still_applies_inside_tests() {
+    let dir = tempfile::tempdir().unwrap();
+    let src_root = dir.path().join("src");
+    let tests_root = dir.path().join("tests");
+    write_fixture(&src_root, "lib.rs", "//! x\n");
+    write_fixture(
+        &tests_root,
+        "app/frame_test.rs",
+        "//! x\nfn f(ctx: &egui::Context) {\n    \
+         ctx.request_repaint_after(std::time::Duration::from_millis(10));\n}\n",
+    );
+
+    let violations = arch_check::scan_with_tests(&src_root, &tests_root);
+    assert_eq!(
+        violations.len(),
+        1,
+        "tests/ 下的直接预约同样应被拦，实际：{:?}",
+        described(&violations)
+    );
+    assert!(
+        violations[0].detail.contains("request_repaint_after"),
+        "{:?}",
+        violations[0]
+    );
+}
+
+// ============================================================================
 // 二、注入必报：use 声明的各种逃逸形状
 // ============================================================================
 
