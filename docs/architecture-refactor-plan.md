@@ -268,8 +268,8 @@ presentation::views::preview_view  调 opener.open(url)
 | `shared::system` | 直接 spawn 进程 | 只定义 `ExternalOpener` trait | R-03 |
 | `app::frame::EditorApp` | 42 字段 / 183 方法，视图可直写其状态 | 42 字段不变，但**所有 UI state 字段的写入口收敛为方法** | R-11 |
 | `app::frame::actions` | 路由表 + UI 状态初始化混做 | 路由表**只做路由**；状态初始化下沉到对应 `app/frame/*` 模块 | R-11 / R-04 |
-| `domain::export::ExportFormat` | 领域枚举 | **唯一**格式真源；新增 `from_str` 穷举实现 | R-07 |
-| `presentation::state::export_ui_state::ExportFormatChoice` | 与领域枚举同构的第二套枚举 | **删除**；UI 侧改用领域枚举 + 单独的 `pdf_caveat` 等 UI 专属数据 | R-07 |
+| `shared::export_format::ExportFormat` | 领域枚举（`domain::export::value_objects` 转出） | **唯一**格式真源（落在 `shared`，三方共同可达）；新增 `parse` 穷举实现 | R-07 |
+| `presentation::state::export_ui_state::ExportFormatChoice` | 与领域枚举同构的第二套枚举 | **已删除**；UI 侧改用真源枚举 + `format_hints` 独立函数表（`pdf_caveat` 等 UI 专属数据） | R-07 |
 | `presentation::theme::mapper` | 样式 → `FontId`/颜色映射 | **唯一**样式真源；`preview_view/inline.rs` 的 `span_format` 并入 | R-10 |
 | `presentation::theme::mapper::highlight_layout` | 排版 + span 应用 | 抽出**唯一** span→`LayoutJob` 构造器，`code.rs` / `inline.rs` 改调它 | R-10 |
 | `application::shortcuts` | 领域 `ActionId` + 默认键位表 | 默认键位表**唯一一份**（领域侧），表现层读取 | R-08 |
@@ -427,6 +427,9 @@ UI 选格式 ──► ExportFormat（领域唯一枚举）
 
 #### R-07 · 导出格式双枚举收敛
 
+> **已落地（2026-10-20，commit `bbcbe20`）**。落地形态与原文有 5 处偏差，
+> 原因与实测证据见本节末尾的「实施偏差」小节；**原文保留**以便对照。
+
 - **改造内容**：
   1. `src/domain/export/value_objects.rs`：给 `ExportFormat` 增加
      ```rust
@@ -439,6 +442,8 @@ UI 选格式 ──► ExportFormat（领域唯一枚举）
   4. `PageSizeChoice`（`choices.rs:109`）同理处理。
 - **涉及文件**：`src/domain/export/value_objects.rs`、`src/application/export/service.rs`、`src/presentation/state/export_ui_state/choices.rs`（大幅缩减或删除）、`src/presentation/state/export_ui_state.rs`、`src/presentation/views/export_view.rs`（消费点）、`src/infrastructure/export/routing_exporter.rs`（确认穷举 ✓）
 - **影响范围**：导出格式的**唯一真源**从 2 个降为 1 个；「新增一种导出格式」的改动点从 6 处降到 **3 处**（领域枚举 + `from_str` + 路由 match），且全部编译期暴露。
+  - **实测（2026-10-20）**：真源落到 `shared` 后，「新增一种导出格式」的实际改动点是 **2 处**：① `shared/export_format.rs`（加变体 → `as_str` / `aliases` 的穷举 match **编译失败** → 补分支 → 登记进 `ALL`）；② `infrastructure/export/routing_exporter.rs` 的路由 `match`（同样靠穷举 match 编译期暴露）。对话框单选组、提交 id、扩展名、领域校验**全部自动派生**，无需改动。
+  - **残留的运行期漏洞（已用测试堵住）**：`ALL` 是手写清单——「加了变体但忘登记进 `ALL`」时该格式解析不出来且无人报错。由 `export_format_all_has_exactly_four_entries` 断言 `ALL.len() == 4` 把它变成一条必改的红线。
 - **依赖关系**：无前置。**R-12 的规则若覆盖「同一概念的双枚举」，本项是第一个被检出的**。
 - **风险点**：
   - `ExportFormatChoice` 被 `export_view.rs` 多处消费（`choices.rs` 里的 `ALL` 是选择器数据源）→ 删除后要重建数据源，**改错会导致下拉框少一项或顺序变**；
@@ -448,6 +453,38 @@ UI 选格式 ──► ExportFormat（领域唯一枚举）
   - 新增用例：`export_format_from_str_is_exhaustive`（对 `ExportFormat::all()` 逐个断言 `from_str` 能反解；**再加一条编译期断言**：故意漏一个变体时编译失败——用 `const _: () = assert!(...)` 形式做不到，改用「`all()` 与 `from_str` 的 match 分支数一致」在测试里断言 `all().len() == 4`）；
   - `grep -c "pub enum ExportFormatChoice" src/` → **0**；
   - 变异验证：把 `from_str` 的一个分支删掉 → 用例红。
+
+- **实施偏差（2026-10-20 落地时确认，commit `bbcbe20`）**：
+  1. **唯一真源落在 `shared::export_format`，不是 `domain`**。原文第 3 条
+     说「UI 侧改为直接使用领域 `ExportFormat`」，但这与
+     `tools/arch_check.rs` 的 `PRESENTATION_FORBIDDEN = ["crate::domain", "crate::infrastructure"]`
+     **直接冲突**——照原文做，`check-arch` 立刻变红。
+     导出格式被**三方**需要（领域：任务选项校验；表现：对话框单选组与提交 id；
+     基础设施：导出器路由），而 `.agent/architecture.md` §4 规定
+     表现层不得依赖 `domain`、基础设施层不得依赖 `application`——
+     **三方共同的依赖点只有 `shared`**。
+     故真源下沉 `shared::export_format`，`domain::export::value_objects`
+     以 `pub use` 转出（公开路径 `domain::export::value_objects::ExportFormat`
+     不变，测试与外部调用零改动）。
+     先例：`shared::path::FilePath`（四层共用）、`shared::text_format`
+     （三方共用的唯一出处）。
+  2. **方法名 `from_str` → `parse`**。clippy 的 `should_implement_trait`
+     拒绝「同名 inherent 方法」与 `std::str::FromStr` trait 方法并存
+     （`-D warnings` 下红）。最终形态：inherent `parse`（返回 `Option`，
+     用于「认不出就当没给」）+ trait `from_str`（返回 `Result`，
+     用于 `str::parse` 惯用写法）**并存**，不靠 `#[allow]` 压制。
+  3. **`all()` → `ALL` 常量 + `as_str()`**（对齐本工程既有命名）。
+     「漏加变体编译失败」这一验收点由 `as_str` / `aliases` 的**穷举 match**
+     承担；「`ALL` 与解析分支一致」由用例 `export_format_all_has_exactly_four_entries`
+     断言 `ALL.len() == 4` 承担（原文已指出 `const _: () = assert!(...)` 形式做不到，
+     改用测试断言——本次沿用该思路）。
+  4. **变异验证的形态变了**：原文是「删掉 `from_str` 的一个分支」，
+     但实现上 `parse` 遍历 `ALL` 而非手写分支，故不存在可删的分支。
+     实际变异点改为「从 `ALL` 里删掉一个变体」→ 实测 **2 条用例变红**
+     （清单长度断言 + 历史别名解析），判据有牙齿。
+  5. **附带发现并修掉的硬编码**：`app/frame/capture.rs` 的两处
+     `format: "image"` / `page_size: "a4"` 是绕过真源的另一条路，
+     已改走 `ExportFormat::Image.as_str()` / `PageSize::A4.as_str()`。
 
 #### R-08 · `persisted_key` 穷举 + 默认键位表合一
 
@@ -811,7 +848,7 @@ UI 选格式 ──► ExportFormat（领域唯一枚举）
   先统一构造器、后合并样式表）。
 - 交付物：4 个改造项共 5 个 commit；4 条「新增 X 只改 N 处」的用例。
 - 验收（**每项独立**）：
-  - R-07：`grep -c "pub enum ExportFormatChoice" src/` → 0；`from_str` 穷举用例通过；
+  - R-07：`grep -c "pub enum ExportFormatChoice" src/` → 0 ✅ **已达成**（`bbcbe20`；`parse` 穷举用例通过；新增源码级守卫「导出格式只有一处定义」+ 3 轮变异验证）；
   - R-08①：`grep "_ => return None" src/presentation/shortcuts/registry/action/impls.rs` → 0；
   - R-09：`ThemeKind::from_str(as_str()) == self` 用例通过（**同时守住持久化兼容**）；
   - R-10：编辑区与预览区**同段代码的语法色逐 span 相同**（真帧对拍）。
@@ -869,7 +906,7 @@ UI 选格式 ──► ExportFormat（领域唯一枚举）
 | M1 | R-16 | 2026-10-20 | 2026-10-20 | **1871** / 4 / OK | `bbb9a12`；**发现方案漏网的第三处硬编码**（侧栏新建预填名）；源码级守卫 + 2 轮变异验证 |
 | M1 | R-15 | 2026-10-20 | 2026-10-20 | **1879** / 4 / OK | `e9dce13`；**修 Windows 路径显示 bug**（9 处收敛）；小项 3「方案判断不成立」未做并如实记录 |
 | M1 | R-18（部分） | 2026-10-20 | 2026-10-20 | **1879** / 4 / OK | `38a819d`；第 1/2/4/5/6/7/8/9/10/11 条已做；第 3 条（ADR 索引补 010/011）**待 R-19** |
-| M2 | R-07 | | | | |
+| M2 | R-07 | 2026-10-20 | 2026-10-20 | **1896** / 4 / OK | `bbcbe20`；唯一真源下沉 `shared::export_format`（**偏离原文**，理由见 §4.2 R-07「实施偏差」）；新增 17 例；变异验证：从 `ALL` 删 `Image` → 2 例红 |
 | M2 | R-08① | | | | |
 | M2 | R-09 | | | | |
 | M2 | R-10 | | | | |
