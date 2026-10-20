@@ -99,7 +99,7 @@ pub(super) fn draw_spell_menu(app: &mut EditorApp, ctx: &Context, theme: &Theme)
     let stale = app.editor_text.get(menu.byte_start..menu.byte_end) != Some(menu.word.as_str());
     let escaped = ctx.input(|i| i.key_pressed(egui::Key::Escape));
     if stale || escaped {
-        app.editor.spell_menu = None;
+        app.close_spell_menu();
         return;
     }
 
@@ -130,6 +130,6 @@ pub(super) fn draw_spell_menu(app: &mut EditorApp, ctx: &Context, theme: &Theme)
     if let Some(replacement) = picked {
         let (start, end) = (menu.byte_start, menu.byte_end);
         let _ = app.replace_spelling(start, end, &replacement);
-        app.editor.spell_menu = None;
+        app.close_spell_menu();
     }
 }

@@ -342,8 +342,7 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
                 if let Some(range) = editor.cursor_range {
                     let c = editor_ops::char_to_byte(&app.editor_text, range.primary.index.0);
                     let a = editor_ops::char_to_byte(&app.editor_text, range.secondary.index.0);
-                    app.editor.cursor = c;
-                    app.editor.anchor = Some(a);
+                    app.set_editor_selection(c, Some(a));
                 }
 
                 // 5) 文本顶端偏移：Galley 坐标系 → 滚动内容坐标系。
@@ -410,13 +409,13 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
                 //    左键点进编辑区一律关菜单：那表示用户要继续打字，
                 //    一个浮在正文上的菜单只会挡住他要看的那行。
                 if editor.response.clicked() {
-                    app.editor.spell_menu = None;
+                    app.close_spell_menu();
                 }
                 if editor.response.secondary_clicked() {
                     let opened = editor.response.interact_pointer_pos().and_then(|pointer| {
                         spell::spell_menu_for(app, &editor.galley, editor.galley_pos, pointer)
                     });
-                    app.editor.spell_menu = opened;
+                    app.set_spell_menu(opened);
                 }
             });
         });
@@ -425,7 +424,7 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
         spell::draw_spell_menu(app, &ctx, &theme);
     }
 
-    app.editor.scroll_y = out.state.clamped_offset().y;
+    app.set_editor_scroll_y(out.state.clamped_offset().y);
     app.ui
         .sync
         .set_geometry(Side::Editor, out.content_size.y, out.inner_rect.height());

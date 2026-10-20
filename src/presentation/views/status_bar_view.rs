@@ -353,8 +353,8 @@ fn run_intent(app: &mut EditorApp, intent: IntentKind, now_ms: u64) {
             Ok(()) => app.status_bar.notice("已保存", now_ms),
             Err(e) => app.status_bar.error(format!("保存失败：{e}"), now_ms),
         },
-        IntentKind::Spell => app.editor.spell_check = !app.editor.spell_check,
-        IntentKind::Wrap => app.editor.word_wrap = !app.editor.word_wrap,
+        IntentKind::Spell => app.toggle_spell_check(),
+        IntentKind::Wrap => app.toggle_word_wrap(),
         IntentKind::Theme => app.execute(UiAction::ToggleTheme),
         IntentKind::Stats => app.execute(UiAction::DocumentStats),
     }

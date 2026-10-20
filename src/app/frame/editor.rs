@@ -1,5 +1,6 @@
 //! 编辑器内部操作：行列换算、编辑同步、格式变换。
 use super::*;
+use crate::presentation::state::editor_ui_state::SpellSuggestMenu;
 
 mod ime;
 
@@ -547,5 +548,53 @@ impl EditorApp {
     /// 是界面闪烁的上游原因（见 [`Self::flush_edit`]）。
     pub fn pending_cursor_for_diag(&self) -> Option<(usize, usize)> {
         self.pending_cursor
+    }
+}
+
+// ————————————————————————————————————————————————————————————
+// R-11 子批 3（editor 组）：编辑区 UI 状态的写入口
+// ————————————————————————————————————————————————————————————
+//
+// 表现层不再直写 `app.editor.*`，与 `frame::export` / `frame::diff` 同构。
+// 每个方法只对应原先的一处直写，不顺手重构选项的组织方式。
+
+impl EditorApp {
+    /// 记下 egui 报上来的光标 / 选区（**已**从字符索引换算成字节偏移）。
+    ///
+    /// 两者总是一起来：只写光标会留下过期的锚点，下一次拖拽选区会
+    /// 从旧锚点算起。
+    pub fn set_editor_selection(&mut self, cursor: usize, anchor: Option<usize>) {
+        self.editor.cursor = cursor;
+        self.editor.anchor = anchor;
+    }
+
+    /// 关闭「你可能想输入」菜单。
+    pub fn close_spell_menu(&mut self) {
+        self.editor.spell_menu = None;
+    }
+
+    /// 右键落在错词上时开菜单；传 `None` 等同关闭。
+    pub fn set_spell_menu(&mut self, menu: Option<SpellSuggestMenu>) {
+        self.editor.spell_menu = menu;
+    }
+
+    /// 记下编辑区的滚动偏移（渲染后由 egui 的滚动容器报上来）。
+    pub fn set_editor_scroll_y(&mut self, y: f32) {
+        self.editor.scroll_y = y;
+    }
+
+    /// 行号显示开关。
+    pub fn set_line_numbers(&mut self, on: bool) {
+        self.editor.line_numbers = on;
+    }
+
+    /// 切换拼写检查（状态栏点击）。
+    pub fn toggle_spell_check(&mut self) {
+        self.editor.spell_check = !self.editor.spell_check;
+    }
+
+    /// 切换自动换行（状态栏点击）。
+    pub fn toggle_word_wrap(&mut self) {
+        self.editor.word_wrap = !self.editor.word_wrap;
     }
 }

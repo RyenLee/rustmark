@@ -348,6 +348,6 @@ fn drive_editor(app: &mut EditorApp, block_id: Option<u64>) -> bool {
     let y = tops.get(line).copied().unwrap_or(0.0) + app.ui.sync.editor_text_top();
 
     let geom = app.ui.sync.geometry(Side::Editor);
-    app.editor.scroll_y = clamp_scroll(y - TARGET_MARGIN, geom);
+    app.set_editor_scroll_y(clamp_scroll(y - TARGET_MARGIN, geom));
     true
 }

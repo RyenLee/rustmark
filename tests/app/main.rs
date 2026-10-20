@@ -14,6 +14,7 @@ mod crash_log_test;
 mod default_extension_guard_test;
 mod delete_confirm_test;
 mod dialog_runner_test;
+mod editor_state_writes_test;
 mod export_format_guard_test;
 mod frame_test;
 mod insert_image_test;

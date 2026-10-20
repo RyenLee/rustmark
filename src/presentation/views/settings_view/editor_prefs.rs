@@ -37,7 +37,7 @@ pub(super) fn editor(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
     field(ui, theme, "行号栏", |ui| {
         let mut on = app.editor.line_numbers;
         if ui.checkbox(&mut on, "在编辑区左侧显示行号").changed() {
-            app.editor.line_numbers = on;
+            app.set_line_numbers(on);
             app.apply_editor_field(|e| e.show_line_numbers = on);
         }
     });
