@@ -67,6 +67,17 @@ pub trait DialogPort: Send + Sync {
     /// 选择目录。
     fn pick_folder(&self) -> Result<FilePath, AppError>;
 
+    /// 选择**图片**文件（R-04b：插入图片的第一跳）。
+    ///
+    /// 与 [`Self::open_file`] 分成两个方法而不是「同一个方法传不同过滤器」：
+    /// 「打开文档」与「选一张图来插引用」是两件不同的事，过滤器只是
+    /// 表象——前者选中即打开（换掉当前标签），后者选中后还要复制资源、
+    /// 拼链接、插入光标处。合成一个入口会让调用方靠过滤器反推语义。
+    ///
+    /// 过滤器固定用 [`image_filters`]（调用方无需也**不应**自备）：
+    /// 支持格式的清单只有这一份。
+    fn pick_image(&self) -> Result<FilePath, AppError>;
+
     /// 确认框（是 / 否）。
     ///
     /// 用于「未保存的修改是否丢弃」这类不可逆操作前的确认。
@@ -84,4 +95,21 @@ pub trait DialogPort: Send + Sync {
 /// 而拖放已经放行 `.csv`：同一个文件，拖进来能开、用对话框选却选不中。
 pub fn default_filters() -> Vec<FileFilter> {
     vec![TextFormats::builtin().file_filter()]
+}
+
+/// 插入图片时支持的扩展名（R-04b）。
+///
+/// **唯一出处**：原生对话框的图片过滤器（[`image_filters`]）从这里推。
+/// 与文本格式的 [`TextFormats`] 分开：那套白名单答的是「能否作为
+/// **文本**打开」，图片答不了这个问题。
+///
+/// 清单 = 预览侧解码器（`image::load_from_memory`）实际支持的格式：
+/// 位图五件套（PNG / JPEG / GIF / WebP / BMP）。**不含 SVG**——`image`
+/// crate 不解码它，插进去只会得到占位符；数据 URI 白名单同样排除
+/// `svg+xml`（`asset_loader` 的 XSS 防线），两处口径一致。
+pub const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp"];
+
+/// 取默认的**图片文件**过滤器集合（插入图片用，R-04b）。
+pub fn image_filters() -> Vec<FileFilter> {
+    vec![FileFilter::new("图片", IMAGE_EXTENSIONS)]
 }

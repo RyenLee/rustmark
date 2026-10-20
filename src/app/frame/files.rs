@@ -209,6 +209,63 @@ impl EditorApp {
         Ok(())
     }
 
+    /// 「还原修改」（R-04a）：从磁盘重新加载当前文档，丢弃未保存修改。
+    ///
+    /// 与 [`Self::undo_edit`] 是两件事：撤销回退一步编辑，还原回到磁盘版本。
+    /// 路由表里 `Revert` 是独立动作（UI 标签「还原修改」），不是 `Undo` 的别名。
+    ///
+    /// # 三条分支
+    ///
+    /// - 无活动文档 / 未命名文档：没有磁盘版本可还原，提示后返回
+    ///   （未命名文档猜一个保存位置比不动作更糟）；
+    /// - 文档干净：直接还原，不为一个零风险操作弹框；
+    /// - 文档脏：先走确认框（丢弃修改不可逆），答复「是」才兑现。
+    pub fn revert_document(&mut self) {
+        let Some(id) = self.ensure_document() else {
+            return;
+        };
+        let Some(path) = self.current_document_file() else {
+            self.set_status_notice("未命名文档尚未保存过，无从还原");
+            return;
+        };
+        if self.current_document_dirty() {
+            self.request_revert(id, &path);
+            return;
+        }
+        self.run_revert(id);
+    }
+
+    /// 兑现还原：调应用层用例 → 清草稿 → 同步 UI。
+    ///
+    /// **草稿必须清**：自动保存的 `.draft` 里躺着刚被丢弃的修改，
+    /// 不清则下次启动会问「是否恢复未保存修改」——把用户明确扔掉的内容
+    /// 又捡回来，还与「还原」的语义直接矛盾（保存后清草稿同此理）。
+    pub(super) fn run_revert(&mut self, id: DocumentId) {
+        match self.services.documents.revert(RevertCommand { id }) {
+            Ok(()) => {
+                let _ = self
+                    .services
+                    .documents
+                    .clear_draft(&self.services.drafts_dir, id);
+                if self.active_doc == Some(id) {
+                    // 领域内容已换：回读文本 + 把 egui 光标对齐到领域光标
+                    // （还原后光标在文档头，与「重新打开」一致）。
+                    self.sync_cursor_from_domain();
+                    let name = self
+                        .current_document_file()
+                        .map(|p| Self::display_name(p.as_str()).to_string())
+                        .unwrap_or_else(|| "文档".to_string());
+                    self.set_status_notice(format!("已还原「{name}」"));
+                } else {
+                    // 确认框是模态的，正常情况下走不到这里；保留 generic 文案
+                    // 是为了「按 id 兑现」不依赖「当时谁是活动文档」。
+                    self.set_status_notice("已还原");
+                }
+            }
+            Err(e) => self.set_status_error(&format!("还原失败：{e}")),
+        }
+    }
+
     /// 保存**全部**已修改文档（`Ctrl+Alt+S` / 「文件 → 保存全部」）。
     ///
     /// # 为什么不在 `execute` 里循环调 `save_document`

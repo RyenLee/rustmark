@@ -17,6 +17,7 @@
 //! - [`text_format`]：可打开的文本格式白名单（问题 045；三方共用的唯一出处）
 //! - [`theme`]：主题种类（领域 / 应用 / 表现三方共用；R-09 收敛双枚举）
 //! - [`system`]：外部打开器与链接安全校验（S6-05 超链接点击）
+//! - [`image_asset`]：图片资源导入端口（R-04b 插入图片）
 //! - [`lru`]：有界 LRU 映射（D-4；高亮 / 拼写 / 渲染 / 图片四缓存共用）
 
 #![deny(clippy::unwrap_used, clippy::expect_used)]
@@ -29,6 +30,7 @@ pub mod export_format;
 pub mod fonts;
 pub mod geometry;
 pub mod ids;
+pub mod image_asset;
 pub mod lru;
 pub mod path;
 pub mod result;

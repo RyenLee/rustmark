@@ -99,7 +99,8 @@ impl EditorApp {
             ActionRoute::Format => self.apply_format(action),
             ActionRoute::GotoTab(index) => self.goto_document(index),
             ActionRoute::Handler(handler) => handler(self),
-            // 显式声明的「暂不接线」，见 `action_route` 末尾的说明。
+            // 显式声明的「暂不接线」，见 [`ActionRoute::Unbound`] 的文档。
+            // R-04 后清单为空，此臂为机制保留。
             ActionRoute::Unbound => {}
         }
     }
@@ -196,6 +197,15 @@ enum ActionRoute {
     /// 单一处理器（统一签名的 trampoline）。
     Handler(fn(&mut EditorApp)),
     /// 动作表里有、但**尚未接线**。
+    ///
+    /// R-04 把 `Revert` / `InsertImage` 接线后，本变体当前**没有实例**
+    /// （清单为空，见 `unbound_actions_are_explicit`）。仍保留而不是删除：
+    /// 「本期确有接不了的线」是需要一个显式出口的——写在路由表里 +
+    /// 在测试清单里登记，提交 diff 即可见；删掉变体只会把这条路
+    /// 变成「路由到一个空 trampoline」，那正是静默失效本身。
+    /// `#[allow(dead_code)]` 是「机制预留、实例为零」的显式声明，
+    /// 不是对警告的静音（与 `tests/support/fake_dialog.rs` 同款理由）。
+    #[allow(dead_code)]
     Unbound,
 }
 
@@ -233,7 +243,9 @@ fn action_route(action: UiAction) -> ActionRoute {
         // —— 编辑 ——
         A::Undo => ActionRoute::Handler(route_undo),
         A::Redo => ActionRoute::Handler(route_redo),
+        A::Revert => ActionRoute::Handler(route_revert),
         A::FindInFiles => ActionRoute::Handler(route_find_in_files),
+        A::InsertImage => ActionRoute::Handler(route_insert_image),
         A::Indent => ActionRoute::Handler(route_indent),
         A::Outdent => ActionRoute::Handler(route_outdent),
         A::MoveLineUp => ActionRoute::Handler(route_move_line_up),
@@ -275,16 +287,6 @@ fn action_route(action: UiAction) -> ActionRoute {
         A::GotoTab7 => ActionRoute::GotoTab(7),
         A::GotoTab8 => ActionRoute::GotoTab(8),
         A::GotoTab9 => ActionRoute::GotoTab(9),
-
-        // —— 显式未接线 ——
-        //
-        // 这两项在动作表 / 菜单 / 快捷键里都存在，但没有任何执行逻辑。
-        // 改造前它们落进 `_ => {}`：菜单项可点、快捷键能按，什么也不发生，
-        // 且零报错。现在显式声明，接线时编译器会强制把这里改成 Handler。
-        //
-        // - `Revert`（还原修改）：需要应用层提供「从磁盘重新加载」用例；
-        // - `InsertImage`（插入图片）：需要「选文件 → 插入 `![]()`」的流程。
-        A::Revert | A::InsertImage => ActionRoute::Unbound,
     }
 }
 
@@ -329,6 +331,19 @@ fn route_undo(app: &mut EditorApp) {
 
 fn route_redo(app: &mut EditorApp) {
     app.redo_edit();
+}
+
+/// 「还原修改」（R-04a）：从磁盘重新加载当前文档。与 `route_undo` 是
+/// 两个动作——撤销回退一步编辑，还原回到磁盘版本（脏文档先确认）。
+fn route_revert(app: &mut EditorApp) {
+    app.revert_document();
+}
+
+/// 「插入图片」（R-04b）：起图片选择对话框，结果回填时复制进资源目录
+/// 并在光标处插入相对链接。与 `ActionRoute::Format` 的那些插入动作
+/// 不同——它要弹对话框，不能同步完成，故只能是独立 Handler。
+fn route_insert_image(app: &mut EditorApp) {
+    app.insert_image();
 }
 
 /// 全局「在文件中查找」：**不打开浮层**——全局搜索是侧栏的 Search 标签，
@@ -423,6 +438,10 @@ mod tests {
     ///
     /// 这条断言的作用不是禁止新增 Unbound，而是让每一次新增都必须在
     /// 测试里改一行——提交 diff 里就能看见「又有一个动作没接线」。
+    ///
+    /// R-04 接线 `Revert` / `InsertImage` 后清单**清零**；清零不等于
+    /// 删机制——`ActionRoute::Unbound` 变体与 `execute` 的对应臂都留着，
+    /// 下一位「本期接不了」的动作从那里显式登场。
     #[test]
     fn unbound_actions_are_explicit() {
         let unbound: Vec<UiAction> = UiAction::ALL
@@ -432,7 +451,7 @@ mod tests {
             .collect();
         assert_eq!(
             unbound,
-            vec![UiAction::Revert, UiAction::InsertImage],
+            Vec::<UiAction>::new(),
             "未接线动作清单变了：新增 Unbound 时必须同步更新本断言，\
              并在提交说明里交代为什么暂不接线"
         );

@@ -73,6 +73,16 @@ pub struct UndoCommand {
     pub id: DocumentId,
 }
 
+/// 从磁盘重新加载（「还原修改」，R-04a）。
+///
+/// 与 [`UndoCommand`] 是两件事：撤销回退**一步编辑**，还原回到**磁盘版本**。
+/// 未命名文档（无路径）没有磁盘版本可还原，用例直接报错。
+#[derive(Clone, Debug)]
+pub struct RevertCommand {
+    /// 文档 ID。
+    pub id: DocumentId,
+}
+
 /// 重做一步。
 #[derive(Clone, Debug)]
 pub struct RedoCommand {

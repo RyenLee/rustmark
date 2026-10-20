@@ -22,7 +22,7 @@
 
 use rfd::{FileDialog, MessageButtons, MessageDialog, MessageLevel};
 
-use crate::shared::dialog::{DialogPort, FileFilter};
+use crate::shared::dialog::{DialogPort, FileFilter, image_filters};
 use crate::shared::error::AppError;
 use crate::shared::path::FilePath;
 
@@ -88,6 +88,13 @@ impl DialogPort for RfdDialogAdapter {
     fn pick_folder(&self) -> Result<FilePath, AppError> {
         let dialog = FileDialog::new().set_title("选择工作区目录");
         Self::to_result(dialog.pick_folder())
+    }
+
+    fn pick_image(&self) -> Result<FilePath, AppError> {
+        // 过滤器固定用 `image_filters()`（端口契约）：调用方不传，
+        // 支持格式的清单只有 shared 那一份。
+        let dialog = Self::apply_filters(FileDialog::new().set_title("选择图片"), &image_filters());
+        Self::to_result(dialog.pick_file())
     }
 
     fn confirm(&self, message: &str) -> Result<bool, AppError> {

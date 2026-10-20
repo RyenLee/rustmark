@@ -16,7 +16,8 @@ use crate::app::bootstrap::Services;
 use crate::app::dialog_runner::{DialogOutcome, DialogRequest, DialogRunner};
 use crate::application::document::commands::{
     CloseCommand, FormatCommand, FormatKind, InsertTextCommand, NewDocumentCommand,
-    OpenFileCommand, RedoCommand, ReplaceRangeCommand, SaveCommand, SaveToPathCommand, UndoCommand,
+    OpenFileCommand, RedoCommand, ReplaceRangeCommand, RevertCommand, SaveCommand,
+    SaveToPathCommand, UndoCommand,
 };
 use crate::application::document::queries::{
     GetContentQuery, GetDocumentQuery, GetStatsQuery, ListOpenDocumentsQuery,
@@ -331,6 +332,14 @@ pub struct EditorApp {
     /// 布尔而非路径：待确认的目标就是「当前打开的全部文档」，
     /// 没有第二个自由度，记路径反而是假精度。
     pending_close_all: bool,
+    /// 已发出确认框、等待用户答复的「还原修改」目标（R-04a）。
+    ///
+    /// 与 [`Self::pending_delete`] 同款两步走：还原丢弃全部未保存修改，
+    /// 不可逆；确认框同步阻塞，故登记目标 → 后台问 → 每帧取回。
+    /// 记 **DocumentId** 而非布尔：目标是「请求还原时的那一个文档」，
+    /// 答复回来后按 id 兑现，不按「当时谁是活动文档」——后者会把
+    /// 「确认期间用户切了标签」变成还原错文档。
+    pending_revert: Option<DocumentId>,
     /// 后台工作区扫描的待处理结果（PickFolder 首次扫描路径异步化）。
     ///
     /// channel 发回 `(root, Result<Vec<FileEntryView>, String>)` ——
@@ -467,6 +476,7 @@ impl EditorApp {
             screenshot_sink: std::sync::Arc::new(std::sync::Mutex::new(None)),
             pending_delete: None,
             pending_close_all: false,
+            pending_revert: None,
             scan_pending: None,
             scan_loading: false,
             // 真实值在下面按持久化设置覆盖（与 `split_ratio` 同一手法）。
@@ -513,6 +523,7 @@ mod drag_drop;
 mod editor;
 mod files;
 mod find;
+mod images;
 mod outline;
 mod recovery;
 mod scheduler;

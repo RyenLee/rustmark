@@ -46,6 +46,7 @@ use crate::infrastructure::parsing::pulldown_parser::PulldownMarkdownParser;
 use crate::infrastructure::persistence::asset_loader::AssetLoader;
 use crate::infrastructure::persistence::fs_document_repository::FsDocumentRepository;
 use crate::infrastructure::persistence::fs_workspace_repository::FsWorkspaceRepository;
+use crate::infrastructure::persistence::image_store::FsImageAssetStore;
 use crate::infrastructure::persistence::toml_preferences_repository::TomlPreferencesRepository;
 use crate::infrastructure::spell::VendoredSpellChecker;
 use crate::infrastructure::system::SystemExternalOpener;
@@ -53,6 +54,7 @@ use crate::infrastructure::text::rope_text_buffer::RopeBufferFactory;
 use crate::shared::dialog::DialogPort;
 use crate::shared::event::EventBus;
 use crate::shared::ids::WorkspaceId;
+use crate::shared::image_asset::ImageAssetStore;
 use crate::shared::result::AppResult;
 use crate::shared::system::ExternalOpener;
 use crate::shared::time::{Clock, SystemClock};
@@ -167,6 +169,11 @@ pub struct Services {
     /// 实现在 `infrastructure`，与 `dialogs` / 时钟同一范式）。
     /// 测试可注入假实现断言「点了链接且参数正确」。
     pub opener: Arc<dyn ExternalOpener>,
+    /// 图片资源导入端口：插入图片时把选中的文件复制进文档资源目录（R-04b）。
+    ///
+    /// 与 `opener` / `dialogs` 同一范式：端口在 `shared`、实现在
+    /// `infrastructure`，测试可注入假实现。默认 [`FsImageAssetStore`]。
+    pub images: Arc<dyn ImageAssetStore>,
     /// 文档注册表句柄，供事件订阅者失效缓存时读取版本号。
     pub registry: Arc<RwLock<DocumentRegistry>>,
     /// 渲染缓存句柄（与 `markdown` 服务共享同一份）。
@@ -238,16 +245,35 @@ impl Services {
 
     /// 以指定配置路径、时钟、对话框端口与**外部打开器端口**装配。
     ///
-    /// 装配链的最深点（R-03 起）。 opener 单独一个 `_with_` 变体而不是
-    /// 并进 `assemble_with_clock_and_dialogs`：那条链已被测试广泛使用，
-    /// 加参数会一次性改所有调用点；而 opener 的假实现目前只有 R-03 的
-    /// 新用例需要。生产路径经 [`Self::assemble_with_clock_and_dialogs`]
-    /// 固定用 [`SystemExternalOpener`]。
+    /// 转调 [`Self::assemble_with_image_store`]（固定用文件系统实现）：
+    /// 与 R-03 加 opener 时同款取舍——给中间层加参数会一次性改动
+    /// 所有测试调用点，新增依赖一律落在**最深层**。
     pub fn assemble_with_opener(
         paths: ConfigPaths,
         clock: Arc<dyn Clock>,
         dialogs: Arc<dyn DialogPort>,
         opener: Arc<dyn ExternalOpener>,
+    ) -> AppResult<Self> {
+        Self::assemble_with_image_store(
+            paths,
+            clock,
+            dialogs,
+            opener,
+            Arc::new(FsImageAssetStore::new()),
+        )
+    }
+
+    /// 装配链的最深点（R-04b 起）：显式指定图片资源导入端口。
+    ///
+    /// 生产路径经 [`Self::assemble_with_opener`] 固定用
+    /// [`FsImageAssetStore`]；本变体为需要假导入器的测试存在
+    /// （与 `assemble_with_dialogs` 同理）。
+    pub fn assemble_with_image_store(
+        paths: ConfigPaths,
+        clock: Arc<dyn Clock>,
+        dialogs: Arc<dyn DialogPort>,
+        opener: Arc<dyn ExternalOpener>,
+        images: Arc<dyn ImageAssetStore>,
     ) -> AppResult<Self> {
         // —— 共享内核 ——
         let bus: Arc<dyn EventBus> = Arc::new(InProcessEventBus::new());
@@ -350,6 +376,7 @@ impl Services {
             workspace,
             dialogs,
             opener,
+            images,
             registry,
             render_cache,
             assets: AssetLoader::default(),
