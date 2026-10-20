@@ -11,7 +11,9 @@ mod breadcrumb_test;
 mod editor_frame_geometry_test;
 mod editor_view_test;
 mod enter_ime_test;
+// R-03：预览区外链改经 opener 端口（假实现可断言）。
 mod export_view_test;
+mod external_opener_test;
 mod find_replace_view_test;
 mod highlight_layout_bench;
 mod highlight_layout_test;

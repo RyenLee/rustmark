@@ -93,12 +93,23 @@ const PRESENTATION_FORBIDDEN: &[&str] = &["crate::app", "crate::domain", "crate:
 /// 而那正是最需要守卫的时刻。
 const PRESENTATION_STATE_FORBIDDEN: &[&str] = &["crate::domain::document"];
 
+/// `shared` 禁止的外部依赖与层引用。
+///
+/// # `std::process` 为什么在这里（R-03）
+///
+/// `shared` 自称「零外部依赖」，但 `system.rs` 曾在此用 `Command` 起进程，
+/// 文件头自认「`std::process` 不在禁止清单，故在此落位」——那是**绕规则
+/// 落位**：规则说这里不该有 IO，就改规则迁就代码。R-03 已把执行端移到
+/// `infrastructure::system`，此处补上禁令，防止回退。
+///
+/// 端口（trait）与纯逻辑校验可以留在 `shared`——它们不产生 IO。
 const SHARED_FORBIDDEN: &[&str] = &[
     "egui",
     "eframe",
     "rfd",
     "syntect",
     "pulldown_cmark",
+    "std::process",
     "crate::app",
     "crate::domain",
     "crate::application",

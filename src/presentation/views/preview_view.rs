@@ -64,11 +64,20 @@ pub use table::table_column_distribution;
 /// 而 `inline` 是本模块的私有子模块，`pub(super)` 的 `span_format`
 /// 够不着跨模块访问。
 ///
-/// 限定 `#[cfg(test)]`：非测试构建**不存在**这个模块，
-/// 不会成为公开 API 的一部分。
-#[cfg(test)]
-pub(crate) mod test_only {
-    pub(crate) use super::inline::span_format;
+/// R-03 起 additionally 导出 `handle_span_click`：外链改走 opener 端口后，
+/// 「点击 link 会调 open、且不安全的地址不调」这条用户可见行为要能在
+/// 集成测试里断言（真起进程的旧实现做不到）。
+///
+/// # 为什么不能加 `#[cfg(test)]`
+///
+/// integration test（`tests/`）编译的是**另一个 crate**，`#[cfg(test)]`
+/// 只在 lib 自身的测试目标里为真——加了就看不见这些符号。
+/// 故它在所有构建里存在，用 `#[doc(hidden)]` 藏起来不进公开文档。
+/// 名字以 `test_only` 自明用途：**不是**公开 API，别在生产代码里用。
+#[doc(hidden)]
+pub mod test_only {
+    pub use super::inline::handle_span_click;
+    pub use super::inline::span_format;
 }
 
 use std::cell::RefCell;

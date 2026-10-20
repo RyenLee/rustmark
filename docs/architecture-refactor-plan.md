@@ -503,6 +503,58 @@ UI 选格式 ──► ExportFormat（领域唯一枚举）
   - 新增单测：用假 `ExternalOpener` 断言「预览区点击外链时调用了 `open` 且参数正确」——**当前无法测**（spawn 真进程），改造后可测；
   - 变异验证：把 `preview_view` 的调用改回直连 `shared::system::open_external` → `cargo check` 报 `shared` 不得依赖 `std::process`（R-01 的新规则命中）。
 
+##### R-03 实施结果（2026-10-20）
+
+按方案 5 步落地，范式与 `DialogPort` / `Clock` **完全一致**（端口在
+`shared`、实现在 `infrastructure`、组合根装配）：
+
+1. `src/shared/system.rs`：删 `use std::process::Command` 与 `open_external`
+   实现，新增 `pub trait ExternalOpener: Send + Sync`；
+   **`is_safe_to_open` 原样留下**（纯逻辑，方案点名「校验留在 shared」）。
+2. 新增 `src/infrastructure/system.rs`：`SystemExternalOpener`，三平台
+   `Command::new(...).spawn()` 分支**整体搬迁**（含 Windows `cmd /C start ""`
+   的标题占位注释与不支持平台的 `Unsupported` 错误）。
+3. `src/app/bootstrap.rs`：`Services` 加 `opener: Arc<dyn ExternalOpener>`。
+   装配链新增最深层 `assemble_with_opener(paths, clock, dialogs, opener)`；
+   `assemble_with_clock_and_dialogs` 转发到它并固定用 `SystemExternalOpener`
+   ——**既有调用点一个都不用改**（那条链被测试广泛使用）。
+4. `preview_view/inline.rs`（行内链接）与 `preview_view/media.rs`（远程图片
+   加载失败的「在浏览器中打开」按钮）改经 `app.services.opener.open(...)`。
+5. `tools/arch_check.rs`：`SHARED_FORBIDDEN` 增加 `std::process`。
+
+**新增守卫 9 例**：
+
+- `tests/presentation/external_opener_test.rs`（**5 例**，方案第 2 条判据）：
+  假 opener 断言「点了安全外链→调 `open` 且参数是那个地址」「4 种 XSS
+  向量一次都不调」「`#锚点` 不惊动外部打开器」「无 url 的 link 是 no-op」
+  「`file://` 与相对路径逐一打开」。**改造前这个行为无法测**——
+  `open_external` 真起 `cmd` 进程，既不幂等也没法观察。
+- `tests/arch_violation_fixture.rs`（**4 例**）：`shared` 里 `std::process`
+  必报 / 端口 trait 与纯校验在 `shared` 放行 / 薄封装也算违规 /
+  `infrastructure` 里放行。
+
+**变异验证 7 轮全部捕获**：
+
+| 变异 | 结果 |
+|---|---|
+| `shared` 留 `open_external` 薄封装（**方案点名**） | 捕获 |
+| `SHARED_FORBIDDEN` 丢掉 `std::process` | 捕获 |
+| 禁令误扩到 `infrastructure` | 捕获（build.rs 先拦下） |
+| 丢掉 `is_safe_to_open` 校验 | 捕获 |
+| 校验反相（只放行危险地址） | 捕获 |
+| 参数传错（把整段内容而非 url 交给 opener） | 捕获 |
+| 锚点分支不提前返回（内部跳转误落外部打开） | 捕获 |
+
+**用户可见行为不变**：仍是系统默认程序打开（同一份三平台 spawn 代码，
+只换了落脚文件）。差异仅在两处**可观测性**：打开失败仍不打扰用户
+（`let _ =`，与旧实现取舍一致）。
+
+**实施偏差 1 条**（**偏离原文**）：方案第 3 步说「`Services` 持有
+`Arc<dyn ExternalOpener>`（默认 `SystemExternalOpener`）」，未说明如何穿过
+既有装配链。直接给 `assemble_with_clock_and_dialogs` 加参数会**一次性改动
+所有测试调用点**（该链被 20+ 个测试文件使用），故改为**新增最深层**
+`assemble_with_opener`，让旧链转发过去——既有调用点零改动。
+
 #### R-04 · 接线两个 `Unbound` 动作（`Revert` / `InsertImage`）
 
 - **改造内容**：
@@ -1281,7 +1333,8 @@ UI 选格式 ──► ExportFormat（领域唯一枚举）
   - `cargo run --bin check-arch` → OK。
 - **进度**：R-01 ✅（`96bb76b` + 收尾 `9d20c01`）｜R-02 ✅（2026-10-20，
   新增 `scan_with_tests` + 8 例 + 变异 6 轮全捕获，构建耗时 +4.6%）｜
-  R-03 ⬜｜R-13 ⬜。
+  R-03 ✅（2026-10-20，`ExternalOpener` 端口化 + 9 例 + 变异 7 轮全捕获）｜
+  R-13 ⬜。
 
 **M4 · 用户可见缺口（3 人日）**
 
@@ -1329,7 +1382,7 @@ UI 选格式 ──► ExportFormat（领域唯一枚举）
 | M2 | R-10 | 2026-10-20 | 2026-10-20 | **1979** / 4 / OK | `7f96b55` + `ec8926a`（拆 2 commit）；三套 span→`LayoutJob` 实现收敛为 `mapper::span_job::build_job`（差异由 `SpanPolicy` 显式参数化）；两张样式表合并为一份派发 `StyleSemantics::of`（**偏离原文**：字面「并表」会破坏字号/字体族/行高的刻意差异，改为「派发合并、度量分离」）；**修掉代码块同一行两种字号 + 重叠 span 文本重复**（8 字符 → 10/13 字符）两个真实缺陷；新增 21 例（对拍 13 + 行内 4 + 样式表 3 + 真帧 1）+ 变异验证 **19 轮**（详见 §4.2 R-10「实施结果」「实施偏差」） |
 | M3 | R-01 | 2026-10-20 | 2026-10-20 | **1958** / 4 / OK | **提前至 M2 期间实施**（R-10 被打断时插入）；判定由「行首 `use `」重写为**词法 + use-tree 展开**；实测额外发现并修掉 8 类漏检 + 3 处实现缺陷；`crate::app` 禁令改为**更窄豁免前缀**（表现层放行 `crate::app::frame`，54 个文件依赖它）；豁免机制加**登记表**校验（未登记/过时均报错）；**规则真源由 `.agent/architecture.md` 迁入 `docs/architecture-constraints.md`**（`.agent/` 整目录不入库 → CI 上豁免机制死锁）；删死代码 `signature()`/`file_stamp()`；报告格式收敛到单一来源 `format_report`；用例 13 → **45** 条；变异验证 **10 轮**（详见 §4.1 R-01「实施结果」） |
 | M3 | R-02 | 2026-10-20 | 2026-10-20 | **2005** / 4 / OK | 新增 `scan_with_tests`，`scan` 签名不变；`tests/` 侧统一判 `Layer::Tests`（**不按目录名判层**——`tests/domain/` 是测试目标划分不是层，按名判会误套禁令）；`TESTS_FORBIDDEN` 只列库层名，放行 `crate::support`（243 处）；报告带 `tests/` 前缀；帧预约规则照样罩住测试侧；新增 8 例 + 变异验证 **6 轮全捕获**；构建耗时 +0.27s（+4.6%，方案预估的 35% 指扫描量非总耗时）；存量实测 `crate::<库层名>` 真实引用 = 0（命中全在注释/字符串里） |
-| M3 | R-03 | | | | |
+| M3 | R-03 | 2026-10-20 | 2026-10-20 | **2017** / 4 / OK | `shared/system.rs` 端口化：新增 `ExternalOpener` trait（`std::process` 移出 `shared`，`is_safe_to_open` 纯校验留下）；实现搬 `infrastructure/system.rs`；`Services.opener` + 装配链最深层 `assemble_with_opener`（**偏离原文**：直接给 `assemble_with_clock_and_dialogs` 加参数会一次性改 20+ 测试调用点，故新增最深层让旧链转发，既有调用点零改动）；预览区两处调用改经端口；`SHARED_FORBIDDEN` 加 `std::process`；新增 **9 例**（5 例假 opener 用户可见 + 4 例禁令）+ 变异 **7 轮全捕获** |
 | M3 | R-13 | | | | |
 | M4 | R-04 | | | | |
 | M4 | R-05 | | | | |

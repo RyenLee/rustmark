@@ -33,7 +33,9 @@ use super::*;
 /// 可见性为 `pub(crate)` 而非 `pub(super)`：`theme::mapper` 的样式表
 /// 合并用例（`mapper/tests.rs`）要把它与**编辑区侧**的样式表做同表对照，
 /// 而 `pub(super)`（限 `preview_view` 模块内）够不着跨模块访问。
-pub(crate) fn span_format(theme: &Theme, style: &str, size: f32, line_height: f32) -> TextFormat {
+/// R-03 起经 `preview_view::test_only` 再导出给集成测试，故此处为 `pub`。
+#[doc(hidden)]
+pub fn span_format(theme: &Theme, style: &str, size: f32, line_height: f32) -> TextFormat {
     let base = TextFormat {
         color: theme.text_primary,
         font_id: FontId::proportional(size),
@@ -217,12 +219,17 @@ fn span_rects(galley: &egui::Galley, hits: &[SpanHit]) -> Vec<(usize, Rect)> {
 
 /// 行内片段点击分发：链接打开、脚注引用跳转。
 ///
-/// - `link`：绝对 / 相对地址交系统默认程序打开（`system::open_external`）；
+/// - `link`：绝对 / 相对地址交系统默认程序打开（`services.opener`，
+///   端口在 `shared`、实现在 `infrastructure`，见 R-03）；
 ///   `#锚点` 在 `internal_targets` 里找对应标题块并跳转；地址经
 ///   `system::is_safe_to_open` 过滤，拒绝 `javascript:` 等 XSS 向量。
 /// - `footnote_ref`：依标号在 `internal_targets` 里找脚注定义块并跳转
 ///   （预览点击跳转与连续滚动同步解耦，见 `scroll_sync` 改造）。
-fn handle_span_click(
+/// 可见性：`pub(super)` 供 `preview_view` 内的调用方使用；R-03 起 additionally
+/// 经 `preview_view::test_only` 再导出给集成测试（外链改走 opener 端口后，
+/// 「点击 link 会调 open、不安全地址不调」要在集成测试里断言）。
+#[doc(hidden)]
+pub fn handle_span_click(
     app: &mut EditorApp,
     sv: &SpanView,
     content: &str,
@@ -241,7 +248,9 @@ fn handle_span_click(
                 return;
             }
             if system::is_safe_to_open(url) {
-                let _ = system::open_external(url);
+                // 打开失败不打扰用户：链接打不开时预览区照常显示，
+                // 弹窗反而挡住阅读（与旧实现 `let _ =` 的取舍一致）。
+                let _ = app.services.opener.open(url);
             }
         }
         "footnote_ref" => {

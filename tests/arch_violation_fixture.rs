@@ -357,6 +357,137 @@ fn repaint_rule_still_applies_inside_tests() {
 }
 
 // ============================================================================
+// 一之补、R-03：`shared` 禁 `std::process`
+// ============================================================================
+
+/// `shared` 里出现 `std::process` 必报（R-03 的新禁令）。
+///
+/// # 为什么这条禁令存在
+///
+/// `shared` 自称「零外部依赖」，但 `system.rs` 曾在此用 `Command` 起进程，
+/// 文件头自认「`std::process` 不在禁止清单，故在此落位」——那是**绕规则
+/// 落位**：规则说这里不该有 IO，就改规则迁就代码。R-03 把执行端移到
+/// `infrastructure::system`，此处补禁令防回退。
+///
+/// 端口（trait）与纯逻辑校验可以留在 `shared`——它们不产生 IO，
+/// 这条禁令只拦**进程调用**本身。
+#[test]
+fn std_process_is_forbidden_in_shared() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "shared/system.rs",
+        "//! x\nuse std::process::Command;\nfn open(t: &str) {\n    \
+         Command::new(\"cmd\").arg(t).spawn().ok();\n}\n",
+    );
+
+    let violations = arch_check::scan(&root);
+    assert_eq!(
+        violations.len(),
+        1,
+        "shared 里的 std::process 应被拦，实际：{:?}",
+        described(&violations)
+    );
+    assert!(
+        violations[0].detail.contains("std::process"),
+        "{:?}",
+        violations[0]
+    );
+}
+
+/// 端口 trait 与纯校验留在 `shared` **不**触发禁令。
+///
+/// # 为什么必须单独一条
+///
+/// 若禁令写成「`shared` 不许出现 `process` 字样」这类宽口径，
+/// `ExternalOpener` trait 的文档注释（解释为什么拆开）会被误伤；
+/// 更糟的是写成禁 `Command` 的话，`infrastructure` 侧也会被拖累。
+/// 这条钉住「只拦 `std::process` 路径，不拦端口定义」。
+#[test]
+fn the_port_trait_may_live_in_shared() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "shared/system.rs",
+        "//! 端口留在 shared，实现移到 infrastructure。\n\
+         pub trait ExternalOpener: Send + Sync {\n    \
+         fn open(&self, target: &str) -> std::io::Result<()>;\n}\n\
+         pub fn is_safe_to_open(url: &str) -> bool { !url.is_empty() }\n",
+    );
+
+    let violations = arch_check::scan(&root);
+    assert!(
+        violations.is_empty(),
+        "端口 trait 与纯校验不是 IO，应放行。实际：{:?}",
+        described(&violations)
+    );
+}
+
+/// **R-03 点名的变异验证**：把预览区的调用改回直连 `shared::system::open_external`
+/// → 该自由函数若留在 `shared` 就会带 `std::process`，被新禁令拦下。
+///
+/// # 这条测的是什么
+///
+/// 方案原文的变异判据是「改回直连 → `cargo check` 报 shared 不得依赖
+/// `std::process`」。这里用 fixture 复现同一形状：`shared` 里既留端口
+/// **又**留一个用 `Command` 的自由函数封装 → 必报。
+/// 它守的是「不许把实现搬回 shared」这条底线，而不是某个具体符号名。
+#[test]
+fn a_free_function_wrapper_in_shared_is_still_banned() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "shared/system.rs",
+        "//! x\npub trait ExternalOpener: Send + Sync {\n    \
+         fn open(&self, t: &str) -> std::io::Result<()>;\n}\n\
+         /// 薄封装：留个Compat 出口。\n\
+         pub fn open_external(t: &str) -> std::io::Result<()> {\n    \
+         std::process::Command::new(\"cmd\").arg(t).spawn()\n}\n",
+    );
+
+    let violations = arch_check::scan(&root);
+    assert_eq!(
+        violations.len(),
+        1,
+        "即使包成薄封装，shared 里的进程调用仍应被拦。实际：{:?}",
+        described(&violations)
+    );
+    assert!(
+        violations[0].detail.contains("std::process"),
+        "{:?}",
+        violations[0]
+    );
+}
+
+/// `infrastructure` 里的 `std::process` **不**受影响。
+///
+/// R-03 把实现搬到 `infrastructure::system`，那里本来就要起进程。
+/// 若禁令误扩到 infrastructure（比如有人把 `std::process` 加进
+/// `INFRASTRUCTURE_FORBIDDEN`），这条当场红。
+#[test]
+fn std_process_is_allowed_in_infrastructure() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "infrastructure/system.rs",
+        "//! x\npub struct SystemExternalOpener;\nimpl SystemExternalOpener {\n    \
+         pub fn open(t: &str) -> std::io::Result<()> {\n        \
+         std::process::Command::new(\"cmd\").arg(t).spawn()\n    }\n}\n",
+    );
+
+    let violations = arch_check::scan(&root);
+    assert!(
+        violations.is_empty(),
+        "infrastructure 是执行端的归宿，应放行。实际：{:?}",
+        described(&violations)
+    );
+}
+
+// ============================================================================
 // 二、注入必报：use 声明的各种逃逸形状
 // ============================================================================
 

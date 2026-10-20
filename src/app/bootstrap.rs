@@ -48,11 +48,13 @@ use crate::infrastructure::persistence::fs_document_repository::FsDocumentReposi
 use crate::infrastructure::persistence::fs_workspace_repository::FsWorkspaceRepository;
 use crate::infrastructure::persistence::toml_preferences_repository::TomlPreferencesRepository;
 use crate::infrastructure::spell::VendoredSpellChecker;
+use crate::infrastructure::system::SystemExternalOpener;
 use crate::infrastructure::text::rope_text_buffer::RopeBufferFactory;
 use crate::shared::dialog::DialogPort;
 use crate::shared::event::EventBus;
 use crate::shared::ids::WorkspaceId;
 use crate::shared::result::AppResult;
+use crate::shared::system::ExternalOpener;
 use crate::shared::time::{Clock, SystemClock};
 
 /// 预览防抖间隔（毫秒，FR-01）。
@@ -158,6 +160,13 @@ pub struct Services {
     pub workspace: Arc<WorkspaceAppService>,
     /// 原生对话框端口（**阻塞**，只能在后台线程调用）。
     pub dialogs: Arc<dyn DialogPort>,
+    /// 外部打开器端口：预览区点击外链时用系统默认程序打开。
+    ///
+    /// R-03 把 `std::process` 移出 `shared` 后，预览区不能再直调
+    /// `shared::system::open_external`，改经此端口（端口在 `shared`、
+    /// 实现在 `infrastructure`，与 `dialogs` / 时钟同一范式）。
+    /// 测试可注入假实现断言「点了链接且参数正确」。
+    pub opener: Arc<dyn ExternalOpener>,
     /// 文档注册表句柄，供事件订阅者失效缓存时读取版本号。
     pub registry: Arc<RwLock<DocumentRegistry>>,
     /// 渲染缓存句柄（与 `markdown` 服务共享同一份）。
@@ -223,6 +232,22 @@ impl Services {
         paths: ConfigPaths,
         clock: Arc<dyn Clock>,
         dialogs: Arc<dyn DialogPort>,
+    ) -> AppResult<Self> {
+        Self::assemble_with_opener(paths, clock, dialogs, Arc::new(SystemExternalOpener::new()))
+    }
+
+    /// 以指定配置路径、时钟、对话框端口与**外部打开器端口**装配。
+    ///
+    /// 装配链的最深点（R-03 起）。 opener 单独一个 `_with_` 变体而不是
+    /// 并进 `assemble_with_clock_and_dialogs`：那条链已被测试广泛使用，
+    /// 加参数会一次性改所有调用点；而 opener 的假实现目前只有 R-03 的
+    /// 新用例需要。生产路径经 [`Self::assemble_with_clock_and_dialogs`]
+    /// 固定用 [`SystemExternalOpener`]。
+    pub fn assemble_with_opener(
+        paths: ConfigPaths,
+        clock: Arc<dyn Clock>,
+        dialogs: Arc<dyn DialogPort>,
+        opener: Arc<dyn ExternalOpener>,
     ) -> AppResult<Self> {
         // —— 共享内核 ——
         let bus: Arc<dyn EventBus> = Arc::new(InProcessEventBus::new());
@@ -324,6 +349,7 @@ impl Services {
             preferences,
             workspace,
             dialogs,
+            opener,
             registry,
             render_cache,
             assets: AssetLoader::default(),

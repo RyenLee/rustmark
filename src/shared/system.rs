@@ -1,49 +1,45 @@
-//! 最小外部打开器与链接安全校验（共享内核，零外部依赖）。
+//! 外部打开器端口与链接安全校验（共享内核，零外部依赖）。
 //!
 //! egui 在本项目编译时未启用 `open_url` feature（见 `Cargo.toml` 的
 //! `egui = { ... features = ["default_fonts"] }`），且项目对运行时依赖一贯
 //! 严控（数学 / 图表均自研），因此不引入 `webbrowser` crate，而是用
 //! 操作系统自带的默认程序打开——零额外依赖，桌面端行为与原生应用一致。
 //!
-//! 放在 `shared` 而非 `infrastructure`：打开链接是表现层（预览区）需要的能力，
-//! 而架构约束禁止 `presentation` 依赖 `crate::infrastructure`
-//! （见 `docs/architecture-constraints.md` 依赖矩阵）。`shared` 可被任意层依赖，且
-//! `std::process` 不在其禁止清单，故在此落位。
-
-use std::process::Command;
+//! # 为什么执行端不在这里
+//!
+//! `shared` 是**零 IO** 的共享内核（R-03 起 `std::process` 亦进
+//! [`SHARED_FORBIDDEN`]，见 `docs/architecture-constraints.md`）。早先
+//! 「`std::process` 不在禁止清单，故在此落位」是**绕规则落位**——文件头
+//! 自认绕过，与「零外部依赖」的自我描述矛盾。现按 `DialogPort` / `Clock`
+//! 的既有范式拆开：
+//!
+//! - **端口**（[`ExternalOpener`] trait）留在这里——表现层（预览区）需要
+//!   这个能力，而架构约束禁止 `presentation` 依赖 `crate::infrastructure`；
+//!   `shared` 可被任意层依赖，端口本身零 IO；
+//! - **实现**（三平台 `Command::new(...).spawn()`）移到
+//!   `infrastructure::system::SystemExternalOpener`；
+//! - **链接安全校验**（[`is_safe_to_open`]，纯逻辑）**必须留在这里**——
+//!   若随执行一起搬走，`shared` 会重新含 IO，且校验逻辑会被拆到
+//!   infrastructure 侧，表现层再想复用就得反向依赖 infrastructure。
 
 /// 用系统默认程序打开一个外部地址 / 本地文件。
 ///
 /// 行为对齐「在浏览器中打开链接」：http(s) / mailto 交浏览器 / 邮件客户端，
-/// 本地路径交文件管理器 / 关联程序。`spawn` 而非 `wait`：不阻塞 UI 帧。
+/// 本地路径交文件管理器 / 关联程序。实现应 `spawn` 而非 `wait`——不阻塞 UI 帧。
 ///
 /// 失败只返回 `Err`，不 panic——打开器不可用（或平台不支持）不应拖垮编辑器。
-pub fn open_external(target: &str) -> std::io::Result<()> {
-    // `cmd /C start "" "url"` 的空 `""` 是 `start` 的「窗口标题」占位，
-    // 必须保留，否则当 url 自身带引号 / 空格时会被 `start` 误判为标题。
-    #[cfg(target_os = "windows")]
-    {
-        Command::new("cmd")
-            .args(["/C", "start", "", target])
-            .spawn()?;
-    }
-    #[cfg(target_os = "macos")]
-    {
-        Command::new("open").arg(target).spawn()?;
-    }
-    #[cfg(target_os = "linux")]
-    {
-        Command::new("xdg-open").arg(target).spawn()?;
-    }
-    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-    {
-        let _ = target;
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Unsupported,
-            "unsupported platform for open_external",
-        ));
-    }
-    Ok(())
+///
+/// # 为什么这是个 trait 而不是自由函数
+///
+/// 预览区点击外链是**用户可见**行为，而真起进程的调用在测试里无法断言
+/// （`spawn` 一个真 `cmd` 既不幂等也没法观察）。抽成端口后，测试可注入
+/// 假实现，断言「点了链接、参数正确、且**只在通过安全校验后**才调」。
+///
+/// 与 [`crate::shared::dialog::DialogPort`] / [`crate::shared::time::Clock`]
+/// 同一范式：端口在 `shared`，实现在 `infrastructure`。
+pub trait ExternalOpener: Send + Sync {
+    /// 打开 `target`（URL 或本地路径）。
+    fn open(&self, target: &str) -> std::io::Result<()>;
 }
 
 /// 该链接目标是否可安全打开（拒绝 XSS 向量）。
@@ -85,6 +81,15 @@ pub fn is_safe_to_open(url: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::is_safe_to_open;
+
+    /// 端口必须能装进 `Arc<dyn ExternalOpener>` 并跨线程传递（`Services`
+    /// 持有它，对话框端口同为 `Send + Sync`）。这条是**编译期**约束：
+    /// 若哪天有人给 trait 去掉 `Send + Sync`，实现侧 `Arc<dyn …>` 会编译失败。
+    #[test]
+    fn opener_port_is_send_and_sync() {
+        fn assert_send_sync<T: Send + Sync + ?Sized>() {}
+        assert_send_sync::<dyn super::ExternalOpener>();
+    }
 
     #[test]
     fn rejects_xss_protocols() {
