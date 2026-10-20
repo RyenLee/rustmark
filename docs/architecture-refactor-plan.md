@@ -996,6 +996,11 @@ UI 选格式 ──► ExportFormat（领域唯一枚举）
 
 #### R-11 · `presentation ↔ app` 状态所有权收敛
 
+> **子批 1（`export_ui`）已落地（2026-10-20，commit `96c2fa8`）**，作为 R-06
+> 的前置条件单独提出。落地形态与原文有 4 处偏差，原因与实测证据见本节
+> 末尾的「实施偏差 · 子批 1」小节；**原文保留**以便对照。
+> 子批 2（`diff_ui`）与子批 3（其余 49 处）**尚未开始**。
+
 - **改造内容**：把 presentation 层对 app 状态字段的 **59 处直写**（`grep -rEn 'app\.[a-z_]+\.[a-z_]+\s*=' src/presentation/`）改为调用 app 层方法。
   - **子批 1（`export_ui`，7 处）**：`src/presentation/views/export_view.rs:221/231/236/265/272/276/280` → 在 `src/app/frame/actions.rs` 或新建 `src/app/frame/export.rs` 提供 `set_export_error()` / `clear_export_result()` / `set_export_path()` 等方法。
   - **子批 2（`diff_ui`，3 处 + `model.rs`）**：`src/presentation/views/diff_view.rs:70/94/95` → `src/app/frame/` 提供对应方法。
@@ -1013,6 +1018,40 @@ UI 选格式 ──► ExportFormat（领域唯一枚举）
   - `grep -rEn 'app\.[a-z_]+\.[a-z_]+\s*=' src/presentation/` → **零命中**（R-12 规则上线后由构建期保证）；
   - 每个子批的行为等价性由**该功能已有的真帧回归**保证（导出浮层、差异对比、查找替换、状态栏各有既有用例）→ 逐子批跑对应测试文件；
   - 变异验证：把某个新方法改成空实现 → 对应用例红。
+
+##### 实施偏差 · 子批 1（`export_ui`，2026-10-20，commit `96c2fa8`）
+
+1. **处数：方案列 7 处，实测 8 处**。多出的是 `export_view.rs` 关闭分支里
+   对 `running` 的复位——它紧邻的 `close()` **本身就把 `running` 置 false**，
+   故这处直写是冗余的。处置：直接删除（**不是**改成调方法），行为等价由
+   修正后的 `closing_export_clears_the_running_flag` 钉住。
+   方案的「处数只是下限」再次成立（同 R-15 的 9 处 vs 方案 5 处）。
+2. **方法名与实测不符**：原文给的 `set_export_error()` / `clear_export_result()`
+   / `set_export_path()` 在 `export_view.rs` 里**没有对应的直写**
+   （错误/结果/路径分别走状态结构体已有的 `fail` / `succeed` / `close`，
+   路径输入框是 `TextEdit` 绑定）。实际新增的是 6 个选项写入口
+   （`set_export_long_image` / `set_export_include_toc` / `set_export_embed_images`
+   / `set_export_page_size` / `set_export_paginate` / `set_pdf_include_toc`）
+   + `open_export_overlay`。
+3. **「59 处」的口径含 13 处误报**：检测正则 `app\.[a-z_]+\.[a-z_]+\s*=` 会
+   把 `==` 比较（`app.export_ui.format == *format`）也当成赋值。
+   实测**真实赋值**改造前为 **46 处**，子批 1 清零 8 处后剩 **38 处**。
+   R-12 上线时检测正则必须排除 `==`，否则会误报 13 处。
+4. **`TextEdit` 的 `&mut` 绑定是已知边界**：输出目录与文件名输入框以
+   `TextEdit::singleline(&mut app.export_ui.output_dir)` 绑定，egui 的文本
+   控件必须拿到 `&mut String`。改成「返回 `&mut String` 的访问器」只是把直写
+   换个写法，所有权并未收敛；故保留原样，且 R-12 规则只针对赋值形态，
+   不会误伤这两处。
+
+- **顺带修掉的两处无牙齿判据**（改造前就存在，均为「测试自己写值再断言」）：
+  - `pdf_toc_implies_pagination`：自设 `paginate = true` 再断言它为真，
+    联动漏了也绿 → 改为走 `set_pdf_include_toc(true)`；
+  - `closing_export_clears_the_running_flag`：自设 `running = false` 再断言，
+    `close()` 清不清 running 根本没测 → 删掉那行自设。
+- **新增 7 例**（一律走 `EditorApp` 方法入口，不走「给字段赋值再断言」的自指
+  判据）+ `tools/mut_r11_1.py` **变异 10 轮全捕获、0 无牙齿**。
+- **门禁**：fmt OK / check-arch OK / clippy 0 lint /
+  test **2055 passed / 0 failed / 4 ignored**（基线 2048 → +7）。
 
 #### R-12 · 新增机械规则「presentation 不得直写 app 状态字段」
 
@@ -1432,9 +1471,10 @@ widgets 不清 / icons 不清 / views 丢窄豁免 / 窄豁免外溢到整个 `c
 | M3 | R-13 | 2026-10-20 | 2026-10-20 | **2024** / 4 / OK | `layer_of` 细粒度化（`state`/`views`/`rich`/`widgets`/`icons` 五子层，**层根文件与目录同规则**）；四条新禁令全部叠加父层；**方案预警的风险点真的发生了**——`views/` 独立成层后 `allowed_for` 没跟上，**35 个视图文件同时报错**，按「放宽到具体前缀而非放弃规则」把 `crate::app::frame` 窄豁免扩到全部子层（窄前缀不变）；存量实测 **0 处真实违规**（命中全在文档注释）→ 本项不改变任何编译结果；新增 7 例 + 修正 1 条旧筛子 + 变异 **8 轮全捕获**；约束文档加 §4.0/§9，新建 ADR-010 |
 | M4 | R-04 | 2026-10-20 | 2026-10-20 | **2044** / 4 / OK | `1462337`；Revert=从磁盘重载（非撤销，方案正文偏差，见 §4.2 R-04「实施偏差」）；InsertImage=选图→复制到 assets→插相对链接；`action_route` 的 `Unbound` 清单清零；新增 14 集成例 + 6 lib 例 + 变异 **11 轮全捕获** |
 | M4 | R-05 | 2026-10-20 | 2026-10-20 | **2048** / 4 / OK | `bd61fd4`；设置页补写作目标输入框，`normalize_writing_goal` 纯函数 + 纳入取消回滚快照；新增 3 集成例 + 1 lib 例 + 变异 **2 轮全捕获**；**R-11 改造时需回头收口输入框直写**（详见 §4.2 R-05 风险点） |
-| M4/M5 后 | R-06 | | | | 依赖 M5 子批 1 |
-| M5 | R-11 子批 1/2/3 | | | | |
-| M5 后 | R-12 | | | | 依赖 M5 |
+| M5 | R-11 子批 1（`export_ui`） | 2026-10-20 | 2026-10-20 | **2055** / 4 / OK | `96c2fa8`；导出浮层 **8 处直写清零**（方案列 7 处，实测另有 1 处冗余写）；`open_overlay` 的 Export 初始化下沉到 `frame/export.rs`；新增 7 例 + 变异 **10 轮全捕获**；顺带修 2 处无牙齿判据；**方案「59 处」口径含 13 处 `==` 误报，真实赋值 46 → 38**（详见 §4.2 R-11「实施偏差 · 子批 1」） |
+| M5 | R-11 子批 2/3 | | | | `diff_ui` 3 处 + 其余 49 处，**尚未开始** |
+| M4/M5 后 | R-06 | | | | **前置（R-11 子批 1）已落地，可做**（原记「依赖 M5 子批 1」） |
+| M5 后 | R-12 | | | | 依赖 R-11 全部子批；**规则正则须排除 `==`，否则误报 13 处** |
 | M6 | R-17 | | | | |
 | M6 | R-20 | | | | |
 | M6 | R-19 | | | | |
