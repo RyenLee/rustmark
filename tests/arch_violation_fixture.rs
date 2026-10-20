@@ -1042,3 +1042,440 @@ fn the_state_violation_explains_why() {
 
 // ============================================================================
 // 十一、词法层
+// ============================================================================
+
+/// 豁免指令要区分「独立成行」与「行尾」——窗口形状取决于这个区分。
+///
+/// 词法层是唯一能便宜地看见这个区分的地方：扫描级用例只能看「罩没罩住」，
+/// 看不出「为什么没罩」。debug 输出里带上了形状标记，窗口问题不用猜。
+#[test]
+fn allow_directives_record_whether_they_are_own_line() {
+    let dump = arch_check::lex_dump("// arch-allow: egui\nuse egui; // arch-allow: egui\n");
+    assert!(
+        dump.contains("allow@1:egui(own_line)"),
+        "独立成行的注释应记 own_line：{dump}"
+    );
+    assert!(
+        dump.contains("allow@2:egui(trailing)"),
+        "行尾注释应记 trailing：{dump}"
+    );
+}
+
+// ============================================================================
+// 十二、豁免窗口：行尾豁免只罩本条语句，独立行豁免额外罩下一行
+// ============================================================================
+
+/// 行尾豁免曾顺「起点前一行也认」漏到下一行，把一条**独立的**违规压掉。
+///
+/// 形状：第 1 行行尾写豁免，第 2 行是另一条同类 `use`——它没有任何豁免，
+/// 必须照常报。这是「判据无牙齿」的又一变体：豁免写在第 1 行，看着像只
+/// 豁免了第 1 行，实际把第 2 行一起吞了。
+#[test]
+fn a_trailing_allow_does_not_cover_the_next_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "domain/document/aggregate.rs",
+        "use egui; // arch-allow: egui\nuse egui;\n",
+    );
+    write_registry(&root, &[("domain/document/aggregate.rs", "egui")]);
+
+    let violations = arch_check::scan(&root);
+    assert_eq!(
+        violations.len(),
+        1,
+        "第 2 行的 use 没有任何豁免，必须照常报：{:?}",
+        described(&violations)
+    );
+    assert_eq!(
+        violations[0].line,
+        2,
+        "应报第 2 行：{:?}",
+        described(&violations)
+    );
+}
+
+/// 同上，但下一行是**非 use 位置**的限定路径——漏抑它同样放掉一个真依赖。
+#[test]
+fn a_trailing_allow_does_not_cover_the_next_reference() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "domain/document/aggregate.rs",
+        "use egui; // arch-allow: egui\nfn f(x: egui::Context) {}\n",
+    );
+    write_registry(&root, &[("domain/document/aggregate.rs", "egui")]);
+
+    let violations = arch_check::scan(&root);
+    assert_eq!(
+        violations.len(),
+        1,
+        "下一行的引用没有任何豁免，必须照常报：{:?}",
+        described(&violations)
+    );
+    assert_eq!(violations[0].line, 2);
+    assert!(
+        violations[0].detail.contains("引用"),
+        "应报为引用：{:?}",
+        described(&violations)
+    );
+}
+
+/// 独立成行的豁免写在 `use` 上面——这是它**该**罩的形状，不能收严收坏。
+#[test]
+fn an_own_line_allow_covers_the_statement_below() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "domain/document/aggregate.rs",
+        "// arch-allow: egui\nuse egui;\n",
+    );
+    write_registry(&root, &[("domain/document/aggregate.rs", "egui")]);
+
+    assert!(
+        arch_check::scan(&root).is_empty(),
+        "独立成行的豁免应罩住紧邻的 use：{:?}",
+        described(&arch_check::scan(&root))
+    );
+}
+
+/// 独立成行的豁免 + 多行 use：窗口起点是 `use` 所在行，也要罩住。
+#[test]
+fn an_own_line_allow_covers_a_multiline_use_below() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "domain/document/aggregate.rs",
+        "// arch-allow: egui\nuse egui::{\n    Context,\n};\n",
+    );
+    write_registry(&root, &[("domain/document/aggregate.rs", "egui")]);
+
+    assert!(
+        arch_check::scan(&root).is_empty(),
+        "独立成行的豁免应罩住紧邻的多行 use：{:?}",
+        described(&arch_check::scan(&root))
+    );
+}
+
+/// 豁免写在多行 use 组内（与代码同行）——本条语句照常罩。
+#[test]
+fn an_allow_inside_a_use_group_covers_that_statement() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "domain/document/aggregate.rs",
+        "use egui::{ // arch-allow: egui\n    Context,\n};\n",
+    );
+    write_registry(&root, &[("domain/document/aggregate.rs", "egui")]);
+
+    assert!(
+        arch_check::scan(&root).is_empty(),
+        "组内的行尾豁免应罩住本条语句：{:?}",
+        described(&arch_check::scan(&root))
+    );
+}
+
+/// 组内的行尾豁免**不越过本条语句**：后面的另一条 use 照常报。
+#[test]
+fn an_allow_inside_a_use_group_does_not_leak_past_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "domain/document/aggregate.rs",
+        "use egui::{ // arch-allow: egui\n    Context,\n};\nuse egui::Frame;\n",
+    );
+    write_registry(&root, &[("domain/document/aggregate.rs", "egui")]);
+
+    let violations = arch_check::scan(&root);
+    assert_eq!(
+        violations.len(),
+        1,
+        "第 4 行的 use 不在豁免窗口里：{:?}",
+        described(&violations)
+    );
+    assert_eq!(violations[0].line, 4);
+}
+
+/// 独立行豁免只罩**紧邻**的下一行：隔一条语句不罩，
+/// 且那条够不着的豁免自身要报「无效」。
+#[test]
+fn an_own_line_allow_does_not_skip_a_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "domain/document/aggregate.rs",
+        "// arch-allow: egui\nfn f() {}\nuse egui;\n",
+    );
+    write_registry(&root, &[("domain/document/aggregate.rs", "egui")]);
+
+    let violations = arch_check::scan(&root);
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.line == 3 && v.detail.contains("禁止依赖 egui")),
+        "隔一行的 use 必须照常报：{:?}",
+        described(&violations)
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.line == 1 && v.detail.contains("豁免无效")),
+        "罩不住任何违规的豁免要报无效：{:?}",
+        described(&violations)
+    );
+}
+
+// ============================================================================
+// 十三、自由位置是白名单，其它顶层名字是覆盖缺口
+// ============================================================================
+
+/// 白名单内的自由位置不报「未知层」：crate 入口与 `src/bin/` 工具。
+///
+/// 与下几条对照——收严成「默认未知」会误伤这三个约定好的位置。
+#[test]
+fn the_free_positions_are_a_whitelist() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(&root, "main.rs", "use egui;\n");
+    write_fixture(&root, "lib.rs", "use egui;\n");
+    write_fixture(&root, "bin/check-arch.rs", "use egui;\n");
+
+    assert!(
+        arch_check::scan(&root).is_empty(),
+        "crate 入口与 bin 工具是约定好的自由位置：{:?}",
+        described(&arch_check::scan(&root))
+    );
+}
+
+/// 未登记的顶层目录曾**静默**逃过全部层禁令——`layer_of` 的默认分支
+/// 曾是 `Free`，任何新目录（含打错的层名）都不产生任何报告。
+#[test]
+fn an_unknown_top_level_directory_is_reported() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(&root, "utils/helpers.rs", "use egui;\n");
+
+    let violations = arch_check::scan(&root);
+    assert_eq!(
+        violations.len(),
+        1,
+        "未登记的顶层目录必须报出来：{:?}",
+        described(&violations)
+    );
+    assert!(
+        violations[0].detail.contains("未知层"),
+        "应报「未知层」：{:?}",
+        described(&violations)
+    );
+}
+
+/// 未登记的顶层文件同理（`src/foo.rs`）。
+#[test]
+fn an_unknown_top_level_file_is_reported() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(&root, "foo.rs", "fn f() {}\n");
+
+    let violations = arch_check::scan(&root);
+    assert_eq!(
+        violations.len(),
+        1,
+        "未登记的顶层文件必须报出来：{:?}",
+        described(&violations)
+    );
+    assert!(violations[0].detail.contains("未知层"));
+}
+
+/// 未知层的文件**仍然**受帧预约规则约束——那条与层无关。
+///
+/// 这条钉的是检查顺序：未知层检查若插到帧预约循环**之前**，
+/// 这里的预约违规会被漏掉（正是 `app_layer_is_not_exempt_from_the_repaint_rule`
+/// 同类错误的另一个入口）。
+#[test]
+fn an_unknown_file_still_obeys_the_repaint_rule() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "utils/helpers.rs",
+        "fn f(ctx: &egui::Context) {\n    ctx.request_repaint_after(std::time::Duration::from_millis(10));\n}\n",
+    );
+
+    let violations = arch_check::scan(&root);
+    assert_eq!(
+        violations.len(),
+        2,
+        "应同时报未知层与帧预约：{:?}",
+        described(&violations)
+    );
+    assert!(
+        violations.iter().any(|v| v.detail.contains("未知层")),
+        "应报未知层：{:?}",
+        described(&violations)
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.detail.contains("request_repaint_after")),
+        "帧预约规则与层无关，未知层同样生效：{:?}",
+        described(&violations)
+    );
+}
+
+/// 组合根 / 自由文件里的 `arch-allow` 也曾被**静默忽略**——豁免体检跑在
+/// 「无层禁令提前返回」的后面。三态表（未登记 / 无效 / 对象不符）应当对
+/// 所有文件成立，包括没有层禁令的位置。
+#[test]
+fn a_stale_allow_in_a_layer_without_bans_is_reported() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(&root, "app/bootstrap.rs", "fn f() {} // arch-allow: egui\n");
+    write_registry(&root, &[("app/bootstrap.rs", "egui")]);
+
+    let violations = arch_check::scan(&root);
+    assert_eq!(
+        violations.len(),
+        1,
+        "组合根里的无效豁免必须被报：{:?}",
+        described(&violations)
+    );
+    assert!(
+        violations[0].detail.contains("豁免无效"),
+        "应报「豁免无效」：{:?}",
+        described(&violations)
+    );
+}
+
+// ============================================================================
+// 十四、extern crate 与「不设豁免」的规则
+// ============================================================================
+
+/// `extern crate egui;`（2015 版式，`#[macro_use]` 场景仍会出现）与 `use`
+/// 同等对待——旧实现只认 `use`，这条整类漏检。
+#[test]
+fn extern_crate_is_detected() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "domain/document/aggregate.rs",
+        "extern crate egui;\n",
+    );
+
+    let violations = arch_check::scan(&root);
+    assert_eq!(
+        violations.len(),
+        1,
+        "extern crate 必须被检出：{:?}",
+        described(&violations)
+    );
+    assert!(
+        violations[0].detail.contains("extern crate"),
+        "来源应标注为 extern crate：{:?}",
+        described(&violations)
+    );
+}
+
+/// 带别名的 `extern crate egui as e;`——别名不改变依赖对象。
+#[test]
+fn aliased_extern_crate_is_detected() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "domain/document/aggregate.rs",
+        "extern crate egui as e;\n",
+    );
+
+    let violations = arch_check::scan(&root);
+    assert_eq!(
+        violations.len(),
+        1,
+        "别名 extern crate 必须被检出：{:?}",
+        described(&violations)
+    );
+    assert!(violations[0].detail.contains("egui"));
+}
+
+/// `extern "C" { … }` 不是依赖声明：字符串不产生 token，`extern` 后面
+/// 跟不到 `crate` 标识符。这条防的是把 `extern` 一律当依赖声明的新误报。
+#[test]
+fn an_extern_block_is_not_a_dependency() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "domain/document/aggregate.rs",
+        "extern \"C\" {\n    fn foo();\n}\nfn f() {}\n",
+    );
+
+    assert!(
+        arch_check::scan(&root).is_empty(),
+        "extern 块不是依赖声明：{:?}",
+        described(&arch_check::scan(&root))
+    );
+}
+
+/// `extern "C" fn` 同理。
+#[test]
+fn an_extern_fn_is_not_a_dependency() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "domain/document/aggregate.rs",
+        "extern \"C\" fn foo() {}\nfn f() {}\n",
+    );
+
+    assert!(
+        arch_check::scan(&root).is_empty(),
+        "extern fn 不是依赖声明：{:?}",
+        described(&arch_check::scan(&root))
+    );
+}
+
+/// 帧预约规则**不设豁免**：给它写豁免，要被指出「这条规则没有豁免」，
+/// 而不是报「该行没有依赖它的违规」——后者会让人去挪注释位置，
+/// 而正确动作是删掉那处预约。
+#[test]
+fn the_repaint_rule_has_no_exemption() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "app/frame/files.rs",
+        "fn f(ctx: &egui::Context) {\n    ctx.request_repaint_after(std::time::Duration::from_millis(10)); // arch-allow: request_repaint_after\n}\n",
+    );
+    write_registry(&root, &[("app/frame/files.rs", "request_repaint_after")]);
+
+    let violations = arch_check::scan(&root);
+    assert_eq!(
+        violations.len(),
+        2,
+        "应报帧预约违规 + 无效豁免：{:?}",
+        described(&violations)
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.detail.contains("request_repaint_after") && !v.detail.contains("arch-allow")),
+        "帧预约违规照常报：{:?}",
+        described(&violations)
+    );
+    let stale = violations
+        .iter()
+        .find(|v| v.detail.contains("arch-allow"))
+        .expect("应有一条豁免体检结果");
+    assert!(
+        stale.detail.contains("不设豁免"),
+        "文案应指明这条规则没有豁免，而不是说「该行没有违规」：{}",
+        stale.detail
+    );
+}

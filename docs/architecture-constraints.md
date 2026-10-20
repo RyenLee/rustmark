@@ -76,12 +76,16 @@ presentation ──► application ──► domain ◄── infrastructure
 2. **`use` 展开**：`use` 声明按 use-tree 语法展开成**完整路径**，覆盖
    `pub use` / `pub(crate) use` / `use a::{b, c}` / `use a::{self, b}` / 嵌套组 /
    `use a::b as c`（别名不改变依赖对象）/ `use a::*` / 跨行 / 前导 `::`。
+   `extern crate a;` / `extern crate a as e;`（2015 版式，`#[macro_use]` 场景）
+   同等对待；`extern "C" { … }` / `extern "C" fn` 不是依赖声明。
 3. **限定路径**：非 `use` 位置的 `a::b::C` 同样参与判定——
    `fn f(d: crate::domain::x::Y)` 也是跨层依赖。
 4. **匹配**：与禁止清单做**路径段**前缀匹配——`crate::domain` 命中
    `crate::domain::x::Y`，但**不**命中 `crate::domainfoo`。
 5. **层判定**：先剥掉末段 `.rs` 再取首段——`src/domain.rs` 属于 domain 层，
-   `src/presentation/state.rs` 属于 `presentation/state` 子层。
+   `src/presentation/state.rs` 属于 `presentation/state` 子层。自由位置是
+   **白名单**（`src/main.rs` / `src/lib.rs` / `src/bin/**`）；其它顶层名字
+   报「未知层」——默认放行等于新目录静默逃过全部层禁令。
 6. **子层叠加**：`presentation/state` 同时受父层与子层两组禁令约束（不是替换）。
 
 ### 4.2 表现层的唯一例外：`crate::app::frame`
@@ -111,6 +115,7 @@ presentation ──► application ──► domain ◄── infrastructure
 
 这条规则对**所有**文件生效，**含组合根 `app/`**。组合根豁免的是「层依赖」
 （可以依赖全部层），不是「所有规则」——调用点自己预约帧，正是上面那三次的根因。
+本条**不设 `arch-allow` 豁免**：给它写豁免会被指出「这条规则没有豁免」。
 
 ### 4.4 豁免（`arch-allow`）
 
@@ -122,6 +127,17 @@ presentation ──► application ──► domain ◄── infrastructure
 | 豁免未登记 | `arch-allow 豁免未登记` |
 | 该行没有依赖它的违规（豁免写错或已过时） | `arch-allow 豁免无效` |
 | 豁免对象与实际违规对象不符 | 照常报违规（豁免只认写明的那个对象） |
+
+**窗口形状**（两种 deliberately 不同）：
+
+- **行尾豁免**（`use egui; // arch-allow: egui`）只作用于**本条语句**——
+  包括它坐在里面的多行 `use` 组，但**不越过**这条语句；
+- **独立成行**的豁免额外作用于**紧邻的下一行**（写在 `use egui;` 上面的那种），
+  且只罩紧邻的那一条。
+
+少了这个区分，第 1 行的行尾豁免会把第 2 行一条**独立的**违规一并压掉——
+豁免看着写在第 1 行，实际吞了第 2 行。组合根 / 自由文件（无层禁令的位置）里的
+`arch-allow` 同样要体检：那里的豁免必然无对象，报「无效」而不是被静默忽略。
 
 <!-- arch-allow:registry -->
 | 文件 | 对象 | 理由 |
@@ -176,6 +192,10 @@ src/
 ├─ infrastructure/{persistence,text,parsing,highlighting,export,events,dialogs}/
 └─ presentation/{state,views,widgets,theme,shortcuts}/
 ```
+
+白名单外的顶层位置（如 `src/foo.rs` / `src/utils/`）会被校验器报「未知层」：
+新目录要么归入既有层，要么先改本文档与校验器再放代码。`src/bin/` 是工具二进制
+（`check-arch`），与 `main.rs` / `lib.rs` 一样不受层级限制。
 
 ## 8. 体积与性能预算（改动前自查）
 

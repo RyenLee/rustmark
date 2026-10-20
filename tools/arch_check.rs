@@ -7,21 +7,29 @@
 //    会被误判成跨层依赖。
 // 2. **`use` 展开**：`use` 声明按 use-tree 语法展开成**完整路径**，覆盖
 //    `pub use` / `use a::{b, c}` / `use a::b as c` / `use a::*` / 跨行 / 前导 `::`。
+//    `extern crate a;`（2015 版式，`#[macro_use]` 场景）同等对待。
 // 3. **限定路径**：非 `use` 位置的 `a::b::C` 同样参与判定——
 //    `fn f(d: crate::domain::x::Y)` 也是跨层依赖。
 // 4. **匹配**：与各层禁止清单做「路径段前缀」匹配（`crate::domain` 命中
 //    `crate::domain::x::Y`，但不命中 `crate::domainfoo`）。
+// 5. **层判定**：先剥掉末段 `.rs` 再取首段。自由位置是**白名单**
+//    （`main.rs` / `lib.rs` / `bin/**`）；其它顶层名字判「未知层」并报错——
+//    默认放行等于新目录静默逃过全部层禁令。
 //
 // # 豁免（`arch-allow`）
 //
 // 行尾注释 `// arch-allow: <对象>` **只豁免该对象**（不再整行放行），
 // 且必须登记在 `docs/architecture-constraints.md` 的豁免表里（校验器逐条核对）。
 //
+// 豁免窗口分两种形状：**行尾**豁免只作用于本条语句；**独立成行**的豁免额外
+// 作用于紧邻的下一行。少了这个区分，行尾豁免会漏到下一行，把一条独立的
+// 违规一并压掉。
+//
 // # 帧预约唯一出口（T11 / ADR-009）
 //
 // `request_repaint_after` 在 `src/` 里**只允许**出现在 `app/frame/scheduler.rs`。
 // 这条规则对**所有**文件生效（含组合根 `app/`）——调用点自己预约帧，
-// 正是历史上「定时功能完全不生效」那三次的根因。
+// 正是历史上「定时功能完全不生效」那三次的根因。它**不设豁免**。
 
 use std::fs;
 use std::path::Path;
@@ -145,6 +153,12 @@ enum Layer {
     App,
     /// 组合根之外的自由文件（`main.rs` / `lib.rs` / `bin/**`）：不受层级限制。
     Free,
+    /// 未登记的顶层位置——**不是自由文件，是覆盖缺口**。
+    ///
+    /// `main.rs` / `lib.rs` / `bin/` 是约定好的自由位置；其它顶层名字
+    /// （`src/foo.rs` / `src/utils/`）不在约束文档的模块树里。判 Unknown
+    /// 并直接报错：否则新目录会**静默**逃过全部层禁令——缺口要响，不要静。
+    Unknown,
 }
 
 impl Layer {
@@ -159,6 +173,7 @@ impl Layer {
             Layer::Shared => "shared",
             Layer::App => "app",
             Layer::Free => "free",
+            Layer::Unknown => "unknown",
         }
     }
 }
@@ -174,7 +189,11 @@ impl Layer {
 /// 同理 `src/presentation/state.rs` 是 `presentation/state` 子层的根模块，
 /// 按同一套规则落子层。
 ///
-/// `main.rs` / `lib.rs` / `bin/` 属于组合根或工具，不做限制（`Layer::Free`）。
+/// # 自由位置是**白名单**，不是默认值
+///
+/// `main.rs` / `lib.rs` / `bin/**` 是约定好的自由位置（crate 入口与工具
+/// 二进制）。其它顶层名字一律判 [`Layer::Unknown`] 并报错——默认放行等于
+/// 「新目录静默逃过全部层禁令」，而这类缺口不产生编译错误、没人会注意到。
 fn layer_of(rel: &str) -> Layer {
     let mut parts: Vec<&str> = rel.split('/').collect();
     if let Some(stem) = parts.last().and_then(|l| l.strip_suffix(".rs")) {
@@ -195,7 +214,10 @@ fn layer_of(rel: &str) -> Layer {
             }
         }
         "app" => Layer::App,
-        _ => Layer::Free,
+        // crate 入口与 `src/bin/` 工具：约定好的自由位置。
+        "bin" => Layer::Free,
+        "main" | "lib" if parts.len() == 1 => Layer::Free,
+        _ => Layer::Unknown,
     }
 }
 
@@ -218,7 +240,9 @@ fn forbidden_for(layer: Layer) -> Vec<&'static str> {
             v
         }
         Layer::Shared => SHARED_FORBIDDEN.to_vec(),
-        Layer::App | Layer::Free => Vec::new(),
+        // 组合根 / 自由文件 / 未登记位置：没有可判的层禁令。
+        // （Unknown 的「报未知层」在 `check_file` 里做——它要先于层禁令返回。）
+        Layer::App | Layer::Free | Layer::Unknown => Vec::new(),
     }
 }
 
@@ -282,6 +306,17 @@ struct Allow {
     line: usize,
     /// 豁免对象（如 `egui` / `crate::domain`）。
     name: String,
+    /// 注释是否**独立成行**（该行在它之前没有代码 token）。
+    ///
+    /// 这个标记决定豁免窗口的形状，两者 deliberately 不同：
+    ///
+    /// - **行尾豁免**（`use egui; // arch-allow: egui`）只作用于**本条语句**；
+    /// - **独立成行的豁免**额外作用于**紧邻的下一行**（写在 `use egui;`
+    ///   上面的那种）。
+    ///
+    /// 少了这个区分，行尾豁免会顺着「起点前一行也认」漏到下一行，把一条
+    /// **独立的**违规一并压掉——豁免写在第 1 行，第 2 行的同类违规照样报到。
+    own_line: bool,
 }
 
 struct Lexed {
@@ -302,6 +337,11 @@ struct Lexer<'a> {
     bytes: &'a [u8],
     pos: usize,
     line: usize,
+    /// 最近一次 push 的 token 所在行（0 = 还没有 token）。
+    ///
+    /// 用于区分「独立成行的注释」与「行尾注释」——豁免窗口的形状取决于这个
+    /// 区分（见 [`Allow::own_line`]）。
+    last_tok_line: usize,
 }
 
 impl<'a> Lexer<'a> {
@@ -311,6 +351,7 @@ impl<'a> Lexer<'a> {
             bytes: src.as_bytes(),
             pos: 0,
             line: 1,
+            last_tok_line: 0,
         }
     }
 
@@ -403,7 +444,8 @@ impl<'a> Lexer<'a> {
         Lexed { tokens, allows }
     }
 
-    fn push(&self, tokens: &mut Vec<Token>, kind: TokKind, text: String) {
+    fn push(&mut self, tokens: &mut Vec<Token>, kind: TokKind, text: String) {
+        self.last_tok_line = self.line;
         tokens.push(Token {
             kind,
             text,
@@ -429,6 +471,8 @@ impl<'a> Lexer<'a> {
     fn skip_line_comment(&mut self, allows: &mut Vec<Allow>) {
         // 文档注释（`///` / `//!`）不产生豁免——文档里提到标记串不等于豁免。
         let is_doc = matches!(self.bytes.get(self.pos + 2), Some(b'/') | Some(b'!'));
+        // 本行在注释之前有没有代码 token：有 → 行尾注释；没有 → 独立成行。
+        let own_line = self.last_tok_line != self.line;
         let start = self.pos + 2;
         while let Some(c) = self.peek_char() {
             if c == '\n' {
@@ -437,12 +481,13 @@ impl<'a> Lexer<'a> {
             self.bump_char();
         }
         if !is_doc {
-            collect_allow(&self.src[start..self.pos], self.line, allows);
+            collect_allow(&self.src[start..self.pos], self.line, own_line, allows);
         }
     }
 
     fn skip_block_comment(&mut self, allows: &mut Vec<Allow>) {
         let is_doc = matches!(self.bytes.get(self.pos + 2), Some(b'*') | Some(b'!'));
+        let own_line = self.last_tok_line != self.line;
         let start = self.pos;
         let start_line = self.line;
         self.pos += 2;
@@ -466,7 +511,7 @@ impl<'a> Lexer<'a> {
             }
         }
         if !is_doc {
-            collect_allow(&self.src[start..self.pos], start_line, allows);
+            collect_allow(&self.src[start..self.pos], start_line, own_line, allows);
         }
     }
 
@@ -578,7 +623,9 @@ impl<'a> Lexer<'a> {
 /// 词法层的调试出口：把源码解析成可读的 token 序列。
 ///
 /// 词法层是「哪些东西会被判成路径」的唯一真源，出问题时需要一个
-/// 不用猜的窗口。返回形如 `1:Ident(use) 1:Ident(egui) 2:Semi(;)` 的多行文本。
+/// 不用猜的窗口。返回形如 `1:Ident(use) 1:Ident(egui) 2:Semi(;)` 的多行文本；
+/// 豁免指令另起一行，形如 `allow@2:egui(trailing)` / `allow@1:egui(own_line)`
+/// ——`own_line` 决定豁免窗口的形状，调试窗口问题时必须看得见。
 ///
 /// 只在测试目标里编译——`build.rs` 与 `check-arch` bin 都用不到它，
 /// 留着会变成 `dead_code` 告警（门禁是 `-D warnings`）。
@@ -594,7 +641,8 @@ pub fn lex_dump(src: &str) -> String {
         s.push_str(&format!("{}:{:?}({})\n", t.line, t.kind, t.text));
     }
     for a in &lexed.allows {
-        s.push_str(&format!("allow@{}:{}\n", a.line, a.name));
+        let shape = if a.own_line { "own_line" } else { "trailing" };
+        s.push_str(&format!("allow@{}:{}({})\n", a.line, a.name, shape));
     }
     s
 }
@@ -617,7 +665,9 @@ pub fn lex_dump(src: &str) -> String {
 ///
 /// 于是 `egui（已在 architecture.md 登记）` → `egui`，
 /// 而 `egui, architecture.md 是登记处` → 只认 `egui`。
-fn collect_allow(text: &str, line: usize, out: &mut Vec<Allow>) {
+///
+/// `own_line` 见 [`Allow::own_line`]：它决定这条豁免能罩住哪些行。
+fn collect_allow(text: &str, line: usize, own_line: bool, out: &mut Vec<Allow>) {
     // 只取**第一个** `arch-allow:` 之后的片段——一条注释里写多个标记串
     // 是笔误，按第一个处理即可。
     let Some(part) = text.split(ARCH_ALLOW).nth(1) else {
@@ -639,6 +689,7 @@ fn collect_allow(text: &str, line: usize, out: &mut Vec<Allow>) {
         out.push(Allow {
             line,
             name: name.to_string(),
+            own_line,
         });
     }
 }
@@ -770,17 +821,20 @@ struct Candidate {
     banned: &'static str,
     /// 报告用行号。
     line: usize,
-    /// 豁免指令可出现的行号窗口（含两端；起点前一行的豁免也认）。
+    /// 豁免指令可出现的行号窗口（含两端）。
+    ///
+    /// 窗口只是**必要条件**：行尾豁免必须落在窗口内；独立成行的豁免额外
+    /// 认「窗口起点前一行」（见 [`Allow::own_line`] 与 `check_file` 里的判定）。
     win_start: usize,
     win_end: usize,
-    /// 来自 `use` 声明（true）还是其它位置的路径引用（false）。
-    from_use: bool,
+    /// 来源标注：`use` / `extern crate` / `引用`（非 use 位置的限定路径）。
+    source: &'static str,
 }
 
 impl Candidate {
     /// 违规文案里的来源标注。
     fn kind(&self) -> &'static str {
-        if self.from_use { "use" } else { "引用" }
+        self.source
     }
 }
 
@@ -970,57 +1024,79 @@ fn check_file(rel: &str, layer: Layer, lexed: &Lexed, registry: &Registry) -> Ve
         }
     }
 
-    let forbidden = forbidden_for(layer);
-    if forbidden.is_empty() {
-        // 组合根 / 自由文件：没有层级禁令 → 没有可豁免的东西。
+    // ---- 未登记的顶层位置：覆盖缺口，必须响 ----
+    //
+    // 放在帧预约检查**之后**：那条规则与层无关，未知文件同样受它约束。
+    if layer == Layer::Unknown {
+        violations.push(Violation {
+            file: rel.to_string(),
+            line: 1,
+            detail: format!(
+                "未知层：{rel} 不在架构约束的模块树里（docs/architecture-constraints.md）。\
+                 要么把它归入既有层（domain / application / infrastructure / shared / \
+                 presentation / app），要么它是 src/bin/ 工具；若确实需要新的层类别，\
+                 先改约束文档与校验器，再放代码"
+            ),
+        });
         return violations;
     }
 
     // ---- 依赖路径判定 ----
-    let candidates = collect_candidates(tokens, &forbidden, allowed_for(layer));
+    //
+    // 没有层禁令的层（组合根 / 自由文件）跳过候选收集，但**豁免体检照跑**——
+    // 那些位置写 `arch-allow` 同样是噪音，应当报出来而不是被静默忽略。
     let mut used_allow = vec![false; lexed.allows.len()];
-
-    for cand in &candidates {
-        let hit = lexed
-            .allows
-            .iter()
-            .enumerate()
-            .find(|(_, a)| {
-                a.line + 1 >= cand.win_start
-                    && a.line <= cand.win_end
-                    && allow_covers(&a.name, cand.banned)
-            })
-            .map(|(idx, _)| idx);
-        match hit {
-            Some(idx) => {
-                used_allow[idx] = true;
-            }
-            None => {
-                let reason = if layer == Layer::PresentationState
-                    && PRESENTATION_STATE_FORBIDDEN.contains(&cand.banned)
-                {
-                    "（UI State 只放视图状态：开关 / 滚动 / 焦点 / 临时输入；\
-                     业务数据一律来自 DTO，见 docs/06 表现层与交互实现）"
-                } else {
-                    ""
-                };
-                violations.push(Violation {
-                    file: rel.to_string(),
-                    line: cand.line,
-                    detail: format!(
-                        "{} 层禁止依赖 {}（{} {}）{}",
-                        layer.label(),
-                        cand.banned,
-                        cand.kind(),
-                        cand.path,
-                        reason
-                    ),
-                });
+    let forbidden = forbidden_for(layer);
+    if !forbidden.is_empty() {
+        let candidates = collect_candidates(tokens, &forbidden, allowed_for(layer));
+        for cand in &candidates {
+            let hit = lexed
+                .allows
+                .iter()
+                .enumerate()
+                .find(|(_, a)| {
+                    allow_covers(&a.name, cand.banned)
+                        && (cand.win_start <= a.line && a.line <= cand.win_end
+                            // 独立成行的豁免额外罩住紧邻的下一行；行尾豁免不罩——
+                            // 否则第 1 行的行尾豁免会把第 2 行的独立违规一并压掉。
+                            || (a.own_line && cand.win_start == a.line + 1))
+                })
+                .map(|(idx, _)| idx);
+            match hit {
+                Some(idx) => {
+                    used_allow[idx] = true;
+                }
+                None => {
+                    let reason = if layer == Layer::PresentationState
+                        && PRESENTATION_STATE_FORBIDDEN.contains(&cand.banned)
+                    {
+                        "（UI State 只放视图状态：开关 / 滚动 / 焦点 / 临时输入；\
+                         业务数据一律来自 DTO，见 docs/06 表现层与交互实现）"
+                    } else {
+                        ""
+                    };
+                    violations.push(Violation {
+                        file: rel.to_string(),
+                        line: cand.line,
+                        detail: format!(
+                            "{} 层禁止依赖 {}（{} {}）{}",
+                            layer.label(),
+                            cand.banned,
+                            cand.kind(),
+                            cand.path,
+                            reason
+                        ),
+                    });
+                }
             }
         }
     }
 
     // ---- 豁免指令自身的体检 ----
+    //
+    // 对**所有**层生效（含组合根 / 自由文件）：那些位置没有层禁令，
+    // 因此那里的 `arch-allow` 必然是无对象的噪音——报出来，而不是
+    // 因为「提前返回」被静默忽略（三态表才对所有文件成立）。
     for (idx, a) in lexed.allows.iter().enumerate() {
         if used_allow[idx] {
             if !registry.contains(rel, &a.name) {
@@ -1036,13 +1112,27 @@ fn check_file(rel: &str, layer: Layer, lexed: &Lexed, registry: &Registry) -> Ve
             }
             continue;
         }
+        // 该行确实有帧预约违规时，说清楚「这条规则不设豁免」——
+        // 否则读者会以为是窗口写错了，去挪注释位置而不是删掉预约。
+        let repaint_here = violations
+            .iter()
+            .any(|v| v.line == a.line && v.detail.contains(REPAINT_RESERVATION));
+        let detail = if repaint_here {
+            format!(
+                "arch-allow 豁免无效：{}（该行确实有违规，但「{REPAINT_RESERVATION} 只允许出现在 \
+                 {REPAINT_RESERVATION_HOME}」这条规则不设豁免）",
+                a.name
+            )
+        } else {
+            format!(
+                "arch-allow 豁免无效：{}（该行没有依赖它的违规，豁免要么写错、要么已过时）",
+                a.name
+            )
+        };
         violations.push(Violation {
             file: rel.to_string(),
             line: a.line,
-            detail: format!(
-                "arch-allow 豁免无效：{}（该行没有依赖它的违规，豁免要么写错、要么已过时）",
-                a.name
-            ),
+            detail,
         });
     }
 
@@ -1069,7 +1159,30 @@ fn collect_candidates(
                 .unwrap_or(t.line);
             for (path, line) in paths {
                 push_candidates(
-                    &mut out, &path, line, t.line, stmt_end, true, forbidden, allowed,
+                    &mut out, &path, line, t.line, stmt_end, "use", forbidden, allowed,
+                );
+            }
+            i = if end > i { end } else { i + 1 };
+            continue;
+        }
+        // `extern crate egui;` / `extern crate egui as e;`
+        // （2015 版式依赖声明，`#[macro_use]` 重导出场景仍会出现）
+        // ——与 `use` 同等对待：只认 `use` 会让这条整类漏检。
+        // 注意 `extern "C" { … }` / `extern "C" fn` 的 `extern` 后面跟的是
+        // 字符串（不产生 token）或 `{` / `fn`，到不了这里。
+        if t.kind == TokKind::Ident
+            && t.text == "extern"
+            && tokens.get(i + 1).map(|n| n.text.as_str()) == Some("crate")
+        {
+            let (paths, end) = parse_use_tree(tokens, i + 2, &[]);
+            let stmt_end = end
+                .checked_sub(1)
+                .and_then(|k| tokens.get(k))
+                .map(|x| x.line)
+                .unwrap_or(t.line);
+            for (path, line) in paths {
+                push_candidates(
+                    &mut out, &path, line, t.line, stmt_end, "extern crate", forbidden, allowed,
                 );
             }
             i = if end > i { end } else { i + 1 };
@@ -1099,7 +1212,7 @@ fn collect_candidates(
                 .collect();
             let path = segs.join("::");
             push_candidates(
-                &mut out, &path, t.line, t.line, t.line, false, forbidden, allowed,
+                &mut out, &path, t.line, t.line, t.line, "引用", forbidden, allowed,
             );
             i = j;
             continue;
@@ -1116,7 +1229,7 @@ fn push_candidates(
     line: usize,
     win_start: usize,
     win_end: usize,
-    from_use: bool,
+    source: &'static str,
     forbidden: &[&'static str],
     allowed: &[&'static str],
 ) {
@@ -1134,7 +1247,7 @@ fn push_candidates(
             line,
             win_start,
             win_end,
-            from_use,
+            source,
         });
     }
 }
