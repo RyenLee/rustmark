@@ -1,8 +1,19 @@
-//! 架构边界校验器自身的验证（S2-07）。
+//! 架构边界校验器自身的验证（S2-07 建立，R-01 重写后扩为「形状覆盖」）。
 //!
-//! 两条断言：
-//! 1. 当前工程**零违规**（真实源码扫描）；
-//! 2. 注入违规的临时工程**必须被检出**（证明校验器不是形同虚设）。
+//! # 为什么要这么多用例
+//!
+//! 校验器本身**不产生编译错误**：它写错一个 `use`、漏一个括号、少认一个宏，
+//! 后果都是「该拦的没拦」——而工程照样编译通过、测试照样全绿。
+//! 唯一能让这类缺陷现形的办法就是**注入违规**。
+//!
+//! 所以本文件的核心不是「跑一遍真实工程」，而是**把各种逃逸形状逐个钉死**：
+//! 旧实现的漏洞全是「某个具体形状逃过去了」，那就把形状做成用例。
+//!
+//! # 三类用例
+//!
+//! 1. **零违规守卫**：真实工程必须干净；
+//! 2. **注入必报**：每种逃逸形状都必须被检出；
+//! 3. **注入不报**：每种「看起来像违规但其实不是」的情形必须放过。
 
 use std::path::{Path, PathBuf};
 
@@ -16,6 +27,34 @@ fn write_fixture(root: &Path, rel: &str, content: &str) {
     std::fs::write(path, content).unwrap();
 }
 
+/// 写入豁免登记表（`docs/architecture-constraints.md` 的登记区段）。
+///
+/// 登记表是**豁免指令的另一半**：代码里的 `// arch-allow: X` 只在登记表里
+/// 出现过的对象上才有效。没登记的豁免会被报「豁免未登记」——
+/// 否则「随手写个豁免注释就能放行」等于没有豁免机制。
+fn write_registry(root: &Path, rows: &[(&str, &str)]) {
+    let manifest = root.parent().unwrap();
+    let path = manifest.join("docs").join("architecture-constraints.md");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let mut text = String::from("# 架构约束\n\n<!-- arch-allow:registry -->\n");
+    text.push_str("| 文件 | 对象 | 理由 |\n|---|---|---|\n");
+    for (f, n) in rows {
+        text.push_str(&format!("| `{f}` | `{n}` | 测试登记 |\n"));
+    }
+    text.push_str("<!-- /arch-allow:registry -->\n");
+    std::fs::write(path, text).unwrap();
+}
+
+fn described(vs: &[arch_check::Violation]) -> Vec<String> {
+    vs.iter()
+        .map(|v| format!("{}:{} {}", v.file, v.line, v.detail))
+        .collect()
+}
+
+// ============================================================================
+// 一、零违规守卫
+// ============================================================================
+
 #[test]
 fn current_project_has_no_violations() {
     let src_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
@@ -23,12 +62,31 @@ fn current_project_has_no_violations() {
     assert!(
         violations.is_empty(),
         "当前工程不应存在分层违规，实际：{:?}",
-        violations
-            .iter()
-            .map(|v| format!("{}:{} {}", v.file, v.line, v.detail))
-            .collect::<Vec<_>>()
+        described(&violations)
     );
 }
+
+/// 现状守卫：真实工程里的 UI State 一个领域文档类型都不引。
+///
+/// 与 `current_project_has_no_violations` 重复是有意的——那条会因
+/// **任何**层的任何违规而红，这条红了能立刻指认是 `state/` 的问题。
+#[test]
+fn ui_state_modules_import_no_domain_document() {
+    let src_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
+    let state_violations: Vec<_> = arch_check::scan(&src_root)
+        .into_iter()
+        .filter(|v| v.file.starts_with("presentation/state/"))
+        .collect();
+    assert!(
+        state_violations.is_empty(),
+        "UI State 只放视图状态，业务数据来自 DTO。实际违规：{:?}",
+        described(&state_violations)
+    );
+}
+
+// ============================================================================
+// 二、注入必报：use 声明的各种逃逸形状
+// ============================================================================
 
 #[test]
 fn injected_domain_violation_is_detected() {
@@ -98,6 +156,262 @@ fn injected_std_fs_in_domain_is_detected() {
     assert!(violations[0].detail.contains("std::fs"));
 }
 
+// ============================================================================
+// 三、注入必报：R-01 修掉的 8 类逃逸形状
+// ============================================================================
+
+/// `pub use` 曾整类逃逸——旧实现只认「行首 `use `」。
+#[test]
+fn pub_use_is_detected() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "domain/document/aggregate.rs",
+        "//! x\npub use egui::Context;\n",
+    );
+
+    let violations = arch_check::scan(&root);
+    assert_eq!(
+        violations.len(),
+        1,
+        "pub use 同样必须被检出：{:?}",
+        described(&violations)
+    );
+    assert!(violations[0].detail.contains("egui"));
+}
+
+/// `pub(crate) use` 与 `pub use` 同理。
+#[test]
+fn pub_crate_use_is_detected() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "domain/document/aggregate.rs",
+        "//! x\npub(crate) use egui::Context;\n",
+    );
+
+    let violations = arch_check::scan(&root);
+    assert_eq!(
+        violations.len(),
+        1,
+        "pub(crate) use 必须被检出：{:?}",
+        described(&violations)
+    );
+}
+
+/// 嵌套花括号曾整类逃逸——旧实现按整行取首段，`crate::{domain::x::Y}` 落到
+/// 「crate」就断了。
+#[test]
+fn nested_brace_use_is_detected() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "presentation/views/main_view.rs",
+        "//! x\nuse crate::{domain::document::aggregate::Document};\n",
+    );
+
+    let violations = arch_check::scan(&root);
+    assert_eq!(
+        violations.len(),
+        1,
+        "嵌套花括号必须被检出：{:?}",
+        described(&violations)
+    );
+    assert!(
+        violations[0].detail.contains("crate::domain"),
+        "应展开成完整路径：{}",
+        violations[0].detail
+    );
+}
+
+/// 非 `use` 位置的限定路径也是跨层依赖——`fn f(d: crate::domain::x::Y)`。
+#[test]
+fn qualified_path_in_signature_is_detected() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "presentation/views/main_view.rs",
+        "//! x\nfn f(d: crate::domain::document::aggregate::Document) {}\n",
+    );
+
+    let violations = arch_check::scan(&root);
+    assert_eq!(
+        violations.len(),
+        1,
+        "签名里的限定路径必须被检出：{:?}",
+        described(&violations)
+    );
+    assert!(
+        violations[0].detail.contains("引用"),
+        "来源应标注为「引用」而非「use」：{}",
+        violations[0].detail
+    );
+}
+
+/// 函数体内的 `use` 也是依赖声明。
+#[test]
+fn use_inside_function_body_is_detected() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "domain/document/aggregate.rs",
+        "//! x\nfn f() { use egui::Context; }\n",
+    );
+
+    let violations = arch_check::scan(&root);
+    assert_eq!(
+        violations.len(),
+        1,
+        "函数体内的 use 必须被检出：{:?}",
+        described(&violations)
+    );
+}
+
+/// 别名曾整类逃逸——旧实现取整行首段，`use egui as e;` 里首段是 `egui`
+/// 却被 `as` 之后的噪声干扰。
+#[test]
+fn aliased_use_is_detected() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "domain/document/aggregate.rs",
+        "//! x\nuse egui as e;\n",
+    );
+
+    let violations = arch_check::scan(&root);
+    assert_eq!(
+        violations.len(),
+        1,
+        "别名 use 必须被检出：{:?}",
+        described(&violations)
+    );
+    assert!(violations[0].detail.contains("egui"));
+}
+
+/// 跨行 `use` 曾整类逃逸——旧实现按行处理，多行声明只有第一行被看到。
+#[test]
+fn multiline_use_is_detected() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "domain/document/aggregate.rs",
+        "//! x\nuse egui::{\n    Context,\n    Frame,\n};\n",
+    );
+
+    let violations = arch_check::scan(&root);
+    assert!(
+        !violations.is_empty(),
+        "跨行 use 必须被检出：{:?}",
+        described(&violations)
+    );
+}
+
+/// 层根文件 `src/domain.rs` 曾整类逃逸——旧实现按路径首段判定，
+/// 首段是 `"domain.rs"` 而不是 `"domain"`。
+#[test]
+fn layer_root_file_is_judged_by_its_layer() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(&root, "domain.rs", "//! x\nuse egui;\n");
+
+    let violations = arch_check::scan(&root);
+    assert_eq!(
+        violations.len(),
+        1,
+        "层根文件必须按所属层判定：{:?}",
+        described(&violations)
+    );
+    assert!(
+        violations[0].detail.starts_with("domain 层"),
+        "应报为 domain 层：{}",
+        violations[0].detail
+    );
+}
+
+/// `src/app/` 整层曾逃逸**所有**规则——包括帧预约唯一出口这条。
+///
+/// 这是历史上最严重的一条：`layer_of("app/...")` 返回 `""`，而扫描函数
+/// 在**所有**检查之前就 `continue` 掉了 → 组合根里随手写
+/// `ctx.request_repaint_after(...)` 不会被拦，「定时功能静默失效」的老坑
+/// 可以原样复发。
+#[test]
+fn app_layer_is_not_exempt_from_the_repaint_rule() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "app/frame/files.rs",
+        "//! x\nfn f(ctx: &egui::Context) {\n    ctx.request_repaint_after(std::time::Duration::from_millis(10));\n}\n",
+    );
+
+    let violations = arch_check::scan(&root);
+    assert_eq!(
+        violations.len(),
+        1,
+        "组合根里的帧预约也必须被拦：{:?}",
+        described(&violations)
+    );
+    assert!(
+        violations[0].detail.contains("request_repaint_after"),
+        "应报帧预约违规：{}",
+        violations[0].detail
+    );
+    assert_eq!(violations[0].line, 3, "应报告实际行号");
+}
+
+/// 帧预约的唯一出口本身当然合法。
+#[test]
+fn the_repaint_exit_itself_is_allowed() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "app/frame/scheduler.rs",
+        "//! x\nfn f(ctx: &egui::Context) {\n    ctx.request_repaint_after(std::time::Duration::from_millis(10));\n}\n",
+    );
+
+    assert!(
+        arch_check::scan(&root).is_empty(),
+        "唯一出口处的预约不应被拦"
+    );
+}
+
+/// `crate::app` 曾完全没有被任何层禁止——组合根可以被下层反向依赖。
+#[test]
+fn crate_app_is_forbidden_in_the_lower_layers() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "domain/document/aggregate.rs",
+        "//! x\nuse crate::app::frame::EditorApp;\n",
+    );
+
+    let violations = arch_check::scan(&root);
+    assert_eq!(
+        violations.len(),
+        1,
+        "领域层反向依赖组合根必须被拦：{:?}",
+        described(&violations)
+    );
+    assert!(
+        violations[0].detail.contains("crate::app"),
+        "应报 crate::app：{}",
+        violations[0].detail
+    );
+}
+
+// ============================================================================
+// 四、注入必报：打印宏家族
+// ============================================================================
+
 #[test]
 fn println_in_domain_is_detected() {
     let dir = tempfile::tempdir().unwrap();
@@ -113,6 +427,167 @@ fn println_in_domain_is_detected() {
     assert!(violations[0].detail.contains("println!"));
 }
 
+/// `print!`（无 ln）曾漏网——旧实现只查 `println!` 字面量。
+#[test]
+fn print_without_ln_is_detected() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "domain/export/aggregate.rs",
+        "//! x\nprint!(\"hi\");\n",
+    );
+
+    let violations = arch_check::scan(&root);
+    assert_eq!(
+        violations.len(),
+        1,
+        "print! 必须被检出：{:?}",
+        described(&violations)
+    );
+    assert!(violations[0].detail.contains("print!"));
+}
+
+/// `eprintln!` 曾被当成 `println!` 报错——文案不准会让人去错地方找。
+#[test]
+fn eprintln_reports_its_own_macro_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "domain/export/aggregate.rs",
+        "//! x\neprintln!(\"hi\");\n",
+    );
+
+    let violations = arch_check::scan(&root);
+    assert_eq!(violations.len(), 1);
+    assert!(
+        violations[0].detail.contains("eprintln!"),
+        "文案应带实际宏名：{}",
+        violations[0].detail
+    );
+}
+
+// ============================================================================
+// 五、注入不报：注释、字符串里的路径不是依赖
+// ============================================================================
+
+/// 行尾注释里的 `println!` 曾被误报。
+#[test]
+fn println_inside_a_comment_is_not_a_violation() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "domain/export/aggregate.rs",
+        "//! x\n// 这里本可以用 println!(\"hi\") 打印\nfn f() {}\n",
+    );
+
+    assert!(
+        arch_check::scan(&root).is_empty(),
+        "注释里的 println! 不该被报：{:?}",
+        described(&arch_check::scan(&root))
+    );
+}
+
+/// 块注释里的 `use` 曾被误报（且嵌套块注释会把后面的代码整段吞掉）。
+#[test]
+fn use_inside_a_block_comment_is_not_a_violation() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "domain/document/aggregate.rs",
+        "//! x\n/*\nuse egui;\n*/\nfn f() {}\n",
+    );
+
+    assert!(
+        arch_check::scan(&root).is_empty(),
+        "块注释里的 use 不该被报：{:?}",
+        described(&arch_check::scan(&root))
+    );
+}
+
+/// 嵌套块注释：内层 `/* */` 不能让外层提前结束。
+#[test]
+fn nested_block_comment_does_not_leak_code() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "domain/document/aggregate.rs",
+        "//! x\n/* 外层 /* 内层 */ 仍是外层 */\nfn f() {}\n",
+    );
+
+    assert!(
+        arch_check::scan(&root).is_empty(),
+        "嵌套块注释之后的代码不该被误判：{:?}",
+        described(&arch_check::scan(&root))
+    );
+}
+
+/// 字符串字面量里的路径不是依赖。
+#[test]
+fn path_inside_a_string_literal_is_not_a_violation() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "domain/document/aggregate.rs",
+        "//! x\nconst S: &str = \"use egui;\";\nfn f() {}\n",
+    );
+
+    assert!(
+        arch_check::scan(&root).is_empty(),
+        "字符串里的路径不该被报：{:?}",
+        described(&arch_check::scan(&root))
+    );
+}
+
+/// 文档注释里提到 `crate::domain` 不是依赖。
+#[test]
+fn path_inside_a_doc_comment_is_not_a_violation() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "presentation/views/main_view.rs",
+        "//! x\n/// 参见 [`crate::domain::document::aggregate::Document`]。\nfn f() {}\n",
+    );
+
+    assert!(
+        arch_check::scan(&root).is_empty(),
+        "文档注释里的路径不该被报：{:?}",
+        described(&arch_check::scan(&root))
+    );
+}
+
+// ============================================================================
+// 六、路径段前缀：不能误伤同前缀的其它 crate
+// ============================================================================
+
+/// `crate::domainfoo` 不是 `crate::domain`——字符串前缀匹配会误伤。
+#[test]
+fn similar_prefix_crate_is_not_matched() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "presentation/views/main_view.rs",
+        "//! x\nuse crate::domainfoo::Thing;\n",
+    );
+
+    assert!(
+        arch_check::scan(&root).is_empty(),
+        "同前缀但不同段的 crate 不该被误伤：{:?}",
+        described(&arch_check::scan(&root))
+    );
+}
+
+// ============================================================================
+// 七、组合根与表现层的边界
+// ============================================================================
+
 #[test]
 fn app_layer_may_use_ui_and_infra() {
     // 组合根是唯一允许依赖全部层的位置（含 main.rs / lib.rs / app/）
@@ -127,6 +602,107 @@ fn app_layer_may_use_ui_and_infra() {
     assert!(arch_check::scan(&root).is_empty(), "组合根不应被判违规");
 }
 
+/// 表现层从 `crate::app::frame` 取状态句柄是**被认可的下行通道**。
+///
+/// 现实：54 个表现层文件都这么干。规则若一刀切禁掉 `crate::app`，
+/// 就会变成「一条没人能遵守的规则」——例外随之蔓延成惯例，
+/// 连真正要拦的反向依赖也一起淹掉。
+#[test]
+fn presentation_may_reach_the_app_frame_handle() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "presentation/views/main_view.rs",
+        "//! x\nuse crate::app::frame::EditorApp;\nuse crate::app::frame::PendingDialog;\n",
+    );
+
+    assert!(
+        arch_check::scan(&root).is_empty(),
+        "表现层取 app::frame 状态句柄不应被判违规：{:?}",
+        described(&arch_check::scan(&root))
+    );
+}
+
+/// 但表现层**不许**碰组合根的其它部分（启动编排、崩溃日志等）。
+#[test]
+fn presentation_may_not_reach_the_rest_of_the_composition_root() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "presentation/views/main_view.rs",
+        "//! x\nuse crate::app::bootstrap::run;\n",
+    );
+
+    let violations = arch_check::scan(&root);
+    assert_eq!(
+        violations.len(),
+        1,
+        "表现层伸手到组合根其它部分必须被拦：{:?}",
+        described(&violations)
+    );
+    assert!(
+        violations[0].detail.contains("crate::app"),
+        "应报 crate::app：{}",
+        violations[0].detail
+    );
+}
+
+// ============================================================================
+// 八、豁免机制的三态
+// ============================================================================
+
+/// 豁免必须**登记**——否则「随手写个豁免注释就能放行」等于没有豁免机制。
+#[test]
+fn arch_allow_must_be_registered() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "domain/document/aggregate.rs",
+        "//! x\nuse egui; // arch-allow: egui\n",
+    );
+    // 故意**不**写登记表。
+
+    let violations = arch_check::scan(&root);
+    assert_eq!(
+        violations.len(),
+        1,
+        "未登记的豁免必须被报：{:?}",
+        described(&violations)
+    );
+    assert!(
+        violations[0].detail.contains("豁免未登记"),
+        "应报「豁免未登记」：{}",
+        violations[0].detail
+    );
+}
+
+/// 豁免只豁免**写明的那个对象**——旧实现是「整行放行」，
+/// 写 `arch-allow: crate::domain` 能把同行的 `use egui;` 一起放行。
+#[test]
+fn arch_allow_only_covers_the_named_object() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "domain/document/aggregate.rs",
+        "//! x\nuse egui; // arch-allow: crate::domain\n",
+    );
+    write_registry(&root, &[("domain/document/aggregate.rs", "crate::domain")]);
+
+    let violations = arch_check::scan(&root);
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.detail.contains("禁止依赖 egui")),
+        "豁免写的是 crate::domain，放行不了 egui：{:?}",
+        described(&violations)
+    );
+}
+
+/// 登记齐全的豁免应当完全放行。
 #[test]
 fn arch_allow_comment_suppresses_single_line() {
     let dir = tempfile::tempdir().unwrap();
@@ -136,32 +712,172 @@ fn arch_allow_comment_suppresses_single_line() {
         "domain/document/aggregate.rs",
         "//! x\nuse egui; // arch-allow: egui（已在 architecture.md 登记）\n",
     );
+    write_registry(&root, &[("domain/document/aggregate.rs", "egui")]);
 
     assert!(
         arch_check::scan(&root).is_empty(),
-        "带 arch-allow 注释的行应被豁免"
+        "带 arch-allow 注释的行应被豁免：{:?}",
+        described(&arch_check::scan(&root))
     );
 }
 
+/// 过时豁免必须被报出来——否则豁免会随代码演进不断堆积，
+/// 最后没人敢动。
 #[test]
-fn signature_changes_when_source_changes() {
+fn stale_arch_allow_is_reported() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "domain/document/aggregate.rs",
+        "//! x\nfn f() {} // arch-allow: egui\n",
+    );
+    write_registry(&root, &[("domain/document/aggregate.rs", "egui")]);
+
+    let violations = arch_check::scan(&root);
+    assert_eq!(
+        violations.len(),
+        1,
+        "没有违规可豁免的豁免必须被报：{:?}",
+        described(&violations)
+    );
+    assert!(
+        violations[0].detail.contains("豁免无效"),
+        "应报「豁免无效」：{}",
+        violations[0].detail
+    );
+}
+
+/// 豁免理由里提到 `architecture.md` 不能被当成第二个豁免对象。
+#[test]
+fn arch_allow_reason_text_is_not_a_second_object() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "domain/document/aggregate.rs",
+        "//! x\nuse egui; // arch-allow: egui（登记处见 architecture.md）\n",
+    );
+    write_registry(&root, &[("domain/document/aggregate.rs", "egui")]);
+
+    assert!(
+        arch_check::scan(&root).is_empty(),
+        "理由里的文件名不该变成豁免对象：{:?}",
+        described(&arch_check::scan(&root))
+    );
+}
+
+// ============================================================================
+// 九、扫描本身的性质
+// ============================================================================
+
+/// 扫描必须**确定**且**对内容敏感**。
+///
+/// 旧实现里有 `signature()`（路径 + mtime 指纹）用于跳过重复扫描——
+/// 但 build.rs 早已移除内部缓存，那段代码成了死代码，且与
+/// 「已移除内部缓存」的文档记载自相矛盾。删掉它之后，
+/// 这里守住的是「同一份输入永远得到同一份输出」这条更本质的性质。
+#[test]
+fn scan_is_deterministic_and_content_sensitive() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("src");
     write_fixture(&root, "shared/ids.rs", "//! x\n");
-    let before = arch_check::signature(&root);
 
-    write_fixture(&root, "shared/ids.rs", "//! x\n// changed\n");
-    let after = arch_check::signature(&root);
+    let first = arch_check::scan(&root);
+    let second = arch_check::scan(&root);
+    assert_eq!(
+        described(&first),
+        described(&second),
+        "同一份输入应得到同一份输出"
+    );
 
+    write_fixture(&root, "shared/ids.rs", "//! x\nuse egui;\n");
+    let third = arch_check::scan(&root);
     assert_ne!(
-        before, after,
-        "源文件变更后指纹应变化（驱动 build.rs 重扫）"
+        described(&first),
+        described(&third),
+        "源文件变更后扫描结果必须变化"
     );
 }
 
+/// 报告文本是**单一来源**：`build.rs` 与 `check-arch` bin 共用
+/// `format_report`，两处各写一遍格式必然漂移。
+#[test]
+fn the_report_is_produced_by_a_single_source() {
+    let violations = vec![arch_check::Violation {
+        file: "domain/document/aggregate.rs".to_string(),
+        line: 7,
+        detail: "domain 层禁止依赖 egui".to_string(),
+    }];
+    let report = arch_check::format_report(&violations);
+    assert!(report.contains("domain/document/aggregate.rs:7"));
+    assert!(report.contains("domain 层禁止依赖 egui"));
+    assert!(report.contains("docs/architecture-constraints.md"));
+}
+
 // ============================================================================
-// S6-12：presentation/state 子层
-// ============================================================================
+// 十、S6-12：presentation/state 子层
+//
+// 词法层是「哪些东西会被判成路径」的唯一真源。它一旦出错，后面所有
+// 判定都建立在错误的地基上——而这类错误**不产生编译错误**。
+// 所以词法层本身也要有直接的用例。
+
+/// 空白**不产生 token**。
+///
+/// 这条不是洁癖：`use` 与被导入项之间的空格一旦变成 token，
+/// `parse_use_tree` 读到的就是「`use` 后面跟了个非标识符」，
+/// 整条 `use` 声明会**静默漏检**。
+#[test]
+fn whitespace_does_not_become_a_token() {
+    let dump = arch_check::lex_dump("use egui;\n");
+    assert_eq!(
+        dump, "1:Ident(use)\n1:Ident(egui)\n1:Semi()\n",
+        "空白不应出现在 token 流里：{dump}"
+    );
+}
+
+/// 换行必须计入行号——否则所有违规都报「第 1 行」，行号形同虚设。
+#[test]
+fn newlines_advance_the_line_counter() {
+    let dump = arch_check::lex_dump("fn a() {}\nfn b() {}\n");
+    assert!(
+        dump.contains("2:Ident(b)"),
+        "第二行的标识符应报第 2 行：{dump}"
+    );
+}
+
+/// 注释与字符串里的内容**不产生 token**。
+#[test]
+fn comments_and_strings_produce_no_tokens() {
+    let dump = arch_check::lex_dump(
+        "//! 文档\n// 行注释\n/* 块注释 */\nfn f() { let s = \"use egui;\"; }\n",
+    );
+    assert!(
+        !dump.contains("egui"),
+        "注释与字符串里的路径不该被词法：{dump}"
+    );
+    assert!(
+        !dump.contains("Ident(use)"),
+        "字符串里的 use 不该被词法：{dump}"
+    );
+}
+
+/// 块注释的嵌套深度正确——内层 `/* */` 不能让外层提前结束。
+#[test]
+fn nested_block_comments_end_at_the_outer_close() {
+    let dump = arch_check::lex_dump("/* a /* b */ c */\nfn f() {}\n");
+    assert!(
+        dump.contains("1:Ident(fn)") || dump.contains("2:Ident(fn)"),
+        "外层块注释之后的代码应被词法：{dump}"
+    );
+}
+
+/// 豁免指令只在**普通注释**里生效——文档注释里提到标记串不算豁免。
+#[test]
+fn doc_comments_do_not_produce_allow_directives() {
+    let dump = arch_check::lex_dump("/// 参见 arch-allow: egui 的用法\nfn f() {}\n");
+    assert!(!dump.contains("allow@"), "文档注释不该产生豁免指令：{dump}");
+}
 
 /// 子层判定：`state/` 走自己的层名，父层禁令**叠加**其上。
 ///
@@ -189,12 +905,6 @@ fn the_state_subdirectory_is_judged_by_its_own_layer_name() {
     write_fixture(&root, "presentation/views/editor_view.rs", banned);
 
     let violations = arch_check::scan(&root);
-    // `Violation` 不派生 `Debug`（S2-07 的既定接口），故手工格式化。
-    let described = |vs: &[arch_check::Violation]| -> Vec<String> {
-        vs.iter()
-            .map(|v| format!("{}:{} {}", v.file, v.line, v.detail))
-            .collect()
-    };
     let state_hits: Vec<_> = violations
         .iter()
         .filter(|v| v.detail.starts_with("presentation/state 层"))
@@ -330,23 +1040,5 @@ fn the_state_violation_explains_why() {
     );
 }
 
-/// 现状守卫：真实工程里的 UI State 一个领域文档类型都不引。
-///
-/// 与 `current_project_has_no_violations` 重复是有意的——那条会因
-/// **任何**层的任何违规而红，这条红了能立刻指认是 `state/` 的问题。
-#[test]
-fn ui_state_modules_import_no_domain_document() {
-    let src_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
-    let state_violations: Vec<_> = arch_check::scan(&src_root)
-        .into_iter()
-        .filter(|v| v.file.starts_with("presentation/state/"))
-        .collect();
-    assert!(
-        state_violations.is_empty(),
-        "UI State 只放视图状态，业务数据来自 DTO。实际违规：{:?}",
-        state_violations
-            .iter()
-            .map(|v| format!("{}:{} {}", v.file, v.line, v.detail))
-            .collect::<Vec<_>>()
-    );
-}
+// ============================================================================
+// 十一、词法层

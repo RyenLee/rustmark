@@ -5,7 +5,7 @@
 //! 编码由**基础设施层**探测（要读字节、查 GB18030 映射表，属 IO），
 //! 却要在**状态栏**（表现层）展示。而：
 //!
-//! - 表现层禁止 `use crate::infrastructure::*`（`.agent/architecture.md` §4）；
+//! - 表现层禁止 `use crate::infrastructure::*`（`docs/architecture-constraints.md` §4）；
 //! - 领域层禁止触碰 IO 类型（`.agent/conventions.md` §六）。
 //!
 //! 于是把「这是什么编码」抽成一个**纯值**（不含任何解码逻辑）放进共享内核：

@@ -28,12 +28,9 @@ fn main() {
     let violations = arch_check::scan(&src_root);
 
     if !violations.is_empty() {
-        let mut report = String::from("\n架构边界校验失败（分层依赖违规）：\n");
-        for v in &violations {
-            report.push_str(&format!("  {}:{} —— {}\n", v.file, v.line, v.detail));
-        }
-        report
-            .push_str("\n规则见 .agent/architecture.md；人工执行 `cargo run --bin check-arch`。\n");
+        // 报告文本与 `check-arch` bin 共用 `format_report`——两处各写一遍必然漂移。
+        let mut report = arch_check::format_report(&violations);
+        report.push_str("人工执行 `cargo run --bin check-arch` 可复现同一份报告。\n");
         panic!("{report}");
     }
 }

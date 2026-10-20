@@ -7,7 +7,7 @@
 //!
 //! 放在 `shared` 而非 `infrastructure`：打开链接是表现层（预览区）需要的能力，
 //! 而架构约束禁止 `presentation` 依赖 `crate::infrastructure`
-//! （见 `.agent/architecture.md` 依赖矩阵）。`shared` 可被任意层依赖，且
+//! （见 `docs/architecture-constraints.md` 依赖矩阵）。`shared` 可被任意层依赖，且
 //! `std::process` 不在其禁止清单，故在此落位。
 
 use std::process::Command;

@@ -2,7 +2,7 @@
 //!
 //! # 为什么放在 shared而不是 domain / application
 //!
-//! 依赖矩阵（`.agent/architecture.md`）规定：
+//! 依赖矩阵（`docs/architecture-constraints.md`）规定：
 //! `presentation` **不得**依赖 `domain`，`infrastructure` **不得**依赖
 //! `application` / `presentation`。而「打开文件」这件事同时被三方需要：
 //! - `presentation` 在菜单里触发「打开」；

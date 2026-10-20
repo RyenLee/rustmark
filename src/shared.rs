@@ -1,7 +1,7 @@
 //! 共享内核（Shared Kernel）。
 //!
 //! 可被任意层依赖，但自身**不得依赖** `domain` / `application` /
-//! `infrastructure` / `presentation`（见 `.agent/architecture.md`）。
+//! `infrastructure` / `presentation`（见 `docs/architecture-constraints.md`）。
 //!
 //! - [`error`] / [`result`]：统一错误与结果类型
 //! - [`ids`]：强类型标识符

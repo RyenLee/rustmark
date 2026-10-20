@@ -1,6 +1,6 @@
 //! 领域层：聚合、值对象、领域事件、领域服务与仓储 trait（阶段 03）。
 //!
-//! 边界（`.agent/architecture.md`）：可依赖 `shared` / `ropey` / `chrono` /
+//! 边界（`docs/architecture-constraints.md`）：可依赖 `shared` / `ropey` / `chrono` /
 //! `serde` / `thiserror`；**禁止** `egui` / `eframe` / `rfd` / `syntect` /
 //! `pulldown_cmark` / `std::fs` / `std::io` / `anyhow`（由 `check-arch` 机械拦截）。
 //!

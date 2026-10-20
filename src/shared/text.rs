@@ -9,7 +9,7 @@
 //! 连续的 ASCII 字母构成一个词，非 ASCII（中文）天然是分隔符。
 //!
 //! 放在 `shared` 而非 `domain` / `application`：表现层不得依赖 `application`
-//! 以外的层，而它同样需要这条规则（见 `.agent/architecture.md`）。
+//! 以外的层，而它同样需要这条规则（见 `docs/architecture-constraints.md`）。
 
 /// 返回 `offset` 所在的**英文词**的字节区间 `(start, end)`。
 ///
