@@ -270,6 +270,8 @@ presentation::views::preview_view  调 opener.open(url)
 | `app::frame::actions` | 路由表 + UI 状态初始化混做 | 路由表**只做路由**；状态初始化下沉到对应 `app/frame/*` 模块 | R-11 / R-04 |
 | `shared::export_format::ExportFormat` | 领域枚举（`domain::export::value_objects` 转出） | **唯一**格式真源（落在 `shared`，三方共同可达）；新增 `parse` 穷举实现 | R-07 |
 | `presentation::state::export_ui_state::ExportFormatChoice` | 与领域枚举同构的第二套枚举 | **已删除**；UI 侧改用真源枚举 + `format_hints` 独立函数表（`pdf_caveat` 等 UI 专属数据） | R-07 |
+| `shared::theme::ThemeKind` | 领域枚举（`domain::preferences::value_objects` 转出） | **唯一**主题种类真源（落在 `shared`，三方共同可达）；`parse` 只认得/不认得，兜底交调用点 | R-09 |
+| `presentation::theme::builtin::BuiltinTheme` | 与领域枚举同构的第二套枚举（3 变体，无 `Custom`） | **已删除**；表现层改用真源 + `labels::theme_kind_label` 独立函数（UI 专属显示名） | R-09 |
 | `presentation::theme::mapper` | 样式 → `FontId`/颜色映射 | **唯一**样式真源；`preview_view/inline.rs` 的 `span_format` 并入 | R-10 |
 | `presentation::theme::mapper::highlight_layout` | 排版 + span 应用 | 抽出**唯一** span→`LayoutJob` 构造器，`code.rs` / `inline.rs` 改调它 | R-10 |
 | `application::shortcuts` | 领域 `ActionId` + 默认键位表 | 默认键位表**唯一一份**（领域侧），表现层读取 | R-08 ②（**未做**） |
@@ -564,6 +566,9 @@ UI 选格式 ──► ExportFormat（领域唯一枚举）
 
 #### R-09 · 主题双枚举收敛
 
+> **已落地（2026-10-20，commit `b1f951b`）**。落地形态与原文有 3 处偏差，
+> 并**顺带修掉两个真实缺陷**（详见「实施偏差」）。
+
 - **改造内容**：
   1. `src/presentation/theme/builtin/kind.rs:5` 的 `BuiltinTheme`（3 变体）与 `src/domain/preferences/value_objects/theme.rs:11` 的 `ThemeKind`（4 变体，多 `Custom`）——保留**领域 `ThemeKind` 为唯一真源**，`BuiltinTheme` 降为「内置主题的标识」或直接删除；内置主题的具体配色（`builtin.rs:145` `dark()` / `:200` `light()`）保持不变。
   2. `src/app/frame/actions.rs:20-24` 的**第三份**手写 `match self.ui.theme.kind` → 改为调用领域枚举的 `as_str()`。
@@ -579,6 +584,68 @@ UI 选格式 ──► ExportFormat（领域唯一枚举）
   - `grep -rn "pub enum BuiltinTheme" src/` → 0（或降级为非枚举的常量表）；
   - 新增用例：`theme_kind_round_trips_through_its_persisted_string`（对每个 `ThemeKind` 断言 `from_str(as_str()) == self`）——**这条同时守住持久化兼容性**；
   - 变异验证：把 `as_str()` 的一个分支改错 → 用例红。
+
+##### R-09 实施偏差（2026-10-20 落地时确认，commit `b1f951b`）
+
+1. **真源落 `shared` 而非 `domain`**（**偏离原文**）：原文说「保留领域
+   `ThemeKind` 为唯一真源」，但**表现层不得依赖领域**
+   （`.agent/architecture.md` §4；`check-arch` 的
+   `PRESENTATION_FORBIDDEN` 拦 `crate::domain`），而主题种类是三方
+   （领域 / 应用 / 表现）共同需要的 → 真源落在 `shared::theme::ThemeKind`，
+   领域侧以 `pub use` 转出（公开路径
+   `domain::preferences::value_objects::ThemeKind` **保持不变**）。
+   与 R-07 的 `shared::export_format` 同一模式。
+2. **原文漏数了副本数量**：原文只提到「第三份手写 `match`」，
+   实测主题这条事实散落**六处**：领域枚举、表现层 `BuiltinTheme`、
+   `app/frame/actions.rs` 的手写 `match`、
+   `application/preferences/service.rs` 的手写 `match`、
+   `presentation/views/settings_view.rs` 的成对常量表 `THEME_KINDS`、
+   `presentation/views/settings_view/about.rs` 的手写 `match`。
+   六处**全部**收敛。
+3. **容错责任重新划分（行为差异）**：真源的 `ThemeKind::parse`
+   **不**兜底（未知值 → `None`），而原表现层 `BuiltinTheme::parse`
+   未知值直接退回 `System`。现改为：**真源只回答「认得 / 不认得」**，
+   兜底由**调用点**决定——表现层 `resolve` 用 `unwrap_or(System)`
+   （「照常启动」），应用层 `to_theme` 报出配置错误（「告诉用户写错了」）。
+   另：应用层的字符串匹配由**精确**改为**大小写不敏感 + trim**
+   （随真源 `parse` 的语义）。
+
+##### R-09 顺带修掉的两个真实缺陷
+
+1. **`refresh_system_theme` 永远提前返回**（`app/frame/settings.rs`）：
+   判据是 `ui.theme.kind != System`，而 `ui.theme.kind` 是 `resolve()`
+   解析后的**实际生效明暗**（只可能是 `Light`/`Dark`），故该判断
+   **恒成立** → 跟随系统时系统外观变化**不会**自动刷新。
+   根因是表现层 `BuiltinTheme` 缺 `Custom` 变体、`custom` 时被迫用
+   `System` 顶替，使「当前是不是跟随系统」在运行时无从判断。
+   现改读**设置里用户选的 kind**（持久化真源）。
+2. **主题持久化契约值被硬编码 3 处**：`dto/preferences.rs` 的
+   `fallback()` 默认主题、`export_ui_state.rs` 的 `Default` 构造参数、
+   以及一处测试数据。契约值写错的后果是「用户的主题选不中」，
+   而编译与运行**都不报错**。现已全部走 `ThemeKind::as_str()`。
+
+##### R-09 新增守卫（18 例）
+
+- `tests/shared/theme_test.rs`（9 例）：
+  - `theme_kind_round_trips_through_its_persisted_string`（**验收判据**）；
+  - 持久化字符串的**具体值**固定不变（`light`/`dark`/`system`/`custom`）——
+    往返能守住「加变体时同步加解析」，但守不住「把 `dark` 改成 `darker`」；
+  - 变体清单恰为四项；解析大小写不敏感但严格；
+  - `parse`（`Option`）与 `FromStr`（`Result`）分工一致；
+  - 明暗判定的语义边界（`System`/`Custom` **不算**深色）；
+    `Display` ≡ `as_str`。
+- `tests/shared/theme_guard_test.rs`（9 例，源码级）：
+  - 主题种类枚举**只有一处定义**（按「变体像」识别，故换个名字重建
+    同构枚举也会被检出）；
+  - 主题持久化契约值**不得**在别处硬编码（豁免真源 / serde 属性 /
+    比较上下文 / `#[cfg(test)]` 模块——**比较**契约值是**读**它，
+    不是**定义**它）。
+
+##### R-09 变异验证（2 轮）
+
+1. `as_str` 把 `dark` 写成 `darker` → **2 例红**；
+2. 注入第二份同构枚举 `BuiltinTheme` →
+   `theme_kind_has_exactly_one_definition` 红（报真实路径行号）。
 
 #### R-10 · span → `LayoutJob` 构造器统一 + 样式表合并
 
@@ -908,7 +975,7 @@ UI 选格式 ──► ExportFormat（领域唯一枚举）
 - 验收（**每项独立**）：
   - R-07：`grep -c "pub enum ExportFormatChoice" src/` → 0 ✅ **已达成**（`bbcbe20`；`parse` 穷举用例通过；新增源码级守卫「导出格式只有一处定义」+ 3 轮变异验证）；
   - R-08①：`grep "_ => return None" src/presentation/shortcuts/registry/action/impls.rs` → 0 ✅ **已达成**（`8cdf083`；`every_ui_action_has_an_explicit_persisted_key_decision` 通过；新增源码级守卫「`persisted_key` 不许有兜底」+「手写清单与枚举变体同步」+ 3 轮变异验证；**顺带修掉领域动作清单漏登记的真实缺陷**）；
-  - R-09：`ThemeKind::from_str(as_str()) == self` 用例通过（**同时守住持久化兼容**）；
+  - R-09：`ThemeKind::from_str(as_str()) == self` 用例通过（**同时守住持久化兼容**）✅ **已达成**（`b1f951b`；真源下沉 `shared::theme`（**偏离原文**，理由见 §4.2 R-09「实施偏差」）；**修掉 `refresh_system_theme` 恒提前返回 + 契约值硬编码 3 处**；新增 18 例 + 2 轮变异验证）；
   - R-10：编辑区与预览区**同段代码的语法色逐 span 相同**（真帧对拍）。
 
 **M3 · 守卫加固（4.5 人日）**
@@ -966,7 +1033,7 @@ UI 选格式 ──► ExportFormat（领域唯一枚举）
 | M1 | R-18（部分） | 2026-10-20 | 2026-10-20 | **1879** / 4 / OK | `38a819d`；第 1/2/4/5/6/7/8/9/10/11 条已做；第 3 条（ADR 索引补 010/011）**待 R-19** |
 | M2 | R-07 | 2026-10-20 | 2026-10-20 | **1896** / 4 / OK | `bbcbe20`；唯一真源下沉 `shared::export_format`（**偏离原文**，理由见 §4.2 R-07「实施偏差」）；新增 17 例；变异验证：从 `ALL` 删 `Image` → 2 例红 |
 | M2 | R-08① | 2026-10-20 | 2026-10-20 | **1909** / 4 / OK | `8cdf083`；`persisted_key` 改穷举（38 `Some` + 19 `None` / 共 57 变体，**修正原文「16 个」的偏差**）；②默认键位表合一**未做**（两侧表语义不同，领域无法表达「无默认键位」，牵动 `shared`）；**修掉领域 `ActionId::all()` 漏登记 `ToggleStatusbar` 的真实缺陷**（改「显示/隐藏状态栏」键位弹「尚未映射到领域动作」）；新增 13 例；变异验证 3 轮（兜底写回 / 领域清单漏登记 → 4 例红 / 表现清单漏登记 → 3 例红） |
-| M2 | R-09 | | | | |
+| M2 | R-09 | 2026-10-20 | 2026-10-20 | **1927** / 4 / OK | `b1f951b`；主题种类收敛为唯一真源 `shared::theme`（**偏离原文**，理由见 §4.2 R-09「实施偏差」）；**六份**副本全部收敛（原文只提到三份）；**修掉 `refresh_system_theme` 恒提前返回**（跟随系统时系统外观变化不刷新）+ 契约值硬编码 3 处；新增 18 例；变异验证 2 轮（`as_str` 写错 → 2 例红 / 注入同构枚举 → 守卫红） |
 | M2 | R-10 | | | | |
 | M3 | R-01 | | | | |
 | M3 | R-02 | | | | |
@@ -1108,7 +1175,7 @@ src/
 | R-03 | `preview_view` 的外链点击 | `Services` 结构体（新增字段） | `Services` 是**组合根内部**结构，新增字段不破外部 API；`ExternalOpener` 需有默认实现，否则 `Services::assemble*` 的多个入口都要改 |
 | R-07 | 导出浮层、导出路由 | 持久化格式字符串 | `ExportFormat` 的**字符串值不变**（`"html"/"markdown"/"pdf"/"image"`）→ 用户配置兼容 |
 | R-08 | 快捷键持久化 | 用户改键数据 | `persisted_key` 的**字符串值不变**（`"new_document"/"save"/…`）→ 已存配置继续生效 |
-| R-09 | 主题设置与持久化 | 用户主题配置 | `ThemeKind::as_str()` 输出**不变**（`"dark"/"light"/"system"/"custom"`） |
+| R-09 | 主题设置与持久化 | 用户主题配置 | `ThemeKind::as_str()` 输出**不变**（`"dark"/"light"/"system"/"custom"`）；**但解析容错语义有变**：应用层 `to_theme` 由「精确匹配」改为「大小写不敏感 + trim」（原先 `"Dark"` 会报配置错误，现在被接受）——属**放宽**，旧配置不会因此失效 |
 | R-11 | R-06、R-12 | 全部视图 | 纯重构，**无用户可见变化**；但 59 处改动量大 → 3 个子批分开 |
 | R-20 | `app/frame.rs` 的字体装配 | `scripts/package-*` 三个脚本 | `assets/fonts/` 的**发行包布局不变**（脚本按此分发） |
 
