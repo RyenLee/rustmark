@@ -27,3 +27,4 @@ mod shortcut_action_guard_test;
 mod shortcut_persisted_key_test;
 mod text_format_guard_test;
 mod workspace_reveal_test;
+mod writing_goal_test;

@@ -18,6 +18,7 @@ impl EditorApp {
             show_line_numbers: view.editor.show_line_numbers,
             lint: view.editor.lint,
             max_open_documents: view.editor.max_open_documents,
+            writing_goal: view.editor.writing_goal,
         }
     }
 
@@ -25,6 +26,15 @@ impl EditorApp {
     pub(crate) fn open_settings(&mut self) {
         let snapshot = self.settings_snapshot();
         self.settings_ui.open(snapshot);
+        // 把当前写作目标种进输入框缓冲：0 = 未设 → 空串（提示「留空表示不设」）；
+        // 正数 → 其十进制文本。缓冲每帧从「落盘值」重算只在打开时发生，
+        // 之后由 `TextEdit` 自己持有并即时落盘，避免每帧覆盖用户敲入的字符。
+        let goal = self.settings().editor.writing_goal;
+        self.settings_ui.writing_goal_text = if goal == 0 {
+            String::new()
+        } else {
+            goal.to_string()
+        };
     }
 
     /// 写一个主题字段并立即生效（实时预览，S6-11 验收要求）。
@@ -151,8 +161,8 @@ impl EditorApp {
             // 侧栏宽度同理：它是拖拽定的、不经过设置页，「取消」不该把它
             // 打回主题默认（与 split_ratio 同一处理）。
             sidebar_width: self.settings().editor.sidebar_width,
-            // 设置页尚未提供写作目标输入框，保存时沿用当前值，避免被 0 覆盖。
-            writing_goal: self.settings().editor.writing_goal,
+            // 写作目标随「取消」回滚到打开设置那一刻（与缩进 / 上限同理由）。
+            writing_goal: snapshot.writing_goal,
             // 取消时把 lint 开关也回滚到打开设置那一刻（V11-08）。
             lint: snapshot.lint,
             // 打开文档上限同理：设置页改小了，「取消」要回到原值，
