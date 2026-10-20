@@ -12,23 +12,26 @@
 //! # 模块结构
 //!
 //! facade 保留对话框状态 `ExportUiState` 及其全部行为与内联测试；
-//! 格式 / 纸张两个取值枚举（显示名、提交标识、能力判据）在 `choices`。
+//! **取值**（格式 / 纸张）来自 [`crate::shared::export_format`]（唯一真源），
+//! **界面专属**的可用性判断与文案在 `format_hints`。
 
-mod choices;
+mod format_hints;
 
-pub use choices::{ExportFormatChoice, PageSizeChoice};
+use crate::shared::export_format::{ExportFormat, PageSize};
+
+pub use format_hints::{is_available, page_size_label, pdf_caveat, unavailable_reason};
 
 /// 导出对话框状态。
 #[derive(Clone, Debug)]
 pub struct ExportUiState {
     /// 当前格式。
-    pub format: ExportFormatChoice,
+    pub format: ExportFormat,
     /// 是否生成目录。
     pub include_toc: bool,
     /// 是否内联图片为 data URI。
     pub embed_images: bool,
     /// 页面尺寸。
-    pub page_size: PageSizeChoice,
+    pub page_size: PageSize,
     /// 是否分页。
     pub paginate: bool,
     /// 输出目录（含分隔符，或直接是完整目标路径）。
@@ -69,10 +72,10 @@ impl ExportUiState {
     /// 以建议文件名与主题构造。
     pub fn new(file_stem: impl Into<String>, theme: impl Into<String>) -> Self {
         let mut state = Self {
-            format: ExportFormatChoice::Html,
+            format: ExportFormat::Html,
             include_toc: false,
             embed_images: false,
-            page_size: PageSizeChoice::A4,
+            page_size: PageSize::A4,
             paginate: false,
             output_dir: String::new(),
             file_stem: file_stem.into(),
@@ -105,7 +108,7 @@ impl ExportUiState {
     /// 夹紧而非保留：选了 Markdown 还勾着「目录」，提交时领域会拒
     /// （`TocNotSupported`）。那时用户看到的错误是「Markdown 不支持目录」，
     /// 而他从来没想过这件事——夹紧掉这个开关，界面上就根本没这个矛盾。
-    pub fn set_format(&mut self, format: ExportFormatChoice) {
+    pub fn set_format(&mut self, format: ExportFormat) {
         self.format = format;
         if !format.supports_toc() {
             self.include_toc = false;
@@ -115,7 +118,7 @@ impl ExportUiState {
         }
         // 长图开关同理夹紧：它是 Image 专属选项，切走再切回来时
         // 用户多半已不记得勾过——留着只会导出意料之外的产物。
-        if format != ExportFormatChoice::Image {
+        if format != ExportFormat::Image {
             self.long_image = false;
         }
         self.error = None;
@@ -166,7 +169,7 @@ impl ExportUiState {
         if self.awaiting_capture {
             return Some("正在等待截图返回，请稍候".to_string());
         }
-        if let Some(reason) = self.format.unavailable_reason() {
+        if let Some(reason) = unavailable_reason(self.format) {
             return Some(reason.to_string());
         }
         // 必须显式给出输出目录。留空时 `target_path` 产出的是裸文件名，
@@ -229,7 +232,7 @@ mod tests {
         state.include_toc = true;
         state.paginate = true;
 
-        state.set_format(ExportFormatChoice::Markdown);
+        state.set_format(ExportFormat::Markdown);
 
         assert!(!state.include_toc, "Markdown 不支持目录，开关必须夹紧");
         assert!(!state.paginate, "Markdown 不支持分页，开关必须夹紧");
@@ -241,7 +244,7 @@ mod tests {
         state.include_toc = true;
         state.paginate = true;
 
-        state.set_format(ExportFormatChoice::Pdf);
+        state.set_format(ExportFormat::Pdf);
 
         assert!(
             state.include_toc && state.paginate,
@@ -254,13 +257,13 @@ mod tests {
         // 长图开关是 Image 专属：切走必须清零，防止用户切回 HTML 后
         // 残留的开关在某个未来分支里悄悄改变行为（防御性夹紧，与 TOC 同理）。
         let mut state = ExportUiState::new("doc", "dark");
-        state.set_format(ExportFormatChoice::Image);
+        state.set_format(ExportFormat::Image);
         state.long_image = true;
 
-        state.set_format(ExportFormatChoice::Html);
+        state.set_format(ExportFormat::Html);
         assert!(!state.long_image, "切走 Image 时长图开关应被夹紧");
 
-        state.set_format(ExportFormatChoice::Image);
+        state.set_format(ExportFormat::Image);
         assert!(!state.long_image, "切回 Image 不应恢复旧开关状态");
     }
 
@@ -269,10 +272,10 @@ mod tests {
         let mut state = ExportUiState::new("notes", "dark");
         assert_eq!(state.target_path(), "notes.html");
 
-        state.set_format(ExportFormatChoice::Markdown);
+        state.set_format(ExportFormat::Markdown);
         assert_eq!(state.target_path(), "notes.md");
 
-        state.set_format(ExportFormatChoice::Image);
+        state.set_format(ExportFormat::Image);
         assert_eq!(state.target_path(), "notes.png");
     }
 
@@ -304,11 +307,11 @@ mod tests {
         // 遍历**全部**格式而非只列未开放的那几个：
         // 这样「哪些格式不可用」由实现决定，测试不会在有人新增格式时静默失效。
         // 自 P2 起图片已可用（视口截图 + 长图），故只有 PDF 属界面未开放。
-        for format in ExportFormatChoice::ALL {
+        for format in ExportFormat::ALL {
             let mut state = ExportUiState::new("doc", "dark");
             state.output_dir = "/tmp/out".to_string();
             state.set_format(*format);
-            match format.unavailable_reason() {
+            match unavailable_reason(*format) {
                 Some(reason) => {
                     assert!(
                         !state.can_submit(),
@@ -335,9 +338,9 @@ mod tests {
         //
         // V11-04 之后 PDF 经由系统打印对话框产出，不再是「未实现」的占位——
         // 因此四种格式**全部可用**，可用性的边界从「PDF 不可用」变成了「全可用」。
-        let unavailable: Vec<_> = ExportFormatChoice::ALL
+        let unavailable: Vec<_> = ExportFormat::ALL
             .iter()
-            .filter(|f| !f.is_available())
+            .filter(|f| !is_available(**f))
             .copied()
             .collect();
         assert!(
@@ -347,7 +350,7 @@ mod tests {
         );
         // 反向钉死：PDF 现在必须可用（这是 V11-04 验收的核心，不能静默回退）。
         assert!(
-            ExportFormatChoice::Pdf.is_available(),
+            is_available(ExportFormat::Pdf),
             "PDF 自 V11-04 起应可用（系统打印路径）"
         );
     }
@@ -357,13 +360,10 @@ mod tests {
         // 图片走视口截图：可用、可提交、不给「未实现」提示。
         let mut state = ExportUiState::new("doc", "dark");
         state.output_dir = "/tmp/out".to_string();
-        state.set_format(ExportFormatChoice::Image);
+        state.set_format(ExportFormat::Image);
+        assert!(is_available(ExportFormat::Image), "图片自 P2 起应可用");
         assert!(
-            ExportFormatChoice::Image.is_available(),
-            "图片自 P2 起应可用"
-        );
-        assert!(
-            ExportFormatChoice::Image.unavailable_reason().is_none(),
+            unavailable_reason(ExportFormat::Image).is_none(),
             "可用格式不应给出未实现原因"
         );
         assert!(state.can_submit());
@@ -376,7 +376,7 @@ mod tests {
         // 若不单独拦awaiting_capture，就能再点一次导出把上一次覆盖掉。
         let mut state = ExportUiState::new("doc", "dark");
         state.output_dir = "/tmp/out".to_string();
-        state.set_format(ExportFormatChoice::Image);
+        state.set_format(ExportFormat::Image);
         state.begin();
         state.running = false; // 模拟「关掉对话框」把 running 复位
         state.awaiting_capture = true;
@@ -390,9 +390,9 @@ mod tests {
     #[test]
     fn available_formats_are_submittable() {
         for format in [
-            ExportFormatChoice::Html,
-            ExportFormatChoice::Markdown,
-            ExportFormatChoice::Image,
+            ExportFormat::Html,
+            ExportFormat::Markdown,
+            ExportFormat::Image,
         ] {
             let mut state = ExportUiState::new("doc", "dark");
             state.output_dir = "/tmp/out".to_string();
@@ -430,9 +430,9 @@ mod tests {
 
     #[test]
     fn every_format_reports_a_label_and_id() {
-        for format in ExportFormatChoice::ALL {
+        for format in ExportFormat::ALL {
             assert!(!format.label().is_empty(), "{format:?} 缺显示名");
-            assert!(!format.id().is_empty(), "{format:?} 缺提交标识");
+            assert!(!format.as_str().is_empty(), "{format:?} 缺提交标识");
             assert!(!format.extension().is_empty(), "{format:?} 缺扩展名");
         }
     }

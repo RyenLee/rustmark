@@ -9,6 +9,7 @@
 //! - [`event`]：领域事件与事件总线抽象
 //! - [`dialog`]：原生对话框端口（S5-08）
 //! - [`encoding`]：文本编码标签（纯值，V11-03）
+//! - [`export_format`]：导出格式与页面尺寸（领域 / 表现 / 基础设施三方共用）
 //! - [`fonts`]：编辑区字体族的跨层共享契约（设置页字体选择，S6-06）
 //! - [`path`]：路径值对象（`FilePath`）
 //! - [`time`]：时间戳与可注入时钟
@@ -23,6 +24,7 @@ pub mod dialog;
 pub mod encoding;
 pub mod error;
 pub mod event;
+pub mod export_format;
 pub mod fonts;
 pub mod geometry;
 pub mod ids;

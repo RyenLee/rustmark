@@ -29,10 +29,13 @@ use rustmark::application::document::commands::ReplaceRangeCommand;
 use rustmark::application::dto::ExportRequestView;
 use rustmark::presentation::shortcuts::registry::UiAction;
 use rustmark::presentation::state::dialog_ui_state::Overlay;
-use rustmark::presentation::state::export_ui_state::ExportFormatChoice;
+use rustmark::presentation::state::export_ui_state::{
+    is_available, pdf_caveat, unavailable_reason,
+};
 use rustmark::presentation::state::scroll_sync_state::Side;
 use rustmark::presentation::views::export_view::{FILE_STEM_INPUT_ID, OUTPUT_DIR_INPUT_ID};
 use rustmark::presentation::views::{main_view, overlays};
+use rustmark::shared::export_format::ExportFormat;
 use rustmark::shared::geometry::{ByteOffset, TextRange};
 
 /// 导出用语料：覆盖标题层级、粗体、行内代码、列表、分隔线、中文。
@@ -159,18 +162,13 @@ fn markdown_export_writes_the_source_verbatim() {
 /// 注入假调度覆盖。
 #[test]
 fn pdf_export_is_offered_with_an_honest_caveat() {
-    assert!(
-        ExportFormatChoice::Pdf.is_available(),
-        "PDF 已开放（V11-04）"
-    );
+    assert!(is_available(ExportFormat::Pdf), "PDF 已开放（V11-04）");
     assert_eq!(
-        ExportFormatChoice::Pdf.unavailable_reason(),
+        unavailable_reason(ExportFormat::Pdf),
         None,
         "开放后不应再有「不可用」的原因文案"
     );
-    let caveat = ExportFormatChoice::Pdf
-        .pdf_caveat()
-        .expect("PDF 必须有前置声明（产物经系统打印对话框）");
+    let caveat = pdf_caveat(ExportFormat::Pdf).expect("PDF 必须有前置声明（产物经系统打印对话框）");
     assert!(caveat.contains("系统打印"), "声明应说清经系统打印产出");
     assert!(
         caveat.contains("另存为 PDF"),
@@ -364,7 +362,7 @@ fn switching_format_clamps_unsupported_options() {
     let (_cfg, mut app) = app_with_out(&out);
 
     app.export_ui.include_toc = true;
-    app.export_ui.set_format(ExportFormatChoice::Markdown);
+    app.export_ui.set_format(ExportFormat::Markdown);
 
     assert!(
         !app.export_ui.include_toc,
@@ -380,7 +378,7 @@ fn pdf_toc_implies_pagination() {
     let out = out_dir(&dir);
     let (_cfg, mut app) = app_with_out(&out);
 
-    app.export_ui.set_format(ExportFormatChoice::Pdf);
+    app.export_ui.set_format(ExportFormat::Pdf);
     app.export_ui.include_toc = true;
     // 模拟视图里的联动：勾目录时补分页。
     app.export_ui.paginate = true;

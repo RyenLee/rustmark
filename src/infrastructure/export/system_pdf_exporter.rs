@@ -44,8 +44,9 @@ use std::sync::Arc;
 use crate::domain::export::aggregate::ExportJob;
 use crate::domain::export::errors::ExportError;
 use crate::domain::export::services::{Exporter, TocBuilder};
-use crate::domain::export::value_objects::{ExportFormat, PageSize, TocEntry};
+use crate::domain::export::value_objects::TocEntry;
 use crate::infrastructure::persistence::recent_files_store::atomic_write;
+use crate::shared::export_format::{ExportFormat, PageSize};
 
 use super::pulldown_html_exporter::{collect_toc, render_fragment, render_toc};
 pub use backend::{CommandProbe, PathProbe, PdfBackend, PrintOutcome};

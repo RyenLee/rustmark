@@ -12,7 +12,7 @@
 //! | 图片 | ✅ 可用（P2） | **视口截图**：截取当前预览区所见 |
 //!
 //! PDF 的两种产出方式要在用户点导出**之前**讲清楚
-//!（`ExportFormatChoice::pdf_caveat`）：「目标 `.pdf` 没出现」在经对话框那条路上是
+//!（`export_ui_state::pdf_caveat`）：「目标 `.pdf` 没出现」在经对话框那条路上是
 //! **正常**的，不预告就会被当成失败。
 //!
 //! # 图片导出：视口截图与整篇长图
@@ -33,8 +33,11 @@ use egui::{Align, Color32, Context, Layout, RichText, Ui};
 use crate::app::frame::{EditorApp, PendingDialog};
 use crate::application::dto::ExportRequestView;
 use crate::presentation::state::dialog_ui_state::Overlay;
-use crate::presentation::state::export_ui_state::{ExportFormatChoice, PageSizeChoice};
+use crate::presentation::state::export_ui_state::{
+    is_available, page_size_label, pdf_caveat, unavailable_reason,
+};
 use crate::presentation::theme::builtin::Theme;
+use crate::shared::export_format::{ExportFormat, PageSize};
 
 /// 对话框默认尺寸（对齐原型 `BaseModal :width="540" :height="430"`）。
 const WIDTH: f32 = 540.0;
@@ -99,8 +102,8 @@ fn body(app: &mut EditorApp, ui: &mut Ui) {
     path_rows(app, ui, &theme);
     ui.separator();
     match app.export_ui.format {
-        ExportFormatChoice::Markdown => markdown_note(ui, &theme),
-        ExportFormatChoice::Pdf => pdf_options(app, ui, &theme),
+        ExportFormat::Markdown => markdown_note(ui, &theme),
+        ExportFormat::Pdf => pdf_options(app, ui, &theme),
         _ => common_options(app, ui, &theme),
     }
     ui.separator();
@@ -122,10 +125,10 @@ pub(crate) fn selected_format_label_color(theme: &Theme) -> Color32 {
 fn format_row(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
     ui.horizontal_wrapped(|ui| {
         ui.label("格式");
-        for format in ExportFormatChoice::ALL {
+        for format in ExportFormat::ALL {
             let selected = app.export_ui.format == *format;
-            let available = format.is_available();
-            let label = match format.unavailable_reason() {
+            let available = is_available(*format);
+            let label = match unavailable_reason(*format) {
                 Some(_) => format!("{}（暂未开放）", format.label()),
                 None => format.label().to_string(),
             };
@@ -186,7 +189,7 @@ fn path_rows(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
     if stem_changed {
         app.export_ui.refresh_resolved_path();
     }
-    if let Some(reason) = app.export_ui.format.unavailable_reason() {
+    if let Some(reason) = unavailable_reason(app.export_ui.format) {
         ui.colored_label(theme.text_secondary, reason);
     } else {
         ui.colored_label(
@@ -208,7 +211,7 @@ fn markdown_note(ui: &mut Ui, theme: &Theme) {
 /// 通用格式选项（HTML / 图片）。
 fn common_options(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
     let format = app.export_ui.format;
-    if format == ExportFormatChoice::Image {
+    if format == ExportFormat::Image {
         // 图片走截图路径：内容、目录、分页对它都没有意义。
         // 仍显示这些开关只会让用户以为勾了会影响结果。
         // 唯一有意义的选项是「整篇长图」：决定截图的范围模式。
@@ -259,9 +262,13 @@ fn image_note(ui: &mut Ui, theme: &Theme, long_image: bool) {
 fn pdf_options(app: &mut EditorApp, ui: &mut Ui, _theme: &Theme) {
     ui.horizontal_wrapped(|ui| {
         ui.label("纸张");
-        for size in PageSizeChoice::ALL {
+        for size in PageSize::ALL {
             let selected = app.export_ui.page_size == *size;
-            if ui.selectable_label(selected, size.label()).clicked() && !selected {
+            if ui
+                .selectable_label(selected, page_size_label(*size))
+                .clicked()
+                && !selected
+            {
                 app.export_ui.page_size = *size;
             }
         }
@@ -287,7 +294,7 @@ fn pdf_options(app: &mut EditorApp, ui: &mut Ui, _theme: &Theme) {
     );
     // V11-04：PDF 的产出方式与其它格式完全不同（经系统打印对话框），
     // 必须**在用户点导出之前**讲清楚，否则他会以为导出失败。
-    if let Some(caveat) = app.export_ui.format.pdf_caveat() {
+    if let Some(caveat) = pdf_caveat(app.export_ui.format) {
         ui.colored_label(_theme.text_secondary, caveat);
     }
 }
@@ -345,7 +352,7 @@ fn run_export(app: &mut EditorApp, pixels_per_point: f32) {
 
     // 图片走**截图**路径：像素来自 GPU 对当前帧的回读，
     // 由 `pump_capture` 在下一帧兑现，不经过同步的 `export_current_document`。
-    if app.export_ui.format == ExportFormatChoice::Image {
+    if app.export_ui.format == ExportFormat::Image {
         // 勾了「整篇长图」走多段滚动拼接；否则单帧视口截图。
         // 两条路径都在帧循环里异步兑现（`pump_capture`），错误文案同理。
         let result = if app.export_ui.long_image {
@@ -364,16 +371,16 @@ fn run_export(app: &mut EditorApp, pixels_per_point: f32) {
     }
 
     let request = ExportRequestView {
-        format: app.export_ui.format.id().to_string(),
+        format: app.export_ui.format.as_str().to_string(),
         include_toc: app.export_ui.include_toc,
         embed_images: app.export_ui.embed_images,
         theme: app.export_ui.theme.clone(),
-        page_size: app.export_ui.page_size.id().to_string(),
+        page_size: app.export_ui.page_size.as_str().to_string(),
         paginate: app.export_ui.paginate,
     };
     match app.export_current_document(request, &path) {
         Ok(result) => {
-            if app.export_ui.format == ExportFormatChoice::Pdf && result.bytes == 0 {
+            if app.export_ui.format == ExportFormat::Pdf && result.bytes == 0 {
                 // PDF 有两种产出方式，靠 `bytes` 区分：
                 // - 直接落盘（无头内核）：`bytes > 0`，走下面的通用文案；
                 // - 经系统打印对话框：本进程拿不到最终大小，`bytes` 恒为 0。

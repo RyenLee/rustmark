@@ -41,6 +41,7 @@ use crate::application::workspace::service::TREE_MAX_DEPTH;
 use crate::domain::export::errors::ExportError;
 use crate::domain::preferences::value_objects::ActionId;
 use crate::shared::error::AppError;
+use crate::shared::export_format::{ExportFormat, PageSize};
 use crate::shared::fonts::EditorFontChoice;
 use crate::shared::path::{FilePath, file_name_of};
 use crate::shared::result::AppResult;
