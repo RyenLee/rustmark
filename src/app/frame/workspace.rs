@@ -182,16 +182,20 @@ impl EditorApp {
     /// 另存为对话框的**建议文件名**（带扩展名）。
     ///
     /// 未命名文档给 `未命名.md`：系统对话框不会替我们补后缀，
-    /// 建议名不带 `.md` 时用户点确认就得到一个双击打不开的文件。
+    /// 建议名不带扩展名时用户点确认就得到一个双击打不开的文件。
     /// 「未命名」是领域给的标题（`Document` 的默认 title），
     /// 它本身不是合法文件名之一，但加上扩展名即可用。
+    ///
+    /// 扩展名取 [`text_format::default_extension`]（白名单首选的唯一出处），
+    /// 不在此处硬编码 `.md`——白名单的首选变了这里必须跟着变。
     pub fn suggested_save_name(&self) -> String {
+        let ext = text_format::default_extension();
         match self.active_document_title_stem() {
             Some(stem) if stem.contains('.') => stem,
-            Some(stem) => format!("{stem}.md"),
+            Some(stem) => format!("{stem}.{ext}"),
             // 一个文档都没有时：给一个像样的默认值而不是空串，
             // 空串会让对话框停在「未命名」并要求用户自己敲名字。
-            None => "未命名.md".to_string(),
+            None => format!("未命名.{ext}"),
         }
     }
 
@@ -275,9 +279,9 @@ impl EditorApp {
     ///
     /// # 可打开的格式白名单（问题 045）
     ///
-    /// 只有 [`crate::shared::text_format::TextFormats`] 放行的扩展名
-    /// （内置：`md` / `markdown` / `mdown` / `mkd` / `txt` / `text` / `csv`，
-    /// 大小写不敏感）能被打开；图片与二进制一律拒绝并提示。守卫放在
+    /// 只有 [`crate::shared::text_format::TextFormats`] 放行的扩展名能被打开；
+    /// 内置清单见 [`crate::shared::text_format::BUILTIN_TEXT_EXTENSIONS`]
+    /// （大小写不敏感）。图片与二进制一律拒绝并提示。守卫放在
     /// 本方法开头，故**五条入口**（文件树 / 搜索跳转 / 最近文件 /
     /// 快速打开 / 拖放）一次性全覆盖，各调用方不必各自判一遍。
     ///

@@ -115,6 +115,26 @@ pub fn display_name(ext: &str) -> &'static str {
 /// 一字不差的默认过滤器名（原生对话框的「文件类型」下拉项）。
 const FILTER_NAME: &str = "Markdown 与文本文件";
 
+/// **默认**扩展名（另存为对话框的建议文件名用）。
+///
+/// 这是「新建 / 另存为时默认给哪个后缀」这条规则的**唯一出处**：
+/// 此前散落在调用点的 `format!("{stem}.md")` / `"未命名.md"` 是硬编码，
+/// 白名单一旦变化（新增或调整首选格式）就会漏改——而漏改的后果是
+/// **用户拿到的建议文件名与实际支持的格式不一致**（建议 `.md` 却被
+/// 按 `.txt` 打开，或反之）。
+///
+/// 取白名单的**首项**而不是另立一个常量：白名单的顺序本身即表达了
+/// 「首选在前」的意图（[`BUILTIN_TEXT_EXTENSIONS`] 的 Markdown 家族在最前），
+/// 另立常量等于把「首选」这件事记两处。
+pub const fn default_extension() -> &'static str {
+    // `BUILTIN_TEXT_EXTENSIONS` 是 `&[&str]` 切片，取首项需在编译期求值。
+    // 用 `match` 而非 `[0]`：切片的索引在 const 上下文里不是 const fn。
+    match BUILTIN_TEXT_EXTENSIONS {
+        [first, ..] => first,
+        [] => "md",
+    }
+}
+
 /// 可打开的文本格式白名单。
 ///
 /// 内置清单来自 [`BUILTIN_TEXT_EXTENSIONS`]；[`Self::extended_with`]
@@ -224,6 +244,29 @@ impl Default for TextFormats {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 默认扩展名必须是白名单的**首项**（V11-54a / R-16）。
+    ///
+    /// 断言的是「等于首项」而不是字面量 `"md"`：白名单的首选一旦调整，
+    /// 这条用例必须跟着红——否则「默认扩展名」与「白名单」就变成两个
+    /// 各自独立的事实，调用点又会退回硬编码。
+    #[test]
+    fn default_extension_is_the_first_builtin_extension() {
+        assert_eq!(default_extension(), BUILTIN_TEXT_EXTENSIONS[0]);
+        // 当前首选是 Markdown（默认值取自白名单顺序，不是另立的常量）。
+        assert_eq!(default_extension(), "md");
+    }
+
+    /// 默认扩展名必须是白名单**内**的扩展名——否则默认名指向一个打不开的格式。
+    #[test]
+    fn default_extension_is_inside_the_whitelist() {
+        assert!(
+            BUILTIN_TEXT_EXTENSIONS.contains(&default_extension()),
+            "默认扩展名 {:?} 必须在白名单 {:?} 内",
+            default_extension(),
+            BUILTIN_TEXT_EXTENSIONS
+        );
+    }
 
     #[test]
     fn builtin_covers_the_three_required_formats() {

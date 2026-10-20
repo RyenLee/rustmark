@@ -451,7 +451,8 @@ impl EditorApp {
     ///
     /// 行为（推荐方案）：
     /// - 按扩展名分类（`classify_dropped`，判据是**全应用唯一**的格式白名单）——
-    ///   白名单内（内置：`md` / `markdown` / `mdown` / `mkd` / `txt` / `text` / `csv`）
+    ///   白名单内的扩展名（内置清单见
+    ///   [`crate::shared::text_format::BUILTIN_TEXT_EXTENSIONS`]）
     ///   逐个打开为标签；其余扩展名拒绝并在状态栏提示；
     /// - 拖入无本地路径的「虚拟文件」（如浏览器拖拽）忽略；
     /// - 一次拖入多个文件：全部可识别的都打开（批量），不截断到第一个；

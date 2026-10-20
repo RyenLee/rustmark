@@ -18,7 +18,8 @@ use std::sync::Arc;
 
 use rustmark::app::bootstrap::{ConfigPaths, Services};
 use rustmark::app::frame::EditorApp;
-use rustmark::shared::text_format::TextFormats;
+use rustmark::presentation::state::sidebar_ui_state::SidebarUiState;
+use rustmark::shared::text_format::{BUILTIN_TEXT_EXTENSIONS, TextFormats, default_extension};
 
 use crate::support::fake_dialog::FakeDialog;
 
@@ -150,5 +151,63 @@ fn notice_text_has_a_single_source() {
     assert_eq!(
         notice, "暂不支持打开该格式：photo.png",
         "提示语应只说文件末段，不含整条路径（状态栏放不下）"
+    );
+}
+
+/// 三处「默认文件名」的后缀都必须等于白名单首选（V11-54a / R-16）。
+///
+/// # 钉的是什么
+///
+/// 改扩展名的**后缀**有三处，历史上各写各的（`.md` 硬编码）：
+/// 1. 另存为对话框的建议名（`EditorApp::suggested_save_name`）；
+/// 2. 侧栏「新建文件」的预填名（`SidebarUiState::start_create`）；
+/// 3. （白名单自身的首选项 = `default_extension()`）。
+///
+/// 断言的是「后缀 == [`default_extension`]」而**不是**字面量 `"md"`：
+/// 白名单首选一旦调整，这条用例必须跟着红——否则「默认扩展名」与
+/// 「白名单」又变成两个各自独立的事实，调用点会悄悄退回硬编码。
+///
+/// # 为什么值得单独一条
+///
+/// 硬编码 `.md` 在**当前**白名单下**行为完全正确**（首选就是 md），
+/// 所以任何断言字面量的用例都会绿——它测不出「漏改」这种只在
+/// 白名单变化后才显形的问题。要让它变红，只能把判据写成
+/// 「与白名单联动」。
+#[test]
+fn default_names_follow_the_whitelist_preferred_extension() {
+    // 判据**独立于** `default_extension()`：直接取白名单首项。
+    // 若这里改成断言 `== default_extension()`，两边一起变就看不出联动断了
+    // （实测：把 `default_extension` 改成返回 "txt"，断言 `== default_extension()`
+    // 的用例仍绿，而真正要防的「调用点与白名单脱钩」恰恰是红的）。
+    let expected = BUILTIN_TEXT_EXTENSIONS
+        .first()
+        .copied()
+        .expect("内置白名单不应为空");
+
+    // ③ 常量自身也必须与白名单首项一致（否则「唯一出处」是假的）。
+    assert_eq!(
+        default_extension(),
+        expected,
+        "`default_extension()` 必须就是白名单首项，否则它不是唯一出处"
+    );
+
+    // ① 另存为对话框的建议名（未命名文档 → `未命名.<ext>`）。
+    let (_dir, mut app) = app();
+    app.new_document().expect("新建应成功");
+    let suggested = app.suggested_save_name();
+    assert_eq!(
+        suggested,
+        format!("未命名.{expected}"),
+        "另存为建议名的后缀应取自白名单首选，而非硬编码"
+    );
+
+    // ② 侧栏「新建文件」的预填名。
+    let mut sidebar = SidebarUiState::new();
+    sidebar.start_create(Some("/w"), false);
+    let prefilled = sidebar.draft_mut().expect("新建中应有草稿").clone();
+    assert_eq!(
+        prefilled,
+        format!("未命名.{expected}"),
+        "侧栏新建文件的预填名应取自白名单首选，而非硬编码"
     );
 }
