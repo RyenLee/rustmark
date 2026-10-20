@@ -4,7 +4,7 @@ use egui::text::{CCursor, CharIndex, LayoutJob, TextFormat};
 use egui::{Align2, FontId, Pos2, Rect, Stroke, Ui, Vec2};
 
 use crate::application::dto::{RangeView, SpanView};
-use crate::presentation::theme::mapper::{SpanHit, SpanPolicy, build_job};
+use crate::presentation::theme::mapper::{SpanHit, SpanPolicy, StyleSemantics, build_job};
 use crate::presentation::views::math::{self, MathLayout};
 use crate::shared::geometry::clamp_to_char_boundaries;
 use crate::shared::system;
@@ -17,97 +17,54 @@ use super::*;
 /// `theme.editor_font_size`（编辑区设置），且带编辑区的行高——直接拿来渲染预览
 /// 会让预览字号跟随编辑区设置漂移。这里显式用预览字号族，并统一给出
 /// `line_height`，使同一段文本里的不同样式**不改变行高**（上下标变小也不撑行）。
-pub(super) fn span_format(theme: &Theme, style: &str, size: f32, line_height: f32) -> TextFormat {
+///
+/// # 样式名 → 语义的派发已收敛（R-10）
+///
+/// 本函数此前是**第二张**样式表，与 [`StyleMapper::format`] 各写一遍
+/// 「样式名 → 颜色 / 斜体 / 下划线 / 删除线 / 背景」的 `match`。
+/// 现改为：派发走共享的 [`StyleSemantics::of`]，本函数只负责
+/// **预览区这一侧的度量**（比例字体、预览字号、预览行高、1.0 线条）。
+///
+/// 实测依据（探针 2026-10-20）：两表**共同**的 7 种样式
+/// （`heading` / `quote` / `strong` / `emphasis` / `strikethrough` /
+/// `code` / `link`）颜色本就**完全相同**（同源于 `theme.syn_*`），
+/// 故合并后**用户可见效果不变**——这条由 `style_tables_keep_their_look`
+/// （`mapper/tests.rs`）对照合并前的快照钉住。
+/// 可见性为 `pub(crate)` 而非 `pub(super)`：`theme::mapper` 的样式表
+/// 合并用例（`mapper/tests.rs`）要把它与**编辑区侧**的样式表做同表对照，
+/// 而 `pub(super)`（限 `preview_view` 模块内）够不着跨模块访问。
+pub(crate) fn span_format(theme: &Theme, style: &str, size: f32, line_height: f32) -> TextFormat {
     let base = TextFormat {
         color: theme.text_primary,
         font_id: FontId::proportional(size),
         line_height: Some(line_height),
         ..Default::default()
     };
-    match style {
-        // 标题基准样式（调用方给出标题字号）：只需换色，字号由 `size` 决定。
-        "heading" => TextFormat {
-            color: theme.syn_heading,
-            ..base
-        },
-        // 引用基准样式：次级色 + 斜体（与旧实现的观感一致）。
-        "quote" => TextFormat {
-            color: theme.syn_quote,
-            italics: true,
-            ..base
-        },
-        "strong" => TextFormat {
-            color: theme.syn_bold,
-            ..base
-        },
-        "emphasis" => TextFormat {
-            color: theme.syn_italic,
-            italics: true,
-            ..base
-        },
-        "strikethrough" => TextFormat {
-            color: theme.text_secondary,
-            strikethrough: Stroke::new(1.0_f32, theme.text_secondary),
-            ..base
-        },
-        "code" => TextFormat {
-            color: theme.syn_code,
-            background: theme.code_bg,
-            font_id: FontId::monospace(size),
-            ..base
-        },
-        "link" => TextFormat {
-            color: theme.syn_link,
-            underline: Stroke::new(1.0_f32, theme.syn_link),
-            ..base
-        },
-        // 行内公式**排版失败**时的退化样式（成功时走二维排版，见
-        // `render_with_math`）：只做样式区分——倾斜 + 公式色，并把 `$`
-        // 分隔符去掉（分隔符是语法，不是内容）。
-        "math" => TextFormat {
-            color: theme.syn_code,
-            italics: true,
-            ..base
-        },
-        // 键帽：等宽 + 底色，视觉上是一枚小按键。
-        "keycap" => TextFormat {
-            color: theme.syn_code,
-            background: theme.code_bg,
-            font_id: FontId::monospace(size * 0.92),
-            ..base
-        },
-        // 高亮 ==标记==：叠一层查找命中的底色（语义同为「此处被标出」）。
-        "mark" => TextFormat {
-            color: theme.text_primary,
-            background: theme.find_bg,
-            ..base
-        },
-        // 已勾选的任务项：整行次级色 + 删除线。
-        //
-        // 刻意**不**复用 `strikethrough` 样式：那个是给 `~~删除~~` 用的，
-        // 语义不同（一个是「用户划掉的文字」，一个是「已完成」）。
-        // 分开命名后，将来想给「已完成」换色（比如绿色对勾配色）不会波及删除线。
-        "task_done" => TextFormat {
-            color: theme.text_secondary,
-            strikethrough: Stroke::new(1.0_f32, theme.text_secondary),
-            ..base
-        },
-        // 上下标：epaint 无基线位移，用略小字号近似（行高由 `base.line_height`
-        // 固定，故不会把行撑高、不破坏与相邻行的对齐）。
-        "sub" | "sup" => TextFormat {
-            color: theme.text_secondary,
-            font_id: FontId::proportional(size * 0.78),
-            ..base
-        },
-        // 脚注引用 `[^1]`：与上下标同一近似——小一号字 + 链接色。
-        // 它本质是文中指向脚注定义的交叉引用，用链接色才能传达「可对应」；
-        // 显示文本由 `footnote_ref_mark` 换成标号 `1`（剥掉 `[^` `]` 语法）。
-        "footnote_ref" => TextFormat {
-            color: theme.syn_link,
-            font_id: FontId::proportional(size * 0.78),
-            ..base
-        },
-        _ => base,
+    let sem = StyleSemantics::of(theme, style);
+    // 预览区：比例字体为正文，行内代码 / 键帽用等宽；
+    // 上下标 / 脚注引用按 `size_scale` 缩小（行高仍取 `base` 的，故不撑行）。
+    let font = if sem.monospace {
+        FontId::monospace(size * sem.size_scale)
+    } else if sem.size_scale != 1.0 {
+        FontId::proportional(size * sem.size_scale)
+    } else {
+        base.font_id
+    };
+    // `TextFormat` 的下划线 / 删除线是 `Stroke`（不是 `Option`）：
+    // 「不画」= 零宽 `Stroke`（颜色也置为透明）。
+    let stroke = |c: Option<egui::Color32>| match c {
+        Some(c) => Stroke::new(1.0_f32, c),
+        None => Stroke::new(0.0_f32, egui::Color32::TRANSPARENT),
+    };
+    TextFormat {
+        color: sem.color,
+        italics: sem.italics,
+        underline: stroke(sem.underline),
+        strikethrough: stroke(sem.strikethrough),
+        background: sem.background.unwrap_or(egui::Color32::TRANSPARENT),
+        font_id: font,
+        line_height: base.line_height,
+        ..Default::default()
     }
 }
 

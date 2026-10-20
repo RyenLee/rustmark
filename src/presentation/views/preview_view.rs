@@ -57,6 +57,20 @@ pub use inline::{footnote_ref_mark, strip_math_delimiters};
 pub use list::task_marker_offset;
 pub use table::table_column_distribution;
 
+/// 仅供**跨模块**单测访问的私有项转出。
+///
+/// 存在的理由：`theme::mapper` 的样式表合并用例（`mapper/tests.rs`）
+/// 需要拿到预览区行内的样式表，与编辑区侧的做**同表对照**——
+/// 而 `inline` 是本模块的私有子模块，`pub(super)` 的 `span_format`
+/// 够不着跨模块访问。
+///
+/// 限定 `#[cfg(test)]`：非测试构建**不存在**这个模块，
+/// 不会成为公开 API 的一部分。
+#[cfg(test)]
+pub(crate) mod test_only {
+    pub(crate) use super::inline::span_format;
+}
+
 use std::cell::RefCell;
 use std::collections::HashSet;
 
