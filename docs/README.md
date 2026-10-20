@@ -47,7 +47,7 @@
 | `03-领域模型实现.md` | 5 个限界上下文的领域层落地 |
 | `04-应用服务与用例编排.md` | 5 个 AppService、事件订阅链 |
 | `05-基础设施实现.md` | ropey / pulldown / syntect 适配、fs 仓储、导出器 |
-| `06-表现层与交互实现.md` | egui 视图、快捷键单一数据源、主题（76KB，最大单篇） |
+| `06-表现层与交互实现.md` | egui 视图、快捷键单一数据源、主题（77.1 KB，阶段文档中最大单篇） |
 | `07-集成联调与原型对齐.md` | 集成联调、原型契约对齐、手工回归 |
 | `08-性能优化与质量加固.md` | 体积 / 启动 / 内存优化过程 |
 | `09-测试体系打包与发布.md` | 测试金字塔、覆盖率门禁、三平台打包 |
@@ -61,18 +61,21 @@
 
 | ADR | 决策 |
 |---|---|
-| [ADR-001](./adr/ADR-001-ui-framework.md) | UI 框架：egui + eframe 0.33.3（wgpu 后端），不采用 Tauri |
+| [ADR-001](./adr/ADR-001-ui-framework.md) | UI 框架：egui + eframe（wgpu 后端），不采用 Tauri（**当前锁定 0.37.0**——ADR 正文记的是当初的 0.33.3，升级后的现行版本见 `Cargo.toml`） |
 | [ADR-002](./adr/ADR-002-parser-highlighter.md) | 解析与高亮：pulldown-cmark + syntect（feature 收窄） |
 | [ADR-003](./adr/ADR-003-persistence-export.md) | 持久化与导出：ropey trait 隔离、原子写 |
 | [ADR-004](./adr/ADR-004-pdf-export.md) | PDF 导出：不内嵌引擎 → 系统打印 → **无头 Chromium**（修订） |
 | [ADR-005](./adr/ADR-005-prototype-relationship.md) | 原型关系：行为契约来源，非代码来源 |
 | [ADR-006](./adr/ADR-006-memory-threshold-revision.md) | 内存阈值修订：按平台各自口径（Windows Private WS ≤150 MB） |
+| [ADR-007](./adr/ADR-007-rich-renderer-boundary.md) | `presentation/rich/` 的边界：零 egui 依赖，与 `views` / `state` / `theme` 隔离 |
+| [ADR-008](./adr/ADR-008-widgets-layer-boundary.md) | `presentation/widgets/` 的收口标准（≥2 处重复 + 写错不报错 + 直觉写法看起来合理） |
+| [ADR-009](./adr/ADR-009-frame-scheduler.md) | 帧循环定时任务的统一调度：登记表 + 唯一预约出口（`request_repaint_after` 只许出现在 `app/frame/scheduler.rs`） |
 
 ## 流水与素材（logs/ 与 pic/）
 
 | 路径 | 内容 |
 |---|---|
-| [`logs/问题记录1.txt`](./logs/问题记录1.txt) | 用户反馈与缺陷修复的**原始流水记录**（001–027，倒序 append-only）——调试经验已提炼至 `debug-guide.md` §6，细节追根溯源查这里 |
+| [`logs/问题记录1.txt`](./logs/问题记录1.txt) | 用户反馈与缺陷修复的**原始流水记录**（001–056 + 066，**倒序** append-only）——调试经验已提炼至 `debug-guide.md` §6，细节追根溯源查这里 |
 | `logs/示例文档.md` | 应用内置欢迎页 / 测试用 Markdown 样本 |
 | `pic/` | 文档引用的截图与调试探针图（问题记录按编号引用） |
 

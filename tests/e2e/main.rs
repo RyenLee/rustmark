@@ -2,7 +2,7 @@
 //!
 //! 每条用例都以 `tempfile::TempDir` 起一个**全新配置目录**，满足
 //! S7-01「干净环境（全新配置目录）下从零执行通过」的验收。
-//! 用例清单与判定方式见 `docs/e2e-cases.md`。
+//! 用例清单与判定方式见 `docs/archive/stage-reports/e2e-cases.md`。
 //!
 //! 仅收「可脱离真实窗口驱动 `EditorApp` 逻辑」的用例；
 //! 必须看屏幕 / IME / 像素 / 跨平台的进 `docs/manual-qa-*.md`（S7-05）。
