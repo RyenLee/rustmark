@@ -521,6 +521,7 @@ mod capture;
 mod dialog;
 mod drag_drop;
 mod editor;
+mod export;
 mod files;
 mod find;
 mod images;

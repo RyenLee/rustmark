@@ -73,11 +73,18 @@ pub fn show(app: &mut EditorApp, ctx: &Context) {
         // 「导出中」状态里放出来——否则对话框再打开时会一直显示
         // 「正在导出，请稍候」，而实际上早已没有任务在跑。
         //
+        // 复位 `running` 由紧邻的 `close()` 完成（它本身就清 `running`）。
+        // 原先这里还多写一次对 running 的复位，与 `close()` 完全重复；
+        // R-11 子批 1 收口直写时删掉它，行为等价。
+        //
+        // 此处刻意不写出那行被删代码的原样：R-12 的文本扫描会按
+        // 「`app.<字段>.<字段> 赋值`」的形态找违规，注释里留一份
+        // 原样会让规则上线即误报一条。
+        //
         // 截图任务**不**在此作废：GPU 回传只认`pending_capture`，
         // 用户关掉对话框时那一帧已经发出去了，丢弃它等于让后端
         // 白做一次回读，而用户永远等不到文件。任务继续在后台兑现，
         // 结果由 `pump_capture` 写进状态；下次打开对话框能看到提示。
-        app.export_ui.running = false;
         app.export_ui.close();
         app.dialog.close(Overlay::Export);
     }
@@ -221,7 +228,7 @@ fn common_options(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
                 .checkbox(&mut long, "整篇长图（滚动截取全部内容）")
                 .changed()
             {
-                app.export_ui.long_image = long;
+                app.set_export_long_image(long);
             }
         });
         image_note(ui, theme, long);
@@ -231,12 +238,12 @@ fn common_options(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
         if format.supports_toc() {
             let mut on = app.export_ui.include_toc;
             if ui.checkbox(&mut on, "包含目录").changed() {
-                app.export_ui.include_toc = on;
+                app.set_export_include_toc(on);
             }
         }
         let mut embed = app.export_ui.embed_images;
         if ui.checkbox(&mut embed, "内联图片（data URI）").changed() {
-            app.export_ui.embed_images = embed;
+            app.set_export_embed_images(embed);
         }
     });
 }
@@ -269,23 +276,20 @@ fn pdf_options(app: &mut EditorApp, ui: &mut Ui, _theme: &Theme) {
                 .clicked()
                 && !selected
             {
-                app.export_ui.page_size = *size;
+                app.set_export_page_size(*size);
             }
         }
     });
     ui.horizontal_wrapped(|ui| {
         let mut paginate = app.export_ui.paginate;
         if ui.checkbox(&mut paginate, "按标题分页").changed() {
-            app.export_ui.paginate = paginate;
+            app.set_export_paginate(paginate);
         }
         let mut toc = app.export_ui.include_toc;
         if ui.checkbox(&mut toc, "包含目录（需分页）").changed() {
-            app.export_ui.include_toc = toc;
-            // 领域规则：PDF 的目录必须配分页（`TocRequiresPagination`）。
-            // 与其让用户提交后看到一条他无从理解的错误，不如在此自动补上分页。
-            if toc {
-                app.export_ui.paginate = true;
-            }
+            // 「PDF 的目录必须配分页」这条领域规则已随方法下沉到
+            // `EditorApp::set_pdf_include_toc`，视图不再自己补 `paginate`。
+            app.set_pdf_include_toc(toc);
         }
     });
     ui.colored_label(

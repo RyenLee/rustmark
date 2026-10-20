@@ -13,19 +13,10 @@ impl EditorApp {
         // 打开面板即重新扫描：文档内容可能在面板打开期间被改过
         // （面板非模态，用户可以切标签、改内容），沿用旧命中会跳到错误位置。
         if overlay == Overlay::Export {
-            // 建议文件名取当前文档标题去扩展名；导出主题取当前生效主题的种类。
-            let stem = self
-                .active_document_title_stem()
-                .unwrap_or_else(|| "document".to_string());
-            // 直接调真源的 `as_str()`，不再手写一份 `match`——
-            // 这份手写 `match` 是 R-09 收敛掉的**第三份**主题映射副本。
-            let theme_kind = self.ui.theme.kind.as_str();
-            self.export_ui.theme = theme_kind.to_string();
-            self.export_ui.file_stem = stem;
-            // 默认输出目录取文档所在目录；未保存的新文档没有目录，
-            // 此时留空并由 `can_submit` 拦下，提示用户先保存或填目录。
-            self.export_ui.output_dir = self.active_document_dir().unwrap_or_default();
-            self.export_ui.open();
+            // 特有初始化（建议文件名 / 主题 / 默认输出目录）已下沉到
+            // `frame::export::open_export_overlay`——路由表只做路由，
+            // 不再顺手初始化浮层状态。
+            self.open_export_overlay();
         }
         if overlay == Overlay::Settings {
             // 必须在这里取快照：「取消」要回到的是**打开那一刻**的值，
