@@ -21,5 +21,7 @@ mod path_file_name_test;
 mod routing_exporter_test;
 mod save_all_test;
 mod scheduler_test;
+mod shortcut_action_guard_test;
+mod shortcut_persisted_key_test;
 mod text_format_guard_test;
 mod workspace_reveal_test;
