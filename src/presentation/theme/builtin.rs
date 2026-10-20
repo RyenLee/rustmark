@@ -17,10 +17,22 @@
 //!
 //! # 三套主题
 //!
-//! - [`BuiltinTheme::Dark`]：深色（原型默认）
-//! - [`BuiltinTheme::Light`]：浅色
-//! - [`BuiltinTheme::System`]：**跟随系统**，本身不含配色，
+//! - [`ThemeKind::Dark`]：深色（原型默认）
+//! - [`ThemeKind::Light`]：浅色
+//! - [`ThemeKind::System`]：**跟随系统**，本身不含配色，
 //!   由 [`resolve`] 在运行时解析为深或浅。
+//!
+//! # 主题种类的唯一真源
+//!
+//! 种类枚举是 [`crate::shared::theme::ThemeKind`]（三方共用）——
+//! 表现层**不得**依赖领域（`check-arch` 拦 `crate::domain`），
+//! 故真源落在 `shared`。
+//!
+//! 2026-10-20 之前，表现层另有一份 `BuiltinTheme`（**3** 变体，无
+//! `Custom`），加上领域版、应用层与组合根各一份手写 `match`，共**四份**
+//! 副本。表现层那份缺 `Custom` 正是「自定义主题在表现层无法如实表达」
+//! 的根因——本文件 [`Theme::kind`] 曾用 `System` 顶替 `Custom`。
+//! R-09 已全部收敛，见 `docs/architecture-refactor-plan.md` §4.2 R-09。
 //!
 //! # 自定义主题（P2）的加载点
 //!
@@ -30,18 +42,20 @@
 //!
 //! # 模块结构
 //!
-//! - `kind`：[`BuiltinTheme`] 标识与字符串互转；
+//! - `labels`：[`theme_kind_label`] 界面专属显示名；
 //! - `metrics`：[`Metrics`] 尺寸 / 间距 token；
 //! - `resolve`：设置解析 [`resolve`] 与配色变更签名 [`palette_signature`]；
 //! - 本文件保留 [`Theme`] 结构、内置配色构造与颜色辅助函数。
 
-mod kind;
+mod labels;
 mod metrics;
 mod resolve;
 
-pub use self::kind::BuiltinTheme;
+pub use self::labels::theme_kind_label;
 pub use self::metrics::Metrics;
 pub use self::resolve::{palette_signature, resolve};
+
+use crate::shared::theme::ThemeKind;
 
 use egui::Color32;
 
@@ -50,8 +64,26 @@ use crate::application::dto::CustomThemePaletteView;
 /// 完整主题：配色 + 尺寸 + 字体。
 #[derive(Clone, PartialEq, Debug)]
 pub struct Theme {
-    /// 主题标识（`custom` 时为 [`BuiltinTheme::System`] 的值，但配色是自定义的）。
-    pub kind: BuiltinTheme,
+    /// **实际生效的明暗**（只可能是 [`ThemeKind::Light`] 或
+    /// [`ThemeKind::Dark`]）。
+    ///
+    /// # 为什么不是「用户选的种类」
+    ///
+    /// 「用户选了什么」与「现在是什么颜色」是**两件事**：
+    ///
+    /// - 用户选 `system` → 实际生效取决于系统偏好；
+    /// - 用户选 `custom` → 实际生效取决于其调色板主背景的亮度。
+    ///
+    /// 渲染层只关心后者（`is_dark()` 决定 egui 明暗模式），
+    /// 「用户选了什么」由**设置里的 `kind` 字符串**承载（那是持久化的真源）。
+    ///
+    /// 此前这个字段是表现层私有的 `BuiltinTheme`，`custom` 时被迫用
+    /// `System` 顶替——于是「当前是不是跟随系统」这件事**在运行时无从判断**
+    /// （`refresh_system_theme` 的 `kind != System` 判断因此恒成立，
+    /// 跟随系统时系统外观变化不会自动刷新）。
+    /// 改用 [`ThemeKind`] 后，用户选的种类可直接从设置读出，
+    /// 不再靠这个字段间接推断。
+    pub kind: ThemeKind,
     /// 尺寸 token。
     pub metrics: Metrics,
 
@@ -143,7 +175,7 @@ impl Theme {
     /// 深色主题（深色专注型，对齐原型 `tokens.css` 的 `[data-theme='dark']`）。
     pub fn dark() -> Self {
         Self {
-            kind: BuiltinTheme::Dark,
+            kind: ThemeKind::Dark,
             metrics: Metrics::default(),
             bg_primary: rgb(0x14, 0x16, 0x1B),
             bg_secondary: rgb(0x1A, 0x1D, 0x24),
@@ -186,7 +218,7 @@ impl Theme {
     /// 浅色主题（对齐原型 `tokens.css` 的 `[data-theme='light']`）。
     pub fn light() -> Self {
         Self {
-            kind: BuiltinTheme::Light,
+            kind: ThemeKind::Light,
             metrics: Metrics::default(),
             bg_primary: rgb(0xFF, 0xFF, 0xFF),
             bg_secondary: rgb(0xF7, 0xF8, 0xFA),
@@ -228,13 +260,13 @@ impl Theme {
 
     /// 以某套内置主题为底，覆盖字体设置（设置页改动只影响字体，不影响配色）。
     pub fn with_font_settings(
-        base: BuiltinTheme,
+        base: ThemeKind,
         font_family: &str,
         font_size: f32,
         line_height: f32,
     ) -> Self {
         let mut theme = match base {
-            BuiltinTheme::Light => Self::light(),
+            ThemeKind::Light => Self::light(),
             _ => Self::dark(),
         };
         if !font_family.trim().is_empty() {
@@ -309,16 +341,16 @@ impl Theme {
 
         // 由主背景亮度决定 egui 明暗模式（custom 不直接映射 Light/Dark）。
         theme.kind = if dark {
-            BuiltinTheme::Dark
+            ThemeKind::Dark
         } else {
-            BuiltinTheme::Light
+            ThemeKind::Light
         };
         theme
     }
 
     /// 是否为深色（决定 egui 的明暗模式）。
     pub const fn is_dark(&self) -> bool {
-        matches!(self.kind, BuiltinTheme::Dark)
+        matches!(self.kind, ThemeKind::Dark)
     }
 }
 

@@ -324,7 +324,10 @@ impl SettingsView {
     pub fn fallback() -> Self {
         Self {
             theme: ThemeView {
-                kind: "system".to_string(),
+                // 走真源的持久化契约值，不硬编码 `"system"`——
+                // 契约值写错的后果是「用户的主题选不中」，
+                // 而编译与运行**都不报错**。
+                kind: crate::shared::theme::ThemeKind::System.as_str().to_string(),
                 font_family: "monospace".to_string(),
                 font_size: 14.0,
                 line_height: 1.6,

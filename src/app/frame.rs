@@ -46,6 +46,7 @@ use crate::shared::fonts::EditorFontChoice;
 use crate::shared::path::{FilePath, file_name_of};
 use crate::shared::result::AppResult;
 use crate::shared::text_format::{self, TextFormats};
+use crate::shared::theme::ThemeKind;
 use crate::shared::time::Timestamp;
 
 use crate::presentation::shortcuts::dispatcher::{Dispatch, ShortcutDispatcher};
@@ -70,7 +71,7 @@ use crate::presentation::state::sidebar_ui_state::{
 };
 use crate::presentation::state::status_bar_ui_state::StatusBarUiState;
 use crate::presentation::state::symbol_ui_state::SymbolUiState;
-use crate::presentation::theme::builtin::{self, BuiltinTheme, Theme};
+use crate::presentation::theme::builtin::{self, Theme};
 use crate::presentation::theme::mapper;
 use crate::presentation::views::editor_ops;
 use crate::presentation::views::scroll_sync::{LineIndex, RevealIntent, TARGET_MARGIN};

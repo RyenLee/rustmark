@@ -233,17 +233,14 @@ impl PreferencesAppService {
 
 /// 由 DTO 构造主题；未知种类或非法的字体/行高返回 `Err`。
 fn to_theme(view: &ThemeView) -> AppResult<Theme> {
-    let kind = match view.kind.as_str() {
-        "light" => ThemeKind::Light,
-        "dark" => ThemeKind::Dark,
-        "system" => ThemeKind::System,
-        "custom" => ThemeKind::Custom,
-        other => {
-            return Err(AppError::domain(format!(
-                "未知主题种类：{other}（应为 light/dark/system/custom）"
-            )));
-        }
-    };
+    // 走真源的穷举 `parse`，不再手写一份字符串 → 枚举的 `match`
+    // ——那份手写 `match` 是 R-09 收敛掉的**第四份**主题映射副本。
+    let kind = ThemeKind::parse(&view.kind).ok_or_else(|| {
+        AppError::domain(format!(
+            "未知主题种类：{}（应为 light/dark/system/custom）",
+            view.kind.trim()
+        ))
+    })?;
     let mut theme = Theme::new(
         kind,
         view.font_family.clone(),

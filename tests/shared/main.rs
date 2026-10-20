@@ -5,4 +5,6 @@ mod export_format_test;
 mod geometry_test;
 mod ids_test;
 mod path_test;
+mod theme_guard_test;
+mod theme_test;
 mod time_test;

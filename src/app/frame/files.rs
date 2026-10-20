@@ -89,11 +89,7 @@ impl EditorApp {
 
     /// 当前生效主题的显示名（「关于」面板用）。
     pub fn theme_kind_label(&self) -> &'static str {
-        match self.ui.theme.kind {
-            BuiltinTheme::Dark => "深色",
-            BuiltinTheme::Light => "浅色",
-            BuiltinTheme::System => "跟随系统",
-        }
+        crate::presentation::theme::builtin::theme_kind_label(self.ui.theme.kind)
     }
 
     /// 在光标处插入一段文本（符号面板 / 工具栏插入结构共用）。

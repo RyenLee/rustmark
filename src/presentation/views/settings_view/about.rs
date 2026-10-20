@@ -32,10 +32,13 @@ pub(super) fn live_preview(ui: &mut Ui, theme: &Theme, source_kind: &str) {
     let kind_label = if source_kind.trim().eq_ignore_ascii_case("custom") {
         "自定义主题"
     } else {
+        // 走真源的显示名表，不再手写一份 `match`——
+        // 这份手写 `match` 是 R-09 收敛掉的**第六份**主题映射副本。
         match theme.kind {
-            crate::presentation::theme::builtin::BuiltinTheme::Dark => "深色主题",
-            crate::presentation::theme::builtin::BuiltinTheme::Light => "浅色主题",
-            crate::presentation::theme::builtin::BuiltinTheme::System => "跟随系统主题",
+            crate::shared::theme::ThemeKind::Dark => "深色主题",
+            crate::shared::theme::ThemeKind::Light => "浅色主题",
+            crate::shared::theme::ThemeKind::System => "跟随系统主题",
+            crate::shared::theme::ThemeKind::Custom => "自定义主题",
         }
     };
     egui::Frame::new()

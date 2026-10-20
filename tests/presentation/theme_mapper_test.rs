@@ -12,9 +12,10 @@ use egui::Color32;
 
 use rustmark::application::dto::ThemeView;
 use rustmark::presentation::theme::builtin::{
-    BuiltinTheme, Metrics, Theme, palette_signature, resolve,
+    Metrics, Theme, palette_signature, resolve, theme_kind_label,
 };
 use rustmark::presentation::theme::mapper::{StyleMapper, apply};
+use rustmark::shared::theme::ThemeKind;
 
 // ============================================================================
 // 配色对齐原型 tokens.css
@@ -301,11 +302,11 @@ fn system_theme_resolves_by_system_preference() {
 fn resolved_kind_reflects_effective_palette() {
     let view = theme_view("system");
     let dark = resolve(&view, true);
-    assert_eq!(dark.kind, BuiltinTheme::Dark);
+    assert_eq!(dark.kind, ThemeKind::Dark);
     assert!(dark.is_dark());
 
     let light = resolve(&view, false);
-    assert_eq!(light.kind, BuiltinTheme::Light);
+    assert_eq!(light.kind, ThemeKind::Light);
     assert!(!light.is_dark());
 }
 
@@ -325,20 +326,50 @@ fn explicit_theme_ignores_system_preference() {
 }
 
 /// 未知取值退回「跟随系统」而非报错——旧配置里出现新取值时程序应照常启动。
+///
+/// # 真源与表现层的容错点不同
+///
+/// 表现层私有的 `BuiltinTheme::parse`（R-09 已删除）自己带容错：
+/// 未知值**直接退回** `System`。
+/// 真源 [`ThemeKind::parse`] 则**不**做兜底——它返回 `Option`，
+/// 未知值是 `None`。容错的责任落在**调用点**：
+/// `builtin::resolve` 用 `unwrap_or(ThemeKind::System)` 兜底，
+/// 应用层 `to_theme` 则把未知值**当错误**报出。
+///
+/// 两种职责划分各有道理：表现层要「照常启动」，应用层要「告诉用户
+/// 配置写错了」。本用例守住真源的**分工**：
+/// 真源只负责「认得 / 不认得」，兜底由调用点决定。
 #[test]
 fn unknown_theme_kind_falls_back_to_system() {
-    assert_eq!(BuiltinTheme::parse("sepia"), BuiltinTheme::System);
-    assert_eq!(BuiltinTheme::parse(""), BuiltinTheme::System);
-    assert_eq!(BuiltinTheme::parse("LIGHT"), BuiltinTheme::Light);
-    assert_eq!(BuiltinTheme::parse("  dark  "), BuiltinTheme::Dark);
+    // 真源：认得的照常解析。
+    assert_eq!(ThemeKind::parse("LIGHT"), Some(ThemeKind::Light));
+    assert_eq!(ThemeKind::parse("  dark  "), Some(ThemeKind::Dark));
+    assert_eq!(ThemeKind::parse("system"), Some(ThemeKind::System));
+    assert_eq!(ThemeKind::parse("custom"), Some(ThemeKind::Custom));
+    // 真源：不认得的**如实**返回 `None`（不擅自兜底）。
+    assert_eq!(ThemeKind::parse("sepia"), None);
+    assert_eq!(ThemeKind::parse(""), None);
+}
+
+/// 表现层的兜底责任：未知取值按「跟随系统」渲染，程序照常启动。
+///
+/// 这条是上一条的**调用点**版本——真源返回 `None` 后，
+/// `builtin::resolve` 必须把它兜成 `System` 再按系统偏好解析。
+#[test]
+fn resolving_an_unknown_theme_kind_still_yields_a_theme() {
+    let view = theme_view("sepia");
+    // 未知取值 → 退回跟随系统 → 按系统偏好解析成具体明暗。
+    assert!(!resolve(&view, false).is_dark());
+    assert!(resolve(&view, true).is_dark());
 }
 
 /// 主题字符串与显示名。
 #[test]
 fn theme_labels_and_strings() {
-    assert_eq!(BuiltinTheme::Dark.as_str(), "dark");
-    assert_eq!(BuiltinTheme::Light.label(), "浅色");
-    assert_eq!(BuiltinTheme::System.label(), "跟随系统");
+    assert_eq!(ThemeKind::Dark.as_str(), "dark");
+    assert_eq!(theme_kind_label(ThemeKind::Light), "浅色");
+    assert_eq!(theme_kind_label(ThemeKind::System), "跟随系统");
+    assert_eq!(theme_kind_label(ThemeKind::Custom), "自定义");
 }
 
 // ============================================================================

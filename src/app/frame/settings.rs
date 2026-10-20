@@ -276,7 +276,18 @@ impl EditorApp {
     /// 只有设置确实是 `system` 时才重算。若不加这个判断，用户**显式**选定的
     /// 深/浅主题会被系统外观变化悄悄改回去——这是「跟随系统」最常见的实现错误。
     pub(super) fn refresh_system_theme(&mut self, ctx: &egui::Context) {
-        if self.ui.theme.kind != BuiltinTheme::System {
+        // 判断依据是**设置里用户选的种类**，不是 `ui.theme.kind`——
+        // 后者是「实际生效的明暗」（`resolve` 已把它改写成 `Light`/`Dark`），
+        // 用它判断「是否跟随系统」**恒为真**（`!= System` 恒成立），
+        // 于是本函数**永远提前返回**，跟随系统时系统外观变化不会自动刷新。
+        //
+        // 2026-10-20 实测：这是 R-09 收敛主题枚举时暴露出的既有缺陷。
+        // 表现层私有的 `BuiltinTheme` 缺 `Custom` 变体、`custom` 时被迫用
+        // `System` 顶替，两件事混在一起，使「当前是不是跟随系统」无从判断。
+        let Some(view) = self.theme_view() else {
+            return;
+        };
+        if ThemeKind::parse(&view.kind) != Some(ThemeKind::System) {
             return;
         }
         // egui 每帧把系统偏好写进 `visuals.dark_mode`（随系统外观变化更新），
@@ -286,9 +297,6 @@ impl EditorApp {
             return;
         }
         self.system_dark = system_dark;
-        let Some(view) = self.theme_view() else {
-            return;
-        };
         self.ui.set_theme(builtin::resolve(&view, system_dark));
     }
 
@@ -312,7 +320,14 @@ impl EditorApp {
         let mut view = settings.theme;
         // 以当前**正在显示**的主题明暗为准取反，而不是按 kind 字符串推导。
         let effective_dark = self.ui.theme.is_dark();
-        view.kind = if effective_dark { "light" } else { "dark" }.to_string();
+        // 走真源的 `as_str()`，不再手写 `"light"` / `"dark"` 字面量——
+        // 写错了编译不报错、运行期也不报错，只是用户的主题选不中。
+        view.kind = if effective_dark {
+            ThemeKind::Light.as_str()
+        } else {
+            ThemeKind::Dark.as_str()
+        }
+        .to_string();
         // 写盘失败不回滚内存状态：主题是**显示偏好**而非数据，
         // 拦住用户切换只会让界面「看起来没反应」。
         let _ = self.services.preferences.set_theme(SetThemeCommand {
@@ -349,8 +364,8 @@ impl EditorApp {
 
     /// 系统当前是否偏好深色（设置页「跟随系统」提示、状态栏主题文案用）。
     ///
-    /// 刻意暴露**系统偏好**而不是「当前生效主题」：后者在
-    /// `BuiltinTheme::System` 下已经被解析过一次，拿它判断
+    /// 刻意暴露**系统偏好**而不是「当前生效主题」：后者已经被
+    /// `resolve` 解析成具体的 `Light`/`Dark`，拿它判断
     /// 「系统是深是浅」等于拿答案去验证答案。
     pub fn system_prefers_dark(&self) -> bool {
         self.system_dark

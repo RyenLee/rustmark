@@ -10,7 +10,7 @@ use rustmark::app::frame::EditorApp;
 use rustmark::presentation::shortcuts::registry::{ShortcutRegistry, UiAction};
 use rustmark::presentation::state::app_ui_state::{SPLIT_MAX, SPLIT_MIN, SidebarTab};
 use rustmark::presentation::state::dialog_ui_state::Overlay;
-use rustmark::presentation::theme::builtin::BuiltinTheme;
+use rustmark::shared::theme::ThemeKind;
 use std::sync::Arc;
 
 /// 造一个装好默认配置的应用根状态。
@@ -213,24 +213,24 @@ fn toggle_outline_switches_sidebar_tab() {
 fn theme_toggle_swaps_dark_and_light_directly() {
     let (_dir, mut app) = app();
     // 首次跟随系统；本例 system_dark=false → 解析为浅色（生效态 = 浅色）。
-    assert_eq!(app.theme().kind, BuiltinTheme::Light);
+    assert_eq!(app.theme().kind, ThemeKind::Light);
     assert_eq!(app.settings().theme.kind, "system");
 
     // 一键切换 = 直接深浅互换，两向都只要一次点击（#039：原来浅色点回深色要点两次）。
     // 从「生效浅色」点一下 → 深色。
     app.execute(UiAction::ToggleTheme);
     assert_eq!(app.settings().theme.kind, "dark");
-    assert_eq!(app.theme().kind, BuiltinTheme::Dark);
+    assert_eq!(app.theme().kind, ThemeKind::Dark);
 
     // 再点一下 → 浅色（不再是回到 system）。
     app.execute(UiAction::ToggleTheme);
     assert_eq!(app.settings().theme.kind, "light");
-    assert_eq!(app.theme().kind, BuiltinTheme::Light);
+    assert_eq!(app.theme().kind, ThemeKind::Light);
 
     // 再点一下 → 深色，循环就是纯粹的 dark↔light。
     app.execute(UiAction::ToggleTheme);
     assert_eq!(app.settings().theme.kind, "dark");
-    assert_eq!(app.theme().kind, BuiltinTheme::Dark);
+    assert_eq!(app.theme().kind, ThemeKind::Dark);
 }
 
 #[test]

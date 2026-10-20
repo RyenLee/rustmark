@@ -15,6 +15,7 @@
 //! - [`time`]：时间戳与可注入时钟
 //! - [`text`]：与层无关的分词工具（V11-07）
 //! - [`text_format`]：可打开的文本格式白名单（问题 045；三方共用的唯一出处）
+//! - [`theme`]：主题种类（领域 / 应用 / 表现三方共用；R-09 收敛双枚举）
 //! - [`system`]：外部打开器与链接安全校验（S6-05 超链接点击）
 //! - [`lru`]：有界 LRU 映射（D-4；高亮 / 拼写 / 渲染 / 图片四缓存共用）
 
@@ -34,4 +35,5 @@ pub mod result;
 pub mod system;
 pub mod text;
 pub mod text_format;
+pub mod theme;
 pub mod time;

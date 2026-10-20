@@ -5,37 +5,24 @@
 
 use serde::{Deserialize, Serialize};
 
-/// 内置主题种类。
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Default, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ThemeKind {
-    /// 浅色。
-    Light,
-    /// 深色。
-    Dark,
-    /// 跟随系统（默认）。
-    #[default]
-    System,
-    /// 自定义（由 [`CustomThemePalette`] 决定配色）。
-    Custom,
-}
-
-impl ThemeKind {
-    /// 是否为深色（用于选择默认强调色）。
-    pub const fn is_dark(&self) -> bool {
-        matches!(self, Self::Dark)
-    }
-
-    /// 规范字符串（与表现层 `BuiltinTheme::as_str` 对齐，供 DTO 转换复用）。
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Light => "light",
-            Self::Dark => "dark",
-            Self::System => "system",
-            Self::Custom => "custom",
-        }
-    }
-}
+/// 主题种类（**唯一**真源见 [`crate::shared::theme`]）。
+///
+/// # 为什么不在这里定义
+///
+/// 主题种类是**三方**共同需要的：领域（持久化 `Theme.kind`）、
+/// 应用（DTO ↔ 领域转换）、表现（设置页选项 / 主题解析 / 关于面板）。
+/// 而表现层**不得**依赖领域（`.agent/architecture.md` §4；
+/// `check-arch` 的 `PRESENTATION_FORBIDDEN` 拦 `crate::domain`），
+/// 三方共同的依赖点只有 `shared`。
+///
+/// 2026-10-20 之前本文件定义着领域版 `ThemeKind`（4 变体），
+/// 表现层另有一份 `BuiltinTheme`（**3** 变体，无 `Custom`），
+/// 加上应用层与组合根各一份手写 `match`，共**四份**副本。
+/// 唯一真源现落在 [`crate::shared::theme`]。
+///
+/// 公开路径 `domain::preferences::value_objects::ThemeKind` **保持不变**，
+/// 故既有调用与测试零改动。
+pub use crate::shared::theme::ThemeKind;
 
 /// 自定义主题调色板（P2 自定义主题）。
 ///

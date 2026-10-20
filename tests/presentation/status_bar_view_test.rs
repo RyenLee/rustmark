@@ -422,17 +422,17 @@ fn toggles_flip_the_editor_state() {
 /// 现在每一态都直接预告下一态，且文案与 `frame::settings::cycle_theme` 的语义一致。
 #[test]
 fn theme_label_includes_the_resolved_side() {
-    use rustmark::presentation::theme::builtin::BuiltinTheme;
+    use rustmark::shared::theme::ThemeKind;
     let (_cfg, mut app) = app();
 
     // 深色：提示明确说出下一态是浅色主题（一步直达，不绕系统）。
-    app.ui.theme.kind = BuiltinTheme::Dark;
+    app.ui.theme.kind = ThemeKind::Dark;
     let dark = status_bar_view::build_model(&app, None);
     assert_eq!(dark.theme_label, "深色主题");
     assert_eq!(dark.theme_hint, "点击切换为浅色主题");
 
     // 浅色：下一态直接是深色主题（不再跳「跟随系统」）。
-    app.ui.theme.kind = BuiltinTheme::Light;
+    app.ui.theme.kind = ThemeKind::Light;
     let light = status_bar_view::build_model(&app, None);
     assert_eq!(light.theme_label, "浅色主题");
     assert_eq!(

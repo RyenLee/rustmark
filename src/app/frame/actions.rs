@@ -17,11 +17,9 @@ impl EditorApp {
             let stem = self
                 .active_document_title_stem()
                 .unwrap_or_else(|| "document".to_string());
-            let theme_kind = match self.ui.theme.kind {
-                crate::presentation::theme::builtin::BuiltinTheme::Dark => "dark",
-                crate::presentation::theme::builtin::BuiltinTheme::Light => "light",
-                crate::presentation::theme::builtin::BuiltinTheme::System => "system",
-            };
+            // 直接调真源的 `as_str()`，不再手写一份 `match`——
+            // 这份手写 `match` 是 R-09 收敛掉的**第三份**主题映射副本。
+            let theme_kind = self.ui.theme.kind.as_str();
             self.export_ui.theme = theme_kind.to_string();
             self.export_ui.file_stem = stem;
             // 默认输出目录取文档所在目录；未保存的新文档没有目录，

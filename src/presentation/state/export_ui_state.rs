@@ -64,7 +64,10 @@ pub struct ExportUiState {
 
 impl Default for ExportUiState {
     fn default() -> Self {
-        Self::new("document", "dark")
+        // 走真源的持久化契约值，不硬编码 `"dark"`——
+        // 契约值写错的后果是「导出的主题与界面不一致」，
+        // 而编译与运行**都不报错**。
+        Self::new("document", crate::shared::theme::ThemeKind::Dark.as_str())
     }
 }
 
@@ -228,7 +231,7 @@ mod tests {
 
     #[test]
     fn switching_to_markdown_clears_toc_and_pagination() {
-        let mut state = ExportUiState::new("doc", "dark");
+        let mut state = ExportUiState::new("doc", crate::shared::theme::ThemeKind::Dark.as_str());
         state.include_toc = true;
         state.paginate = true;
 
