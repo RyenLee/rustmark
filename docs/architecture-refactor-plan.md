@@ -272,8 +272,8 @@ presentation::views::preview_view  调 opener.open(url)
 | `presentation::state::export_ui_state::ExportFormatChoice` | 与领域枚举同构的第二套枚举 | **已删除**；UI 侧改用真源枚举 + `format_hints` 独立函数表（`pdf_caveat` 等 UI 专属数据） | R-07 |
 | `presentation::theme::mapper` | 样式 → `FontId`/颜色映射 | **唯一**样式真源；`preview_view/inline.rs` 的 `span_format` 并入 | R-10 |
 | `presentation::theme::mapper::highlight_layout` | 排版 + span 应用 | 抽出**唯一** span→`LayoutJob` 构造器，`code.rs` / `inline.rs` 改调它 | R-10 |
-| `application::shortcuts` | 领域 `ActionId` + 默认键位表 | 默认键位表**唯一一份**（领域侧），表现层读取 | R-08 |
-| `presentation::shortcuts::registry` | `UiAction` + `persisted_key` 兜底 | `persisted_key` **穷举**（不可持久化的显式列出） | R-08 |
+| `application::shortcuts` | 领域 `ActionId` + 默认键位表 | 默认键位表**唯一一份**（领域侧），表现层读取 | R-08 ②（**未做**） |
+| `presentation::shortcuts::registry` | `UiAction` + `persisted_key` 兜底 | `persisted_key` **穷举**（不可持久化的显式列出）——**已达成**（`8cdf083`）；手写清单 `UiAction::ALL` 与枚举变体的同步由源码级守卫钉住 | R-08 ① |
 | `infrastructure::fonts` | 发现 + 装配 1111 行 | 拆为「路径发现（可测）」+「装配（可测）」+「真实 FS 薄适配」 | R-20 |
 
 ### 3.3 交互关系与数据流
@@ -488,6 +488,10 @@ UI 选格式 ──► ExportFormat（领域唯一枚举）
 
 #### R-08 · `persisted_key` 穷举 + 默认键位表合一
 
+> **① 已落地（2026-10-20，commit `8cdf083`）**。落地形态与原文有 3 处偏差，
+> 并**顺带修掉一个真实用户可见缺陷**（领域动作清单漏登记）。②（默认键位表合一）
+> **未做**——理由见下方「实施偏差」第 3 条。
+
 - **改造内容**：
   1. `src/presentation/shortcuts/registry/action/impls.rs:72` 的 `persisted_key` 改为**穷举全部 57 个 `UiAction` 变体**：可持久化的返回 `Some("...")`，不可持久化的**显式**写 `UiAction::X => None`（不再用 `_ => return None` 兜底）→ 漏加变体时**编译失败**。
   2. 默认键位表合一：`src/domain/preferences/value_objects/shortcut_table.rs:150` `default_bindings()` 与 `src/presentation/shortcuts/registry/action/impls.rs:322` `default_combo()` 是两份并行表 → **保留领域侧一份**，表现层改为查领域（需确认领域侧不依赖表现层类型——`KeyCombo` 若是表现层类型，则把 `KeyCombo` 下沉到 `shared` 或让领域表存字符串）。
@@ -503,6 +507,60 @@ UI 选格式 ──► ExportFormat（领域唯一枚举）
   - `grep -n "_ => return None" src/presentation/shortcuts/registry/action/impls.rs` → **零命中**；
   - 新增用例：`every_ui_action_has_an_explicit_persisted_key_decision`（遍历 `UiAction::ALL`，断言每个变体在 `persisted_key` 的穷举表里都有明确分支——用「`persisted_key` 对每个变体返回可预测值 + 编译期穷举」双保险）；
   - 变异验证：给 `UiAction` 加一个测试专用变体 → **编译失败**（这就是验收本身）。
+
+##### R-08 ① 实施偏差（2026-10-20 落地时确认，commit `8cdf083`）
+
+1. **数量修正（方案原文有误，以代码为准）**：原文称「原本靠 `_` 兜底的
+   **16** 个不可持久化动作」。实测 `UiAction::ALL` 共 **57** 项，
+   `persisted_key` 的 `Some` 分支 **38** 项，兜底覆盖 **19** 项
+   （`OpenFolder` / `Revert` / `InsertImage` / `ToggleList` /
+   `ToggleOrderedList` / `MoveLineUp` / `MoveLineDown` / `GotoTab1..9` /
+   `ShortcutOverview` / `About` / `ToggleTheme`）。
+2. **②（默认键位表合一）未做**：①完成后实测发现两侧默认表的**语义不同**——
+   领域 `ActionId::all()` 是「**可持久化**动作全集」（38 项），
+   领域 `default_bindings()` 是「**有默认键位**的动作集」（37 项），
+   差集恰为 `ToggleStatusbar`（可持久化但**不占用快捷键**，产品有意为之，
+   见 `docs/06-表现层与交互实现.md:46`）。
+   领域 `KeyCombo::parse("")` 返回 `Err`（`key` 为 `None`），
+   故领域表**无法表达「无默认键位」**——要合一需先改领域 `KeyCombo`
+   的表达能力或引入「未绑定」语义，**牵动 `shared`**，与 R-21 方向相反。
+   按原文「② 视 ① 完成后的形态决定」，本次**不做**，留待专项。
+3. **顺带修掉一个真实用户可见缺陷**：领域 `ActionId::all()` 清单
+   **漏登记** `ToggleStatusbar`（枚举 38 / 清单 37）。
+   症状：用户改「显示/隐藏状态栏」的键位时，`domain_action()` 反查返回
+   `None`，界面弹「ToggleStatusbar 尚未映射到领域动作，无法改键」。
+   该缺陷自 `ActionId::ToggleStatusbar` 引入起就存在；文档当时记载的
+   「未进 `all()` 默认绑定集」把「不进 `all()`」与「不进 `default_bindings()`」
+   混为一谈——**前者是 bug，后者是设计**。
+   连带修正领域断言「每个动作都应有默认绑定」：它把上述两个集合当成
+   一个，使「可持久化但无默认键位」这一合法状态无法表达
+   （要么被排除出 `all()` → 改键报错；要么进 `all()` → 断言变红）。
+   现改为「除**显式**列出的例外外，每个动作都应有默认绑定」。
+4. **新增两条源码级守卫**：①的收益（编译期穷举）只覆盖 `persisted_key`
+   一处。**手写清单**（`UiAction::ALL` / `ActionId::all()`）编译器管不到，
+   「加变体忘了加进清单 → 该动作不出现在命令面板且不可改键」**零报错**。
+   故新增源码级守卫逐项比对「清单 ↔ 枚举变体」。
+
+##### R-08 ① 新增用例（13 例）
+
+- `tests/app/shortcut_persisted_key_test.rs`（跨层一致性，6 例）：
+  - 领域 `ActionId::all()` 的 key 集合与表现层可持久化 key 集合**逐项相等**
+    （只比数量挡不住「键名写错」）；
+  - 每个动作的持久化决策可预测（有键 → 键在领域存在，且反查回到**同一**动作，
+    即键不得撞车）；
+  - 不可持久化的 19 个动作是**显式清单**；
+  - 两侧手写清单与枚举变体数对照。
+- `tests/app/shortcut_action_guard_test.rs`（源码级，7 例）：
+  - `persisted_key` 不许有 `_ =>` 兜底分支（**扫全仓**：凡叫这个名字的
+    函数一律不许，防「换个类型再写一个同名兜底」）；
+  - `UiAction::ALL` 与枚举变体**逐项同步**（漏登记 / 多登记都检出）；
+  - 领域 `ActionId::all()` 与枚举变体**逐项同步**。
+
+##### R-08 ① 变异验证（3 轮，判据有牙齿的证明）
+
+1. 兜底分支写回 → `persisted_key_has_no_fallback_branch` 红（报**文件真实行号**）；
+2. `ActionId::all()` 漏登记 `ToggleStatusbar` → **4 例同时红**；
+3. `UiAction::ALL` 漏登记 `ToggleTheme` → **3 例同时红**。
 
 #### R-09 · 主题双枚举收敛
 
@@ -849,7 +907,7 @@ UI 选格式 ──► ExportFormat（领域唯一枚举）
 - 交付物：4 个改造项共 5 个 commit；4 条「新增 X 只改 N 处」的用例。
 - 验收（**每项独立**）：
   - R-07：`grep -c "pub enum ExportFormatChoice" src/` → 0 ✅ **已达成**（`bbcbe20`；`parse` 穷举用例通过；新增源码级守卫「导出格式只有一处定义」+ 3 轮变异验证）；
-  - R-08①：`grep "_ => return None" src/presentation/shortcuts/registry/action/impls.rs` → 0；
+  - R-08①：`grep "_ => return None" src/presentation/shortcuts/registry/action/impls.rs` → 0 ✅ **已达成**（`8cdf083`；`every_ui_action_has_an_explicit_persisted_key_decision` 通过；新增源码级守卫「`persisted_key` 不许有兜底」+「手写清单与枚举变体同步」+ 3 轮变异验证；**顺带修掉领域动作清单漏登记的真实缺陷**）；
   - R-09：`ThemeKind::from_str(as_str()) == self` 用例通过（**同时守住持久化兼容**）；
   - R-10：编辑区与预览区**同段代码的语法色逐 span 相同**（真帧对拍）。
 
@@ -907,7 +965,7 @@ UI 选格式 ──► ExportFormat（领域唯一枚举）
 | M1 | R-15 | 2026-10-20 | 2026-10-20 | **1879** / 4 / OK | `e9dce13`；**修 Windows 路径显示 bug**（9 处收敛）；小项 3「方案判断不成立」未做并如实记录 |
 | M1 | R-18（部分） | 2026-10-20 | 2026-10-20 | **1879** / 4 / OK | `38a819d`；第 1/2/4/5/6/7/8/9/10/11 条已做；第 3 条（ADR 索引补 010/011）**待 R-19** |
 | M2 | R-07 | 2026-10-20 | 2026-10-20 | **1896** / 4 / OK | `bbcbe20`；唯一真源下沉 `shared::export_format`（**偏离原文**，理由见 §4.2 R-07「实施偏差」）；新增 17 例；变异验证：从 `ALL` 删 `Image` → 2 例红 |
-| M2 | R-08① | | | | |
+| M2 | R-08① | 2026-10-20 | 2026-10-20 | **1909** / 4 / OK | `8cdf083`；`persisted_key` 改穷举（38 `Some` + 19 `None` / 共 57 变体，**修正原文「16 个」的偏差**）；②默认键位表合一**未做**（两侧表语义不同，领域无法表达「无默认键位」，牵动 `shared`）；**修掉领域 `ActionId::all()` 漏登记 `ToggleStatusbar` 的真实缺陷**（改「显示/隐藏状态栏」键位弹「尚未映射到领域动作」）；新增 13 例；变异验证 3 轮（兜底写回 / 领域清单漏登记 → 4 例红 / 表现清单漏登记 → 3 例红） |
 | M2 | R-09 | | | | |
 | M2 | R-10 | | | | |
 | M3 | R-01 | | | | |
@@ -991,7 +1049,7 @@ src/
 
 | 层次 | 位置 | 本次改造的覆盖要求 |
 |---|---|---|
-| **单元测试** | `src/**` 内联 `#[cfg(test)]`（当前 407 个） | 新增的纯逻辑必须有单测：token 提取、`from_str` 穷举、`persisted_key` 穷举、主题往返、字体发现优先级、span 对拍 |
+| **单元测试** | `src/**` 内联 `#[cfg(test)]`（当前 408 个） | 新增的纯逻辑必须有单测：token 提取、`from_str` 穷举、`persisted_key` 穷举、主题往返、字体发现优先级、span 对拍 |
 | **集成测试** | `tests/`（当前 1 460 个，分 domain / application / infrastructure / presentation / app / integration / shared / e2e） | 每个改造项至少 1 条**走真实入口**的用例（如 R-04 走 `EditorApp::execute`、R-06 走真实 `TextEdit`） |
 | **架构守卫测试** | `tests/arch_violation_fixture.rs` | 每条新规则 1+ 条注入用例 + 1 次变异验证 |
 | **真帧渲染测试** | `tests/presentation/`（真帧 + `Shape::Text` / `Shape::Rect` 取证） | 涉及像素的改造（R-10 配色、R-15 文件名、R-17 行高）**必须**有真帧断言，且断言**绝对位置**而非「不越界」 |
