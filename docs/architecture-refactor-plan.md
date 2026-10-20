@@ -1047,6 +1047,53 @@ UI 选格式 ──► ExportFormat（领域唯一枚举）
   - 注入用例：在 `presentation/state/x.rs` 写 `use crate::presentation::views::y;` → 必须报违规；
   - 变异验证：把 `state` 的禁止清单清空 → 注入用例红。
 
+##### R-13 实施结果（2026-10-20）
+
+- **`layer_of` 细粒度化**：第二段为 `state` / `views` / `rich` / `widgets` /
+  `icons` 时判对应子层。**层根文件与目录同规则**——剥掉末段 `.rs` 后
+  `presentation/state.rs` 的第二段也是 `"state"`，与
+  `presentation/state/foo.rs` 落同一子层（方案风险点点名要求）。
+- **四条新禁令**（全部**叠加**父层 `PRESENTATION_FORBIDDEN`，不是替换）：
+
+  | 子层 | 额外禁止 |
+  |---|---|
+  | `presentation/state/` | `crate::presentation::views` |
+  | `presentation/rich/` | `crate::presentation::views` / `state` / `theme` / `widgets` |
+  | `presentation/widgets/` | `crate::presentation::views` |
+  | `presentation/icons.rs` | `crate::presentation::views` |
+
+- **★ 方案预警的风险点真的发生了，按既定原则处置**：`views/` 独立成层后
+  `allowed_for` 没跟上 → **35 个视图文件同时报错**（全是
+  `use crate::app::frame::EditorApp` / `frame::PendingDialog`）。按方案
+  「超预期则放宽到具体文件而非放弃规则」，把 `crate::app::frame` 窄豁免
+  扩展到全部 presentation 子层——**窄前缀本身不变**（`bootstrap` /
+  `crash_log` 等仍拦）。这不是「更严的架构」，而是规则没跟上自己的细化。
+- **存量实测 0 处真实违规**（动手前摸查）：`state/`→`views` 命中 2 处、
+  `rich/`→`views` 1 处，**全部在文档注释里**（词法阶段剔除）。故本项
+  **不改变任何编译结果**——价值与 `PRESENTATION_STATE_FORBIDDEN` 相同：防未来松动。
+
+**新增守卫 7 例**（fixture 75 → 82 条）：`state_may_not_depend_on_views`
+（**方案点名判据**）/ `views_may_depend_on_state`（反向放行，钉住「禁的是
+方向不是名字」）/ `rich_may_not_depend_on_its_siblings`（四兄弟逐一）/
+`leaf_layers_may_not_depend_on_views`（widgets + icons）/
+`the_layer_root_files_are_judged_too`（层根文件，方案风险点）/
+`views_keep_the_narrow_app_frame_allowance` / `the_narrow_allowance_does_not_leak_to_the_rest_of_app`。
+
+另修正 1 条既有用例的筛子：`the_state_subdirectory_is_judged_by_its_own_layer_name`
+原先筛父层名 `presentation 层`，细粒度化后 `views/` 报告自己的层名
+`presentation/views 层`——**是用例的筛子过时，不是实现错**。
+
+**变异验证 8 轮全部捕获**（`tools/mut_arch_r13.py`）：state 的 views 禁令清空
+（**方案点名**）/ views→state 反向也禁（过度收紧）/ rich 名单漏 theme /
+widgets 不清 / icons 不清 / views 丢窄豁免 / 窄豁免外溢到整个 `crate::app` /
+`layer_of` 丢掉根文件形态。其中 2 轮被 build.rs 架构校验先拦下
+（`captured_build`），被测用例没机会跑——单独归类，不与「无牙齿」混淆。
+
+**文档**：`docs/architecture-constraints.md` 新增 §4.0（内部方向矩阵）与 §9
+（tests 库内部视角禁令，R-02 的规则真源）、§4.1 补第 7/8 条判定口径、
+§4 shared 表补 `std::process`；新建 `docs/adr/ADR-010-presentation-internal-direction.md`；
+`docs/README.md` ADR 索引补 010。
+
 ### 4.3 P2 组：一致性与文档
 
 #### R-14 · 删除 `floor_char_boundary` 私有副本
@@ -1334,7 +1381,8 @@ UI 选格式 ──► ExportFormat（领域唯一枚举）
 - **进度**：R-01 ✅（`96bb76b` + 收尾 `9d20c01`）｜R-02 ✅（2026-10-20，
   新增 `scan_with_tests` + 8 例 + 变异 6 轮全捕获，构建耗时 +4.6%）｜
   R-03 ✅（2026-10-20，`ExternalOpener` 端口化 + 9 例 + 变异 7 轮全捕获）｜
-  R-13 ⬜。
+  R-13 ✅（2026-10-20，细粒度层判定 + 7 例 + 变异 8 轮全捕获，
+  35 文件误报按既定原则处置）。**M3 四项全部完成**。
 
 **M4 · 用户可见缺口（3 人日）**
 
@@ -1383,7 +1431,7 @@ UI 选格式 ──► ExportFormat（领域唯一枚举）
 | M3 | R-01 | 2026-10-20 | 2026-10-20 | **1958** / 4 / OK | **提前至 M2 期间实施**（R-10 被打断时插入）；判定由「行首 `use `」重写为**词法 + use-tree 展开**；实测额外发现并修掉 8 类漏检 + 3 处实现缺陷；`crate::app` 禁令改为**更窄豁免前缀**（表现层放行 `crate::app::frame`，54 个文件依赖它）；豁免机制加**登记表**校验（未登记/过时均报错）；**规则真源由 `.agent/architecture.md` 迁入 `docs/architecture-constraints.md`**（`.agent/` 整目录不入库 → CI 上豁免机制死锁）；删死代码 `signature()`/`file_stamp()`；报告格式收敛到单一来源 `format_report`；用例 13 → **45** 条；变异验证 **10 轮**（详见 §4.1 R-01「实施结果」） |
 | M3 | R-02 | 2026-10-20 | 2026-10-20 | **2005** / 4 / OK | 新增 `scan_with_tests`，`scan` 签名不变；`tests/` 侧统一判 `Layer::Tests`（**不按目录名判层**——`tests/domain/` 是测试目标划分不是层，按名判会误套禁令）；`TESTS_FORBIDDEN` 只列库层名，放行 `crate::support`（243 处）；报告带 `tests/` 前缀；帧预约规则照样罩住测试侧；新增 8 例 + 变异验证 **6 轮全捕获**；构建耗时 +0.27s（+4.6%，方案预估的 35% 指扫描量非总耗时）；存量实测 `crate::<库层名>` 真实引用 = 0（命中全在注释/字符串里） |
 | M3 | R-03 | 2026-10-20 | 2026-10-20 | **2017** / 4 / OK | `shared/system.rs` 端口化：新增 `ExternalOpener` trait（`std::process` 移出 `shared`，`is_safe_to_open` 纯校验留下）；实现搬 `infrastructure/system.rs`；`Services.opener` + 装配链最深层 `assemble_with_opener`（**偏离原文**：直接给 `assemble_with_clock_and_dialogs` 加参数会一次性改 20+ 测试调用点，故新增最深层让旧链转发，既有调用点零改动）；预览区两处调用改经端口；`SHARED_FORBIDDEN` 加 `std::process`；新增 **9 例**（5 例假 opener 用户可见 + 4 例禁令）+ 变异 **7 轮全捕获** |
-| M3 | R-13 | | | | |
+| M3 | R-13 | 2026-10-20 | 2026-10-20 | **2024** / 4 / OK | `layer_of` 细粒度化（`state`/`views`/`rich`/`widgets`/`icons` 五子层，**层根文件与目录同规则**）；四条新禁令全部叠加父层；**方案预警的风险点真的发生了**——`views/` 独立成层后 `allowed_for` 没跟上，**35 个视图文件同时报错**，按「放宽到具体前缀而非放弃规则」把 `crate::app::frame` 窄豁免扩到全部子层（窄前缀不变）；存量实测 **0 处真实违规**（命中全在文档注释）→ 本项不改变任何编译结果；新增 7 例 + 修正 1 条旧筛子 + 变异 **8 轮全捕获**；约束文档加 §4.0/§9，新建 ADR-010 |
 | M4 | R-04 | | | | |
 | M4 | R-05 | | | | |
 | M4/M5 后 | R-06 | | | | 依赖 M5 子批 1 |

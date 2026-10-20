@@ -488,6 +488,223 @@ fn std_process_is_allowed_in_infrastructure() {
 }
 
 // ============================================================================
+// 一之补、R-13：presentation 内部依赖方向
+// ============================================================================
+
+/// **R-13 点名判据**：`presentation/state/x.rs` 写
+/// `use crate::presentation::views::y;` → 必须报违规。
+///
+/// # 这条方向为什么最重要
+///
+/// `views/` 读 `state/` 是单向的。若 `state/` 回指 `views/`，数据流成环：
+/// 「改一个开关要先构造视图」，而立即模式框架下视图每帧重建，
+/// 环会以「状态被视图的渲染副作用污染」的形式发作，极难定位。
+#[test]
+fn state_may_not_depend_on_views() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "presentation/state/scroll_sync_state.rs",
+        "//! x\nuse crate::presentation::views::preview_view;\n",
+    );
+
+    let violations = arch_check::scan(&root);
+    assert_eq!(
+        violations.len(),
+        1,
+        "state 引用 views 应被拦，实际：{:?}",
+        described(&violations)
+    );
+    assert!(
+        violations[0].detail.contains("crate::presentation::views"),
+        "{:?}",
+        violations[0]
+    );
+}
+
+/// `views/` **可以**读 `state/`（那是它存在的理由）——方向必须是单向的。
+///
+/// # 为什么必须有一条「反向放行」用例
+///
+/// 只测「state→views 报」不够：那可能是因为 `views` 前缀被无差别禁了。
+/// 这条钉住「禁的是**方向**，不是**名字**」——`views` 引用 `state` 合法。
+#[test]
+fn views_may_depend_on_state() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "presentation/views/preview_view.rs",
+        "//! x\nuse crate::presentation::state::scroll_sync_state::ScrollSyncState;\n",
+    );
+
+    let violations = arch_check::scan(&root);
+    assert!(
+        violations.is_empty(),
+        "views 读 state 是既定方向，应放行。实际：{:?}",
+        described(&violations)
+    );
+}
+
+/// `rich/` 不得依赖四个兄弟子层（`views` / `state` / `theme` / `widgets`）。
+///
+/// ADR-007 已用编译期手段保证 `rich/` 对 egui 零依赖，本项把其余四个
+/// 方向机械化。`rich/` 是**渲染算法**：一旦能读 `state/`，「排版结果随
+/// UI 状态变化」就会进来——同一段文档在侧栏开着与关着时排版不同，
+/// 而这种差异不报错、也看不出原因。
+#[test]
+fn rich_may_not_depend_on_its_siblings() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    let banned = [
+        ("views", "crate::presentation::views"),
+        ("state", "crate::presentation::state"),
+        ("theme", "crate::presentation::theme"),
+        ("widgets", "crate::presentation::widgets"),
+    ];
+    for (name, prefix) in banned {
+        write_fixture(
+            &root,
+            &format!("presentation/rich/math/{name}_case.rs"),
+            &format!("//! x\nuse {prefix}::x::Y;\n"),
+        );
+    }
+
+    let violations = arch_check::scan(&root);
+    assert_eq!(
+        violations.len(),
+        banned.len(),
+        "rich 对四个兄弟子层的依赖应全部报出，实际：{:?}",
+        described(&violations)
+    );
+}
+
+/// `widgets/` 与 `icons.rs` 不得依赖 `views/`。
+///
+/// 控件与字形图标是**被视图复用**的叶子；它们读视图就形成「叶子→根」
+/// 的反向边，而复用关系一旦成环，控件再也抽不出来单独测试。
+#[test]
+fn leaf_layers_may_not_depend_on_views() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "presentation/widgets/elided_text.rs",
+        "//! x\nuse crate::presentation::views::preview_view::helper;\n",
+    );
+    write_fixture(
+        &root,
+        "presentation/icons.rs",
+        "//! x\nuse crate::presentation::views::preview_view::helper;\n",
+    );
+
+    let violations = arch_check::scan(&root);
+    assert_eq!(
+        violations.len(),
+        2,
+        "widgets 与 icons 引用 views 应各报一处，实际：{:?}",
+        described(&violations)
+    );
+    for v in &violations {
+        assert!(v.detail.contains("crate::presentation::views"), "{v:?}");
+    }
+}
+
+/// 层**根文件**同样受细粒度判定（`presentation/state.rs` 不是 `state/` 目录）。
+///
+/// # 为什么必须单独一条
+///
+/// 方案风险点原文点名：「需保证判定对**层根文件**
+/// （`src/presentation/state.rs`、`src/presentation/views.rs`）同样生效」。
+/// `layer_of` 靠「剥掉末段 `.rs` 后取第二段」覆盖两种形态：
+/// `presentation/state/foo.rs` 与 `presentation/state.rs` 的第二段都是
+/// `"state"`。若这条红了，说明根文件形态漏判——而那正是 R-01 修掉的
+/// 同一类缺陷（`src/domain.rs` 曾整份逃过检查）。
+#[test]
+fn the_layer_root_files_are_judged_too() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "presentation/state.rs",
+        "//! x\nuse crate::presentation::views::preview_view;\n",
+    );
+    write_fixture(
+        &root,
+        "presentation/views.rs",
+        "//! x\nuse crate::presentation::state::ScrollSyncState;\n",
+    );
+
+    let violations = arch_check::scan(&root);
+    assert_eq!(
+        violations.len(),
+        1,
+        "state.rs（根文件）引用 views 应报；views.rs 引用 state 应放行。实际：{:?}",
+        described(&violations)
+    );
+    assert!(
+        violations[0].file.contains("presentation/state.rs"),
+        "{:?}",
+        violations[0]
+    );
+}
+
+/// `views/` 的 `crate::app::frame` 窄豁免在细粒度化后仍然有效。
+///
+/// # 为什么这条是 R-13 的关键回归
+///
+/// 细化层判定时若忘了给 `views/` 同步窄豁免，**35 个视图文件会同时报错**
+/// （实测：全是 `use crate::app::frame::EditorApp` / `frame::PendingDialog`）。
+/// 那不是「更严的架构」，而是规则没跟上自己的细化。这条钉住
+/// 「豁免跟着子层细化走，窄前缀本身不变」。
+#[test]
+fn views_keep_the_narrow_app_frame_allowance() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "presentation/views/sidebar_view.rs",
+        "//! x\nuse crate::app::frame::EditorApp;\nuse crate::app::frame::PendingDialog;\n",
+    );
+
+    let violations = arch_check::scan(&root);
+    assert!(
+        violations.is_empty(),
+        "views 用 app::frame 是既有豁免，细粒度化后应继续放行。实际：{:?}",
+        described(&violations)
+    );
+}
+
+/// 但窄豁免**不外溢**：`views/` 碰 `crate::app::bootstrap` 照样报。
+///
+/// 与上一条互为对照：豁免是「更窄前缀」而非「放开整个 `crate::app`」。
+/// 视图伸手去拿启动编排等于绕过组合根。
+#[test]
+fn the_narrow_allowance_does_not_leak_to_the_rest_of_app() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "presentation/views/startup_view.rs",
+        "//! x\nuse crate::app::bootstrap::Services;\n",
+    );
+
+    let violations = arch_check::scan(&root);
+    assert_eq!(
+        violations.len(),
+        1,
+        "views 引用 app::bootstrap 应被拦，实际：{:?}",
+        described(&violations)
+    );
+    assert!(
+        violations[0].detail.contains("crate::app"),
+        "{:?}",
+        violations[0]
+    );
+}
+
+// ============================================================================
 // 二、注入必报：use 声明的各种逃逸形状
 // ============================================================================
 
@@ -1315,9 +1532,12 @@ fn the_state_subdirectory_is_judged_by_its_own_layer_name() {
     // 注意：不能用 `contains("presentation 层")` 来筛父层那条——
     // 那是子层串的**子串**，会把子层一起捞进来。改判「层名后紧跟空格
     // 且不是 state」：这里用 `starts_with` 锚定整条 detail 的开头。
+    //
+    // R-13 起 `views/` 也独立成层，故筛 `presentation/views 层`
+    // （细粒度化前这里筛的是父层名 `presentation 层`）。
     let view_hits: Vec<_> = violations
         .iter()
-        .filter(|v| v.detail.starts_with("presentation 层"))
+        .filter(|v| v.detail.starts_with("presentation/views 层"))
         .collect();
     assert_eq!(
         state_hits.len(),
@@ -1345,7 +1565,7 @@ fn the_state_subdirectory_is_judged_by_its_own_layer_name() {
     assert_eq!(
         view_hits.len(),
         1,
-        "`views/` 仍按父层名报告（不应被子层规则吞掉）：{:?}",
+        "`views/` 按自己的层名报告（细粒度化后不再是父层名）：{:?}",
         described(&violations)
     );
     assert!(view_hits[0].file.contains("editor_view.rs"));

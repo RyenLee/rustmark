@@ -93,6 +93,50 @@ const PRESENTATION_FORBIDDEN: &[&str] = &["crate::app", "crate::domain", "crate:
 /// 而那正是最需要守卫的时刻。
 const PRESENTATION_STATE_FORBIDDEN: &[&str] = &["crate::domain::document"];
 
+/// `presentation/state/` 不得回指 `views/`（R-13）。
+///
+/// # 为什么这是表现层内部最重要的一条方向
+///
+/// `views/` 读 `state/` 是**单向**的：视图采集状态、按状态绘制、
+/// 把用户操作写回状态。若 `state/` 反过来依赖 `views/`，数据流立刻成环——
+/// 「改一个开关要先构造视图」这类代码会出现，而立即模式框架下视图每帧
+/// 重建，环会以「状态被视图的渲染副作用污染」的形式发作，极难定位。
+///
+/// 实测存量（2026-10-20）：`state/` 对 `views` 的引用 **0 处**（命中 2 处
+/// 全在文档注释里），故这条规则当前**不改变任何编译结果**——它的价值
+/// 与 [`PRESENTATION_STATE_FORBIDDEN`] 相同：防未来松动。
+const PRESENTATION_STATE_VIEWS_FORBIDDEN: &[&str] = &["crate::presentation::views"];
+
+/// `presentation/rich/` 不得依赖的四个兄弟子层（R-13）。
+///
+/// ADR-007 已用编译期手段保证 `rich/` 对 egui 零依赖（自绘排版），
+/// 本项把「不得依赖 `views/` / `state/` / `theme/` / `widgets/`」机械化。
+///
+/// # 为什么 `rich/` 要比别的叶子更严
+///
+/// 它是**渲染算法**：输入一段结构化内容 + 度量，输出字形位置。
+/// 一旦它能读 `state/`，「排版结果随 UI 状态变化」就会进来——同一段
+/// 文档在侧栏开着与关着时排版不同，而这种差异不报错、也看不出原因。
+/// 依赖 `theme/` 同理：配色该由调用方给参数，不是自己查。
+const PRESENTATION_RICH_FORBIDDEN: &[&str] = &[
+    "crate::presentation::views",
+    "crate::presentation::state",
+    "crate::presentation::theme",
+    "crate::presentation::widgets",
+];
+
+/// `presentation/widgets/` 不得依赖 `views/`（R-13）。
+///
+/// 控件是**被视图复用**的叶子。它读视图就会形成「叶子→根」的反向边，
+/// 而复用关系一旦成环，控件再也抽不出来单独测试。
+const PRESENTATION_WIDGETS_FORBIDDEN: &[&str] = &["crate::presentation::views"];
+
+/// `presentation/icons.rs` 不得依赖 `views/`（R-13）。
+///
+/// 字形图标是**最底层的叶子**（渲染断言直接比对字形矩形），
+/// 它连 `widgets/` 都不该碰，更别提 `views/`。
+const PRESENTATION_ICONS_FORBIDDEN: &[&str] = &["crate::presentation::views"];
+
 /// `shared` 禁止的外部依赖与层引用。
 ///
 /// # `std::process` 为什么在这里（R-03）
@@ -199,6 +243,19 @@ enum Layer {
     App,
     /// 组合根之外的自由文件（`main.rs` / `lib.rs` / `bin/**`）：不受层级限制。
     Free,
+    /// `presentation/views/` 子层（R-13 细粒度化）。
+    ///
+    /// 视图层可读 `state/`（那是它存在的理由），故**不**禁 `state`。
+    PresentationViews,
+    /// `presentation/rich/` 子层（R-13）：自绘排版（数学 / Mermaid）。
+    ///
+    /// ADR-007 已用编译期手段保证它对 egui 零依赖，本项把「不得依赖
+    /// `views/` / `state/` / `theme/` / `widgets/`」机械化。
+    PresentationRich,
+    /// `presentation/widgets/` 子层（R-13）：可复用控件。
+    PresentationWidgets,
+    /// `presentation/icons.rs`（R-13）：字形图标出口。
+    PresentationIcons,
     /// 集成测试（`tests/**`）：**消费者**，不是层。
     ///
     /// 测试可以引用任何层的公开 API（`rustmark::domain::…`），但**不许**以
@@ -223,6 +280,10 @@ impl Layer {
             Layer::Infrastructure => "infrastructure",
             Layer::Presentation => "presentation",
             Layer::PresentationState => "presentation/state",
+            Layer::PresentationViews => "presentation/views",
+            Layer::PresentationRich => "presentation/rich",
+            Layer::PresentationWidgets => "presentation/widgets",
+            Layer::PresentationIcons => "presentation/icons",
             Layer::Shared => "shared",
             Layer::App => "app",
             Layer::Free => "free",
@@ -248,6 +309,19 @@ impl Layer {
 /// `main.rs` / `lib.rs` / `bin/**` 是约定好的自由位置（crate 入口与工具
 /// 二进制）。其它顶层名字一律判 [`Layer::Unknown`] 并报错——默认放行等于
 /// 「新目录静默逃过全部层禁令」，而这类缺口不产生编译错误、没人会注意到。
+///
+/// # `presentation` 内部的细粒度（R-13）
+///
+/// `presentation` 不是一个均匀的层：`views/` 是编排者，`state/` 是它读的
+/// 状态，`rich/` / `widgets/` / `icons.rs` 是被复用的叶子。四类之间必须
+/// **单向**（`state` 不得回指 `views`，叶子不得回指 `views`），否则
+/// 「状态层反过来驱动视图」会把立即模式的数据流缠成一团。
+///
+/// 判定时 `parts.get(1)` 同时覆盖两种形态：
+/// - `presentation/state/foo.rs` → `parts = ["presentation", "state", "foo"]`
+/// - `presentation/state.rs`（**层根文件**）→ `parts = ["presentation", "state"]`
+///   第二段同样是 `"state"`，故同一套规则覆盖根文件——这正是方案风险点
+///   里点名的「必须对层根文件同样生效」。
 fn layer_of(rel: &str) -> Layer {
     let mut parts: Vec<&str> = rel.split('/').collect();
     if let Some(stem) = parts.last().and_then(|l| l.strip_suffix(".rs")) {
@@ -260,13 +334,15 @@ fn layer_of(rel: &str) -> Layer {
         "application" => Layer::Application,
         "infrastructure" => Layer::Infrastructure,
         "shared" => Layer::Shared,
-        "presentation" => {
-            if parts.get(1).copied() == Some("state") {
-                Layer::PresentationState
-            } else {
-                Layer::Presentation
-            }
-        }
+        "presentation" => match parts.get(1).copied() {
+            Some("state") => Layer::PresentationState,
+            Some("views") => Layer::PresentationViews,
+            Some("rich") => Layer::PresentationRich,
+            Some("widgets") => Layer::PresentationWidgets,
+            // `icons.rs` 是**单文件**子层：`parts = ["presentation", "icons"]`。
+            Some("icons") => Layer::PresentationIcons,
+            _ => Layer::Presentation,
+        },
         "app" => Layer::App,
         // crate 入口与 `src/bin/` 工具：约定好的自由位置。
         "bin" => Layer::Free,
@@ -278,24 +354,46 @@ fn layer_of(rel: &str) -> Layer {
 /// 取某层的禁用前缀。
 ///
 /// **子层是叠加而非替换**：`presentation/state` 先取父层
-/// [`PRESENTATION_FORBIDDEN`]，再把 [`PRESENTATION_STATE_FORBIDDEN`]
-/// 接在后面。若写成只返回子层名单，`state/` 就不再受
-/// `crate::infrastructure` 等父层禁令约束——那是**放宽**而非收紧，
-/// 与「子层更严」的意图正好相反。
+/// [`PRESENTATION_FORBIDDEN`]，再把 [`PRESENTATION_STATE_FORBIDDEN`] 与
+/// [`PRESENTATION_STATE_VIEWS_FORBIDDEN`] 接在后面。若写成只返回子层名单，
+/// `state/` 就不再受 `crate::infrastructure` 等父层禁令约束——那是**放宽**
+/// 而非收紧，与「子层更严」的意图正好相反。
 fn forbidden_for(layer: Layer) -> Vec<&'static str> {
     match layer {
         Layer::Domain => DOMAIN_FORBIDDEN.to_vec(),
         Layer::Application => APPLICATION_FORBIDDEN.to_vec(),
         Layer::Infrastructure => INFRASTRUCTURE_FORBIDDEN.to_vec(),
         Layer::Presentation => PRESENTATION_FORBIDDEN.to_vec(),
-        Layer::PresentationState => {
-            let mut v = PRESENTATION_FORBIDDEN.to_vec();
-            v.extend_from_slice(PRESENTATION_STATE_FORBIDDEN);
-            v
-        }
         Layer::Shared => SHARED_FORBIDDEN.to_vec(),
         // 集成测试：只禁「库内部视角」，不套任何层的禁令（见 TESTS_FORBIDDEN）。
         Layer::Tests => TESTS_FORBIDDEN.to_vec(),
+        // —— R-13：presentation 内部细粒度 ——
+        //
+        // 全部沿用「子层叠加父层」：先取 PRESENTATION_FORBIDDEN，
+        // 再接本子层自己的名单。只返回子层名单等于**放宽**
+        // （`crate::infrastructure` 等父层禁令会失效）。
+        Layer::PresentationState => {
+            let mut v = PRESENTATION_FORBIDDEN.to_vec();
+            v.extend_from_slice(PRESENTATION_STATE_FORBIDDEN);
+            v.extend_from_slice(PRESENTATION_STATE_VIEWS_FORBIDDEN);
+            v
+        }
+        Layer::PresentationViews => PRESENTATION_FORBIDDEN.to_vec(),
+        Layer::PresentationRich => {
+            let mut v = PRESENTATION_FORBIDDEN.to_vec();
+            v.extend_from_slice(PRESENTATION_RICH_FORBIDDEN);
+            v
+        }
+        Layer::PresentationWidgets => {
+            let mut v = PRESENTATION_FORBIDDEN.to_vec();
+            v.extend_from_slice(PRESENTATION_WIDGETS_FORBIDDEN);
+            v
+        }
+        Layer::PresentationIcons => {
+            let mut v = PRESENTATION_FORBIDDEN.to_vec();
+            v.extend_from_slice(PRESENTATION_ICONS_FORBIDDEN);
+            v
+        }
         // 组合根 / 自由文件 / 未登记位置：没有可判的层禁令。
         // （Unknown 的「报未知层」在 `check_file` 里做——它要先于层禁令返回。）
         Layer::App | Layer::Free | Layer::Unknown => Vec::new(),
@@ -318,9 +416,22 @@ fn forbidden_for(layer: Layer) -> Vec<&'static str> {
 /// （状态句柄与对话框枚举），不许碰 `bootstrap` / `crash_log` /
 /// `dialog_runner` / `startup_timing` 这些**启动与基础设施编排**的东西——
 /// 那些是组合根的私事，视图伸手去拿就等于绕过了组合根。
+///
+/// # R-13 起 `views/` 也要这份豁免
+///
+/// `views/` 独立成子层后，`allowed_for` 若不同步跟上，
+/// **35 个视图文件会同时报错**（实测：全是 `use crate::app::frame::EditorApp`
+/// 与 `frame::PendingDialog`）——那不是「更严的架构」，而是规则没跟上
+/// 自己的细化。方案的既定原则（「超预期则放宽到具体文件而非放弃规则」）
+/// 在这里落地为：**豁免跟着子层细化走，窄前缀本身不变**。
 fn allowed_for(layer: Layer) -> &'static [&'static str] {
     match layer {
-        Layer::Presentation | Layer::PresentationState => &["crate::app::frame"],
+        Layer::Presentation
+        | Layer::PresentationState
+        | Layer::PresentationViews
+        | Layer::PresentationRich
+        | Layer::PresentationWidgets
+        | Layer::PresentationIcons => &["crate::app::frame"],
         _ => &[],
     }
 }

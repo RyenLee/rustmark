@@ -60,12 +60,40 @@ presentation ──► application ──► domain ◄── infrastructure
 | application | `egui`、`eframe`、`rfd`、`syntect`、`pulldown_cmark`、`std::fs`、`std::io`、`crate::app`、`crate::infrastructure`、`crate::presentation` |
 | infrastructure | `crate::app`、`crate::application`、`crate::presentation` |
 | presentation | `crate::domain`（含聚合与值对象）、`crate::infrastructure`、`crate::app`（**唯一例外 `crate::app::frame`**，见 4.2） |
-| shared | `egui`、`eframe`、`rfd`、`syntect`、`pulldown_cmark`、全部业务层（`crate::domain` / `crate::application` / `crate::infrastructure` / `crate::presentation` / `crate::app`） |
+| shared | `egui`、`eframe`、`rfd`、`syntect`、`pulldown_cmark`、`std::process`（R-03）、全部业务层（`crate::domain` / `crate::application` / `crate::infrastructure` / `crate::presentation` / `crate::app`） |
 
 允许：domain 可用 `shared`、`ropey`、`regex`、`chrono`、`serde(derive)`、`thiserror`。
 
 `crate::app` 是组合根。下层反向依赖组合根 = 依赖倒置被打破（领域层一旦能拿到
 应用状态，聚合就不再是可独立测试的对象），故各层一律禁止。
+
+`shared` 的 `std::process` 禁令见 R-03：端口 trait 与纯逻辑校验可留在 `shared`，
+起进程的执行端必须在 `infrastructure`。`tests/` 的规则见第 9 节。
+
+### 4.0 `presentation` 内部依赖方向（R-13）
+
+`presentation` 不是一个均匀的层，内部方向**单向**：
+
+```
+views ──► state ──► (domain DTO，经 application)
+  │
+  └──► theme / widgets / icons / rich
+rich / widgets / icons ──► （不得回指 views / state / theme / widgets）
+```
+
+| 子层 | 额外禁止 |
+|---|---|
+| `presentation/state/` | `crate::presentation::views` |
+| `presentation/rich/` | `crate::presentation::views` / `state` / `theme` / `widgets` |
+| `presentation/widgets/` | `crate::presentation::views` |
+| `presentation/icons.rs` | `crate::presentation::views` |
+
+`views/` 可读 `state/`（那是它存在的理由），故不列在禁止清单里。
+四个子层全部**叠加**父层 `presentation` 的禁令（`crate::domain` /
+`crate::infrastructure` / `crate::app`），不是替换。
+
+`views/` 与其余子层同样享有 4.2 的 `crate::app::frame` 窄豁免——豁免跟着
+子层细化走，窄前缀本身不变。
 
 ### 4.1 判定口径（校验器怎么判）
 
@@ -87,6 +115,12 @@ presentation ──► application ──► domain ◄── infrastructure
    **白名单**（`src/main.rs` / `src/lib.rs` / `src/bin/**`）；其它顶层名字
    报「未知层」——默认放行等于新目录静默逃过全部层禁令。
 6. **子层叠加**：`presentation/state` 同时受父层与子层两组禁令约束（不是替换）。
+7. **`presentation` 内部细粒度**（R-13）：第二段为 `state` / `views` / `rich` /
+   `widgets` / `icons` 时判对应子层；目录与层根文件（`presentation/state.rs`）
+   两种形态由同一套规则覆盖。
+8. **`tests/` 全部文件判 `tests` 层**（R-02）：测试是**消费者**不是层，
+   `tests/domain/`、`tests/presentation/` 是测试目标的划分，与 `src/` 的层
+   毫无关系——按目录名判层会误套禁令。
 
 ### 4.2 表现层的唯一例外：`crate::app::frame`
 
@@ -210,3 +244,29 @@ src/
 | **总计** | **5–7 MB（红线 10 MB）** |
 
 新增依赖必须登记体积贡献（`docs/dependencies.md`）并经 ADR 追加评审。
+
+## 9. 集成测试的库内部视角禁令（R-02）
+
+`tests/` 下的全部 `.rs` 文件纳入扫描（`scan_with_tests`），判 `tests` 层。
+
+测试是**消费者**，不是层：它可以引用任何层的公开 API
+（`rustmark::domain::…`、`rustmark::presentation::…`），`tests/app/` 下的
+跨层用例天然要同时看见四层。
+
+但**不许**以 `crate::<层名>::…` 的库内部视角书写：
+
+```
+✗ use crate::domain::document::aggregate::Document;   // 库内部视角
+✓ use rustmark::domain::document::aggregate::Document; // 公开 API
+```
+
+`crate::` 在集成测试里指向**测试 crate 自身**，写 `crate::domain` 说明作者的
+心智模型是「我在 `src/` 里」——那正是「绕过公开 API 偷看内部」的起点。
+这类写法编译就过不了，所以它不是「编译能过的偷看」，而是**从 `src/` 复制
+粘贴过来时**原样带进来的坏味道。
+
+放行：`crate::support` / `crate::golden_fixture` 等**测试自身**的共享模块
+（集成测试的正常组织方式）。禁令只列库层名，天然放行它们。
+
+报告里 `tests/` 侧文件带 `tests/` 前缀，与 `src/presentation/…` 等同名路径
+可区分。与层无关的通用规则（帧预约唯一出口，见 4.3）照样罩住测试侧。
