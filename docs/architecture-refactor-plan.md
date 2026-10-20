@@ -1,0 +1,1050 @@
+# rustmark 架构改造实施方案
+
+- **上游依据**：[`docs/architecture-review.md`](./architecture-review.md)（2026-10-20 全库架构评估，基线 `e09ad2b`）
+- **任务登记**：`docs/v1.1-backlog.md` 的 **V11-54**
+- **编制日期**：2026-10-20
+- **适用范围**：本方案覆盖评估报告 §2 中 P0 / P1 / P2 共 18 项主问题与 P3 低成本清理包；
+  **不覆盖**性能优化主线（1MB p95 压进 16ms 属另一条线，见 `docs/metrics.md` §3.2.13）
+  与 T7 平台真机回归（需外部机器）
+
+---
+
+## 目录
+
+- [0. 本方案怎么用](#0-本方案怎么用)
+- [1. 现状分析](#1-现状分析)
+  - [1.1 架构与模块划分](#11-架构与模块划分)
+  - [1.2 核心业务流程](#12-核心业务流程)
+  - [1.3 主要问题归类](#13-主要问题归类)
+- [2. 改造目标与范围](#2-改造目标与范围)
+  - [2.1 改造目标（可验证）](#21-改造目标可验证)
+  - [2.2 范围内](#22-范围内)
+  - [2.3 明确不涉及](#23-明确不涉及)
+- [3. 目标架构设计](#3-目标架构设计)
+  - [3.1 总体结构](#31-总体结构)
+  - [3.2 关键组件职责变更](#32-关键组件职责变更)
+  - [3.3 交互关系与数据流](#33-交互关系与数据流)
+- [4. 详细改造项](#4-详细改造项)
+  - [4.1 P0 组：守卫失效与用户可见缺口](#41-p0-组守卫失效与用户可见缺口)
+  - [4.2 P1 组：扩展性瓶颈与耦合](#42-p1-组扩展性瓶颈与耦合)
+  - [4.3 P2 组：一致性与文档](#43-p2-组一致性与文档)
+  - [4.4 P3 组：低成本清理包](#44-p3-组低成本清理包)
+- [5. 实施计划](#5-实施计划)
+  - [5.1 里程碑总览](#51-里程碑总览)
+  - [5.2 各阶段任务顺序与交付物](#52-各阶段任务顺序与交付物)
+  - [5.3 进度记录表（随实施填写）](#53-进度记录表随实施填写)
+- [6. 技术选型与规范](#6-技术选型与规范)
+  - [6.1 技术选型](#61-技术选型)
+  - [6.2 目录与命名规范](#62-目录与命名规范)
+  - [6.3 接口与编码规范](#63-接口与编码规范)
+- [7. 测试与验证](#7-测试与验证)
+  - [7.1 测试层次与范围](#71-测试层次与范围)
+  - [7.2 通过标准](#72-通过标准)
+  - [7.3 回归重点清单（改造后必须仍然成立的行为）](#73-回归重点清单改造后必须仍然成立的行为)
+- [8. 风险与依赖](#8-风险与依赖)
+  - [8.1 外部依赖](#81-外部依赖)
+  - [8.2 上游 / 下游影响](#82-上游--下游影响)
+  - [8.3 兼容性问题](#83-兼容性问题)
+  - [8.4 安全问题](#84-安全问题)
+  - [8.5 方案级风险](#85-方案级风险)
+- [附录 A · 改造项索引表](#附录-a--改造项索引表)
+
+---
+
+## 0. 本方案怎么用
+
+每条改造项采用**同一套七字段**描述，缺一不可：
+
+| 字段 | 作用 | 写法要求 |
+|---|---|---|
+| **改造内容** | 做什么 | 必须落到「改哪个文件的哪个符号」，不接受「优化 X」这类表述 |
+| **涉及文件** | 改哪里 | 给出真实路径；新增文件写明归属目录与命名 |
+| **影响范围** | 波及多大 | 列出受影响的调用点数量与用户可见行为变化 |
+| **依赖关系** | 先后顺序 | 明确前置项（写 R-xx）与可并行项 |
+| **风险点** | 会怎么坏 | 至少一条，且必须是**本改造特有的**（不是通用套话） |
+| **回滚方案** | 坏了怎么办 | 必须是**可执行的动作**（`git revert` 单个 commit / 开关 / 保留旧实现并行） |
+| **验收判据** | 怎么算做完 | 必须是**可机械检查**的：测试名、命令、数字、规则命中数 |
+
+**执行纪律**（沿用项目既有约定）：
+
+1. 每条改造项**独立成一个 commit**，commit message 写 `refactor(scope): 做了什么（依据 R-xx）`；
+2. 每条改造项完成后**当场跑四道门禁**并把**当日实测命令 + 数字**写进 commit message——
+   不接受「已验证」这种无数字的表述；
+3. 涉及用户可见行为的改造，必须有**真帧或领域级回归**，不接受只有纯函数单测；
+4. 涉及守卫规则的改造，必须做**变异验证**（把守卫改坏，用例必须当场变红）。
+
+---
+
+## 1. 现状分析
+
+### 1.1 架构与模块划分
+
+四层单向依赖 + 共享内核 + 组合根，由 `tools/arch_check.rs` 文本扫描强制：
+
+```text
+presentation ──► application ──► domain ◄── infrastructure
+    │  (32 处)      │  (单向)        ▲
+    │               │                │ (trait 实现反向注入, 9 处)
+    ▼               ▼                │
+    └────── app（组合根）◄───────────┘
+                   │
+                   └──► presentation::views::main_view::show  (1 处)
+```
+
+**实测规模**（`src/` 302 文件 / 33 845 行）：
+
+| 层 | 文件 | 行数 | 占比 | 主要子目录 |
+|---|---:|---:|---:|---|
+| `presentation` | 123 | 31 534 | **56%** | `views/` 48 · `state/` 24 · `rich/` 25 · `theme/` 9 · `shortcuts/` 8 · `widgets/` 2 · `icons.rs` |
+| `infrastructure` | 47 | 10 221 | 18% | 持久化 / 导出 / 解析 / 高亮 / 拼写 / 字体 / PDF |
+| `domain` | 46 | 7 282 | 13% | document / markdown / workspace / preferences / export |
+| `application` | 43 | 6 201 | 11% | 用例编排 + DTO + 查询 / 命令 |
+| `app` | 20 | 6 146 | 11% | `frame.rs` 737 + `frame/` 16 文件 5 325 |
+| `shared` | 14 | 1 890 | 3% | 值对象 / trait 契约 / 工具 |
+
+**已验证健康的部分**（改造时应保持，不得回退）：
+
+- `domain` → `infrastructure` **0 处**；`application` → `infrastructure` **0 处**；
+- `application` 的 trait（`DocumentContentProvider`）签名只含 `DocumentId` / `String` / `FilePath` / `u64`，
+  **不含 domain 类型** → 不存在 application ↔ domain 的反向依赖；
+- 基础设施的 9 处 trait 实现（`fs_document_repository.rs:268`、`fs_workspace_repository.rs:195`、
+  `toml_preferences_repository.rs:72`、`rope_text_buffer.rs:299`、3 个 exporter）**全在 infrastructure 侧**；
+- `presentation/rich/` 对 `egui` / `theme` / `state` **零引用**（ADR-007 的边界有编译期保障）；
+- 全仓 `TODO` / `FIXME` / `HACK` / `XXX` **0 处**；域层 `clippy::todo` 已 `#![deny]`（`src/domain.rs:14-25`）。
+
+**结构性软肋**（本方案要处理的对象）：
+
+| 软肋 | 实测 | 后果 |
+|---|---|---|
+| **守卫自身有绕过形态** | `tools/arch_check.rs:214` 只识别行首 `use `，实测 4 类绕过成立；`tests/` 完全不在扫描范围 | 架构规则可被无声违反 |
+| **`presentation ↔ app` 双向环** | presentation→app **32 处 / 32 文件**；app→presentation **1 处**（`frame.rs:601` 调 `main_view::show`） | 无规则覆盖；状态所有权真空（presentation 直写 app 状态字段 **59 处**，app 的 state 有 **150 个 `pub` 字段**） |
+| **表现层内部无规则** | `views/` ↔ `state/` 靠约定；本轮新增 `widgets` / `rich` / `icons` / `FrameScheduler` 四个抽象层，但没给表现层内部定方向 | 31 534 行只靠约定 |
+| **`shared` 语义被侵蚀** | `shared/system.rs:13-36` 直接 `Command::new(...).spawn()`；文件头自认「`std::process` 不在其禁止清单，故在此落位」 | 共享内核不再是「零 IO」，文档与实现矛盾 |
+
+### 1.2 核心业务流程
+
+四条主流程及其**代码落点**（据代码核实，非推测）：
+
+**① 打开文档** — 四个入口（文件树双击 / 命令面板 / 拖放 / 快捷键）→ 统一走
+`app/frame/workspace.rs:298` `open_workspace_file`：白名单守卫（`files.rs:400` `can_open_as_text`）
+→ 去重（`:324`）→ 打开数上限（`:353`）→ `FilePath::new` → `documents.open` →
+领域 `Document` 聚合 → 事件总线发 `DocumentOpened` → 标签条 / 编辑区 / 预览区各自响应。
+
+**② 编辑与保存** — egui `TextEdit` → 帧内 diff（`app/frame/editor.rs`）→ 领域命令
+（`application/document/service/`）→ 撤销栈 → 两种持久化：
+显式保存（`files.rs:193` `save_document`）与自动保存草稿（`files.rs:311` `run_autosave` → `save_draft`）。
+自动保存依赖**帧循环定时任务**，由 T11 的 `FrameScheduler` 统一预约（`app/frame/scheduler.rs`）。
+
+**③ 渲染** — 编辑区：每帧 `revision_and_len`（O(1)）→ 防抖判定（`HighlightPace`）→
+增量高亮（`infrastructure/highlighting/incremental.rs`）→ `Galley` 缓存
+（`presentation/theme/mapper/highlight_cache.rs`）→ 排版（`highlight_layout.rs`，A1-4 单行补丁）→ 绘制。
+预览区：`pulldown-cmark` 解析 → 块级渲染（`presentation/views/preview_view/`）。
+
+**④ 帧循环与定时** — `eframe::App::ui`（`app/frame.rs:527`）→
+状态更新段（主题 / 字体 / 对话框回执 / 拖放 / 快捷键 / 自动保存 / 高亮到期点）→
+`main_view::show` 绘制 → **帧末 `FrameScheduler::flush` 统一预约下一帧**（T11）。
+
+### 1.3 主要问题归类
+
+| 类别 | 条目 | 对应改造项 |
+|---|---|---|
+| **守卫失效** | `check-arch` 4 类绕过；`tests/` 不在扫描范围 | R-01 / R-02 |
+| **职责耦合** | `presentation ↔ app` 双向环 + 59 处直写；表现层内部无规则；`shared` 内进程调用 | R-03 / R-11 / R-12 / R-13 |
+| **重复实现** | `floor_char_boundary` 两份；span→`LayoutJob` 三份 + 样式表两张；路径/文件名 5 种写法；`capture.rs`↔`files.rs` 逐字重复 | R-10 / R-14 / R-15 / R-21 |
+| **扩展性瓶颈** | 导出格式双枚举 + 手写字符串 `match`；`persisted_key` 漏加不报错；主题双枚举 + 第三份映射；格式白名单硬编码漏网 | R-07 / R-08 / R-09 / R-16 |
+| **可维护性** | `files.rs`↔`workspace.rs` 打开管线双实现且依赖方向与命名相反；三个「取当前文档路径」方法并存；`views/` 拆分阈值两套标准 | R-21 / R-23 |
+| **测试缺口** | 1 条无区分力判据；`fonts.rs` 测试依赖真实资产（干净克隆会失败） | R-20 / R-21 |
+| **文档缺口** | 过期 8+ 处；ADR 缺 5 项 | R-18 / R-19 |
+| **用户可见缺口** | `Revert` / `InsertImage` 无响应；写作目标无入口；切标签光标归零 | R-04 / R-05 / R-06 |
+
+---
+
+## 2. 改造目标与范围
+
+### 2.1 改造目标（可验证）
+
+| # | 目标 | 验证方式 |
+|---|---|---|
+| G1 | 架构规则**拦得住**：4 类绕过形态全部被检出 | `tests/arch_violation_fixture.rs` 新增 4 条注入用例，逐条「注入后必须报错」 |
+| G2 | 依赖方向**有唯一真源**：`presentation` 不再直接写 `app` 的状态字段 | 机械规则零命中；`scheduled_deadlines` 类的状态写入口收敛为方法调用 |
+| G3 | 扩展性瓶颈**降到编译期暴露** | 「新增一种导出格式 / 可持久化动作 / 内置主题」各写一条「漏加即编译失败」的用例 |
+| G4 | 重复实现**收敛到单一真源** | `grep` 计数：同名实现从 2/3 份降为 1 份；`floor_char_boundary` 从 2 处降为 1 处 |
+| G5 | 文档**与代码同源** | `docs/README.md` 的 ADR 索引、问题记录编号、版本号、测试数与实测一致 |
+| G6 | 三处用户可见缺口**闭环** | 每项一条真帧或领域级回归 |
+| G7 | 门禁**保持四绿** | 每条改造项完成时 `fmt` / `check-arch` / `clippy -D warnings` / `test` 全绿并附实测数字 |
+
+### 2.2 范围内
+
+- `tools/arch_check.rs`（守卫判定逻辑 + 新规则）
+- `src/shared/`（`system.rs` 端口化；`text_format.rs` / `lru.rs` / `text.rs` 归位）
+- `src/app/frame/`（状态所有权、`files.rs`↔`workspace.rs` 职责归位、动作接线、路径处理）
+- `src/presentation/state/`（`export_ui_state/choices.rs` 双枚举收敛；state 字段的写入口收敛）
+- `src/presentation/views/`（`sidebar_view/search.rs` 收口；`preview_view/code.rs` / `inline.rs` 统一 span 应用）
+- `src/presentation/shortcuts/`（`persisted_key` 穷举、默认键位表合一）
+- `src/presentation/theme/`（样式表合并、`mapper`/`inline` 归一）
+- `src/presentation/icons.rs` / `src/presentation/widgets/`（命名与组件扩充）
+- `src/infrastructure/fonts.rs`（拆分）
+- `docs/`（`README.md`、`testing.md`、`PROGRESS.md`、新增 ADR）
+
+### 2.3 明确不涉及
+
+| 不涉及 | 理由 |
+|---|---|
+| **性能主线**（1MB p95 压进 16ms、增量统计） | 属 `docs/metrics.md` §3.2.13 的另一条线；本次改造**不得**引入每帧回归 |
+| **T7 平台真机回归** | 需外部 macOS / Linux 机器 |
+| **crate 拆分** | ADR-007 已定：不拆（编译隔离是伪收益） |
+| **`presentation/rich/` 内部重构** | ADR-007 的边界已验证（零外部依赖），本期不动 |
+| **换 egui / 换渲染栈** | ADR-001 已冻结 |
+| **新增第三方 crate** | 本方案全部改造**零新增依赖**（含 R-03 的端口化——`std::process` 只是搬家） |
+
+---
+
+## 3. 目标架构设计
+
+### 3.1 总体结构
+
+改造后**四层结构不变**，变的是三件事：
+
+```text
+① 守卫变严      check-arch 从「行首 use 扫描」→ token 级匹配 + 覆盖 tests/
+② 状态所有权    presentation 只读 app 状态 + 调方法改；app 独占写权
+③ 端口化        shared 只留值对象与 trait 契约；一切 IO 落 infrastructure
+```
+
+**（一）守卫的判定模型**
+
+现状（`tools/arch_check.rs:214`）：
+
+```rust
+let Some(rest) = line.strip_prefix("use ") else { continue; };
+```
+
+目标：**行级 → token 级**。对每一行：
+
+```text
+去掉行注释（// 之后）与字符串字面量（"..."）
+  ↓
+提取全部路径 token：crate::a::b::C / egui / eframe / rfd / ...
+  ↓
+逐 token 与该层的禁止清单比对（保留前缀匹配语义）
+```
+
+这样 `pub use`、`use crate::{…}`、类型位置全路径、函数体内 `use`、全路径调用**一次全覆盖**。
+`arch-allow:` 豁免语义从「整行跳过」收紧为「只豁免该行中指定的那个 crate」。
+
+**（二）状态所有权模型**
+
+| 层 | 对 UI state 的权限 | 落地方式 |
+|---|---|---|
+| `app` | **唯一写者** | `app` 层提供语义化方法（如 `export_ui.begin_pick()`） |
+| `presentation` | **只读 + 调方法** | 视图不再出现 `app.export_ui.error = …` 这类直写 |
+
+**注意**：`presentation` → `app::EditorApp` 的**类型依赖保留**（egui 的 `App::ui` 契约要求
+视图拿到 app 才能拿到状态），被禁的只是**字段直写**。规则形态：
+
+```text
+presentation 层不得出现  app.<state字段>.<字段> = …   （赋值形态）
+```
+
+**（三）端口化模型**
+
+`shared/system.rs` 的进程调用改为一对 trait + 实现，与 `shared/dialog.rs:55` 的 `DialogPort` 完全同构：
+
+```text
+shared::system::ExternalOpener  (trait, 只含 &str → io::Result<()>)
+        ↑ 实现
+infrastructure::system::SystemExternalOpener   (Command::new(...).spawn())
+        ↑ 注入
+app::bootstrap::Services  持有 Arc<dyn ExternalOpener>
+        ↓ 传入
+presentation::views::preview_view  调 opener.open(url)
+```
+
+### 3.2 关键组件职责变更
+
+| 组件 | 现状职责 | 改造后职责 | 涉及项 |
+|---|---|---|---|
+| `tools/arch_check.rs` | 扫 `use` 语句 | 扫**路径 token**；新增 4 类形态覆盖 + `tests/` 范围 + 2 条新规则 | R-01 / R-02 / R-12 / R-13 |
+| `shared::system` | 直接 spawn 进程 | 只定义 `ExternalOpener` trait | R-03 |
+| `app::frame::EditorApp` | 42 字段 / 183 方法，视图可直写其状态 | 42 字段不变，但**所有 UI state 字段的写入口收敛为方法** | R-11 |
+| `app::frame::actions` | 路由表 + UI 状态初始化混做 | 路由表**只做路由**；状态初始化下沉到对应 `app/frame/*` 模块 | R-11 / R-04 |
+| `domain::export::ExportFormat` | 领域枚举 | **唯一**格式真源；新增 `from_str` 穷举实现 | R-07 |
+| `presentation::state::export_ui_state::ExportFormatChoice` | 与领域枚举同构的第二套枚举 | **删除**；UI 侧改用领域枚举 + 单独的 `pdf_caveat` 等 UI 专属数据 | R-07 |
+| `presentation::theme::mapper` | 样式 → `FontId`/颜色映射 | **唯一**样式真源；`preview_view/inline.rs` 的 `span_format` 并入 | R-10 |
+| `presentation::theme::mapper::highlight_layout` | 排版 + span 应用 | 抽出**唯一** span→`LayoutJob` 构造器，`code.rs` / `inline.rs` 改调它 | R-10 |
+| `application::shortcuts` | 领域 `ActionId` + 默认键位表 | 默认键位表**唯一一份**（领域侧），表现层读取 | R-08 |
+| `presentation::shortcuts::registry` | `UiAction` + `persisted_key` 兜底 | `persisted_key` **穷举**（不可持久化的显式列出） | R-08 |
+| `infrastructure::fonts` | 发现 + 装配 1111 行 | 拆为「路径发现（可测）」+「装配（可测）」+「真实 FS 薄适配」 | R-20 |
+
+### 3.3 交互关系与数据流
+
+**（一）打开文档（改造后，R-11 影响）**
+
+```text
+入口(4) ──► app::frame::workspace::open_workspace_file
+                 │  白名单 / 去重 / 限额           ← R-15 统一路径处理
+                 ▼
+             application::document::open ──► domain::Document
+                 │
+                 ├──► 事件总线 DocumentOpened
+                 ├──► presentation::views::editor_view   （只读 app 状态）
+                 └──► presentation::views::preview_view
+```
+
+**（二）帧循环（改造后，R-12/R-13 影响）**
+
+```text
+eframe::App::ui
+  ├─ 状态更新段（app 独占写 UI state）
+  ├─ main_view::show → views 只读 app 状态 + 调 app 方法改
+  │     └─ presentation::state::*  ← 视图不得直写 app.<state>.<field>
+  └─ 帧末 FrameScheduler::flush → 一次 request_repaint_after
+```
+
+**（三）导出格式（改造后，R-07）**
+
+```text
+UI 选格式 ──► ExportFormat（领域唯一枚举）
+                │  ExportFormat::from_str（穷举，漏加编译失败）
+                ├──► presentation 读 label()/extension()/supports_toc()（直接调领域方法）
+                └──► infrastructure::export::routing_exporter::match（穷举）
+```
+
+---
+
+## 4. 详细改造项
+
+### 4.1 P0 组：守卫失效与用户可见缺口
+
+#### R-01 · `check-arch` 判定改为 token 级匹配
+
+- **改造内容**：把 `tools/arch_check.rs:214` 的「行首 `use `」判定替换为 token 级提取。新增内部函数 `extract_path_tokens(line: &str) -> Vec<&str>`：
+  1. 去掉行注释（`//` 之后）与字符串字面量；
+  2. 用词法扫描提取 `crate::a::b::C` 形式的路径 token 与裸 crate 名（`egui` / `eframe` / `rfd` / `syntect` / `pulldown_cmark` / `anyhow` / `std::fs` / `std::io` / `std::process`）；
+  3. 保留现有「前缀匹配」语义（`crate::domain::x` 命中 `crate::domain`）。
+  `arch-allow:` 从「整行跳过」改为「只豁免该行中写明的那个 crate」。
+- **涉及文件**：`tools/arch_check.rs`（判定核心，约 +80 行）；`tests/arch_violation_fixture.rs`（新增 4 条注入用例）
+- **影响范围**：`build.rs`（每次编译）与 `cargo run --bin check-arch` 的判定结果会变严。当前全库 `pub use` 均为同层 `self::` 重导出、`presentation` 内 `crate::domain::` 的 2 处命中全在 doc 注释里 → **存量违规预计为 0**，但需实测确认。
+- **依赖关系**：无前置。**R-12 / R-13 的新规则依赖本项的 token 提取能力** → 必须先做。
+- **风险点**：
+  - 误报——doc 注释里提到 `crate::domain::…` 的 2 处（`preview_ui_state.rs:29`、`welcome_view.rs:57`）若未被「去注释」逻辑排除，会立刻变红；
+  - 字符串字面量里的路径（如错误信息里写 `crate::domain::…`）同理；
+  - `std::process` 若加入 `SHARED_FORBIDDEN` 会命中 `shared/system.rs`——**必须等 R-03 落地后再加**（顺序约束）。
+- **回滚方案**：`git revert` 该 commit（单点改动，无数据迁移）。若需要临时放宽，把 `extract_path_tokens` 的调用点用 `if false` 短路即可回到旧行为。
+- **验收判据**：
+  - `tests/arch_violation_fixture.rs` 新增 4 条用例：`pub use egui::Context;`、`use crate::{domain::x::Y};`、`fn f(d: crate::domain::x::Y) {}`、`fn f() { use egui::Context; }` —— **每条都必须让 `scan()` 报出违规**；
+  - 变异验证：把 `extract_path_tokens` 改成返回空 vec → 4 条注入用例**同时变红**（证明用例有牙齿）；
+  - `cargo run --bin check-arch` 仍输出 OK。
+
+#### R-02 · `tests/` 纳入架构扫描 + 扩充 fixture
+
+- **改造内容**：`arch_check::scan()` 增加一个可选的「额外根目录」参数（`scan(src_root)` 保持签名不变以免破坏 `build.rs` 调用，新增 `scan_with_tests(src_root, tests_root)`），把 `tests/` 纳入扫描。`tests/` 的层级判定放宽：测试可以引用任何层（测试是**消费者**，不是层），但**禁止** `tests/` 里出现 `use crate::domain::…` 这类**以为在测库内部**的写法——实际现状是 `tests/` 对 domain/infrastructure 引用数 = 0，规则是「防止测试绕过公开 API 偷看内部」。
+- **涉及文件**：`tools/arch_check.rs`（`scan` 签名与层判定）；`src/bin/check-arch.rs`（传入 `tests/` 根）；`build.rs`（同步传参）；`tests/arch_violation_fixture.rs`
+- **影响范围**：`tests/` 109 个文件全部进扫描。构建期扫描量增加约 35%（`tests/` 约 1.1 万行 vs `src/` 3.4 万行）。
+- **依赖关系**：**依赖 R-01**（token 提取是共同基础）。
+- **风险点**：`build.rs` 在每次编译时跑扫描，扫描范围扩大 → 编译变慢；且 `tests/` 里若存在**故意**引用内部符号的测试（当前实测为 0），会误报。
+- **回滚方案**：`scan_with_tests` 不被 `build.rs` 调用即可回到旧行为（一行注释 / 参数默认值 `None`）。
+- **验收判据**：
+  - `tests/arch_violation_fixture.rs` 新增一条：「在 `tests/` 注入 `use crate::domain::x::Y;` → `scan_with_tests` 必须报出违规，而 `scan` 不报」；
+  - `cargo run --bin check-arch` 仍 OK；
+  - 记录构建期耗时的前后对比数字（`cargo build` 的 `Finished in` 时间，取 3 次中位数）。
+
+#### R-03 · `shared/system.rs` 端口化
+
+- **改造内容**：
+  1. `src/shared/system.rs`：删除 `use std::process::Command` 与 `open_external` 的实现，改为
+     ```rust
+     pub trait ExternalOpener: Send + Sync {
+         fn open(&self, target: &str) -> std::io::Result<()>;
+     }
+     ```
+     并保留 `open_external` 的**链接安全校验**部分（`is_safe_to_open`）——**校验留在 shared（纯逻辑），执行移到 infrastructure**。
+  2. 新增 `src/infrastructure/system.rs`：实现 `SystemExternalOpener`，把现有 `Command::new("cmd"/"open"/"xdg-open").spawn()` 三平台分支整体搬过去。
+  3. `src/app/bootstrap.rs`：`Services` 持有 `Arc<dyn ExternalOpener>`（默认 `SystemExternalOpener`）。
+  4. `src/presentation/views/preview_view.rs`（及 `preview_view/` 下用到外链的子文件）：改为经 `app.services.opener` 调用。
+  5. `tools/arch_check.rs`：`SHARED_FORBIDDEN` 增加 `std::process`。
+- **涉及文件**：`src/shared/system.rs`（改写）、`src/infrastructure/system.rs`（新增）、`src/infrastructure.rs`（加 `pub mod system;`）、`src/app/bootstrap.rs`、`src/presentation/views/preview_view*.rs`、`tools/arch_check.rs`
+- **影响范围**：1 个 trait + 1 个实现 + 1 个注入点；`shared` 从「含进程调用」恢复为「零 IO」；用户可见行为**不变**（仍是系统默认程序打开）。
+- **依赖关系**：**必须在 R-01 之后**（`std::process` 进 `SHARED_FORBIDDEN` 会命中当前实现）。
+- **风险点**：
+  - `preview_view` 在 0.37 的 `open_url` feature 未启用（见 `shared/system.rs:2-4`）→ 打开链接是**唯一的**外链出口，端口化时若漏改某处会编译失败（**这是好事**：编译期暴露）；
+  - 链接安全校验若随执行一起搬走，会让 shared 重新含 IO；**必须把校验留在 shared**。
+- **回滚方案**：`git revert`；或保留 `shared::system::open_external` 作为薄封装（`#[deprecated]`），1 个版本后再删。
+- **验收判据**：
+  - `grep -rn "std::process" src/shared/` **零命中**；
+  - 新增单测：用假 `ExternalOpener` 断言「预览区点击外链时调用了 `open` 且参数正确」——**当前无法测**（spawn 真进程），改造后可测；
+  - 变异验证：把 `preview_view` 的调用改回直连 `shared::system::open_external` → `cargo check` 报 `shared` 不得依赖 `std::process`（R-01 的新规则命中）。
+
+#### R-04 · 接线两个 `Unbound` 动作（`Revert` / `InsertImage`）
+
+- **改造内容**：
+  1. `Revert`（撤销）：领域侧撤销链已齐备（`domain/document/aggregate.rs` 的 `UndoStack`），`app/frame/actions.rs:289` 现为 `A::Revert | A::InsertImage => ActionRoute::Unbound`。→ 改为 `ActionRoute::Handler(route_revert)`，新增 `route_revert` 调用既有的撤销入口。
+  2. `InsertImage`（插入图片）：需要确认原型契约——是插入图片**链接**（`![](path)`）还是触发**文件选择**。
+     - 若为链接：走 `app/frame/files.rs` 的插入文本路径 + 一个图片选择对话框；
+     - 若为文件选择：走 `DialogPort`（`shared/dialog.rs:55`）新增一个 `pick_image()` 方法。
+  3. `src/app/frame/actions.rs:433-440` 的 Unbound 清单断言**同步更新**（该断言的作用是「防止新增 Unbound 而无人知晓」）。
+- **涉及文件**：`src/app/frame/actions.rs`（路由表 + trampoline + Unbound 清单断言）、`src/app/frame/editor.rs`（撤销/插入实现）、`src/shared/dialog.rs`（若需 `pick_image`）、`src/infrastructure/dialog`（对应实现）
+- **影响范围**：2 个动作从「按下无反应」变为「可用」；`UiAction` 总数 57 不变；`action_route` 的 `Unbound` 分支清零。
+- **依赖关系**：无前置。
+- **风险点**：
+  - `Revert` 与 egui 内置撤销栈的**双撤销**问题——`app/frame/editor.rs` 已有「领域改文本后清空 egui 撤销栈」的机制（`clear_undoer_next` 字段），接线时必须确认这条路仍然成立，否则一次 Ctrl+Z 会撤两层；
+  - `InsertImage` 若走文件选择，涉及**写盘**（图片复制到资源目录）还是仅插入链接，**契约未定**——**这是本项唯一的规格缺口，实施前需先定**。
+- **回滚方案**：路由改回 `Unbound` 即可（1 行），但 `Unbound` 清单断言要同步改回 → 建议**两条一起 revert**。
+- **验收判据**：
+  - `action_route` 的 `Unbound` 清单**清零**（或仅剩经用户确认保留的项，且每项在 `actions.rs` 注释里写明原因）；
+  - 新增回归：`revert_restores_the_previous_content`（真帧或领域级：改 3 次 → 撤销 → 内容回到第 1 次之后的状态）；
+  - 变异验证：把 `route_revert` 改成空实现 → 用例红。
+
+#### R-05 · 设置页补写作目标输入
+
+- **改造内容**：`src/app/frame/settings.rs:154` 注释「设置页尚未提供写作目标输入框，保存时沿用当前值，避免被 0 覆盖」→ 在设置页的「编辑」分区补一个目标词数输入框；`domain/preferences/value_objects/editor.rs` 的 `writing_goal` 字段已存在，DTO（`EditorSettingsView`）已含该字段，**只缺 UI 入口**。
+- **涉及文件**：`src/presentation/views/settings_view.rs`（或其 `editor_prefs.rs` 子文件）、`src/app/frame/settings.rs`（保存时读输入框）、`src/presentation/state/settings_ui_state.rs`（暂存输入值）
+- **影响范围**：1 个 UI 控件 + 1 条保存路径；用户可见：写作目标**从不可设变为可设**；状态栏进度条随之生效（`app/frame/editor.rs` 的 `sync_goal` 已在读该值）。
+- **依赖关系**：无前置。**与 R-06 一起做可减少一次设置页回访成本**（可并行）。
+- **风险点**：
+  - 输入框的**校验**：0 或负数会与 `sync_goal` 的「未设目标 = 整项隐藏」语义冲突（`status_bar_ui_state.rs:70` `goal.is_set()` 为假即隐藏）→ 必须把 0 归一为「未设」，不能存 0；
+  - 输入框的**状态归属**：临时输入值放 `settings_ui_state`（表现层状态）还是直写 `app`？按 R-11 的方向应走方法，但本项**排在 R-11 之前** → 此时仍走既有直写模式，**R-11 改造时需回头收口**（此点必须写进 R-11 的影响范围）。
+- **回滚方案**：移除控件 + 恢复 `settings.rs:154` 的「沿用当前值」逻辑。
+- **验收判据**：
+  - 新增回归：设置目标 1000 → 保存 → 重启 → 设置页读回 1000；设 0 → 保存 → 读回「未设」（而非 0）；
+  - 变异验证：把「0 归一为未设」的分支去掉 → 用例红。
+
+#### R-06 · 切标签保留光标（每文档独立光标/选区）
+
+- **改造内容**：`src/app/frame/tabs.rs:33-35` 注释「每文档独立的光标 / 选区尚未在 UI State 中建模（S6-12 范畴），切换时回到文档开头」→ 在 `presentation/state/editor_ui_state.rs` 增加 per-document 的光标 / 选区表（`HashMap<DocumentId, CursorState>`），切标签时存取、切换回时恢复。
+- **涉及文件**：`src/presentation/state/editor_ui_state.rs`（新增字段 + 存取方法）、`src/app/frame/tabs.rs`（切换时存取）、`src/app/frame/editor.rs`（`pending_cursor` 的写回与新表协同）、`src/presentation/views/editor_view.rs`（渲染时取当前文档的光标）
+- **影响范围**：多文档场景的用户可见行为变化（**这是行为变更，不是纯重构**）；需考虑文档关闭时清理表项、文档数上限 12 → 表大小有界。
+- **依赖关系**：**依赖 R-11 的第 1 子批**（state 字段的写入口约定）——否则本项会新增一批「app 直写 state 字段」的样板，与后续收敛方向相反。
+- **风险点**：
+  - **与 `pending_cursor` 的时序冲突**：`app/frame/editor.rs` 的 `pending_cursor` 是「领域改文本后把 egui 光标重设回去」的一次性通道，与「每文档光标表」是两套机制 → 必须明确谁在什么时候写谁，否则会出现「切回标签时光标跳到旧位置」；
+  - egui `TextEdit` 自身也记光标（`TextEdit` 内部状态），切换文档时它会重置 → 需要在切换帧**主动重设**，而不是只在切走时记录。
+- **回滚方案**：`git revert`（本项独立成一个 commit，不与其他项混提）。
+- **验收判据**：
+  - 新增真帧回归：文档 A 光标在第 3 行 → 切到 B → 切回 A → 光标仍在第 3 行（断言 `Shape::Text` 的光标矩形 y 坐标不变）；
+  - 变异验证：把「切回时恢复」的那段去掉 → 用例红。
+
+### 4.2 P1 组：扩展性瓶颈与耦合
+
+#### R-07 · 导出格式双枚举收敛
+
+- **改造内容**：
+  1. `src/domain/export/value_objects.rs`：给 `ExportFormat` 增加
+     ```rust
+     pub const fn from_str(raw: &str) -> Option<Self>  // 穷举 match，漏加变编译错误
+     pub const fn all() -> &'static [Self]
+     ```
+     现有 `extension()` / `supports_toc()` / `supports_pagination()` / `needs_page_size()` / `label()` 已是穷举 ✓。
+  2. `src/application/export/service.rs:224` `parse_format` 改为调 `ExportFormat::from_str`（删掉手写字符串 `match`）。
+  3. **删除** `src/presentation/state/export_ui_state/choices.rs:5` 的 `ExportFormatChoice` 枚举，UI 侧改为直接使用领域 `ExportFormat`；该文件里**领域没有**的 UI 专属数据（`is_available()` / `unavailable_reason()` / `pdf_caveat()`）拆到**独立的辅助函数表**（`fn pdf_caveat(format: ExportFormat) -> Option<&'static str>`），不与枚举同构。
+  4. `PageSizeChoice`（`choices.rs:109`）同理处理。
+- **涉及文件**：`src/domain/export/value_objects.rs`、`src/application/export/service.rs`、`src/presentation/state/export_ui_state/choices.rs`（大幅缩减或删除）、`src/presentation/state/export_ui_state.rs`、`src/presentation/views/export_view.rs`（消费点）、`src/infrastructure/export/routing_exporter.rs`（确认穷举 ✓）
+- **影响范围**：导出格式的**唯一真源**从 2 个降为 1 个；「新增一种导出格式」的改动点从 6 处降到 **3 处**（领域枚举 + `from_str` + 路由 match），且全部编译期暴露。
+- **依赖关系**：无前置。**R-12 的规则若覆盖「同一概念的双枚举」，本项是第一个被检出的**。
+- **风险点**：
+  - `ExportFormatChoice` 被 `export_view.rs` 多处消费（`choices.rs` 里的 `ALL` 是选择器数据源）→ 删除后要重建数据源，**改错会导致下拉框少一项或顺序变**；
+  - `pdf_caveat` 等 UI 文案若混进领域枚举 → 领域层将依赖 UI 文案，**违反分层**（必须用独立函数表，理由要写进注释）。
+- **回滚方案**：`git revert`（领域侧改动是纯新增 `from_str` / `all`，可单独 revert 而不动 UI）。
+- **验收判据**：
+  - 新增用例：`export_format_from_str_is_exhaustive`（对 `ExportFormat::all()` 逐个断言 `from_str` 能反解；**再加一条编译期断言**：故意漏一个变体时编译失败——用 `const _: () = assert!(...)` 形式做不到，改用「`all()` 与 `from_str` 的 match 分支数一致」在测试里断言 `all().len() == 4`）；
+  - `grep -c "pub enum ExportFormatChoice" src/` → **0**；
+  - 变异验证：把 `from_str` 的一个分支删掉 → 用例红。
+
+#### R-08 · `persisted_key` 穷举 + 默认键位表合一
+
+- **改造内容**：
+  1. `src/presentation/shortcuts/registry/action/impls.rs:72` 的 `persisted_key` 改为**穷举全部 57 个 `UiAction` 变体**：可持久化的返回 `Some("...")`，不可持久化的**显式**写 `UiAction::X => None`（不再用 `_ => return None` 兜底）→ 漏加变体时**编译失败**。
+  2. 默认键位表合一：`src/domain/preferences/value_objects/shortcut_table.rs:150` `default_bindings()` 与 `src/presentation/shortcuts/registry/action/impls.rs:322` `default_combo()` 是两份并行表 → **保留领域侧一份**，表现层改为查领域（需确认领域侧不依赖表现层类型——`KeyCombo` 若是表现层类型，则把 `KeyCombo` 下沉到 `shared` 或让领域表存字符串）。
+  3. `ActionId`（`domain/preferences/value_objects/action.rs:11`）与 `UiAction` 的对应关系改为**由 `persisted_key` 单向派生**（现状已是 `from_persisted_key` 反查，可加一条「两表长度一致」的一致性用例）。
+- **涉及文件**：`src/presentation/shortcuts/registry/action/impls.rs`、`src/domain/preferences/value_objects/shortcut_table.rs`、`src/domain/preferences/value_objects/action.rs`、`src/application/preferences/*`（DTO 映射）
+- **影响范围**：57 个动作的持久化键表；「新增一个可持久化动作」的改动点从 5–8 处降到 4 处，且漏加**全部编译期暴露**。
+- **依赖关系**：无前置。若 R-08 ② 需要 `KeyCombo` 下沉，会牵动 `shared` → 建议**先只做 ①**（收益最大、风险最小），② 视 ① 完成后的形态决定。
+- **风险点**：
+  - `persisted_key` 穷举后，**原本靠 `_` 兜底的 16 个不可持久化动作**要逐个显式列出 → 写漏一个就编译失败（**这正是目的**，但第一次改会有一批编译错误要逐个处理）；
+  - ② 若 `KeyCombo` 下沉到 `shared`，会新增 `shared` 的公共 API 面 → 与 R-21 的「shared 瘦身」方向相反 → 建议 ② 改为「领域表存 `(action_id, combo_str)`，表现层解析」，避免类型下沉。
+- **回滚方案**：`git revert`；① 与 ② 分成两个 commit，可单独回退。
+- **验收判据**：
+  - `grep -n "_ => return None" src/presentation/shortcuts/registry/action/impls.rs` → **零命中**；
+  - 新增用例：`every_ui_action_has_an_explicit_persisted_key_decision`（遍历 `UiAction::ALL`，断言每个变体在 `persisted_key` 的穷举表里都有明确分支——用「`persisted_key` 对每个变体返回可预测值 + 编译期穷举」双保险）；
+  - 变异验证：给 `UiAction` 加一个测试专用变体 → **编译失败**（这就是验收本身）。
+
+#### R-09 · 主题双枚举收敛
+
+- **改造内容**：
+  1. `src/presentation/theme/builtin/kind.rs:5` 的 `BuiltinTheme`（3 变体）与 `src/domain/preferences/value_objects/theme.rs:11` 的 `ThemeKind`（4 变体，多 `Custom`）——保留**领域 `ThemeKind` 为唯一真源**，`BuiltinTheme` 降为「内置主题的标识」或直接删除；内置主题的具体配色（`builtin.rs:145` `dark()` / `:200` `light()`）保持不变。
+  2. `src/app/frame/actions.rs:20-24` 的**第三份**手写 `match self.ui.theme.kind` → 改为调用领域枚举的 `as_str()`。
+  3. `src/application/preferences/service.rs:237-240` 的字符串 → `ThemeKind` 映射 → 改为 `ThemeKind::from_str`（穷举）。
+- **涉及文件**：`src/presentation/theme/builtin/kind.rs`、`src/presentation/theme/builtin.rs`、`src/domain/preferences/value_objects/theme.rs`、`src/application/preferences/service.rs`、`src/app/frame/actions.rs`、`src/presentation/views/settings_view.rs`（消费点）
+- **影响范围**：「新增一种内置主题」的改动点从 4 处降到 2 处（领域枚举 + 配色表）。
+- **依赖关系**：无前置。
+- **风险点**：
+  - `ThemeKind` 有 `Custom` 变体（用户自定义），而 `BuiltinTheme` 没有 → 合并时**不能简单删一个**，要处理「领域有 Custom、表现层无对应内置主题」的映射（`Custom` 走用户配置，不走 builtin 表）；
+  - 持久化值是字符串（`"dark"/"light"/"system"/"custom"`），改枚举时**不能改这些字符串**（否则用户配置失效）→ 合并时必须保持 `as_str()` 输出不变。
+- **回滚方案**：`git revert`。
+- **验收判据**：
+  - `grep -rn "pub enum BuiltinTheme" src/` → 0（或降级为非枚举的常量表）；
+  - 新增用例：`theme_kind_round_trips_through_its_persisted_string`（对每个 `ThemeKind` 断言 `from_str(as_str()) == self`）——**这条同时守住持久化兼容性**；
+  - 变异验证：把 `as_str()` 的一个分支改错 → 用例红。
+
+#### R-10 · span → `LayoutJob` 构造器统一 + 样式表合并
+
+- **改造内容**：
+  1. 把 `src/presentation/theme/mapper/highlight_cache.rs:253-333` 的 `build_line_job`（「边界并集 + `find` 覆盖」语义）提炼为**表现层唯一的 span→`LayoutJob` 构造器**，放到 `src/presentation/theme/mapper/span_job.rs`。
+  2. `src/presentation/views/preview_view/code.rs:98-143` 的 `highlighted_code_job`（顺序游标）与 `src/presentation/views/preview_view/inline.rs:319-` 的 `build_text_job`（顺序游标）改为调用它；若某些 span 语义确实不同（如 `inline` 要剥 math 分隔符），用**参数化**（`SpanPolicy`）表达差异，**不复制实现**。
+  3. 样式表合并：`src/presentation/views/preview_view/inline.rs:19` 的 `span_format` 并入 `src/presentation/theme/mapper.rs:99` 的 `format`（mapper 覆盖更全：15 种 vs 14 种，缺的是 `heading/quote/strong/emphasis/strikethrough/code/link` 的对齐）→ 改一处颜色两处同步。
+  4. 字符边界防护统一：`shared/geometry.rs:170` `floor_char_boundary` 与 `:188` `clamp_to_char_boundaries` 的调用点统一到后者（它是前者的超集）。
+- **涉及文件**：`src/presentation/theme/mapper/highlight_cache.rs`、`src/presentation/theme/mapper/span_job.rs`（新增）、`src/presentation/theme/mapper.rs`、`src/presentation/views/preview_view/code.rs`、`src/presentation/views/preview_view/inline.rs`
+- **影响范围**：预览区代码块与行内元素的语法配色；**用户可见效果应完全不变**（同一份 Markdown 在编辑区与预览区颜色本就应一致，现状因两套实现而可能已漂）。
+- **依赖关系**：**依赖 R-14**（`floor_char_boundary` 副本清理会顺带统一边界防护调用点）。R-21 的「命名冲突」建议在 R-10 之后做（改文件名会与本项的 import 改动冲突）。
+- **风险点**：
+  - **顺序游标 vs 边界并集**语义不等价：边界并集能表达**重叠** span（查找命中背景叠加语法高亮），顺序游标不能 → 替换后 `code.rs` / `inline.rs` 会出现「查找命中背景覆盖语法色」的新行为（这其实是**修复**，但需确认用户可见效果符合预期）；
+  - `inline.rs` 的 math 分隔符剥离、footnote 引用等是**行内特有**语义，直接套用编辑区的 `build_line_job` 会丢 → 必须显式建模为 `SpanPolicy` 参数，**不能为了少写而丢语义**；
+  - 一次改两套实现 + 一张表 = 变更面较大 → 建议拆成 2 个 commit（先统一构造器，再合并样式表）。
+- **回滚方案**：`git revert`（两个 commit 可分别回退）；**保留旧实现**并行一个版本做对拍，确认等价后再删。
+- **验收判据**：
+  - 新增**对拍用例**：同一段 Markdown（含代码块、表格、任务列表、引用、脚注、数学），分别经「旧三套实现」与「新统一构造器」产出的 `LayoutJob`，逐项比对 `text()` / `num_vertices` / `num_indices` / 每行 rect；**差异仅允许出现在重叠 span 的背景层**；
+  - 变异验证：把统一构造器里 `find` 覆盖那一支删掉 → 查找命中的背景消失 → 对拍用例红；
+  - 用户可见：预览区与编辑区同一段代码的语法色**逐 span 相同**（新增真帧用例断言两侧 `Shape::Text` 的颜色序列一致）。
+
+#### R-11 · `presentation ↔ app` 状态所有权收敛
+
+- **改造内容**：把 presentation 层对 app 状态字段的 **59 处直写**（`grep -rEn 'app\.[a-z_]+\.[a-z_]+\s*=' src/presentation/`）改为调用 app 层方法。
+  - **子批 1（`export_ui`，7 处）**：`src/presentation/views/export_view.rs:221/231/236/265/272/276/280` → 在 `src/app/frame/actions.rs` 或新建 `src/app/frame/export.rs` 提供 `set_export_error()` / `clear_export_result()` / `set_export_path()` 等方法。
+  - **子批 2（`diff_ui`，3 处 + `model.rs`）**：`src/presentation/views/diff_view.rs:70/94/95` → `src/app/frame/` 提供对应方法。
+  - **子批 3（其余 49 处）**：`editor_ui_state` / `app_ui_state` / `find_replace_ui_state` / `status_bar_ui_state` 等，按「谁改的」归到对应 app 模块。
+  - 配套：`src/app/frame/actions.rs:14-58` 的 `open_overlay` 直接写 `self.export_ui.theme` / `.file_stem` / `.output_dir` 与 `self.diff_ui.error` → 路由表模块**只做路由**，状态初始化下沉到对应 app 模块。
+- **涉及文件**：`src/presentation/views/*.rs`（59 处散点）、`src/app/frame/*.rs`（新增方法）、`src/presentation/state/*.rs`（字段的 `pub` 视情况收敛为 `pub(crate)`）
+- **影响范围**：**全应用 UI 状态写入路径**。用户可见行为**不变**（纯重构），但需逐处确认语义等价。
+- **依赖关系**：**R-06 依赖本项的子批 1 先行**（否则 R-06 会新增一批直写样板）。本项完成后 R-12 才能加规则。
+- **风险点**：
+  - 59 处逐个改写，**极易漏改或改错语义**（尤其 `export_view.rs` 连续 7 处有先后顺序依赖：设置错误 → 清除结果 → 设置路径）；
+  - 借用冲突：视图方法签名是 `fn show(app: &mut EditorApp, ui: &mut Ui)`，改成调 `app` 方法后，视图内部**不能再持有 `app` 的字段引用**（Rust 借用检查会强制这一点，**这是好事**）；
+  - 过度改造的诱惑：把 59 处顺手重构成「命令模式」会引入大改 → **本项只做「直写 → 方法调用」这一件事**，不顺手重构。
+- **回滚方案**：**按子批分别 commit**，每个子批可独立 `git revert`；每个子批完成后门禁必须全绿，不允许「攒着一起改」。
+- **验收判据**：
+  - `grep -rEn 'app\.[a-z_]+\.[a-z_]+\s*=' src/presentation/` → **零命中**（R-12 规则上线后由构建期保证）；
+  - 每个子批的行为等价性由**该功能已有的真帧回归**保证（导出浮层、差异对比、查找替换、状态栏各有既有用例）→ 逐子批跑对应测试文件；
+  - 变异验证：把某个新方法改成空实现 → 对应用例红。
+
+#### R-12 · 新增机械规则「presentation 不得直写 app 状态字段」
+
+- **改造内容**：在 `tools/arch_check.rs` 增加一条**赋值形态**规则：扫描 `src/presentation/**`（以及未来的 `src/app/frame/**`），命中 `app.<标识符>.<标识符> =` 或 `self.<state字段>.<字段> =` 这类**对 UI state 字段的赋值**时报违规。豁免语法：`// arch-allow: app-state-write`。
+  - 配套约定：**只允许对 `app` 的**方法**调用**做状态变更**；`app` 的**字段读取**（`app.active_doc`、`app.ui.theme`）仍允许。
+- **涉及文件**：`tools/arch_check.rs`（新规则）、`src/presentation/**`（R-11 完成后自动合规）、`tests/arch_violation_fixture.rs`（注入用例）
+- **影响范围**：构建期规则；命中数为 0 才可启用。
+- **依赖关系**：**严格依赖 R-01（token 级匹配）+ R-11（直写清零）**。
+- **风险点**：
+  - 规则太宽会误伤**合法的**字段写入（如 `app.services` 内部的缓存字段、不是 UI state 的字段）→ 规则需限定「只查已知 UI state 结构体的字段名」，即维护一份**状态字段名清单**（可从 `presentation/state/*.rs` 自动提取，或硬编码在规则里）；
+  - 规则太窄会漏（用 `app.export_ui.error = ...` 之外的写法绕过，如 `let s = &mut app.export_ui; s.error = ...`）→ 接受这个残余风险（Rust 的借用规则会让这种写法少见），在 ADR 中如实登记。
+- **回滚方案**：规则的 `enabled` 标志置 false（一行）。
+- **验收判据**：
+  - 注入用例：`app.export_ui.error = Some("x".into());` → `scan()` 必须报违规；
+  - 全量 `cargo run --bin check-arch` → OK（0 命中）；
+  - 变异验证：把规则的判定改成永远返回「无违规」→ 注入用例红。
+
+#### R-13 · 表现层内部依赖规则（`views` ↔ `state`）
+
+- **改造内容**：明确并**机械守卫**表现层内部方向：`views/` 可读 `state/`，`state/` **不得**依赖 `views/`；`rich/` 不得依赖 `views/` / `state/` / `theme/` / `widgets/`（ADR-007 已有编译期保障，本项把它**机械化**）。同时规定 `widgets/` 与 `icons.rs` 不得依赖 `views/`。
+- **涉及文件**：`tools/arch_check.rs`（`layer_of` 增细粒度：`presentation/views`、`presentation/state`、`presentation/rich`、`presentation/widgets`）、`.agent/architecture.md` §4（登记）、`docs/adr/ADR-010`（记录）
+- **影响范围**：`presentation` 内部 123 文件的依赖方向；当前预期 0 违规（实测 `rich/` 零外部依赖 ✓）。
+- **依赖关系**：**依赖 R-01**（token 匹配）。**不依赖 R-12**（两者是各自独立的守卫项）→ 本项可在 M3 内独立完成。
+- **风险点**：
+  - `views/` 里可能有**合法的**对 `state/` 内部实现的依赖（如 `state/find_replace_ui_state/pattern.rs` 的私有函数被视图调用）→ 需要先跑一次全量扫描看命中数，超预期则**放宽到具体文件**而非放弃规则；
+  - 规则粒度变细 → `layer_of` 逻辑变复杂 → 需保证 `build.rs` 的缓存签名（`signature()`）仍能正确反映变化。
+- **回滚方案**：规则的 `enabled` 标志置 false。
+- **验收判据**：
+  - `cargo run --bin check-arch` → OK；
+  - 注入用例：在 `presentation/state/x.rs` 写 `use crate::presentation::views::y;` → 必须报违规；
+  - 变异验证：把 `state` 的禁止清单清空 → 注入用例红。
+
+### 4.3 P2 组：一致性与文档
+
+#### R-14 · 删除 `floor_char_boundary` 私有副本
+
+- **改造内容**：删除 `src/application/workspace/service.rs:525` 的私有 `fn floor_char_boundary`，改调 `src/shared/geometry.rs:170` 的公开版本（`use crate::shared::geometry::floor_char_boundary;`）。
+- **涉及文件**：`src/application/workspace/service.rs`（删 ~15 行 + 改调用点）
+- **影响范围**：1 处；行为等价（两份实现算法相同，仅参数名与饱和处理略有差异 → 需逐行比对）。
+- **依赖关系**：**R-10 依赖本项**（统一字符边界防护的调用点）。
+- **风险点**：两份实现并非**逐字相同**——私有副本多了一层「索引越界时回退到末尾」的处理，公开版可能没有 → 直接替换会引入越界 panic。**必须先逐行 diff 确认等价**。
+- **回滚方案**：`git revert`（改动极小）。
+- **验收判据**：
+  - `grep -rn "fn floor_char_boundary" src/` → **1 处**（只剩 `shared/geometry.rs`）；
+  - 原有的 workspace 服务测试全部通过；
+  - 变异验证：把调用改回私有副本 → 无测试变红（说明这条太弱）→ **补一条「多字节字符边界」用例**（如 emoji / 中英混排的偏移），先让新用例在替换前红、替换后绿。
+
+#### R-15 · 路径与文件名处理收口
+
+- **改造内容**（3 个小项，可合并为一个 commit）：
+  1. **文件名提取统一**：`src/app/frame/dialog.rs:166` 与 `:253` 的 `path.rsplit('/')`（**不处理反斜杠**）、
+     `src/app/frame/files.rs:441` 的 `rsplit('/')` → 统一走 `src/shared/path.rs` 的 `FilePath::file_name`；
+     `files.rs:408` 与 `shared/text_format.rs:98` 已用 `rsplit(['/', '\\'])` → 一并收敛。
+  2. **三个「取当前文档路径」方法合并**：`files.rs:61` `current_document_path() -> String`（返回 `"未命名文档"` 哨兵）、
+     `editor.rs:301` `document_dir() -> Option<PathBuf>`、`workspace.rs:134` `active_document_dir() -> Option<String>`
+     → 统一为一个 `current_document_file() -> Option<FilePath>`（`None` = 未命名），派生出 dir / name。
+  3. **`capture.rs`↔`files.rs` 路径处理去重**：`capture.rs:86-93` 与 `files.rs:193-205` 的
+     `FilePath::new(path).map_err(...)` + `refresh_text()` 逐字重复，且错误映射不一致
+     （`AppError::Config` vs `AppError::domain`）→ 抽一个 `app/frame/files.rs` 的 `save_to_path()` 供两处调用。
+- **涉及文件**：`src/app/frame/dialog.rs`、`src/app/frame/files.rs`、`src/app/frame/editor.rs`、`src/app/frame/workspace.rs`、`src/app/frame/capture.rs`、`src/shared/path.rs`
+- **影响范围**：用户可见变化：**Windows 下原生对话框显示的文件名从「整条路径」变为「文件名」**（这是修 bug）；其余为内部重构。
+- **依赖关系**：无前置。建议与 R-21 的「打开管线归位」一起做。
+- **风险点**：
+  - 改文件名提取会影响**对话框标题**的显示（用户可见）→ 必须有真帧或集成用例断言标题文案；
+  - 三个方法的语义**不完全等价**（一个返回哨兵字符串、一个返回 `Option`）→ 合并时若漏掉「未命名文档」这个 UI 文案的来源，会出现状态栏显示空白。
+- **回滚方案**：按 3 个小项分别 commit，可独立回退。
+- **验收判据**：
+  - 新增用例：`file_name_extraction_handles_windows_backslashes`（输入 `C:\a\b.md` → 期望 `b.md`）；
+  - 新增用例：`dialog_title_shows_only_the_file_name_on_windows_paths`（走真实 `DialogOutcome` 路径）；
+  - `grep -rn "rsplit" src/app/frame/` → 只剩 `rsplit(['/', '\\'])` 一种形态。
+
+#### R-16 · 格式白名单硬编码漏网 + 注释单源
+
+- **改造内容**：
+  1. `src/app/frame/workspace.rs:191,194` 的另存为建议名硬编码 `.md`（`format!("{stem}.md")` / `"未命名.md"`）→ 改为查 `shared::text_format` 的默认扩展名（新增 `TextFormats::default_extension()`）。
+  2. `src/app/frame/workspace.rs:279-280` 与 `src/app/frame/files.rs:454` 的**注释里手写了白名单清单**（`md/markdown/mdown/mkd/txt/text/csv`）→ 删掉注释里的清单，改为指向 `shared::text_format::BUILTIN_TEXT_EXTENSIONS`（注释即引用，不复制常量）。
+- **涉及文件**：`src/shared/text_format.rs`、`src/app/frame/workspace.rs`、`src/app/frame/files.rs`
+- **影响范围**：另存为对话框的默认文件名（用户可见，仅当默认格式非 md 时才有差别）。
+- **依赖关系**：无前置。
+- **风险点**：`TextFormats::default_extension()` 的默认值选择需与产品口径一致（当前硬编码是 `.md`）→ 保持 `.md` 不变，只是把「硬编码」变成「可配置」。
+- **回滚方案**：`git revert`。
+- **验收判据**：
+  - `grep -rn "md/markdown/mdown" src/` → 零命中；
+  - `grep -rn 'format!("{stem}.md")' src/` → 零命中；
+  - 已有「另存为」用例继续通过。
+
+#### R-17 · widgets 收口：`search.rs` 反模式 + 第 4 个组件
+
+- **改造内容**：
+  1. `src/presentation/views/sidebar_view/search.rs:176-182` 的 `allocate_ui_with_layout(vec2(avail, 0.0), …)` + 裸 `Label::truncate()`
+     → 改用 `src/presentation/widgets/text.rs:45` 的 `elided_segment`（高度取自已排控件，0 高写不出来）。
+  2. **新增第 4 个 widgets 组件**：「行矩形 + `Sense::click` + hover 底色（`CornerRadius::same(4)`）」——
+     该配方在 4 处逐字重复：`quick_open_view.rs:226-229`、`command_palette_view.rs:223-226`、
+     `toolbar_view.rs:421-423`、`toolbar_view.rs:473-475`。符合 ADR-008 的三条标准（≥2 处重复 / 写错不报错 / 直觉写法看起来合理），
+     建议命名为 `widgets::row::clickable_row_with_background`（或给现有 `clickable_row` 加 `background: bool` 参数）。
+- **涉及文件**：`src/presentation/views/sidebar_view/search.rs`、`src/presentation/widgets/row.rs`、`src/presentation/widgets/text.rs`、`src/presentation/views/quick_open_view.rs`、`src/presentation/views/command_palette_view.rs`、`src/presentation/views/toolbar_view.rs`
+- **影响范围**：4 处 hover 底色 + 1 处限宽段；用户可见效果**应完全不变**（同一像素）。
+- **依赖关系**：无前置。
+- **风险点**：
+  - `clickable_row` 当前**不画底色**（4 个调用点在侧栏，底色由父级画）→ 若加 `background` 参数，需确认不会与父级底色**叠加两次**（视觉变深）；
+  - `search.rs` 改 `elided_segment` 后**行高**会变（065 的垂直错位正是 0 高导致）→ 可能影响侧栏行距，需真帧比对；
+  - 新组件的参数设计要**让错误写法说不出口**（ADR-008 的判据），否则第 5 个调用点又会写回老样子。
+- **回滚方案**：`git revert`（2 个子项分开 commit）。
+- **验收判据**：
+  - `grep -rn "allocate_ui_with_layout" src/presentation/views/` → 只剩 `preview_view/table.rs:284`（表格单元格，**不属于限宽段**场景）与 `widgets/text.rs` 自身；
+  - 变异验证：把 `elided_segment` 的高度改回 0 → `search.rs` 的行高/垂直位置断言红；
+  - 4 处 hover 底色改造后，各有真帧用例断言**命中区覆盖整行**且**底色矩形位置与改造前一致**（记下改造前的像素坐标作为基线）。
+
+#### R-18 · 文档过期修正
+
+- **改造内容**（逐条对应评估报告 §P2-5 的 11 条）：
+  1. `docs/README.md:53` 的「egui + eframe 0.33.3」→ 0.37.0；
+  2. `docs/README.md:64` 的「001–027」→ 「001–069」；
+  3. `docs/README.md:47-58` 的 ADR 索引补 **007 / 008 / 009**（R-19 新增的 010 / 011 一并补）；
+  4. `docs/README.md:50` 的「76KB」→ 实测值；
+  5. `docs/testing.md:37` 与 `docs/PROGRESS.md:53,79` 的「1623 passed / 0 failed / 0 ignored」→ **当日实测数字**（含 ignored 数）；
+  6. `docs/PROGRESS.md:175` 的 egui 版本号；
+  7. `docs/11-预览区技术实现.md:369,371` 的 `views/math.rs`、`views/mermaid.rs` → `presentation/rich/math/`、`presentation/rich/mermaid/`；
+  8. `docs/05-基础设施实现.md:40,56,63,70,105` 的 5 个测试文件名；
+  9. `tests/e2e/main.rs:5` 与 `tests/integration/large_file_test.rs:472` 的文档路径 → `docs/archive/stage-reports/`；
+  10. `docs/metrics.md:211` 的 exe 字节数 → 当日实测（**注意：每次构建产物会有 0.0x MiB 波动，只更新实测值不改结论**）；
+  11. `docs/logs/问题记录1.txt` 的**正文标题格式两套并存**（001–056 用 `YYYY-MM-DD NNN` 独占行，057–069 用 `NNN · MM-DD ·` 单段）→ 统一为新格式（**只改 057–069 的标题行，不动正文内容**）。
+- **涉及文件**：上述 8 个文件 + `docs/logs/问题记录1.txt`
+- **影响范围**：纯文档；影响「一个事实一个家」的可信度。
+- **依赖关系**：**依赖 R-19**（ADR 补齐后索引才完整）。
+- **风险点**：
+  - 改 `问题记录1.txt` 的旧条目标题会**破坏历史记录的逐字性**（该文件是 append-only 流水账）→ **只统一新条目的格式，不动 001–056**；本项第 11 条实际应改为「新增条目统一用新格式」并在文件头注明；
+  - 测试数会随改造推进持续变化 → 在 `docs/testing.md` 标注「数字截至 YYYY-MM-DD」而非写死。
+- **回滚方案**：`git revert`（纯文档，无风险）。
+- **验收判据**：
+  - 逐条 grep 核对 11 处**全部**与代码现状一致；
+  - `docs/README.md` 的 ADR 条目数 == `ls docs/adr/*.md | wc -l`；
+  - 交叉核对：`docs/testing.md` 的测试数 == 当日 `cargo test --all-targets` 的实测 passed 数。
+
+#### R-19 · ADR 补齐
+
+- **改造内容**：
+  1. **ADR-010 · 动作路由与双意图**：`ActionRoute` 穷举表 + `Unbound` 显式声明（`app/frame/actions.rs:189-289`）
+     + `RevealIntent` 双意图分流（`presentation/views/scroll_sync.rs`）→ 记录「为什么用穷举表而不用 `_` 兜底」「为什么双意图」；
+  2. **ADR-011 · 图标系统与资源布局**：`presentation::icons` 的「规格 = 数据」（`icons.rs`）
+     + 草稿旁车文件协议（`<id>.draft.path`，问题记录 069）+ 字体外置（T2 改变发行包形态）→ 记录「为什么图标不用字形」「为什么草稿用旁车」「为什么字体随包分发而非内嵌」；
+  3. **ADR-012**（若 R-11/R-12/R-13 落地）：表现层状态所有权与内部依赖规则。
+- **涉及文件**：`docs/adr/ADR-010-*.md`（新增）、`docs/adr/ADR-011-*.md`（新增）、`docs/adr/ADR-012-*.md`（可选）、`docs/README.md`（索引）
+- **影响范围**：文档。
+- **依赖关系**：**依赖 R-04 / R-10 / R-11** 的最终形态（否则 ADR 写的是过程稿不是定稿）。
+- **风险点**：ADR 若写成「计划」而非「已定」会误导后续维护者 → **只写已落地的决定**，计划类内容放 backlog。
+- **回滚方案**：`git revert`。
+- **验收判据**：
+  - `grep -rn "ActionRoute" docs/adr/` → 有记录；
+  - `grep -rn "旁车\|sidecar" docs/adr/` → 有记录；
+  - ADR 索引与 `docs/adr/` 文件数一致。
+
+#### R-20 · `infrastructure/fonts.rs` 拆分
+
+- **改造内容**：把 1111 行（生产 646 / 测试 465）拆成三层：
+  1. `src/infrastructure/fonts/discovery.rs`：**路径发现**——`builtin_font_path()` / `discover_font_sources()` /
+     `scan_project_fonts_dir()` / `system_mono_candidates()`（三平台）/ `candidate_paths()`；
+     改为**接受注入的根目录列表**（`fn discover_font_sources(roots: &[PathBuf]) -> Vec<FontSource>`），
+     真实文件系统只留一层薄适配（`default_roots()`）。
+  2. `src/infrastructure/fonts/assembly.rs`：**装配**——`font_definitions()` / `prepend_selected_to_monospace()` /
+     `extend_with_cjk()` / `load_cjk_font()` / `extend_with_math_fallback()`；
+     改接受 `Arc<dyn FontBytesLoader>`（或直接接受字节），使「有 CJK 字体 → 装上」这条逻辑**可测**。
+  3. `src/infrastructure/fonts.rs`（保留为门面）：`font_definitions()` 组装上述两层。
+- **涉及文件**：`src/infrastructure/fonts.rs` → 拆为 `src/infrastructure/fonts/{mod,discovery,assembly}.rs`；
+  `src/infrastructure.rs`（加 `pub mod fonts;` 目录声明）；`src/app/frame.rs`（调用点不变）；
+  `src/shared/fonts.rs`（`EditorFontChoice` 契约不动）
+- **影响范围**：字体发现与装配；**用户可见行为不变**（同一套字体路径与装配顺序）。
+- **依赖关系**：无前置，但建议在 R-18 之后（避免文档改两遍）。
+- **风险点**：
+  - **发行包形态**：字体路径依赖 `current_exe()` 附近的 `assets/fonts/` → 拆分时**不能改这条约定**（T2 刚落地，且 `scripts/package-*` 三个脚本按 `assets/fonts/` 分发）；
+  - 现有 18 个测试**依赖真实字体文件存在**（`real_cjk_font_provides_glyphs_for_chinese` 等）→ 拆分后应区分「纯逻辑单测」（无资产依赖）与「真实资产集成测试」（**在 `assets/fonts/` 缺失时应 skip 而不是 fail**——当前是 fail，干净克隆会红）。
+- **回滚方案**：`git revert`（拆分前后的 `font_definitions()` 签名保持一致则调用点零改动）。
+- **验收判据**：
+  - `cargo test` 在**删除 `assets/fonts/` 的临时副本**下仍全绿（真实资产测试自动 skip）；
+  - 新增单测：`discovery_prefers_project_fonts_dir_over_system_candidates`（注入临时目录，断言优先级）；
+  - 变异验证：把 `prepend_selected_to_monospace` 的置顶顺序反过来 → 新增用例红；
+  - `cargo build --release` 后 exe 体积与拆分前**差值 < 0.05 MiB**（记录前后数字）。
+
+### 4.4 P3 组：低成本清理包
+
+#### R-21 · 低成本清理包（8 个小项）
+
+建议**合并为一个 commit**（每项改动都 ≤ 20 行，单独成 commit 反而增加噪声），但**每项独立可回退**（用 `git revert -n` + 分块暂存）。
+
+| # | 小项 | 涉及位置 | 验收 |
+|---|---|---|---|
+| 1 | **命名冲突**：`presentation/theme/mapper/highlight_cache.rs`（egui `Galley` 缓存）改名 `galley_cache.rs`；`application/markdown/service/highlight_cache.rs`（syntect span 缓存）改名 `span_cache.rs` | 2 个文件 + 全部 import | `grep -rn "highlight_cache" src/` 的两个路径语义不再同名 |
+| 2 | **`shared` 归位**：`shared/text_format.rs`（5 个使用点**全在 app 层**）下沉到 `src/app/text_format.rs` 或 `src/infrastructure/text_format.rs`；`shared/lru.rs`（application 3 + presentation 1）与 `shared/text.rs`（application 3 + presentation 7）**归位到调用方**或明确改名 | `src/shared/*`、调用点 | `src/shared/` 减少 3 个模块；`shared` 的定位回到「值对象 + trait 契约」 |
+| 3 | **`shared` 内部循环**：`shared/text_format.rs:36` ↔ `shared/dialog.rs:26` 互相 import → 随第 2 项一并消除 | 同上 | `shared` 内无环 |
+| 4 | **打开管线归位**：`files.rs:438` `open_path` 只是 `workspace.rs:298` `open_workspace_file` 的薄包装；且 `workspace.rs:312` **反向调用** `files.rs:400` `can_open_as_text`（方向与命名相反）→ 打开管线的全部逻辑归到 `workspace.rs`，`files.rs` 只留「保存 / 新建 / 状态栏」 | `src/app/frame/files.rs`、`workspace.rs` | `open_workspace_file` 是打开文档的**唯一**实现 |
+| 5 | **通用状态栏方法归位**：`files.rs:46-52` 的 `set_status_error` / `set_status_notice` 被 `workspace.rs` / `find.rs` / `tabs.rs` 多处调用 → 移到 `src/app/frame/status.rs` | 新增 1 文件 + 调用点 | 状态栏操作集中在一处 |
+| 6 | **编辑器操作归位**：`files.rs:113-147` 的 `insert_at_cursor` 属编辑器操作 → 移到 `editor.rs` | 2 文件 | — |
+| 7 | **纯函数归位**：`workspace.rs:502` `group_search_hits`（搜索结果分组）被 `outline.rs:3` 反向导入 → 移到 `src/app/frame/find.rs` 或 `src/shared/`（若纯且层无关） | 2 文件 | 无跨模块反向导入 |
+| 8 | **判据加强**：`tests/infrastructure/pulldown_parser_test.rs:251` `thematic_break_is_parsed` 只断言 `!blocks.is_empty()` → 断言块类型与块数（区分「解析出 hr」「当普通段落」「解析成空」） | 1 个测试 | 变异验证：把解析器的 hr 分支去掉 → 用例红 |
+
+另含 2 项**可选**（视时间）：
+- `FontId::monospace(...)` 硬编码 **12 处**（字号来源各异）→ 收口到 `theme.metrics` 的具名字段；
+- `src/domain/workspace/repository.rs:47` 的 doc 注释反向引用 `crate::app::frame::EditorApp::request_delete` → 改引 application 层契约。
+
+- **改造内容**：下表 8 个小项（命名冲突 1、`shared` 归位 2、`shared` 内部环 3、打开管线归位 4、状态栏方法归位 5、编辑器操作归位 6、纯函数归位 7、判据加强 8）+ 2 项可选。
+- **涉及文件**：`src/presentation/theme/mapper/highlight_cache.rs`（改名 `galley_cache.rs`）、`src/application/markdown/service/highlight_cache.rs`（改名 `span_cache.rs`）、`src/shared/{text_format,lru,text}.rs`、`src/app/frame/{files,workspace,editor,find,status}.rs`（`status.rs` 新增）、`src/domain/workspace/repository.rs`、`tests/infrastructure/pulldown_parser_test.rs`。
+- **影响范围**：`shared` 模块数由 8 降为 5；`app/frame` 内部模块职责重划；**用户可见行为零变化**（纯搬迁 + 改名 + 1 条判据加强）。
+- **依赖关系**：第 3 项依赖第 2 项；第 4 项建议在 R-15（路径收口）之后，避免同一批文件改两遍；第 8 项独立，可并行。
+- **风险点**：
+  - **搬迁引入环**：`shared` 下沉到 `app` 后，`app` 层可能反向依赖 `shared`（当前 `shared/text.rs` 被 presentation 用 7 次）→ 必须逐项确认新归属层不产生新环，`cargo run --bin check-arch` 未必覆盖 `shared` 内部，需 `grep` 复核 import 图；
+  - **改名漏改**：`highlight_cache` 改名影响 2 个模块的 import，若有 `mod.rs` 之外的路径引用会编译失败（可发现，但会拖长该 commit）；
+  - 第 8 项的 hr 判据加强若解析器行为与断言不符，会暴露**既有 bug**（此时不是改造引入的）→ 需先确认现状。
+- **回滚方案**：`git revert` 整个 commit；若已拆分提交，用 `git revert -n <sha>` + 分块暂存仅回退出问题的子项。
+- **验收判据**：
+  - `ls src/shared/` → 模块数 ≤ 5；
+  - `grep -rn "highlight_cache" src/` → 0 命中（两处均已改名）；
+  - `grep -rn "use crate::app" src/presentation/` → 0 命中新增（净变化为 0）；
+  - `cargo test --all-targets` 全绿，且第 8 项用例通过「去掉 hr 分支 → 红」的变异验证。
+
+---
+
+## 5. 实施计划
+
+### 5.1 里程碑总览
+
+| 里程碑 | 名称 | 任务 | 预估 | 出口判据 |
+|---|---|---|---:|---|
+| **M0** | 准备 | 建分支 / 记录基线数字 / 补「基线快照」测试 | 0.5 人日 | 基线数字入 commit message，四门禁全绿 |
+| **M1** | 低风险高收益 | R-14、R-15、R-16、R-18（部分） | 1.5 人日 | 4 项各自达标 |
+| **M2** | 扩展性瓶颈 | R-07、R-08①、R-09、R-10 | 5 人日 | 「新增 X 只改 N 处」用例成立 |
+| **M3** | 守卫加固 | R-01、R-02、R-03、R-13 | 4.5 人日 | 守卫的 4 类绕过全被检出；`tests/` 进扫描 |
+| **M4** | 用户可见缺口 | R-04、R-05、R-06 | 3 人日 | 三处缺口闭环，各有真帧回归 |
+| **M5** | 结构改造 | R-11（3 子批） | 6 人日 | 59 处直写清零 |
+| **M6** | 收尾 | R-17、R-19、R-20、R-21 | 5 人日 | ADR 补齐；字体可测；widgets 收口 |
+
+**合计约 25.5 人日**（不含评审与返工）。
+
+> **口径说明（两个数字的差异是真实的，不是笔误）**：
+> - **22.5 人日** = 附录 A 的 21 条改造项**逐项相加**（净开发量，不含准备与跨阶段协调）。
+> - **25.5 人日** = 里程碑表的合计，含 **M0 准备 0.5 人日** + 各阶段的**集成与协调余量约 2.5 人日**。
+> 实施时以**里程碑表**排期为准（排期需要余量），以**附录 A** 估算单条改造项的相对权重。
+
+### 5.2 各阶段任务顺序与交付物
+
+**M0 · 准备（0.5 人日）**
+
+- 顺序：① 记录基线四道门禁的**实测数字**（`cargo test --all-targets` 的 passed/ignored 数、
+  `check-arch` 输出、release exe 字节数）→ ② 建分支 `refactor/v11-54` → ③ 把基线数字写进本方案 §5.3 的表格。
+- 交付物：基线数字表。
+- 验收：四门禁全绿且数字被记录。
+
+**M1 · 低风险高收益（1.5 人日）**
+
+- 顺序：**R-14**（先做，因为 R-10 依赖它）→ **R-16** → **R-15**（含 R-21 的第 4/5/6 小项可并行）→ **R-18 的第 1/2/5/6/8/10 条**（文档数字类，与代码无耦合，可最后做）。
+- 交付物：4 个 commit；`docs/` 数字与代码一致。
+- 验收：
+  - `grep -rn "fn floor_char_boundary" src/` → 1 处；
+  - `grep -rn "rsplit" src/app/frame/` → 只剩统一形态；
+  - `docs/README.md` ADR 条目数 == `ls docs/adr/*.md | wc -l`；
+  - `docs/testing.md` 的测试数 == 当日实测。
+
+**M2 · 扩展性瓶颈（5 人日）**
+
+- 顺序：**R-07**（导出枚举，独立）→ **R-08①**（`persisted_key` 穷举，编译错误多但机械）→
+  **R-09**（主题枚举，需先确认 `Custom` 变体处理）→ **R-10**（span 统一，**拆 2 个 commit**：
+  先统一构造器、后合并样式表）。
+- 交付物：4 个改造项共 5 个 commit；4 条「新增 X 只改 N 处」的用例。
+- 验收（**每项独立**）：
+  - R-07：`grep -c "pub enum ExportFormatChoice" src/` → 0；`from_str` 穷举用例通过；
+  - R-08①：`grep "_ => return None" src/presentation/shortcuts/registry/action/impls.rs` → 0；
+  - R-09：`ThemeKind::from_str(as_str()) == self` 用例通过（**同时守住持久化兼容**）；
+  - R-10：编辑区与预览区**同段代码的语法色逐 span 相同**（真帧对拍）。
+
+**M3 · 守卫加固（4.5 人日）**
+
+- 顺序：**R-01**（token 匹配）→ **R-02**（`tests/` 纳入）→ **R-03**（`shared/system.rs` 端口化，
+  此时才能把 `std::process` 加进 `SHARED_FORBIDDEN`）→ **R-13**（表现层内部规则）。
+- **依赖修正**：**R-12 依赖 R-11（M5）清零 59 处直写** → 因此 **R-12 排到 M5 之后**，
+  M3 阶段只做 R-01 / R-02 / R-03 / R-13（表现层内部规则**不依赖** R-11）。
+- 交付物：4 个 commit；守卫的注入用例集。
+- 验收：
+  - 4 类绕过形态各有注入用例，**变异后同时变红**；
+  - `tests/` 注入违规能被检出；
+  - `grep -rn "std::process" src/shared/` → 0；
+  - `cargo run --bin check-arch` → OK。
+
+**M4 · 用户可见缺口（3 人日）**
+
+- 顺序：**R-04**（先定 `InsertImage` 的规格，再接线；`Revert` 可先单独做）→ **R-05**（设置页）→
+  **R-06**（切标签光标，**依赖 M5 的子批 1** → 若 M5 未完成则**推迟到 M5 之后**，不硬排）。
+- 交付物：3 个 commit + 每项一条真帧回归。
+- 验收：三处缺口各自的用户场景回归通过（撤销恢复内容 / 目标可设且重启保留 / 切回标签光标位置不变）。
+
+**M5 · 结构改造：状态所有权（6 人日）**
+
+- 顺序：**子批 1（`export_ui`，7 处）** → 门禁 + 导出相关测试 → **子批 2（`diff_ui`）** → 门禁 + 差异对比测试 →
+  **子批 3（其余 49 处，按 state 结构体分组）** → 门禁 + 全量。
+- 交付物：3 个 commit（每子批一个）。
+- 验收：`grep -rEn 'app\.[a-z_]+\.[a-z_]+\s*=' src/presentation/` → 0；全量测试绿。
+
+**M6 · 收尾（5 人日）**
+
+- 顺序：**R-17**（widgets 收口）→ **R-20**（字体拆分）→ **R-19**（ADR）→ **R-21**（清理包）→ **R-18 剩余条目**。
+- 交付物：3 个 commit + ADR-010 / 011（/ 012）。
+- 验收：`grep -rn "allocate_ui_with_layout" src/presentation/views/` → 只剩表格单元格场景；
+  字体测试在**无 `assets/fonts/`** 的副本下仍绿；ADR 索引与文件数一致。
+
+### 5.3 进度记录表（随实施填写）
+
+| 里程碑 | 改造项 | 起始 | 完成 | 门禁数字（passed / ignored / check-arch） | 备注 |
+|---|---|---|---|---|---|
+| M0 | 基线 | | | | |
+| M1 | R-14 | | | | |
+| M1 | R-16 | | | | |
+| M1 | R-15 | | | | |
+| M1 | R-18（部分） | | | | |
+| M2 | R-07 | | | | |
+| M2 | R-08① | | | | |
+| M2 | R-09 | | | | |
+| M2 | R-10 | | | | |
+| M3 | R-01 | | | | |
+| M3 | R-02 | | | | |
+| M3 | R-03 | | | | |
+| M3 | R-13 | | | | |
+| M4 | R-04 | | | | |
+| M4 | R-05 | | | | |
+| M4/M5 后 | R-06 | | | | 依赖 M5 子批 1 |
+| M5 | R-11 子批 1/2/3 | | | | |
+| M5 后 | R-12 | | | | 依赖 M5 |
+| M6 | R-17 | | | | |
+| M6 | R-20 | | | | |
+| M6 | R-19 | | | | |
+| M6 | R-21 | | | | |
+
+---
+
+## 6. 技术选型与规范
+
+### 6.1 技术选型
+
+| 议题 | 选择 | 理由 |
+|---|---|---|
+| **架构守卫实现** | 继续用**文本扫描**（`tools/arch_check.rs`），不做 AST | 零额外依赖、构建期极快（当前 < 1s）；AST 需引入 `syn`/`ra_ap_syntax`，与 ADR-007「不为伪收益增加依赖」同源否决 |
+| **token 提取方式** | 手写词法扫描（跳过注释与字符串） | 只需识别路径形态，无需完整词法；`syn` 的成本换不来收益 |
+| **外部打开链接** | **端口 + 基础设施实现**（`ExternalOpener` trait） | 与既有 `shared::dialog::DialogPort`（`shared/dialog.rs:55`）完全同构，不引入新范式 |
+| **状态所有权** | app 层**语义化方法**（非命令对象、非事件总线） | 项目已有「四入口全汇 `EditorApp::execute`」的路由范式（T6），加一层命令对象会与之重复 |
+| **领域枚举作为唯一真源** | 表现层**直接使用**领域枚举，UI 专属数据用**独立函数表** | 避免「第二套同构枚举」；UI 文案不进领域层 |
+| **默认键位表** | 保留**领域侧一份**（存 `(action_id, combo_str)`），表现层解析 | 避免把 `KeyCombo` 类型下沉到 `shared`（会扩大 shared 的公共 API 面，与「shared 瘦身」冲突） |
+| **字体拆分** | 「发现（注入根目录）+ 装配（注入字节加载器）+ 真实 FS 薄适配」 | 沿用项目既有的**端口/适配器**手法（`DialogPort` / `Exporter` / `DocumentRepository`） |
+| **新增依赖** | **零** | 全部改造用现有能力（`std`、`HashMap`、既有 trait） |
+
+### 6.2 目录与命名规范
+
+**目录**（沿用 `.agent/architecture.md` §7 的「禁 `mod.rs`」约定）：
+
+```text
+src/
+├─ app/frame/            组合根实现；新增业务模块时用「文件 + 同名目录」拆分
+│  ├─ status.rs          (R-21-5) 状态栏通用操作
+│  └─ export.rs          (R-11-1) 导出浮层状态初始化
+├─ infrastructure/
+│  ├─ fonts.rs           (R-20) 门面
+│  └─ fonts/             (R-20) discovery / assembly
+├─ presentation/
+│  ├─ widgets/           只放「写错不报错」的不变式组件（ADR-008）
+│  └─ theme/mapper/      排版与 span 应用的唯一真源（R-10）
+```
+
+**命名**：
+
+| 对象 | 约定 | 示例 |
+|---|---|---|
+| 端口 trait | `<能力>Port` 或 `<能力>er` | `DialogPort` / `ExternalOpener` |
+| 到期点 | 枚举变体 | `Deadline::AutoSave`（R-11 的规则已用 `Deadline`） |
+| 缓存 | `<内容>_cache` | `galley_cache` / `span_cache`（R-21-1 改名） |
+| 纯函数 | `<动词>_<名词>`，放调用方或 `shared` | `group_search_hits` |
+| 领域枚举的唯一真源 | 领域内定义，表现层**不得**定义同构副本 | `ExportFormat` / `ThemeKind` |
+
+### 6.3 接口与编码规范
+
+1. **穷举优先于兜底**：任何「动作 → 去向」「变体 → 行为」的映射表**不写 `_` 兜底**
+   （沿用 `app/frame/actions.rs:205-211` 已确立的纪律，并把这条纪律**扩展**到
+   `persisted_key` / `from_str` / 主题映射等同类表）。
+2. **让错误写法说不出口**：封装组件的参数类型要让「典型误用」在类型层面写不出来
+   （ADR-008 的判据：`elided_segment` 的高度取 `Rect` 而非 `f32`）。
+3. **单一真源**：一个概念只能有一个权威定义处；注释**不得复制**常量清单
+   （R-16 的第 2 小项）。
+4. **纯函数优先**：能从 IO 里剥出来的都剥成纯函数（`floor_char_boundary` /
+   `group_search_hits` / `discover_font_sources`）→ 纯函数才有无头单测。
+5. **状态写入必须经方法**：presentation 层不得直写 app 的 UI state 字段（R-11 / R-12）。
+6. **注释写「为什么」**：本方案的每条改造项都要求在代码注释里写清
+   「为什么这样、另一种写法为什么不行」——沿用项目既有的注释密度与风格。
+
+---
+
+## 7. 测试与验证
+
+### 7.1 测试层次与范围
+
+| 层次 | 位置 | 本次改造的覆盖要求 |
+|---|---|---|
+| **单元测试** | `src/**` 内联 `#[cfg(test)]`（当前 407 个） | 新增的纯逻辑必须有单测：token 提取、`from_str` 穷举、`persisted_key` 穷举、主题往返、字体发现优先级、span 对拍 |
+| **集成测试** | `tests/`（当前 1 460 个，分 domain / application / infrastructure / presentation / app / integration / shared / e2e） | 每个改造项至少 1 条**走真实入口**的用例（如 R-04 走 `EditorApp::execute`、R-06 走真实 `TextEdit`） |
+| **架构守卫测试** | `tests/arch_violation_fixture.rs` | 每条新规则 1+ 条注入用例 + 1 次变异验证 |
+| **真帧渲染测试** | `tests/presentation/`（真帧 + `Shape::Text` / `Shape::Rect` 取证） | 涉及像素的改造（R-10 配色、R-15 文件名、R-17 行高）**必须**有真帧断言，且断言**绝对位置**而非「不越界」 |
+| **性能测试** | `tests/integration/large_file_test.rs` + `tests/presentation/highlight_layout_bench.rs`（`#[ignore]`，release 跑） | **本方案的改造不得引入每帧回归**（尤其 R-10 统一 span 构造器、R-11 状态收敛、R-20 字体拆分） |
+| **回归** | 全量 `cargo test --all-targets` | 每个改造项完成后**全量跑**，数字入 commit message |
+
+### 7.2 通过标准
+
+| 门禁 | 命令 | 通过标准 |
+|---|---|---|
+| 格式 | `cargo fmt --check` | 零差异 |
+| 架构 | `cargo run --bin check-arch` | 输出 `OK（未发现分层依赖违规）` |
+| 静态 | `cargo clippy --all-targets --all-features -- -D warnings` | 0 告警 |
+| 测试 | `cargo test --all-targets` | 0 failed；**passed 数不减**（新增测试后应增） |
+
+**附加通过标准（本次改造特有）**：
+
+1. **每条新规则必须有变异验证**：把规则改坏 → 对应用例当场变红 → 记录在 commit message；
+2. **每条「新增 X 只改 N 处」的用例必须真的失败**：故意漏加一处 → 编译失败或用例红；
+3. **不引入每帧回归**：改造前后各跑 3 次 release 击键帧基准（`cargo test --release --test presentation bench -- --ignored --nocapture`），
+   p50 差值 **< 3%**；超出需说明原因（**不允许「差不多就行」**）；
+4. **体积不回归**：release exe 字节数与改造前差值 **< 0.05 MiB**（R-20 字体拆分尤其要盯）。
+
+### 7.3 回归重点清单（改造后必须仍然成立的行为）
+
+| 行为 | 现有守护用例（改造后仍应通过） |
+|---|---|
+| 自动保存到期帧生效 | `tests/integration/crash_recovery_test.rs` 的 e2e 用例 |
+| 状态栏统计防抖 | `tests/presentation/status_bar_view_test.rs` |
+| 导出浮层全流程 | `tests/presentation/` 的导出相关用例 + R-07 新增的 `from_str` 穷举 |
+| 查找替换 | `tests/presentation/find_replace_view_test.rs` |
+| 差异对比 | `tests/presentation/s6_11f_test.rs`（diff 浮层的**「动作→浮层→渲染」**集成用例；`DiffUiState` 的算法细节由 `src/presentation/state/diff_ui_state.rs` 的内嵌单测覆盖） |
+| 侧栏行高与垂直位置 | `tests/presentation/` 的侧栏几何用例（**R-17 改行高后重点回归**） |
+| 标签条不重叠 + 标题贴左 | `tests/presentation/` 的 tabs 用例 |
+| 架构零违规 | `tests/arch_violation_fixture.rs` 的 `current_project_has_no_violations` |
+
+---
+
+## 8. 风险与依赖
+
+### 8.1 外部依赖
+
+| 依赖 | 现状 | 风险 | 应对 |
+|---|---|---|---|
+| **无新增第三方 crate** | 本方案零新增依赖 | 低 | 守住；任何「顺手加个 crate」都要走依赖复查（V11-26 的流程） |
+| **egui 0.37.0** | 已冻结（ADR-001） | 低 | R-10 的 span 统一必须用 0.37 的 `LayoutJob`/`PlacedRow` 语义，**不得**引入 0.33 时代的写法 |
+| **系统字体 / `assets/fonts/`** | T2 后随包分发 | **中**：干净克隆或不含资产的机器上，字体测试会红 | R-20 把「真实资产集成测试」改为**缺失即 skip**；并在 CI 记录该 skip |
+| **无头 Chromium（PDF 导出）** | ADR-004 | 低 | 本方案不触碰导出链路；R-07 只改格式枚举 |
+| **macOS / Linux 真机** | 缺（T7） | **中**：R-20 的字体路径发现是**平台相关**的（`system_mono_candidates` 三平台分支） | R-20 的发现层必须**注入根目录**测试，平台分支用**参数化用例**覆盖，不依赖真机 |
+
+### 8.2 上游 / 下游影响
+
+| 改造项 | 上游（依赖它） | 下游（依赖它） | 兼容性 |
+|---|---|---|---|
+| R-01 / R-02 | R-03、R-12、R-13 全部新规则 | `build.rs`、`cargo run --bin check-arch` | 判定变严 → 存量违规须在启用前清零（先「只报告」模式摸底） |
+| R-03 | `preview_view` 的外链点击 | `Services` 结构体（新增字段） | `Services` 是**组合根内部**结构，新增字段不破外部 API；`ExternalOpener` 需有默认实现，否则 `Services::assemble*` 的多个入口都要改 |
+| R-07 | 导出浮层、导出路由 | 持久化格式字符串 | `ExportFormat` 的**字符串值不变**（`"html"/"markdown"/"pdf"/"image"`）→ 用户配置兼容 |
+| R-08 | 快捷键持久化 | 用户改键数据 | `persisted_key` 的**字符串值不变**（`"new_document"/"save"/…`）→ 已存配置继续生效 |
+| R-09 | 主题设置与持久化 | 用户主题配置 | `ThemeKind::as_str()` 输出**不变**（`"dark"/"light"/"system"/"custom"`） |
+| R-11 | R-06、R-12 | 全部视图 | 纯重构，**无用户可见变化**；但 59 处改动量大 → 3 个子批分开 |
+| R-20 | `app/frame.rs` 的字体装配 | `scripts/package-*` 三个脚本 | `assets/fonts/` 的**发行包布局不变**（脚本按此分发） |
+
+### 8.3 兼容性问题
+
+| 项 | 判定 | 说明 |
+|---|---|---|
+| 持久化配置格式 | **不变** | R-07 / R-08 / R-09 的枚举字符串值全部保持原样（各条都有「往返」用例守住） |
+| 旧配置文件兼容 | **需验证** | `domain/preferences/value_objects/editor.rs` 的 `#[serde(default)]` 覆盖已知缺字段场景；R-08 改 `ActionId` 映射后要重跑「缺字段按默认读出」的用例（`tests/infrastructure/preferences_repository_test.rs:352`） |
+| 草稿格式 | **不变** | R-03 / R-11 不触碰 `save_draft` / 旁车协议（问题记录 069） |
+| **草稿旁车协议** | **不变** | 旁车（`<id>.draft.path`）是已投产的磁盘协议，任何改造都不得改其文件名与内容格式 → 列入 ADR-011 明确 |
+| 二进制兼容 | 不适用 | 无 C ABI / 无插件机制 |
+
+### 8.4 安全问题
+
+| 项 | 现状 | 风险 | 应对 |
+|---|---|---|---|
+| **外部打开链接** | `shared/system.rs` 直接 `Command::new("cmd").args(["/C","start","",target]).spawn()` | **中**：若 `target` 含 shell 元字符（`&`、`|`、`^`）可能被 `cmd /C` 解释 → **命令注入** | R-03 端口化时**保留并强化**链接安全校验（现有的 `is_safe_to_open` 必须留在 shared 并补测试：当前它已拒绝 `javascript:` / `vbscript:` / `data:`，绝对协议只放行 `http/https/mailto/tel`（`file://` 与相对路径**按现状允许**，属本地文件），**须补一条「拒绝含控制字符的 target」**）。**这是本方案唯一涉及安全面的改造，必须单独写一组安全用例** |
+| **路径穿越** | 打开文档走 `FilePath` 值对象 | 低 | R-15 统一路径处理时**不得**放宽白名单校验 |
+| 内存安全 | Rust，无 `unsafe`（项目零 `unsafe`） | 低 | 守住「项目零 unsafe」 |
+| 依赖漏洞 | 依赖已按 ADR-004 / V11-26 收窄 | 低 | 本方案零新增依赖 → 无新增面 |
+
+### 8.5 方案级风险
+
+| # | 风险 | 概率 | 影响 | 应对 |
+|---|---|---|---|---|
+| 1 | **R-11 的 59 处改写引入回归** | 中 | 高 | 3 个子批分开；每批只做「直写→方法调用」不顺手重构；每批跑**该功能的既有真帧回归**；变异验证 |
+| 2 | **R-01 收紧后阻塞构建**（存量违规） | 中 | 中 | 先以「只报告不失败」跑全量摸底，清零后再启用；`enabled` 标志可一键关 |
+| 3 | **R-10 的 span 语义差异导致预览渲染变化** | 中 | 中 | 保留旧实现并行一版做对拍；先合并构造器、后合并样式表（2 个 commit）；差异仅允许出现在重叠 span 背景层 |
+| 4 | **R-04 的 `InsertImage` 规格未定** | 高 | 中 | **实施前必须先定契约**（插链接 or 选文件+复制资源）；未定则本项只做 `Revert`，`InsertImage` 单独排期 |
+| 5 | **R-20 改动发行包字体路径** | 低 | 高 | `assets/fonts/` 布局**一字不改**；拆分前后 release 体积差 < 0.05 MiB；打包脚本 `scripts/package-*` 三个都要跑一遍 |
+| 6 | **改造期间性能回归被忽略** | 中 | 中 | 每项改造后跑 release 击键帧基准 3 次取中位数，p50 差 < 3%；基线数字进 §5.3 表格 |
+| 7 | **范围蔓延**（顺手做无关重构） | 中 | 中 | 每条改造项限定「只做一件事」；新增想法登记到 backlog 而非插入本方案 |
+| 8 | **R-12 规则误伤合法写入** | 中 | 中 | 规则限定「已知 UI state 字段名清单」；先跑全量看命中数；`enabled` 开关 |
+
+---
+
+## 附录 A · 改造项索引表
+
+| 编号 | 名称 | 组 | 涉及文件数 | 预估 | 依赖 | 风险等级 | 里程碑 |
+|---|---|---|---:|---:|---|---|---|
+| R-01 | `check-arch` 判定改 token 级匹配 | P0 | 2 | 1 人日 | — | 中 | M3 |
+| R-02 | `tests/` 纳入架构扫描 | P0 | 4 | 0.5 人日 | R-01 | 低 | M3 |
+| R-03 | `shared/system.rs` 端口化 | P0 | 5 | 1 人日 | R-01 | 中 | M3 |
+| R-04 | 接线 `Revert` / `InsertImage` | P0 | 4 | 1 人日 | — | 中 | M4 |
+| R-05 | 设置页补写作目标输入 | P0 | 3 | 0.5 人日 | — | 低 | M4 |
+| R-06 | 切标签保留光标 | P0 | 4 | 1.5 人日 | R-11 子批 1 | 中 | M4/M5 后 |
+| R-07 | 导出格式双枚举收敛 | P1 | 6 | 1 人日 | — | 中 | M2 |
+| R-08 | `persisted_key` 穷举 + 键位表合一 | P1 | 4 | 1 人日 | — | 低 | M2 |
+| R-09 | 主题双枚举收敛 | P1 | 6 | 0.5 人日 | — | 中 | M2 |
+| R-10 | span→`LayoutJob` 统一 + 样式表合并 | P1 | 6 | 2 人日 | R-14 | 中 | M2 |
+| R-11 | `presentation ↔ app` 状态所有权收敛 | P1 | 30+ | 6 人日 | — | **高** | M5 |
+| R-12 | 「presentation 不得直写 app 状态」规则 | P1 | 3 | 0.5 人日 | R-01, R-11 | 中 | M5 后 |
+| R-13 | 表现层内部依赖规则 | P1 | 4 | 0.5 人日 | R-01 | 低 | M3 |
+| R-14 | 删 `floor_char_boundary` 副本 | P2 | 1 | 0.25 人日 | — | 低 | M1 |
+| R-15 | 路径与文件名处理收口 | P2 | 6 | 0.5 人日 | — | 中 | M1 |
+| R-16 | 格式白名单硬编码漏网 | P2 | 3 | 0.25 人日 | — | 低 | M1 |
+| R-17 | widgets 收口（`search.rs` + 第 4 组件） | P2 | 6 | 1 人日 | — | 中 | M6 |
+| R-18 | 文档过期修正 | P2 | 9 | 0.5 人日 | R-19 | 低 | M1/M6 |
+| R-19 | ADR 补齐（010 / 011 / 012） | P2 | 5 | 0.5 人日 | R-04, R-10, R-11 | 低 | M6 |
+| R-20 | `infrastructure/fonts.rs` 拆分 | P2 | 6 | 1.5 人日 | — | 中 | M6 |
+| R-21 | 低成本清理包（8 小项） | P3 | 20+ | 1 人日 | R-10, R-15 | 低 | M6 |
+| **合计** | **21 项** | | | **22.5 人日**（净开发量） | | | |
+
+---
+
+*本方案全部内容由 `docs/architecture-review.md` 的核实结论推导，未引入原文档之外的系统假设。
+涉及的具体文件路径、符号名与行号均以基线 `e09ad2b` 为准；实施时若行号已漂，以符号名为准。*

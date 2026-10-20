@@ -27,6 +27,17 @@
 | [`release.md`](./release.md) | 发布流程（tag 驱动、CI 全自动、回滚） | 维护者 | 发版前 |
 | [`manual-qa-windows.md`](./manual-qa-windows.md) / [`manual-qa-macos.md`](./manual-qa-macos.md) / [`manual-qa-linux.md`](./manual-qa-linux.md) | 三平台手工回归清单（V11-02 待执行） | 测试者 | 真机回归、验收 GUI 行为 |
 
+## 架构评估与改造（2026-10-20）
+
+| 文档 | 定位 | 读者 | 什么时候读 |
+|---|---|---|---|
+| [`architecture-review.md`](./architecture-review.md) | 全库架构评估报告：模块职责边界、依赖关系、P0~P3 问题清单（18 项主问题 + 11 项清理） | 维护者 | 想知道「现状哪里有问题、为什么这么判」 |
+| [`architecture-refactor-plan.md`](./architecture-refactor-plan.md) | 上述评估的**可执行改造方案**：21 条改造项（R-01~R-21，各含七字段）+ M0~M6 里程碑 + 验收判据 | 维护者 | 领改造任务、查某一条怎么做与怎么算做完 |
+
+> 两份文档构成一对：**review 回答「问题是什么」，plan 回答「怎么改、怎么验」**。
+> 任务状态仍只在 [`v1.1-backlog.md`](./v1.1-backlog.md) 的 V11-54 / V11-54a 登记。
+> 具体文件路径与行号以基线 `e09ad2b` 为准，**行号漂移时以符号名为准**。
+
 ## 阶段文档（01–11）
 
 | 文档 | 内容 |

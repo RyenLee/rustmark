@@ -50,6 +50,14 @@
 **`presentation` 占 56%** 是最显著的形态特征。ADR-007 / ADR-008 已把 `rich`
 （5 917 行）与 `widgets`（402 行）从 `views` 中剥离，但 `views` 本身仍有 13 145 行。
 
+**分层依赖总览图**（红 = 违反单向依赖或契约越界；绿 = 已验证合规）：
+
+![rustmark 改造后的分层依赖与四处违规边](./arc/architecture-layers.svg)
+
+> 源文件：[`docs/arc/architecture-layers.svg`](./arc/architecture-layers.svg)（SVG）。
+> 图中的违规边与本报告 §2 的问题编号一一对应：`shared → std::process` = P0-2，
+> `presentation ↔ app` 双向环 = P1-1。
+
 ### 1.2 各层内部边界
 
 - **`views/` vs `state/`** — 边界清晰，无交叉污染。✓

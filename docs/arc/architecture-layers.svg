@@ -1,0 +1,78 @@
+<svg viewBox="0 0 680 512" width="100%" role="img" xmlns="http://www.w3.org/2000/svg">
+<title>rustmark 改造后的分层依赖与四处违规边</title>
+<desc>四层依赖方向正确，presentation 与 app 之间存在双向环，shared 层内含进程调用。</desc>
+<defs>
+  <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+</defs>
+
+<g>
+  <rect x="250" y="34" width="200" height="52" rx="8" fill="var(--color-background-secondary)" stroke="#854F0B" stroke-width="0.5"/>
+  <text x="350" y="54" text-anchor="middle" dominant-baseline="central" font-family="var(--font-sans)" font-size="14" font-weight="500" fill="var(--color-text-primary)">app（组合根）</text>
+  <text x="350" y="71" text-anchor="middle" dominant-baseline="central" font-family="var(--font-sans)" font-size="12" fill="var(--color-text-secondary)">20 文件 / 6 146 行</text>
+</g>
+
+<g>
+  <rect x="200" y="126" width="300" height="66" rx="8" fill="var(--color-background-secondary)" stroke="#185FA5" stroke-width="0.5"/>
+  <text x="350" y="147" text-anchor="middle" dominant-baseline="central" font-family="var(--font-sans)" font-size="14" font-weight="500" fill="var(--color-text-primary)">presentation</text>
+  <text x="350" y="166" text-anchor="middle" dominant-baseline="central" font-family="var(--font-sans)" font-size="12" fill="var(--color-text-secondary)">123 文件 / 31 534 行 · 占全库 56%</text>
+  <text x="350" y="182" text-anchor="middle" dominant-baseline="central" font-family="var(--font-sans)" font-size="12" fill="var(--color-text-secondary)">views 48 · state 24 · rich 25 · theme 9</text>
+</g>
+
+<g>
+  <rect x="230" y="230" width="240" height="52" rx="8" fill="var(--color-background-secondary)" stroke="#185FA5" stroke-width="0.5"/>
+  <text x="350" y="250" text-anchor="middle" dominant-baseline="central" font-family="var(--font-sans)" font-size="14" font-weight="500" fill="var(--color-text-primary)">application</text>
+  <text x="350" y="267" text-anchor="middle" dominant-baseline="central" font-family="var(--font-sans)" font-size="12" fill="var(--color-text-secondary)">43 文件 / 6 201 行</text>
+</g>
+
+<g>
+  <rect x="230" y="326" width="240" height="52" rx="8" fill="var(--color-background-secondary)" stroke="#0F6E56" stroke-width="0.5"/>
+  <text x="350" y="346" text-anchor="middle" dominant-baseline="central" font-family="var(--font-sans)" font-size="14" font-weight="500" fill="var(--color-text-primary)">domain</text>
+  <text x="350" y="363" text-anchor="middle" dominant-baseline="central" font-family="var(--font-sans)" font-size="12" fill="var(--color-text-secondary)">46 文件 / 7 282 行 · 零 IO 零 UI</text>
+</g>
+
+<g>
+  <rect x="230" y="422" width="240" height="52" rx="8" fill="var(--color-background-secondary)" stroke="#0F6E56" stroke-width="0.5"/>
+  <text x="350" y="442" text-anchor="middle" dominant-baseline="central" font-family="var(--font-sans)" font-size="14" font-weight="500" fill="var(--color-text-primary)">infrastructure</text>
+  <text x="350" y="459" text-anchor="middle" dominant-baseline="central" font-family="var(--font-sans)" font-size="12" fill="var(--color-text-secondary)">47 文件 / 10 221 行</text>
+</g>
+
+<g>
+  <rect x="40" y="300" width="140" height="60" rx="8" fill="var(--color-background-secondary)" stroke="#A32D2D" stroke-width="0.5"/>
+  <text x="110" y="320" text-anchor="middle" dominant-baseline="central" font-family="var(--font-sans)" font-size="14" font-weight="500" fill="var(--color-text-primary)">shared</text>
+  <text x="110" y="337" text-anchor="middle" dominant-baseline="central" font-family="var(--font-sans)" font-size="12" fill="var(--color-text-secondary)">14 文件 / 1 890 行</text>
+  <text x="110" y="352" text-anchor="middle" dominant-baseline="central" font-family="var(--font-sans)" font-size="12" fill="#A32D2D">system.rs 直接 spawn</text>
+</g>
+
+<path d="M310 126 L310 92" fill="none" stroke="#A32D2D" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="300" y="110" text-anchor="end" dominant-baseline="central" font-family="var(--font-sans)" font-size="12" fill="#A32D2D">32 处反向引用</text>
+
+<path d="M390 92 L390 126" fill="none" stroke="#A32D2D" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="400" y="110" dominant-baseline="central" font-family="var(--font-sans)" font-size="12" fill="#A32D2D">1 处 show() 调用</text>
+
+<path d="M350 192 L350 226" fill="none" stroke="#185FA5" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="362" y="210" dominant-baseline="central" font-family="var(--font-sans)" font-size="12" fill="var(--color-text-secondary)">单向 ✓</text>
+
+<path d="M350 282 L350 322" fill="none" stroke="#185FA5" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="362" y="302" dominant-baseline="central" font-family="var(--font-sans)" font-size="12" fill="var(--color-text-secondary)">单向 ✓</text>
+
+<path d="M350 378 L350 418" fill="none" stroke="#0F6E56" stroke-width="1.5" marker-end="url(#arrow)"/>
+<text x="362" y="398" dominant-baseline="central" font-family="var(--font-sans)" font-size="12" fill="var(--color-text-secondary)">trait 实现反向注入 ✓</text>
+
+<path d="M180 320 L196 320" fill="none" stroke="#888780" stroke-width="0.5" stroke-dasharray="3 3"/>
+<path d="M180 330 L222 245" fill="none" stroke="#888780" stroke-width="0.5" stroke-dasharray="3 3"/>
+<path d="M180 340 L222 352" fill="none" stroke="#888780" stroke-width="0.5" stroke-dasharray="3 3"/>
+<path d="M180 350 L222 448" fill="none" stroke="#888780" stroke-width="0.5" stroke-dasharray="3 3"/>
+<text x="110" y="378" text-anchor="middle" dominant-baseline="central" font-family="var(--font-sans)" font-size="12" fill="var(--color-text-tertiary)">被所有层依赖</text>
+
+<text x="500" y="200" dominant-baseline="central" font-family="var(--font-sans)" font-size="12" fill="var(--color-text-secondary)">domain → infrastructure</text>
+<text x="500" y="218" dominant-baseline="central" font-family="var(--font-sans)" font-size="12" fill="#0F6E56">0 处 ✓</text>
+<text x="500" y="242" dominant-baseline="central" font-family="var(--font-sans)" font-size="12" fill="var(--color-text-secondary)">application → infra</text>
+<text x="500" y="260" dominant-baseline="central" font-family="var(--font-sans)" font-size="12" fill="#0F6E56">0 处 ✓</text>
+<text x="500" y="284" dominant-baseline="central" font-family="var(--font-sans)" font-size="12" fill="var(--color-text-secondary)">domain → app 引用</text>
+<text x="500" y="302" dominant-baseline="central" font-family="var(--font-sans)" font-size="12" fill="#0F6E56">仅 1 处 doc 注释</text>
+
+<line x1="40" y1="480" x2="640" y2="480" stroke="var(--color-border-tertiary)" stroke-width="0.5"/>
+<text x="40" y="496" dominant-baseline="central" font-family="var(--font-sans)" font-size="12" fill="var(--color-text-tertiary)">红色 = 违反单向依赖或契约越界；绿 = 已验证合规</text>
+</svg>
