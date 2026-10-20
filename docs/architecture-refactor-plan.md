@@ -557,37 +557,35 @@ UI 选格式 ──► ExportFormat（领域唯一枚举）
 
 #### R-04 · 接线两个 `Unbound` 动作（`Revert` / `InsertImage`）
 
-- **改造内容**：
-  1. `Revert`（撤销）：领域侧撤销链已齐备（`domain/document/aggregate.rs` 的 `UndoStack`），`app/frame/actions.rs:289` 现为 `A::Revert | A::InsertImage => ActionRoute::Unbound`。→ 改为 `ActionRoute::Handler(route_revert)`，新增 `route_revert` 调用既有的撤销入口。
-  2. `InsertImage`（插入图片）：需要确认原型契约——是插入图片**链接**（`![](path)`）还是触发**文件选择**。
-     - 若为链接：走 `app/frame/files.rs` 的插入文本路径 + 一个图片选择对话框；
-     - 若为文件选择：走 `DialogPort`（`shared/dialog.rs:55`）新增一个 `pick_image()` 方法。
-  3. `src/app/frame/actions.rs:433-440` 的 Unbound 清单断言**同步更新**（该断言的作用是「防止新增 Unbound 而无人知晓」）。
-- **涉及文件**：`src/app/frame/actions.rs`（路由表 + trampoline + Unbound 清单断言）、`src/app/frame/editor.rs`（撤销/插入实现）、`src/shared/dialog.rs`（若需 `pick_image`）、`src/infrastructure/dialog`（对应实现）
-- **影响范围**：2 个动作从「按下无反应」变为「可用」；`UiAction` 总数 57 不变；`action_route` 的 `Unbound` 分支清零。
+- **改造内容**（**实施偏差：契约已定，与方案正文不同，见下**）：
+  1. `Revert`（还原修改）：方案正文写「调用既有的撤销入口（undo）」，但实施前核对代码证据后**推翻**——UI 标签「还原修改」、图标 `revert discard`、`actions.rs` 的原地注释「需要应用层提供『从磁盘重新加载』用例」、`settings.rs` 注释「Revert 是纯 UI 动作、没有领域对应项」四处一致指向「丢弃未保存修改、从磁盘重新加载」，且 `UiAction::Undo` 早已接线（照方案做会出现两个重复动作）。→ 定为**从磁盘重新加载**：新增应用层 `RevertCommand` + `LifecycleService::revert`（读盘 → 整篇 `replace` → `mark_saved` 清脏），`app/frame` 新增 `pending_revert` + `request_revert`/`apply_revert_confirm`/`run_revert`（脏文档经 `DialogPort::Confirm` 二次确认，**未命名文档提示而非猜位置**），`actions.rs` 路由由 `Unbound` 改为 `Handler(route_revert)`。还原后**草稿必须清**（否则下次启动会把丢弃的修改又捡回来）。
+  2. `InsertImage`（插入图片）：契约定为**选图对话框 → 复制到资源目录 → 插相对链接**（而非仅插链接）。`DialogPort` 新增 `pick_image`（带 `image_filters` 过滤器，唯一出处 `IMAGE_EXTENSIONS`，覆盖预览侧 `image` crate 实际解码的位图，**剔除 svg** 因 `image` 不解码）；`shared` 新增 `ImageAssetStore` 端口 + `infrastructure` `FsImageAssetStore`（复制到文档目录 `assets/`、重名去重 `-1/-2…`，覆盖 = 静默丢图）；`Services.images` + 装配链最深层 `assemble_with_images`（旧链转发、既有调用点零改动）；`app/frame/images.rs` 编排「选图 → 导入 → 算相对/绝对路径 → 光标处插 `![](path)`」；`dialog_runner` 新增 `PickImage` 分支；`rfd_adapter` 与测试 fake 补实现。
+  3. `action_route` 的 `Unbound` 清单**清零**（两个动作各有归宿）；`Unbound` 变体因实例为零保留，加 `#[allow(dead_code)]`（机制预留，与 `tests/support/fake_dialog.rs` 同款理由）。
+- **涉及文件**：`src/app/frame/actions.rs`、`src/app/frame/files.rs`、`src/app/frame/dialog.rs`、`src/app/frame/images.rs`（新）、`src/application/document/commands.rs`、`src/application/document/service/lifecycle.rs`、`src/shared/dialog.rs`、`src/shared/image_asset.rs`（新）、`src/infrastructure/dialogs/rfd_adapter.rs`、`src/infrastructure/persistence.rs`、`src/infrastructure/persistence/image_store.rs`（新）、`src/app/bootstrap.rs`、`src/app/dialog_runner.rs`、`tests/app/revert_test.rs`（新，7 例）、`tests/app/insert_image_test.rs`（新，7 例）、`tests/support/fake_dialog.rs`、`tools/mut_r04.py`（新，11 轮变异）
+- **影响范围**：2 个动作从「按下无反应」变为「可用」；`UiAction` 总数 57 不变；`action_route` 的 `Unbound` 分支清零；用户可见：工具栏/菜单/快捷键的「还原修改」「插入图片」真正生效。
 - **依赖关系**：无前置。
 - **风险点**：
-  - `Revert` 与 egui 内置撤销栈的**双撤销**问题——`app/frame/editor.rs` 已有「领域改文本后清空 egui 撤销栈」的机制（`clear_undoer_next` 字段），接线时必须确认这条路仍然成立，否则一次 Ctrl+Z 会撤两层；
-  - `InsertImage` 若走文件选择，涉及**写盘**（图片复制到资源目录）还是仅插入链接，**契约未定**——**这是本项唯一的规格缺口，实施前需先定**。
-- **回滚方案**：路由改回 `Unbound` 即可（1 行），但 `Unbound` 清单断言要同步改回 → 建议**两条一起 revert**。
-- **验收判据**：
-  - `action_route` 的 `Unbound` 清单**清零**（或仅剩经用户确认保留的项，且每项在 `actions.rs` 注释里写明原因）；
-  - 新增回归：`revert_restores_the_previous_content`（真帧或领域级：改 3 次 → 撤销 → 内容回到第 1 次之后的状态）；
-  - 变异验证：把 `route_revert` 改成空实现 → 用例红。
+  - `Revert` 走的是普通编辑管道（整篇 `replace`），故「还原本身可撤销」（Ctrl+Z 把丢弃的修改找回来）天然成立，无需额外处理；
+  - `InsertImage` 写盘（复制图片到 `assets/`）属行为变更，已用重名去重 + 失败提示兜底；预览侧相对路径经 `assets.load(url, document_dir)` 解析，插 `assets/foo.png` 即可渲染。
+- **回滚方案**：路由改回 `Unbound`（各 1 行）+ 删除两个动作的实现文件与新端口；`Unbound` 清单断言同步改回。
+- **验收判据**（**全部达成**）：
+  - `action_route` 的 `Unbound` 清单清零；
+  - 新增回归 `tests/app/revert_test.rs`（7 例：核心还原 / 干净文档免确认 / 脏文档先确认且答复前内容不变 / 确认文案报文档名 / 答复否保留 / 对话框不可用报错 / 还原可撤销 / 清草稿 / 未命名文档提示）+ `tests/app/insert_image_test.rs`（7 例：复制到 assets 并插相对链接 / 未命名文档插绝对路径 / 导入失败报错且不插 / 重名去重 / 取消不插 / 选图取消不插 / 绝对路径图片）；
+  - 变异验证 `tools/mut_r04.py` **11 轮全捕获**（route 空转 / 脏文档不确认 / 不清草稿 / 确认文案丢名 / 不 mark_saved / replace 传空串 / InsertImage 路由空转 / 导入失败静默 / 链接格式错 / 未命名文档绝对分支丢失 / 重名去重失效）。
 
 #### R-05 · 设置页补写作目标输入
 
-- **改造内容**：`src/app/frame/settings.rs:154` 注释「设置页尚未提供写作目标输入框，保存时沿用当前值，避免被 0 覆盖」→ 在设置页的「编辑」分区补一个目标词数输入框；`domain/preferences/value_objects/editor.rs` 的 `writing_goal` 字段已存在，DTO（`EditorSettingsView`）已含该字段，**只缺 UI 入口**。
-- **涉及文件**：`src/presentation/views/settings_view.rs`（或其 `editor_prefs.rs` 子文件）、`src/app/frame/settings.rs`（保存时读输入框）、`src/presentation/state/settings_ui_state.rs`（暂存输入值）
-- **影响范围**：1 个 UI 控件 + 1 条保存路径；用户可见：写作目标**从不可设变为可设**；状态栏进度条随之生效（`app/frame/editor.rs` 的 `sync_goal` 已在读该值）。
-- **依赖关系**：无前置。**与 R-06 一起做可减少一次设置页回访成本**（可并行）。
+- **改造内容**：在设置页「编辑器」分区补一个目标词数输入框；`domain` 的 `writing_goal` / DTO 的 `EditorSettingsView::writing_goal` 早已有，**只缺 UI 入口**。输入框临时文本放 `settings_ui_state.writing_goal_text`（表现层视图状态，非业务副本），打开设置时从落盘值种入；改动**即时落盘**（`apply_editor_field`，与设置页其它项一致）。「0 归一为未设」逻辑抽成纯函数 `normalize_writing_goal`（表现层不得依赖 `domain`，故不引用 `WritingGoal::MAX`/常量，存 0 即由领域 `is_set` 判定未设），便于单测与变异钉住。`writing_goal` 同时纳入设置快照 `Snapshot`，**「取消」随之回滚**（与其它字段一致）。
+- **涉及文件**：`src/presentation/views/settings_view/editor_prefs.rs`（输入框）、`src/presentation/state/settings_ui_state.rs`（`writing_goal_text` + `Snapshot.writing_goal` + `normalize_writing_goal` + 单测）、`src/app/frame/settings.rs`（`open_settings` 种入缓冲、`cancel_settings` 从快照回滚）、`tests/app/writing_goal_test.rs`（新，3 例）、`tools/mut_r05.py`（新，2 轮变异）
+- **影响范围**：1 个 UI 控件；用户可见：写作目标**从不可设变为可设**；状态栏进度条随之生效（`app/frame/editor.rs` 的 `sync_goal` 已在读该值）。
+- **依赖关系**：无前置。
 - **风险点**：
-  - 输入框的**校验**：0 或负数会与 `sync_goal` 的「未设目标 = 整项隐藏」语义冲突（`status_bar_ui_state.rs:70` `goal.is_set()` 为假即隐藏）→ 必须把 0 归一为「未设」，不能存 0；
-  - 输入框的**状态归属**：临时输入值放 `settings_ui_state`（表现层状态）还是直写 `app`？按 R-11 的方向应走方法，但本项**排在 R-11 之前** → 此时仍走既有直写模式，**R-11 改造时需回头收口**（此点必须写进 R-11 的影响范围）。
-- **回滚方案**：移除控件 + 恢复 `settings.rs:154` 的「沿用当前值」逻辑。
-- **验收判据**：
-  - 新增回归：设置目标 1000 → 保存 → 重启 → 设置页读回 1000；设 0 → 保存 → 读回「未设」（而非 0）；
-  - 变异验证：把「0 归一为未设」的分支去掉 → 用例红。
+  - 0 归一为未设：已实现（`normalize_writing_goal`），负数无法输入（u32）；
+  - **状态归属**：本项**排在 R-11 之前**，临时输入值走 `settings_ui_state`、落盘走 `apply_editor_field`（既有直写模式）；**R-11 改造时需回头收口**（把输入框的读值也收口到方法）。
+- **回滚方案**：移除控件 + 恢复 `Snapshot.writing_goal` 的「从当前值取」逻辑。
+- **验收判据**（**全部达成**）：
+  - 新增回归 `tests/app/writing_goal_test.rs`：设 1000 → 重启 → 读回 1000；设 0 → 读回「未设」（而非 0）；从未设过 → 读回未设；
+  - 变异验证 `tools/mut_r05.py` **2 轮全捕获**（显式 0 不再归一 / 空串不再归一 → `normalize_writing_goal_treats_zero_and_empty_as_unset` 红）。
 
 #### R-06 · 切标签保留光标（每文档独立光标/选区）
 
@@ -1432,8 +1430,8 @@ widgets 不清 / icons 不清 / views 丢窄豁免 / 窄豁免外溢到整个 `c
 | M3 | R-02 | 2026-10-20 | 2026-10-20 | **2005** / 4 / OK | 新增 `scan_with_tests`，`scan` 签名不变；`tests/` 侧统一判 `Layer::Tests`（**不按目录名判层**——`tests/domain/` 是测试目标划分不是层，按名判会误套禁令）；`TESTS_FORBIDDEN` 只列库层名，放行 `crate::support`（243 处）；报告带 `tests/` 前缀；帧预约规则照样罩住测试侧；新增 8 例 + 变异验证 **6 轮全捕获**；构建耗时 +0.27s（+4.6%，方案预估的 35% 指扫描量非总耗时）；存量实测 `crate::<库层名>` 真实引用 = 0（命中全在注释/字符串里） |
 | M3 | R-03 | 2026-10-20 | 2026-10-20 | **2017** / 4 / OK | `shared/system.rs` 端口化：新增 `ExternalOpener` trait（`std::process` 移出 `shared`，`is_safe_to_open` 纯校验留下）；实现搬 `infrastructure/system.rs`；`Services.opener` + 装配链最深层 `assemble_with_opener`（**偏离原文**：直接给 `assemble_with_clock_and_dialogs` 加参数会一次性改 20+ 测试调用点，故新增最深层让旧链转发，既有调用点零改动）；预览区两处调用改经端口；`SHARED_FORBIDDEN` 加 `std::process`；新增 **9 例**（5 例假 opener 用户可见 + 4 例禁令）+ 变异 **7 轮全捕获** |
 | M3 | R-13 | 2026-10-20 | 2026-10-20 | **2024** / 4 / OK | `layer_of` 细粒度化（`state`/`views`/`rich`/`widgets`/`icons` 五子层，**层根文件与目录同规则**）；四条新禁令全部叠加父层；**方案预警的风险点真的发生了**——`views/` 独立成层后 `allowed_for` 没跟上，**35 个视图文件同时报错**，按「放宽到具体前缀而非放弃规则」把 `crate::app::frame` 窄豁免扩到全部子层（窄前缀不变）；存量实测 **0 处真实违规**（命中全在文档注释）→ 本项不改变任何编译结果；新增 7 例 + 修正 1 条旧筛子 + 变异 **8 轮全捕获**；约束文档加 §4.0/§9，新建 ADR-010 |
-| M4 | R-04 | | | | |
-| M4 | R-05 | | | | |
+| M4 | R-04 | 2026-10-20 | 2026-10-20 | **2044** / 4 / OK | `1462337`；Revert=从磁盘重载（非撤销，方案正文偏差，见 §4.2 R-04「实施偏差」）；InsertImage=选图→复制到 assets→插相对链接；`action_route` 的 `Unbound` 清单清零；新增 14 集成例 + 6 lib 例 + 变异 **11 轮全捕获** |
+| M4 | R-05 | 2026-10-20 | 2026-10-20 | **2048** / 4 / OK | `bd61fd4`；设置页补写作目标输入框，`normalize_writing_goal` 纯函数 + 纳入取消回滚快照；新增 3 集成例 + 1 lib 例 + 变异 **2 轮全捕获**；**R-11 改造时需回头收口输入框直写**（详见 §4.2 R-05 风险点） |
 | M4/M5 后 | R-06 | | | | 依赖 M5 子批 1 |
 | M5 | R-11 子批 1/2/3 | | | | |
 | M5 后 | R-12 | | | | 依赖 M5 |
