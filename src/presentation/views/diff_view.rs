@@ -21,6 +21,7 @@ use crate::app::frame::EditorApp;
 use crate::presentation::state::dialog_ui_state::Overlay;
 use crate::presentation::state::diff_ui_state::{CharSeg, CharSegKind, DisplayRow};
 use crate::presentation::theme::builtin::Theme;
+use crate::shared::path::file_name_of;
 
 /// 对话框默认尺寸（对齐原型 `BaseModal :width="760" :height="560"`）。
 const WIDTH: f32 = 760.0;
@@ -161,7 +162,7 @@ fn picker(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
         .auto_shrink([false, false])
         .show(ui, |ui| {
             for (path, _) in &files {
-                let name = path.rsplit('/').next().unwrap_or(path);
+                let name = file_name_of(path);
                 if ui
                     .add_sized(
                         [ui.available_width(), 26.0],

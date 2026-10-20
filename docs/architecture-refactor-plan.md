@@ -595,6 +595,30 @@ UI 选格式 ──► ExportFormat（领域唯一枚举）
   - 新增用例：`dialog_title_shows_only_the_file_name_on_windows_paths`（走真实 `DialogOutcome` 路径）；
   - `grep -rn "rsplit" src/app/frame/` → 只剩 `rsplit(['/', '\\'])` 一种形态。
 
+- **实施记录（2026-10-20，`67210f2` 之后）**：
+  - **小项 1 的实际范围比方案列的更大**：全库 `rsplit('/')` 取末段共 **9 处**（方案列了 5 处），
+    其中 app 层 3 处（`dialog.rs:166`、`:253`、`files.rs:441`）**只认 `/`**，是 Windows 上的真 bug；
+    presentation 层 6 处（`quick_open_ui_state.rs`、`sidebar_ui_state/search.rs`、
+    `sidebar_ui_state/tree.rs`、`diff_view.rs`、`sidebar_view/files.rs`、`welcome_view/recent.rs`）
+    输入来自已归一化的扫描结果，当前不出错但属重复实现。一并收敛。
+  - **落点与方案不同**：方案说走 `FilePath::file_name`（**值对象**方法），但值对象构造即校验
+    （拒绝 `..`、拒绝空串）——含 `..` 的合法路径会被判成 `Err`，写成
+    `FilePath::new(path).ok()` 就会**退化回「显示整条路径」**，比现状更糟。
+    故在 `shared/path.rs` 新增**自由函数** `file_name_of(raw: &str) -> &str`
+    （只做取末段，**不做任何校验**），9 处统一走它；
+    `FilePath::file_name` 也改为委托它，两处规则不分家。
+  - **小项 2 已做**，但**统一到了成本更低的一侧**：`active_document_dir` 原走 `get_document`
+    （**全文快照**，O(全文) 克隆——问题 043 的教训）取一个路径，现改为走
+    `get_tab_summary`（O(1)）；`document_dir` 原经 `current_document_path()` 的
+    **哨兵字符串**（「未命名文档」）反推「有没有路径」，现直接用
+    `current_document_file() -> Option<FilePath>`——**不再拿展示文案当判据**。
+    新增 `EditorApp::current_document_file()` 作为唯一出处。
+  - **小项 3 未做，方案的判断不成立**：`capture.rs:86-93` 的 `save_document_to` 与
+    `files.rs:193-205` 的 `save_document` **不是逐字重复**——后者走 `SaveCommand`
+    （含「另存为」语义与草稿清理），前者走 `SaveToPathCommand`（指定路径）。
+    真正重复的只有 `ensure_document()` + `refresh_text()` 两行，抽出共享函数会
+    制造一个语义混乱的入口。**如实记录：该项从范围中移除**，不强行实施。
+
 #### R-16 · 格式白名单硬编码漏网 + 注释单源
 
 - **改造内容**：
@@ -828,10 +852,20 @@ UI 选格式 ──► ExportFormat（领域唯一枚举）
 
 ### 5.3 进度记录表（随实施填写）
 
+**基线（2026-10-20 实测，commit `a10d766` / 分支 `refactor/v11-54`）**
+
+| 项 | 实测值 | 口径 |
+|---|---|---|
+| 测试 | **1862 passed / 0 failed / 4 ignored** | `cargo test --all-targets`；4 个 ignore 分布在 4 个目标（2 个性能基准 + 1 个生成型 golden + 1 个需外网），**均有意忽略** |
+| 架构守卫 | **OK（未发现分层依赖违规）** | `cargo run --bin check-arch` |
+| clippy | **0 lint** | `cargo clippy --all-targets --all-features -- -D warnings`（仅 Windows 增量编译锁文件清理告警，**非 lint**） |
+| release exe | **11,911,168 B = 11.36 MiB** | `stat -c%s target/x86_64-pc-windows-msvc/release/rustmark.exe`；`docs/metrics.md` §2.6 记 11.34 MiB，差 18,432 B（0.16%）属同配置重建波动，**仍越 10 MB 红线 1.36 MiB** |
+| 源码规模 | `src/` 302 文件 / 33 845 行 | 与评估报告 §1.1 同基线 |
+
 | 里程碑 | 改造项 | 起始 | 完成 | 门禁数字（passed / ignored / check-arch） | 备注 |
 |---|---|---|---|---|---|
-| M0 | 基线 | | | | |
-| M1 | R-14 | | | | |
+| M0 | 基线 | 2026-10-20 | 2026-10-20 | 1862 / 4 / OK | 分支 `refactor/v11-54`；基线 commit `a10d766` |
+| M1 | R-14 | 2026-10-20 | 2026-10-20 | **1863** / 4 / OK | `67210f2`；删私有副本 + 补「向下吸附」判据（变异验证：改向上 → 新用例红、旧用例绿） |
 | M1 | R-16 | | | | |
 | M1 | R-15 | | | | |
 | M1 | R-18（部分） | | | | |

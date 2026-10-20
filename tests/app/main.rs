@@ -16,6 +16,7 @@ mod delete_confirm_test;
 mod dialog_runner_test;
 mod frame_test;
 mod open_limit_test;
+mod path_file_name_test;
 mod routing_exporter_test;
 mod save_all_test;
 mod scheduler_test;

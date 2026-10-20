@@ -95,7 +95,7 @@ pub(crate) fn extension_index(name: &str) -> Option<usize> {
 /// 若只认 `/`，`D:\docs\a.md` 的分隔符判断就会失手（`FilePath` 只在
 /// 归一化**之后**才保证 `/`，而本函数面对的正是归一化之前的原始输入）。
 pub fn extension_of(path: &str) -> Option<String> {
-    let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
+    let name = crate::shared::path::file_name_of(path);
     let start = extension_index(name)?;
     Some(name[start..].to_ascii_lowercase())
 }

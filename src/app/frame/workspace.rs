@@ -131,15 +131,14 @@ impl EditorApp {
     /// 未保存过的新文档没有路径，此时返回 `None`——**不**回退到进程工作目录：
     /// GUI 程序的 CWD 取决于启动方式，用户完全无法预测，
     /// 把文件写到一个他看不见的地方比「要求先保存」糟糕得多。
+    ///
+    /// 走 [`Self::current_document_file`]（轻量摘要）：此前用
+    /// `get_document` 取全文快照只为拿一个路径——导出对话框每帧都可能
+    /// 问一次，白付一次 O(全文) 克隆（问题 043 的教训）。
     pub fn active_document_dir(&self) -> Option<String> {
-        let doc = self.active_doc?;
-        let view = self
-            .services
-            .documents
-            .get_document(GetDocumentQuery { id: doc })
-            .ok()?;
-        let path = view.path?;
-        path.parent().map(|parent| parent.as_str().to_string())
+        self.current_document_file()?
+            .parent()
+            .map(|parent| parent.as_str().to_string())
     }
 
     /// 当前文档标题去掉 `.md` 后缀（导出 / 另存为的建议文件名用）。

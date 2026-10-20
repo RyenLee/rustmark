@@ -298,13 +298,15 @@ impl EditorApp {
     ///
     /// 未保存的草稿没有目录 → 返回 `None`，此时相对路径图片无法解析，
     /// 预览显示占位而非报错。
+    ///
+    /// 走 [`Self::current_document_file`]（轻量摘要）：此前经
+    /// `current_document_path()` 的**哨兵字符串**（「未命名文档」）
+    /// 反推「有没有路径」——用展示文案当判据，一旦文案变了就误判。
     pub(crate) fn document_dir(&self) -> Option<std::path::PathBuf> {
-        let raw = self.current_document_path();
-        if raw.is_empty() || raw == "未命名文档" {
-            return None;
-        }
-        let path = std::path::Path::new(&raw);
-        path.parent().map(|p| p.to_path_buf())
+        let path = self.current_document_file()?;
+        path.parent()
+            .as_ref()
+            .map(|p| std::path::PathBuf::from(p.as_str()))
     }
 
     /// 整篇替换（缩进 / 反缩进 / 移动行这类**全文本变换**走这里）。

@@ -54,25 +54,33 @@ impl EditorApp {
         self.status_bar.notice(text, now);
     }
 
+    /// 当前文档的**保存路径**（`None` = 未保存过的新文档）。
+    ///
+    /// 这是「当前文档路径」的**唯一出处**（V11-54a / R-15）：
+    /// 此前有三处各自取路径（`current_document_path` 的哨兵字符串、
+    /// `document_dir` 的 `PathBuf`、`active_document_dir` 的 `String`），
+    /// 语义相近却**成本不同**（`active_document_dir` 走 `get_document`
+    /// 全文快照，每帧调用就是白付一次 O(全文) 克隆——问题 043 的教训）。
+    ///
+    /// 走轻量摘要（`get_tab_summary`）而非 `get_document`：面包屑每帧都取，
+    /// 后者要付一次全文快照只为拿一个路径。
+    pub fn current_document_file(&self) -> Option<FilePath> {
+        let id = self.active_doc?;
+        self.services
+            .documents
+            .get_tab_summary(GetDocumentQuery { id })
+            .ok()?
+            .path
+    }
+
     /// 当前文档的面包屑路径；无活动文档或无路径时返回「未命名文档」。
     ///
     /// 走轻量摘要而非 `get_document`：面包屑每帧都取，后者要付一次
     /// 全文快照只为拿一个路径（问题 043）。
     pub fn current_document_path(&self) -> String {
-        let Some(id) = self.active_doc else {
-            return "未命名文档".to_string();
-        };
-        match self
-            .services
-            .documents
-            .get_tab_summary(GetDocumentQuery { id })
-        {
-            Ok(view) => view
-                .path
-                .map(|p| p.as_str().to_string())
-                .unwrap_or_else(|| "未命名文档".to_string()),
-            Err(_) => "未命名文档".to_string(),
-        }
+        self.current_document_file()
+            .map(|p| p.as_str().to_string())
+            .unwrap_or_else(|| "未命名文档".to_string())
     }
 
     // ================================================================
@@ -405,7 +413,7 @@ impl EditorApp {
     /// 关联函数而非 `&self` 方法：表现层要在**置灰的行**上直接用同一句话
     /// 做悬停说明，那时手边不一定有可变借用。
     pub fn unsupported_format_notice(path: &str) -> String {
-        let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
+        let name = file_name_of(path);
         format!("暂不支持打开该格式：{name}")
     }
 
@@ -438,7 +446,7 @@ impl EditorApp {
     pub fn open_path(&mut self, path: &str) -> AppResult<()> {
         let result = self.open_workspace_file(path);
         if let Err(e) = &result {
-            let name = path.rsplit('/').next().unwrap_or(path);
+            let name = file_name_of(path);
             self.set_status_error(&format!("无法打开 {name}：{e}"));
         }
         result

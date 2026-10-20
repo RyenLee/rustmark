@@ -6,6 +6,7 @@ use crate::app::frame::EditorApp;
 use crate::presentation::state::sidebar_ui_state::{NameEdit, TreeRow, tree_rows};
 use crate::presentation::theme::builtin::Theme;
 use crate::presentation::widgets;
+use crate::shared::path::file_name_of;
 
 use super::*;
 
@@ -499,7 +500,7 @@ fn delete_with_feedback(app: &mut EditorApp, path: &str) {
 
 /// 路径末段（显示用）。
 pub(super) fn display_name(path: &str) -> String {
-    path.rsplit('/').next().unwrap_or(path).to_string()
+    file_name_of(path).to_string()
 }
 
 /// 执行文件树的点击意图（在渲染结束后统一做，见 `FileIntent`）。

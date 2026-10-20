@@ -5,6 +5,7 @@ use egui::{RichText, Ui, Vec2};
 use crate::application::dto::RecentFileView;
 use crate::presentation::theme::builtin::Theme;
 use crate::presentation::widgets;
+use crate::shared::path::file_name_of;
 
 use super::*;
 
@@ -127,7 +128,7 @@ fn recent_row(ui: &mut Ui, theme: &Theme, width: f32, item: &RecentFileView) -> 
 
 /// 路径末段（文件名）；无分隔符时返回原串。
 pub fn display_name(path: &str) -> String {
-    path.rsplit('/').next().unwrap_or(path).to_string()
+    file_name_of(path).to_string()
 }
 
 /// 目录过长时**从左侧**截断并加省略号。

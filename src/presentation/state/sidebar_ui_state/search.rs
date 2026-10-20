@@ -1,5 +1,7 @@
 //! 全局搜索的视图模型：三个开关、按文件分组的命中投影与片段定位。
 
+use crate::shared::path::file_name_of;
+
 /// 全局搜索选项（对齐原型 `searchOptions`）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub struct SearchOptions {
@@ -180,7 +182,7 @@ pub struct SearchHitRow {
 pub fn group_hits(hits: &[(String, usize, String)]) -> Vec<SearchGroup> {
     let mut groups: Vec<SearchGroup> = Vec::new();
     for (path, line, snippet) in hits {
-        let file_name = path.rsplit('/').next().unwrap_or(path).to_string();
+        let file_name = file_name_of(path).to_string();
         match groups.iter_mut().find(|g| &g.path == path) {
             Some(existing) => existing.hits.push(SearchHitRow {
                 line: *line,

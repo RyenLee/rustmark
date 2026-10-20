@@ -162,8 +162,11 @@ impl EditorApp {
     }
 
     /// 路径末段（提示文案里显示的名字）。
+    ///
+    /// 走 `shared::path::file_name_of`：它同时认 `/` 与 `\`，Windows 的
+    /// 原始路径（`C:\a\b.md`）不会整条被当成文件名显示。
     pub(super) fn display_name(path: &str) -> &str {
-        path.rsplit('/').next().unwrap_or(path)
+        file_name_of(path)
     }
 
     /// 报告「对话框本身不可用」这类失败。
@@ -250,7 +253,7 @@ impl EditorApp {
     /// 而用户右键点到的是目录本身，很可能没意识到里面还有东西。
     /// 只写「确定删除 X？」属于把风险藏起来。
     fn delete_confirm_message(&self, path: &str) -> String {
-        let name = path.rsplit('/').next().unwrap_or(path);
+        let name = file_name_of(path);
         let is_directory = self
             .workspace_entries
             .items
