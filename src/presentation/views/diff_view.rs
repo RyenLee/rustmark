@@ -68,7 +68,7 @@ fn body(app: &mut EditorApp, ui: &mut Ui) {
     let right = match app.read_workspace_file(&right_path) {
         Ok(text) => text,
         Err(e) => {
-            app.diff_ui.error = Some(format!("读取对照文件失败：{e}"));
+            app.set_diff_error(format!("读取对照文件失败：{e}"));
             String::new()
         }
     };
@@ -92,8 +92,8 @@ fn body(app: &mut EditorApp, ui: &mut Ui) {
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if ui.button("换一个文件").clicked() {
-                app.diff_ui.right_path = None;
-                app.diff_ui.rows.clear();
+                // 清选择 + 清结果行是一件事，缺一半会让旧结果与错误提示同框。
+                app.clear_diff_selection();
             }
             if ui.button("关闭").clicked() {
                 app.dialog.close(Overlay::Diff);

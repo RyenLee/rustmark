@@ -905,3 +905,81 @@ fn symbol_grid_matches_the_prototype_geometry() {
     // `each_new_overlay_actually_renders_in_a_real_frame` 覆盖。
     let _ = symbol_view::SYMBOL_INPUT_ID;
 }
+
+// ============================================================================
+// R-11 子批 2：差异对比浮层的写入口收敛到 app 层
+// ============================================================================
+//
+// 判据一律走 `EditorApp` 的方法入口：**不**直接给 `app.diff_ui.<字段>` 赋值
+// 再断言它。那样断言读的是自己刚写进去的值，方法改成空实现也照样绿
+// （判据自指，本项目已多次撞上）。
+
+/// 读取对照文件失败必须被记下来。
+///
+/// 静默返回空串会被当成「两侧完全一致」——用户得到的结论与事实相反。
+#[test]
+fn diff_read_failure_is_recorded_through_the_app_method() {
+    let (_dir, mut app) = app_with("a\n");
+    assert!(app.diff_ui.error.is_none(), "前置：初始无错误");
+
+    app.set_diff_error("读取对照文件失败：找不到 /x.md");
+
+    assert_eq!(
+        app.diff_ui.error.as_deref(),
+        Some("读取对照文件失败：找不到 /x.md"),
+        "读失败必须明说，不能静默"
+    );
+}
+
+/// 「换一个文件」同时清掉选择与上一份结果的行表。
+#[test]
+fn swapping_the_diff_right_file_clears_both_the_choice_and_the_rows() {
+    let (_dir, mut app) = app_with("a\nb\nc");
+    app.diff_ui
+        .open("a".to_string(), "/x.md".to_string(), "x.md".to_string());
+    app.diff_ui.recompute("a\nb\nc", "a\nX\nc");
+    assert!(app.diff_ui.right_path.is_some(), "前置：已选对照文件");
+    assert!(!app.diff_ui.rows.is_empty(), "前置：已有结果行");
+
+    app.clear_diff_selection();
+
+    assert!(app.diff_ui.right_path.is_none(), "选择应被清空");
+    assert!(
+        app.diff_ui.rows.is_empty(),
+        "上一份结果行也必须清掉——否则旧结果会与「读失败」提示同框，自相矛盾"
+    );
+}
+
+/// 没选对照文件时打开面板，会清掉上一次的错误。
+#[test]
+fn opening_diff_without_a_right_side_clears_the_stale_error() {
+    let (_dir, mut app) = app_with("a\n");
+    assert!(app.diff_ui.right_path.is_none(), "前置：还没选对照文件");
+    app.set_diff_error("上一次读失败");
+
+    app.open_diff_overlay();
+
+    assert!(
+        app.diff_ui.error.is_none(),
+        "还没选文件时不该留着上一次的错误：面板会先显示一条无从理解的错误"
+    );
+}
+
+/// 已保留对照文件时打开面板，**不清**错误。
+///
+/// 与上一条互补：`open_diff_overlay` 的清错误是**有条件的**。无条件清会让
+/// 「文件还在、却读不进来」退化成「两侧完全一致」。
+#[test]
+fn opening_diff_with_a_kept_right_side_keeps_the_error() {
+    let (_dir, mut app) = app_with("a\n");
+    app.diff_ui
+        .open("a".to_string(), "/x.md".to_string(), "x.md".to_string());
+    app.set_diff_error("读取对照文件失败");
+
+    app.open_diff_overlay();
+
+    assert!(
+        app.diff_ui.error.is_some(),
+        "对照文件仍在时清掉错误，会让面板显示「两侧一致」而真相是根本没读进来"
+    );
+}

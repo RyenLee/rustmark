@@ -51,12 +51,10 @@ impl EditorApp {
             self.symbol_ui.open();
         }
         if overlay == Overlay::Diff {
-            // 保留上一次选的对照文件：用户对照两个文件看了半天，
-            // 关掉再打开大概率还是想看同一对。**结果**行会重算，
-            // 因为左侧内容可能已经变了。
-            if self.diff_ui.right_path.is_none() {
-                self.diff_ui.error = None;
-            }
+            // 特有初始化已下沉到 `frame::diff::open_diff_overlay`——
+            // 路由表只做路由。保留上一次选的对照文件是刻意的，
+            // 理由与「只在没选文件时清错误」都写在那个方法上。
+            self.open_diff_overlay();
         }
     }
 

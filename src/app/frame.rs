@@ -519,6 +519,7 @@ impl EditorApp {
 mod actions;
 mod capture;
 mod dialog;
+mod diff;
 mod drag_drop;
 mod editor;
 mod export;
