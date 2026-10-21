@@ -33,8 +33,6 @@
 //! UTF-8（无 BOM），带 BOM 的 UTF-8 / UTF-16 与 GBK 在有明确字节
 //! 特征时才启用——见 `infrastructure::persistence::encoding::decode`。
 
-use crate::shared::dialog::FileFilter;
-
 /// 内置白名单的扩展名（**小写、不含前导点**）。
 ///
 /// 这是「默认支持哪些格式」的唯一出处。新增格式时同时更新
@@ -111,9 +109,6 @@ pub fn display_name(ext: &str) -> &'static str {
         .find(|(candidate, _)| *candidate == lower)
         .map_or("纯文本", |(_, name)| *name)
 }
-
-/// 一字不差的默认过滤器名（原生对话框的「文件类型」下拉项）。
-const FILTER_NAME: &str = "Markdown 与文本文件";
 
 /// **默认**扩展名（另存为对话框的建议文件名用）。
 ///
@@ -217,21 +212,6 @@ impl TextFormats {
     /// 「默认放行」等于把二进制文件放进编辑缓冲（本模块存在的理由）。
     pub fn accepts(&self, path: &str) -> bool {
         extension_of(path).is_some_and(|ext| self.accepts_extension(&ext))
-    }
-
-    /// 原生「打开」对话框的扩展名过滤器。
-    ///
-    /// 由白名单派生而非另写一份清单：对话框选不中、但拖放进得来的
-    /// 格式（曾经的 `.csv`）是用户最容易碰到的自相矛盾。
-    pub fn file_filter(&self) -> FileFilter {
-        FileFilter::new(
-            FILTER_NAME,
-            &self
-                .extensions
-                .iter()
-                .map(String::as_str)
-                .collect::<Vec<_>>(),
-        )
     }
 }
 
@@ -342,13 +322,5 @@ mod tests {
         assert_eq!(display_name("csv"), "CSV");
         // 未知格式不得冒充 Markdown。
         assert_eq!(display_name("rst"), "纯文本");
-    }
-
-    #[test]
-    fn file_filter_is_derived_from_the_whitelist() {
-        let filter = TextFormats::builtin().file_filter();
-        let names: Vec<&str> = filter.extensions.iter().map(String::as_str).collect();
-        assert_eq!(names, BUILTIN_TEXT_EXTENSIONS);
-        assert!(names.contains(&"csv"), "对话框必须能选中 csv");
     }
 }

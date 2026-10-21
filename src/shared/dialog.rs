@@ -87,6 +87,37 @@ pub trait DialogPort: Send + Sync {
     fn show_error(&self, message: &str) -> Result<(), AppError>;
 }
 
+/// 一字不差的默认过滤器名（原生对话框的「文件类型」下拉项）。
+///
+/// 与 [`TextFormats::file_filter`] 的实现一起放在本模块而非 `text_format`：
+/// 该方法的返回类型是 [`FileFilter`]（本模块的类型），放在 `text_format`
+/// 就意味着 `text_format → dialog` 的依赖边；而反方向
+/// （[`default_filters`] 派生自白名单）是问题 045 的有意设计。
+/// 两条边同时存在即成环（V11-55，见 `docs/shared-internal-cycle-review.md`）。
+/// Rust 允许同 crate 内跨模块 `impl`，故实现落在此处，调用路径
+/// `TextFormats::file_filter()` 与行为均不变。
+const FILTER_NAME: &str = "Markdown 与文本文件";
+
+impl TextFormats {
+    /// 原生「打开」对话框的扩展名过滤器。
+    ///
+    /// 由白名单派生而非另写一份清单：对话框选不中、但拖放进得来的
+    /// 格式（曾经的 `.csv`）是用户最容易碰到的自相矛盾。
+    ///
+    /// 取扩展名走 [`TextFormats::extensions`] 访问器而非字段——字段私有，
+    /// 跨模块 `impl` 也碰不到（同 crate 不豁免字段可见性）。
+    pub fn file_filter(&self) -> FileFilter {
+        FileFilter::new(
+            FILTER_NAME,
+            &self
+                .extensions()
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+        )
+    }
+}
+
 /// 取默认的**文本文件**过滤器集合。
 ///
 /// 清单**派生自** [`TextFormats`]（问题 045 的「唯一出处」）：在这里另写
@@ -112,4 +143,34 @@ pub const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bm
 /// 取默认的**图片文件**过滤器集合（插入图片用，R-04b）。
 pub fn image_filters() -> Vec<FileFilter> {
     vec![FileFilter::new("图片", IMAGE_EXTENSIONS)]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::shared::text_format::BUILTIN_TEXT_EXTENSIONS;
+
+    /// 派生判据（自 `text_format` 随实现迁入）：过滤器内容 == 白名单内容。
+    #[test]
+    fn file_filter_is_derived_from_the_whitelist() {
+        let filter = TextFormats::builtin().file_filter();
+        let names: Vec<&str> = filter.extensions.iter().map(String::as_str).collect();
+        assert_eq!(names, BUILTIN_TEXT_EXTENSIONS);
+        assert!(names.contains(&"csv"), "对话框必须能选中 csv");
+    }
+
+    /// 对拍判据（V11-55 新增）：`default_filters` 不得在白名单之外另立清单。
+    ///
+    /// 直接锚定 [`BUILTIN_TEXT_EXTENSIONS`] 与过滤器名，而不是与
+    /// `file_filter()` 的结果比对——后者是同义反复（`default_filters`
+    /// 正是调用它），只有锚定源头才能在「有人给对话框另写一份扩展名」
+    /// 时报红。
+    #[test]
+    fn default_filters_derives_from_the_whitelist() {
+        let filters = default_filters();
+        assert_eq!(filters.len(), 1, "文本过滤器应只有一个下拉项");
+        let names: Vec<&str> = filters[0].extensions.iter().map(String::as_str).collect();
+        assert_eq!(names, BUILTIN_TEXT_EXTENSIONS);
+        assert_eq!(filters[0].name, FILTER_NAME);
+    }
 }
