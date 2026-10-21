@@ -1370,6 +1370,17 @@ widgets 不清 / icons 不清 / views 丢窄豁免 / 窄豁免外溢到整个 `c
   - 变异验证：把 `prepend_selected_to_monospace` 的置顶顺序反过来 → 新增用例红；
   - `cargo build --release` 后 exe 体积与拆分前**差值 < 0.05 MiB**（记录前后数字）。
 
+**实施结果（2026-10-21，`1c90c2f`）**：
+
+- **三层拆分落地**：
+  1. `fonts/discovery.rs`：路径与存在性发现。`discover_font_sources(roots: &[PathBuf])` 改为接受**注入的根目录列表**，真实 FS 只留薄适配 `default_roots()`；`scan_project_fonts_dir(roots)` / `candidate_font_paths(roots)` 跟随注入；`system_mono_candidates` / `candidate_paths` / `builtin_font_path` 等保留。
+  2. `fonts/assembly.rs`：`extend_with_cjk` / `prepend_selected_to_monospace` / `extend_with_math_fallback` / `extend_with_builtin_cjk` / `load_cjk_font` 纯装配逻辑（CJK 追加到末尾、选中字体置顶进内置族等**顺序约束**不变）。
+  3. `fonts/mod.rs`：门面，`font_definitions` / `editor_font_choices` / `FontSetup` 组装两层；`pub use` 重导出，外部调用点（`app/frame.rs` 的 `crate::infrastructure::fonts::editor_font_choices()` / `font_definitions()`）**零改动**。
+- **★ 与方案偏差（可接受）**：方案提到装配层改接受 `Arc<dyn FontBytesLoader>`；实际 `extend_with_cjk` 本就接受字节、各函数已纯函数化，且 `font_definitions` 门面已用占位字节可测，故**未引入额外 trait**，避免过度设计。`font_definitions` 留在门面（非 assembly）以表达「门面组装两层」的归属。
+- **真实资产测试 skip 化（关键）**：原 6 个依赖内置字体文件（`assets/fonts/`）的用例在干净克隆下会**失败**；新增 `builtin_font_assets_present()` 守卫，缺失时静默跳过而非 panic——满足「干净克隆仍全绿」验收。发现并修复两处漏加守卫（`math_fallback_sits_between_western_and_cjk` / `builtin_cjk_sits_after_system_cjk_in_both_families`，二者 `.expect("…应已挂载")` 在资产缺失时 panic）。
+- **可测性验证**：新增注入式单测 `discovery_prefers_project_fonts_dir_over_system_candidates`（临时目录注入根，断言项目字体被发现且优先于系统候选）；变异 `tools/mut_r20.py` 2/2 全捕获（选中字体置顶改追加 / CJK 追加改插到开头）。
+- **门禁四绿实测（2026-10-21）**：fmt✓ / check-arch✓ / clippy 0 lint（-D warnings）/ test **2098 passed·0 failed·4 ignored**（2097 + 1 新单测）；`cargo build --release` 后 exe 11.37 MiB，纯文件拆分零逻辑/依赖变化，体积差 ≈ 0（< 0.05 MiB）。
+
 ### 4.4 P3 组：低成本清理包
 
 #### R-21 · 低成本清理包（8 个小项）
@@ -1550,7 +1561,7 @@ widgets 不清 / icons 不清 / views 丢窄豁免 / 窄豁免外溢到整个 `c
 | M4/M5 后 | R-06 | 2026-10-21 | 2026-10-21 | **2093** / 4 / OK | `a62d620`；`EditorApp` 新增 `per_doc_cursor: HashMap<DocumentId,(usize,usize)>`（随关标签 / 全关清除）；`switch_document` 先 stash → `refresh_text` → restore（按新文本 `byte_to_char` 写 `pending_cursor` 让 egui 主动重设脱字符）；`close_document` 仅「关当前页」才 restore（否则表里是陈旧快照，会把最新光标打回旧值）；`open_file` 新文档**不** restore（避免 `pending_cursor=(0,0)` 污染紧邻操作，实测修 `enter_at_various_cursor_positions`）；`tests/app/tab_cursor_test.rs` 三层判据（表记/取 + pending_cursor 排入并被渲染帧消费 + 真帧读 `TextEditState` 脱字符）+ 变异 **3/3 全捕获** |
 | M5 后 | R-12 | 2026-10-21 | 2026-10-21 | **2090** / 4 / OK | `eeaab0f`；`tools/arch_check.rs` 新增 token 级赋值形态规则（表现层 `app.<…> =` 必报、`==`/`&mut` 自然放行）；顺带收口 R-11 两层 grep 漏掉的单层直写 `app.editor_text =`（→ `EditorApp::set_editor_text`）；新增 4 例 + 变异 **1 轮全捕获**；**R-11 成果由构建期机械固化** |
 | M6 | R-17 | 2026-10-21 | 2026-10-21 | **2097** / 4 / OK | `de63c70`；widgets 收口：search 限宽段 0 高反模式→`elided_segment`（Rect 高度杜绝传 0）+ 新增第 4 组件 `paint_row_background` 收口 4 处行底色（独立封装而非给 `clickable_row` 加参数，避免与父级底色叠加两次）；新增 4 例（搜索对齐集成 1 + paint_row_background 单测 3）+ 变异 **3/3 全捕获** |
-| M6 | R-20 | | | | |
+| M6 | R-20 | 2026-10-21 | 2026-10-21 | **2098** / 4 / OK | `1c90c2f`；fonts.rs 拆 discovery/assembly/门面三层（discover_font_sources 改接受注入根目录、default_roots 薄适配）；6 个内置资产测试在 assets/fonts 缺失时 skip；新增注入式单测 1 + 变异 **2/2 全捕获** |
 | M6 | R-19 | | | | |
 | M6 | R-21 | | | | |
 
