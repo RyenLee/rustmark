@@ -1289,6 +1289,17 @@ widgets 不清 / icons 不清 / views 丢窄豁免 / 窄豁免外溢到整个 `c
   - 变异验证：把 `elided_segment` 的高度改回 0 → `search.rs` 的行高/垂直位置断言红；
   - 4 处 hover 底色改造后，各有真帧用例断言**命中区覆盖整行**且**底色矩形位置与改造前一致**（记下改造前的像素坐标作为基线）。
 
+**实施结果（2026-10-21，`de63c70`）**：
+
+- **两个子项均落地**：
+  1. `search.rs::group_header` 的 0 高 `allocate_ui_with_layout` 限宽段 → `widgets::text::elided_segment`，高度取行内已排控件矩形（参数类型 `Rect` 而非 `f32`，从类型层面杜绝「传 0 高」）。**写法顺序修正**：先空弱文本占位取行高基准 → `elided_segment` 文件名 → 右侧 `with_layout(right_to_left)` 放计数（`right_to_left` 先放计数会吃掉整行宽，使文件名段拿 ~0 宽，初版即栽此坑，见 `tests/presentation/search_alignment_test.rs` 修复记录）。
+  2. **新增第 4 个 widgets 组件 `widgets::row::paint_row_background`**（而非给 `clickable_row` 加 `background` 参数）：收口 `quick_open_view` / `command_palette_view` / `toolbar_view` 导航箭头 / `toolbar_view`「全部关闭」共 4 处逐字重复的「选中→`accent_soft` / 悬停→`bg_tertiary` 圆角(4pt)底色」配方。独立封装的理由：4 处调用点中部分底色由父级先画、`clickable_row` 当前不画底色，加 `background` 参数会与父级底色**叠加两次**（视觉变深）——独立函数让「圆角半径 + 两种主题色」没有别的写法可选（ADR-008 判据）。
+- **★ 与方案偏差（命名）**：方案建议 `clickable_row_with_background` 或给 `clickable_row` 加参数；实际选独立 `paint_row_background`，理由见上。函数只收口「圆角半径 + 两种底色」两行易错重复，不分配矩形、不返回命中区（背景须在内容之下绘制，调用方负责顺序）。
+- **真帧判据**：`tests/presentation/search_alignment_test.rs::search_group_header_filename_and_count_share_one_baseline`（集成，1 例：分组头文件名段与命中数同线，带内 top 离散 ≤ 0.5pt）；`row.rs` 单测 3 例（`paint_row_background_selected_draws_accent_soft` / `_hovered_draws_bg_tertiary` / `_draws_nothing_when_neither`，用 `Theme::dark()` + `ctx.run_ui` 抓 `Shape::Rect` 的 `fill` 比对主题色）。
+- **变异验证 `tools/mut_r17.py`**：3/3 全捕获（elided_segment 高度归 0 → 对齐测试红；选中态底色改错 → 选中例红；悬停态底色改错 → 悬停例红）。
+- **门禁四绿实测（2026-10-21）**：fmt✓ / check-arch✓ / clippy 0 lint（仅 lock-file 删除告警）/ test **2097 passed·0 failed·4 ignored**（R-06 后 2093 → +4：搜索对齐集成 1 + paint_row_background 单测 3）。
+- **验收判据复核**：`grep -rn "allocate_ui_with_layout" src/presentation/views/` → 仅 `preview_view/table.rs:284`（表格单元格，非限宽段场景）；`search.rs:175` 的命中是**注释**说明旧反模式、非代码。与方案口径一致。
+
 #### R-18 · 文档过期修正
 
 - **改造内容**（逐条对应评估报告 §P2-5 的 11 条）：
@@ -1538,7 +1549,7 @@ widgets 不清 / icons 不清 / views 丢窄豁免 / 窄豁免外溢到整个 `c
 | M5 | R-11 子批 3（ui/settings_ui/find/status_bar/shortcut_overview） | 2026-10-21 | 2026-10-21 | **2086** / 4 / OK | `e8157a2` + `3b4dc00`；收尾 8 处（ui 4 / settings_ui 4 / find 2 / status_bar 1 / shortcut_overview 1），新建 `frame/ui.rs` / `frame/status_bar.rs` / `frame/shortcut_overview.rs`、复用 `frame/settings.rs` / `frame/find.rs`；6 例 + 变异 **6 轮全捕获**；**`src/presentation/views` 真实直写由 12 降至 0，R-11 整体完成** |
 | M4/M5 后 | R-06 | 2026-10-21 | 2026-10-21 | **2093** / 4 / OK | `a62d620`；`EditorApp` 新增 `per_doc_cursor: HashMap<DocumentId,(usize,usize)>`（随关标签 / 全关清除）；`switch_document` 先 stash → `refresh_text` → restore（按新文本 `byte_to_char` 写 `pending_cursor` 让 egui 主动重设脱字符）；`close_document` 仅「关当前页」才 restore（否则表里是陈旧快照，会把最新光标打回旧值）；`open_file` 新文档**不** restore（避免 `pending_cursor=(0,0)` 污染紧邻操作，实测修 `enter_at_various_cursor_positions`）；`tests/app/tab_cursor_test.rs` 三层判据（表记/取 + pending_cursor 排入并被渲染帧消费 + 真帧读 `TextEditState` 脱字符）+ 变异 **3/3 全捕获** |
 | M5 后 | R-12 | 2026-10-21 | 2026-10-21 | **2090** / 4 / OK | `eeaab0f`；`tools/arch_check.rs` 新增 token 级赋值形态规则（表现层 `app.<…> =` 必报、`==`/`&mut` 自然放行）；顺带收口 R-11 两层 grep 漏掉的单层直写 `app.editor_text =`（→ `EditorApp::set_editor_text`）；新增 4 例 + 变异 **1 轮全捕获**；**R-11 成果由构建期机械固化** |
-| M6 | R-17 | | | | |
+| M6 | R-17 | 2026-10-21 | 2026-10-21 | **2097** / 4 / OK | `de63c70`；widgets 收口：search 限宽段 0 高反模式→`elided_segment`（Rect 高度杜绝传 0）+ 新增第 4 组件 `paint_row_background` 收口 4 处行底色（独立封装而非给 `clickable_row` 加参数，避免与父级底色叠加两次）；新增 4 例（搜索对齐集成 1 + paint_row_background 单测 3）+ 变异 **3/3 全捕获** |
 | M6 | R-20 | | | | |
 | M6 | R-19 | | | | |
 | M6 | R-21 | | | | |
