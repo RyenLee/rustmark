@@ -996,16 +996,14 @@ UI 选格式 ──► ExportFormat（领域唯一枚举）
 
 #### R-11 · `presentation ↔ app` 状态所有权收敛
 
-> **子批 1（`export_ui`，8 处）已落地**（2026-10-20，commit `96c2fa8`），作为
-> R-06 的前置条件单独提出；落地偏差见本节「实施偏差 · 子批 1」。
-> **子批 2（`diff_ui`，3 处）已落地**（2026-10-20，commit `5f5a7ab`）。
-> **子批 3 按 state 结构体分组推进**，已完成 `editor`(11) / `sidebar`(8) /
-> `preview`(5) 三组（commit `92f7755` / `de0bd68` / `aa6c252`）；剩余
-> `ui`(main_view 2 + toolbar_view 2) / `settings_ui`(4) / `find`(2) /
-> `status_bar`(1) / `shortcut_overview`(1) 共 **12 处**待收口。全库
-> `src/presentation/views` 真实直写由改造前 **46 处**降至 **12 处**（方案
-> 「59 处」含 13 处 `==` 误报，真实赋值 46；逐组 commit 见「实施偏差 · 子批 2 /
-> 子批 3」）。
+> **R-11 整体完成（2026-10-21，分支 `refactor/v11-54`）**。
+> 子批 1（`export_ui`，8 处，`96c2fa8`）→ 子批 2（`diff_ui`，3 处，`5f5a7ab`）
+> → 子批 3 按 state 分组八 commit：`editor`(11,`92f7755`) / `sidebar`(8,`de0bd68`)
+> / `preview`(5,`aa6c252`) / `ui`(4,`e8157a2`) / `settings_ui`(4) + `find`(2) +
+> `status_bar`(1) + `shortcut_overview`(1) 收尾四组（`3b4dc00`）。全库
+> `src/presentation/views` 对 app 状态字段的**真实直写由改造前 46 处降至 0**
+> （方案「59 处」含 13 处 `==` 误报，真实赋值 46；逐组 commit 与偏差见本节
+> 「实施偏差」各子节）。R-12 机械规则可上线固化本成果。
 
 - **改造内容**：把 presentation 层对 app 状态字段的 **59 处直写**（`grep -rEn 'app\.[a-z_]+\.[a-z_]+\s*=' src/presentation/`）改为调用 app 层方法。
   - **子批 1（`export_ui`，7 处）**：`src/presentation/views/export_view.rs:221/231/236/265/272/276/280` → 在 `src/app/frame/actions.rs` 或新建 `src/app/frame/export.rs` 提供 `set_export_error()` / `clear_export_result()` / `set_export_path()` 等方法。
@@ -1021,7 +1019,7 @@ UI 选格式 ──► ExportFormat（领域唯一枚举）
   - 过度改造的诱惑：把 59 处顺手重构成「命令模式」会引入大改 → **本项只做「直写 → 方法调用」这一件事**，不顺手重构。
 - **回滚方案**：**按子批分别 commit**，每个子批可独立 `git revert`；每个子批完成后门禁必须全绿，不允许「攒着一起改」。
 - **验收判据**：
-  - `grep -rEn 'app\.[a-z_]+\.[a-z_]+\s*=' src/presentation/` → **零命中**（R-12 规则上线后由构建期保证）；
+  - `grep -rEn 'app\.[a-z_]+\.[a-z_]+\s*=' src/presentation/` → **零命中**（已达成，R-12 规则上线后由构建期保证）；
   - 每个子批的行为等价性由**该功能已有的真帧回归**保证（导出浮层、差异对比、查找替换、状态栏各有既有用例）→ 逐子批跑对应测试文件；
   - 变异验证：把某个新方法改成空实现 → 对应用例红。
 
@@ -1525,9 +1523,10 @@ widgets 不清 / icons 不清 / views 丢窄豁免 / 窄豁免外溢到整个 `c
 | M4 | R-05 | 2026-10-20 | 2026-10-20 | **2048** / 4 / OK | `bd61fd4`；设置页补写作目标输入框，`normalize_writing_goal` 纯函数 + 纳入取消回滚快照；新增 3 集成例 + 1 lib 例 + 变异 **2 轮全捕获**；**R-11 改造时需回头收口输入框直写**（详见 §4.2 R-05 风险点） |
 | M5 | R-11 子批 1（`export_ui`） | 2026-10-20 | 2026-10-20 | **2055** / 4 / OK | `96c2fa8`；导出浮层 **8 处直写清零**（方案列 7 处，实测另有 1 处冗余写）；`open_overlay` 的 Export 初始化下沉到 `frame/export.rs`；新增 7 例 + 变异 **10 轮全捕获**；顺带修 2 处无牙齿判据；**方案「59 处」口径含 13 处 `==` 误报，真实赋值 46 → 38**（详见 §4.2 R-11「实施偏差 · 子批 1」） |
 | M5 | R-11 子批 2（`diff_ui`） | 2026-10-20 | 2026-10-20 | 全绿 / OK | `5f5a7ab`；差异浮层 **3 处直写清零**；`open_overlay` 的 diff 初始化下沉到 `frame/diff.rs`；变异 **5 轮全捕获** |
-| M5 | R-11 子批 3（editor/sidebar/preview） | 2026-10-21 | 2026-10-21 | **2076** / 4 / OK | `92f7755`+`de0bd68`+`aa6c252`；按 state 分组三 commit，清零 **24 处**（editor 11 / sidebar 8 / preview 5）；每组独立变异验证（7/7/4 轮全捕获）；`src/presentation/views` 真实直写由改造前 46 降至 **12**；剩余 `ui` 4 / `settings_ui` 4 / `find` 2 / `status_bar` 1 / `shortcut_overview` 1 待收口 |
+| M5 | R-11 子批 3（editor/sidebar/preview） | 2026-10-21 | 2026-10-21 | **2076** / 4 / OK | `92f7755`+`de0bd68`+`aa6c252`；按 state 分组三 commit，清零 **24 处**（editor 11 / sidebar 8 / preview 5）；每组独立变异验证（7/7/4 轮全捕获）；`src/presentation/views` 真实直写由改造前 46 降至 **12** |
+| M5 | R-11 子批 3（ui/settings_ui/find/status_bar/shortcut_overview） | 2026-10-21 | 2026-10-21 | **2086** / 4 / OK | `e8157a2` + `3b4dc00`；收尾 8 处（ui 4 / settings_ui 4 / find 2 / status_bar 1 / shortcut_overview 1），新建 `frame/ui.rs` / `frame/status_bar.rs` / `frame/shortcut_overview.rs`、复用 `frame/settings.rs` / `frame/find.rs`；6 例 + 变异 **6 轮全捕获**；**`src/presentation/views` 真实直写由 12 降至 0，R-11 整体完成** |
 | M4/M5 后 | R-06 | | | | **前置（R-11 子批 1）已落地，可做**（原记「依赖 M5 子批 1」） |
-| M5 后 | R-12 | | | | 依赖 R-11 全部子批；**规则正则须排除 `==`，否则误报 13 处** |
+| M5 后 | R-12 | | | | 依赖 R-11 全部子批（**已满足**）；**规则正则须排除 `==`，否则误报 13 处**；可上线固化 R-11 成果 |
 | M6 | R-17 | | | | |
 | M6 | R-20 | | | | |
 | M6 | R-19 | | | | |
