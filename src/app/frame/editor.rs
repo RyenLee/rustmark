@@ -561,6 +561,14 @@ impl EditorApp {
     pub fn pending_cursor_for_diag(&self) -> Option<(usize, usize)> {
         self.pending_cursor
     }
+
+    /// 某份文档记下的光标 / 选区（**测试用**，R-06）。
+    ///
+    /// 断言「切走时真的记了、切回时真的取了」：只断言 `editor.cursor`
+    /// 分不清「表里有值」与「恰好默认 0」。
+    pub fn per_doc_cursor_for_diag(&self, id: DocumentId) -> Option<(usize, usize)> {
+        self.per_doc_cursor.get(&id).copied()
+    }
 }
 
 // ————————————————————————————————————————————————————————————

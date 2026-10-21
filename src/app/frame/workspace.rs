@@ -366,6 +366,14 @@ impl EditorApp {
         })?;
         self.active_doc = Some(id);
         self.find.on_document_switched(id);
+        // 新开文档光标归零：这里**不**走 `restore_active_doc_cursor`——
+        // 它在 `per_doc_cursor` 里必然无记录（`open` 对新路径给新 ID），
+        // 恢复结果恒为 0，却会顺带写一个 `pending_cursor = (0, 0)`。
+        // 那个一次性通道值会在随后几帧把 egui 脱字符强设回 0，正好覆盖
+        // 「打开文件后 focus_at_end 再回车」这类紧邻操作落定的光标
+        // （实测 `enter_at_various_cursor_positions_keeps_gutter_in_sync`
+        // 因此把光标错放到第一行中间）。新文档的 0 由 egui 内容替换自然
+        // 给出，无需主动重设。
         self.editor.cursor = 0;
         self.editor.anchor = None;
         self.ui.sync.reset();

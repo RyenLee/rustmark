@@ -27,6 +27,7 @@ mod save_all_test;
 mod scheduler_test;
 mod shortcut_action_guard_test;
 mod shortcut_persisted_key_test;
+mod tab_cursor_test;
 mod text_format_guard_test;
 mod ui_state_writes_test;
 mod workspace_reveal_test;

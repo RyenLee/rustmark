@@ -243,6 +243,21 @@ pub struct EditorApp {
     /// egui 的 `TextEdit` 在内部记一套光标状态；领域命令改了文本后，
     /// 必须显式把这个位置写回 egui，否则光标会停在错误的偏移（多字节边界尤其明显）。
     pending_cursor: Option<(usize, usize)>,
+    /// 每份打开文档各自的光标 / 选区（R-06：切标签保留光标）。
+    ///
+    /// 键 [`DocumentId`]，值 `(cursor, anchor)` **字节偏移**——与
+    /// [`EditorUiState::cursor`] / [`EditorUiState::anchor`] 同单位；无选区时
+    /// `anchor == cursor`（等价于 `anchor: Option<usize>` 的 `None`，这里用
+    /// 相等值省掉一层 `Option`）。
+    ///
+    /// 为什么不在领域层：光标是**视图状态**（见 `editor_ui_state` 模块注释），
+    /// 而「哪份文档的光标配哪份文档」天然随标签生命周期生灭——领域
+    /// `Document` 关闭后这条记录即失效，故由 UI 侧持有、随关标签清除
+    /// （`close_document` / `close_all_documents`）。
+    ///
+    /// 切走时由 `stash_active_doc_cursor` 记、切回时由
+    /// `restore_active_doc_cursor` 取（见 `frame::tabs`）。
+    per_doc_cursor: std::collections::HashMap<DocumentId, (usize, usize)>,
     /// 上一次领域编辑后需要清空 egui 内置撤销栈。
     ///
     /// 理由：egui 的 `TextEdit` 自带撤销栈并会响应 Ctrl+Z；若不清除，
@@ -466,6 +481,7 @@ impl EditorApp {
             stats_pace: StatsPace::default(),
             scheduler: FrameScheduler::default(),
             pending_cursor: None,
+            per_doc_cursor: std::collections::HashMap::new(),
             clear_undoer_next: false,
             ime_composing: false,
             ime_composing_until_ms: 0,
