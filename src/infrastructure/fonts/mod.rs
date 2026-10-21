@@ -28,13 +28,29 @@
 //! 可能无法解析，而本项目设置了 `panic = "abort"`——解析 panic 会**直接终止进程**。
 //! 故候选清单**刻意只收录常规 TrueType 中文字体**，不收录彩色 emoji 字体。
 //! （emoji 由 egui 内置的 NotoEmoji / emoji-icon-font 覆盖，实测常用 emoji 均有字形。）
+//!
+//! # 分层
+//!
+//! - `discovery`：路径与存在性发现（可注入根目录，可单测）；
+//! - `assembly`：字节 → `FontDefinitions` 的纯装配逻辑；
+//! - 本门面：组装两层并产出 [`FontSetup`]。
 
-use std::path::PathBuf;
-use std::sync::Arc;
+pub mod assembly;
+pub mod discovery;
 
-use egui::{FontData, FontDefinitions, FontFamily};
+use egui::FontDefinitions;
 
-use crate::shared::fonts::{DEFAULT_EDITOR_FONT_KEY, EditorFontChoice};
+use crate::shared::fonts::EditorFontChoice;
+
+pub use assembly::{
+    BUILTIN_CJK_KEY, CJK_KEY, MATH_FALLBACK_KEY, extend_with_builtin_cjk, extend_with_cjk,
+    extend_with_math_fallback, load_cjk_font, prepend_selected_to_monospace,
+};
+pub use discovery::{
+    BUILTIN_EDITOR_FONTS, FontSource, builtin_editor_fonts, builtin_font_path,
+    candidate_font_paths, candidate_paths, default_roots, discover_font_sources,
+    scan_project_fonts_dir, system_mono_candidates, to_choices,
+};
 
 /// 字体装配结果。
 pub struct FontSetup {
@@ -70,7 +86,7 @@ pub fn font_definitions(selected_family: Option<&str>) -> FontSetup {
     let mut definitions = FontDefinitions::default();
 
     // 发现并登记可选的编辑区字体（内置三款 + 项目 fonts/ 目录 + 少量常见系统等宽字体）。
-    let sources = discover_font_sources();
+    let sources = discover_font_sources(&default_roots());
     for source in &sources {
         // 读不通的候选不登记，下拉里也不会出现（内置资产不存在读不通的问题）。
         if let Some(data) = source.font_data() {
@@ -108,545 +124,30 @@ pub fn font_definitions(selected_family: Option<&str>) -> FontSetup {
     }
 }
 
-/// 把用户选中的字体**置顶**进内置 `Monospace` 族（纯函数，便于单测）。
-///
-/// # 为什么是「置顶进内置族」而不是「自建一个族」
-///
-/// 自建族要求每一处排版前该族都已注册；而 egui 对未注册的
-/// `FontFamily::Name` 是 **panic**（`epaint fonts.rs:808`），
-/// 在 `panic = "abort"` 下即窗口消失。内置族永远有绑定，没有这个风险。
-/// 完整说明见 `shared::fonts` 模块文档。
-///
-/// # 三条规则
-///
-/// 1. **哨兵 / 空 / 未登记的键 → 原样返回**：观感与改造前逐像素一致，
-///    旧配置里残留的非法字体名（如 `sans-serif`）也能安全退化。
-/// 2. **置顶（不是追加）**：追加的话西文仍由 Hack / Ubuntu-Light 渲染，
-///    用户的选择看不见——那就是这个设置此前的「死设置」病因。
-/// 3. **先去重再插入**：选中键可能本就在族里（如某字体恰好被 egui 内置收录），
-///    不去重会得到重复成员，egui 会为它排版两遍。
-///
-/// 注意这与 [`extend_with_cjk`] 的「必须追加到末尾」不矛盾：那条管的是
-/// **默认**装配（中文兜底不能抢西文）；本条是用户**显式**选择后的覆写，
-/// 选中字体的拉丁字形优先正是用户意图。
-fn prepend_selected_to_monospace(definitions: &mut FontDefinitions, selected_family: Option<&str>) {
-    let Some(sel) = selected_family.filter(|s| {
-        !s.trim().is_empty()
-            && *s != DEFAULT_EDITOR_FONT_KEY
-            && definitions.font_data.contains_key(*s)
-    }) else {
-        return;
-    };
-    let mono = definitions.families.get_mut(&FontFamily::Monospace);
-    let Some(mono) = mono else {
-        // egui 默认定义必然含 Monospace 族；真丢了也不慌——自建一个只含
-        // 选中字体的族，比让用户的选择静默失效好。
-        definitions
-            .families
-            .insert(FontFamily::Monospace, vec![sel.to_string()]);
-        return;
-    };
-    mono.retain(|k| k != sel);
-    mono.insert(0, sel.to_string());
-}
-
-/// 一个已发现的、可供用户选择的编辑区字体源。
-struct FontSource {
-    /// egui 字体数据键（`user:<字体名>` 或 `builtin:<字体名>`，
-    /// 与 [`EditorFontChoice::key`] 同值）。
-    key: String,
-    /// 下拉显示名（字体文件名去扩展名 / 内置字体名）。
-    display_name: String,
-    /// 字体文件路径（内置 `fonts/`、项目 `fonts/` 目录或系统字体目录）。
-    ///
-    /// 内置字体不再 `include_bytes!` 进二进制（体积红线 NFR-PERF-01），
-    /// 改为随发行包以文件形式分发（见 [`builtin_font_path`]），
-    /// 故此处统一为磁盘路径、只做「存在性检查」。
-    path: PathBuf,
-}
-
-impl FontSource {
-    /// 取出字体字节并包装成 egui 的 `FontData`；读不通返回 `None`。
-    fn font_data(&self) -> Option<Arc<FontData>> {
-        std::fs::read(&self.path)
-            .ok()
-            .map(|bytes| Arc::new(FontData::from_owned(bytes)))
-    }
-}
-
-/// 定位一个内置字体文件，返回可读的路径；找不到返回 `None`。
-///
-/// 按顺序查找（先到先得）：
-/// 1. 可执行文件旁的 `fonts/`（安装态：随发行包分发的字体）；
-/// 2. 当前工作目录的 `fonts/`（开发态：`cargo run` 的工作目录即项目根）；
-/// 3. 编译期清单目录下的 `assets/fonts/`（开发 / 测试态：源码树）。
-///
-/// 内置字体随发行包分发，缺失时降级为「下拉里少一项 / 数学符号或裸机
-/// 中文回落到系统字体」，不阻断启动（`font_definitions` 的调用方只依据
-/// `cjk_source.is_none()` 记一条警告）。
-fn builtin_font_path(file: &str) -> Option<PathBuf> {
-    let mut dirs: Vec<PathBuf> = Vec::new();
-    if let Ok(exe) = std::env::current_exe()
-        && let Some(dir) = exe.parent()
-    {
-        dirs.push(dir.join("fonts"));
-    }
-    if let Ok(cwd) = std::env::current_dir() {
-        dirs.push(cwd.join("fonts"));
-    }
-    // `env!` 在编译期展开为清单目录；发行包在用户机器上不存在该路径，
-    // 但它是最后兜底、只在文件真存在时命中，因此无副作用。
-    dirs.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/fonts"));
-    dirs.into_iter().map(|d| d.join(file)).find(|p| p.is_file())
-}
-
-/// 随仓库分发的内置等宽字体（`assets/fonts/`，许可证见同目录 `Fonts-LICENSE.txt`）。
-///
-/// # 为什么要内置，而不是只发现系统字体
-///
-/// 只发现系统字体意味着「设置页能选什么」取决于用户机器装了什么：
-/// 多数 Windows 机器只有 Consolas / Cascadia，macOS 只有 Menlo，
-/// 用户听说 JetBrains Mono 好用，下拉里却没有——想选也无从选起。
-/// 内置三款（合计约 320KB）让三个平台都有一致的可选集，
-/// 「编辑区观感」也不再随机器漂移。
-///
-/// # 为什么只有 Regular 一个字重
-///
-/// 语法高亮的加粗靠 `TextFormat` 的加粗标记表达，egui 不做合成加粗；
-/// 缺 Bold 字重时加粗文本回落 Regular——这与系统 CJK 兜底是同一取舍。
-/// 三款全字重会把体积推到 2MB 以上，不划算。
-///
-/// # 显示名即去重键
-///
-/// 用户机器上恰好装了同名字体时，内置那份赢（内容相同、来源确定），
-/// 避免下拉里出现两个重复项——见 [`discover_font_sources`]。
-///
-/// # 为什么是文件名而非字节
-///
-/// 体积红线（`NFR-PERF-01`）下，内置字体**不再 `include_bytes!` 进二进制**，
-/// 而是随发行包以文件分发（`metrics.md §2.4` 方案 1）。第三列是文件名，
-/// 运行期经 [`builtin_font_path`] 定位、按需读取。
-const BUILTIN_EDITOR_FONTS: &[(&str, &str, &str)] = &[
-    (
-        "builtin:JetBrains Mono",
-        "JetBrains Mono",
-        "JetBrainsMono-Regular.ttf",
-    ),
-    ("builtin:Fira Code", "Fira Code", "FiraCode-Regular.ttf"),
-    (
-        "builtin:IBM Plex Mono",
-        "IBM Plex Mono",
-        "IBMPlexMono-Regular.ttf",
-    ),
-];
-
-/// 内置等宽字体清单（顺序即下拉顺序，按「综合口碑」排）。
-///
-/// 只收录**文件可解析**的项：发行包里缺了某个字体文件时，该字体
-/// 既不登记进 `font_data`，也不出现在下拉里（避免「选了却没生效」）。
-fn builtin_editor_fonts() -> Vec<FontSource> {
-    BUILTIN_EDITOR_FONTS
-        .iter()
-        .filter_map(|(key, name, file)| {
-            builtin_font_path(file).map(|path| FontSource {
-                key: (*key).to_string(),
-                display_name: (*name).to_string(),
-                path,
-            })
-        })
-        .collect()
-}
-
-/// 发现可选的编辑区字体：内置三款打头，其后是项目 `fonts/` 目录与常见系统等宽字体。
-///
-/// 只做**存在性**检查（不读内容、不解码）：真正读字节发生在
-/// [`font_definitions`]（那里经 [`FontSource::font_data`] 按需读文件）。
-fn discover_font_sources() -> Vec<FontSource> {
-    let mut sources: Vec<FontSource> = Vec::new();
-    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    // 内置字体排最前：同名时内置赢——跨平台确定性优先于「用户机器上恰好装了什么」。
-    for source in builtin_editor_fonts() {
-        if seen.insert(source.display_name.clone()) {
-            sources.push(source);
-        }
-    }
-    for (path, name) in candidate_font_paths() {
-        if !path.is_file() {
-            continue;
-        }
-        let key = format!("user:{name}");
-        // 按**显示名**去重（不是键）：用户装了与内置同名的字体时只保留内置那份，
-        // 否则下拉里会出现两个「JetBrains Mono」，选哪个全凭运气。
-        if seen.insert(name.clone()) {
-            sources.push(FontSource {
-                key,
-                display_name: name,
-                path,
-            });
-        }
-    }
-    sources
-}
-
-/// 候选字体路径（项目 `fonts/` + 系统等宽），按优先级排序。
-fn candidate_font_paths() -> Vec<(PathBuf, String)> {
-    let mut out = Vec::new();
-    out.extend(scan_project_fonts_dir());
-    out.extend(system_mono_candidates());
-    out
-}
-
-/// 扫描项目级 `fonts/` 目录：用户自置字体的入口，优先于系统字体。
-///
-/// 查找两个位置（都存在时都扫，项目根优先）：
-/// 1. 可执行文件旁的 `fonts/`（安装态：随程序分发的字体）；
-/// 2. 当前工作目录的 `fonts/`（开发态：`cargo run` 的工作目录即项目根）。
-fn scan_project_fonts_dir() -> Vec<(PathBuf, String)> {
-    const EXTS: [&str; 3] = ["ttf", "otf", "ttc"];
-    let mut dirs: Vec<PathBuf> = Vec::new();
-    if let Ok(exe) = std::env::current_exe()
-        && let Some(dir) = exe.parent()
-    {
-        dirs.push(dir.join("fonts"));
-    }
-    if let Ok(cwd) = std::env::current_dir() {
-        dirs.push(cwd.join("fonts"));
-    }
-    let mut out: Vec<(PathBuf, String)> = Vec::new();
-    for dir in dirs {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        let mut files: Vec<PathBuf> = entries
-            .flatten()
-            .map(|e| e.path())
-            .filter(|p| {
-                p.is_file()
-                    && p.extension()
-                        .is_some_and(|e| EXTS.iter().any(|x| e.eq_ignore_ascii_case(x)))
-            })
-            .collect();
-        // 排序让下拉顺序稳定（`read_dir` 顺序随文件系统而变）。
-        files.sort();
-        for path in files {
-            let Some(stem) = path.file_stem() else {
-                continue;
-            };
-            let name = stem.to_string_lossy().into_owned();
-            if !name.trim().is_empty() {
-                out.push((path, name));
-            }
-        }
-    }
-    out
-}
-
-/// 常见**等宽**字体候选（不收录彩色 emoji 字体，理由见模块文档的安全约束）。
-#[cfg(target_os = "windows")]
-fn system_mono_candidates() -> Vec<(PathBuf, String)> {
-    let fonts = std::env::var_os("WINDIR")
-        .map_or_else(|| PathBuf::from("C:\\Windows"), PathBuf::from)
-        .join("Fonts");
-    // 新版 Cascadia 常按用户安装到 `%LOCALAPPDATA%\Microsoft\Windows\Fonts`。
-    let user_fonts = std::env::var_os("LOCALAPPDATA")
-        .map(PathBuf::from)
-        .unwrap_or_default()
-        .join("Microsoft\\Windows\\Fonts");
-    [
-        (fonts.join("consola.ttf"), "Consolas"),
-        (fonts.join("lucon.ttf"), "Lucida Console"),
-        (user_fonts.join("CascadiaMono.ttf"), "Cascadia Mono"),
-        (user_fonts.join("CascadiaCode.ttf"), "Cascadia Code"),
-    ]
-    .into_iter()
-    .map(|(path, name)| (path, name.to_string()))
-    .collect()
-}
-
-/// macOS：Menlo 是终端与 Xcode 的默认等宽字体。
-#[cfg(target_os = "macos")]
-fn system_mono_candidates() -> Vec<(PathBuf, String)> {
-    [
-        ("/System/Library/Fonts/Menlo.ttc", "Menlo"),
-        (
-            "/Applications/Utilities/Terminal.app/Contents/Resources/Fonts/SFMono-Regular.otf",
-            "SF Mono",
-        ),
-    ]
-    .into_iter()
-    .map(|(path, name)| (PathBuf::from(path), name.to_string()))
-    .collect()
-}
-
-/// Linux：发行版差异大，列最常见的等宽字体安装路径。
-#[cfg(all(unix, not(target_os = "macos")))]
-fn system_mono_candidates() -> Vec<(PathBuf, String)> {
-    [
-        (
-            "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
-            "DejaVu Sans Mono",
-        ),
-        (
-            "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
-            "Liberation Mono",
-        ),
-        (
-            "/usr/share/fonts/truetype/ubuntu/UbuntuMono-R.ttf",
-            "Ubuntu Mono",
-        ),
-        (
-            "/usr/share/fonts/truetype/noto/NotoSansMono-Regular.ttf",
-            "Noto Sans Mono",
-        ),
-    ]
-    .into_iter()
-    .map(|(path, name)| (PathBuf::from(path), name.to_string()))
-    .collect()
-}
-
-/// 把发现的字体源映射为设置页下拉项（始终以「系统等宽（默认）」打头）。
-fn to_choices(sources: &[FontSource]) -> Vec<EditorFontChoice> {
-    let mut choices = vec![EditorFontChoice {
-        key: DEFAULT_EDITOR_FONT_KEY.to_string(),
-        display_name: "系统等宽（默认）".to_string(),
-    }];
-    for s in sources {
-        choices.push(EditorFontChoice {
-            key: s.key.clone(),
-            display_name: s.display_name.clone(),
-        });
-    }
-    choices
-}
-
 /// 轻量版清单：只发现字体（存在性检查），不读字节、不装配。
 ///
 /// 供应用启动时填充设置页下拉用；完整装配走 [`font_definitions`]。
 /// 分开是为了避免「为了列个下拉就把所有字体文件读两遍」。
 pub fn editor_font_choices() -> Vec<EditorFontChoice> {
-    to_choices(&discover_font_sources())
-}
-
-/// 读取第一个可用的 CJK 字体，返回 `(路径, 字节)`。
-///
-/// 逐个尝试候选路径，第一个能读通的即返回——**不做字体内容校验**：
-/// 候选清单里的都是常规轮廓字体，而校验需要额外解析（见模块文档的安全约束）。
-pub fn load_cjk_font() -> Option<(String, Vec<u8>)> {
-    candidate_paths().into_iter().find_map(|path| {
-        std::fs::read(&path)
-            .ok()
-            .map(|bytes| (path.to_string_lossy().into_owned(), bytes))
-    })
-}
-
-/// 把 CJK 字体追加进默认字体定义。
-///
-/// # 必须追加到族**末尾**，不能插到开头
-///
-/// 这是本模块最容易被"优化"错的地方，代价却很大：
-///
-/// - 插到开头 → 西文也改用中文字体的拉丁字形（雅黑的拉丁部分不如 Ubuntu-Light 精细，
-///   观感明显变差），**且代码块会失去等宽**——中文等宽字体的西文字形通常不等宽，
-///   代码缩进与对齐会全乱。
-/// - 追加到末尾 → 保持正确语义：**西文优先命中，缺失才回落到 CJK**。
-///
-/// 表现层无法察觉这一差别（都只是"字体变了"），故有专门的单元测试锁定族内顺序。
-///
-/// # 完整的兜底链（`font_definitions` 的装配顺序）
-///
-/// ```text
-/// 西文（Ubuntu-Light / Hack）──► 数学兜底（MATH_FALLBACK_KEY）──► 系统 CJK ──► 内置 CJK 子集
-/// ```
-///
-/// 数学兜底必须**插在 CJK 之前**：雅黑等中文字体自己也带一部分数学字形
-/// （≤ ≥ ≠ 之类），若让 CJK 先命中，同一页公式里会出现"一部分符号是雅黑
-/// 形状、另一部分是数学字体形状"的混搭；置前则数学符号形状一致，
-/// 中文字符继续落到 CJK（数学字体没有汉字）。
-///
-/// 内置 CJK 子集必须**排在系统 CJK 之后**：系统字体（雅黑 / 苹方）观感更好
-/// 且字重齐全，内置子集只是「一台机器上什么中文字体都没有」时的保险。
-/// 顺序反了会让有中文字体的用户也被迫用子集（生僻字反而变方框）。
-pub fn extend_with_cjk(definitions: &mut FontDefinitions, bytes: Vec<u8>) {
-    definitions
-        .font_data
-        .insert(CJK_KEY.to_owned(), Arc::new(FontData::from_owned(bytes)));
-
-    // 比例族与等宽族都要挂：正文用比例族，编辑区与代码块用等宽族，
-    // 漏掉任一族都会让那一处的中文变成方框。
-    for family in [FontFamily::Proportional, FontFamily::Monospace] {
-        definitions
-            .families
-            .entry(family)
-            .or_default()
-            .push(CJK_KEY.to_owned());
-    }
-}
-
-/// 内置数学兜底字体（TeX Gyre DJV Math，DejaVu 的数学扩展版）。
-///
-/// # 为什么必须内置，而不能指望系统字体
-///
-/// egui 自带的两套字体（比例族 Ubuntu-Light、等宽族 Hack）与常见中文字体
-/// （雅黑 / 苹方 / Noto CJK）**都缺数学运算符区**（U+2200–22FF 与
-/// U+2A00–2AFF）。实测 67 个常用符号（`\forall` `\emptyset` `\Rightarrow`
-/// `\langle` `\bigoplus` …）在西文与中文字体里**全部落空**，预览里就是一屏
-/// 方框——不报错、不崩溃，肉眼极难归因（问题 3「数学符号不齐缺失」的根因）。
-///
-/// 系统里并非没有数学字体（Windows 有 Cambria Math），但**依赖它等于把
-/// 正确性绑到操作系统上**：Linux CI / 极简容器里没有，macOS 没有公开路径，
-/// 于是同一份代码在不同机器上表现不同，字形覆盖测试也无法作为回归守住。
-/// 内置一份则所有平台一致。
-///
-/// # 体积取舍
-///
-/// 578KB 换「数学公式在所有平台都能排出来」。考虑到替代方案是内嵌一个
-/// JS 引擎（+100MB 量级，已被 ADR 否决）或引入 resvg（带 C 依赖），
-/// 这个体积是同一目标下的最小代价。**不做子集化**：符号表由排版引擎
-/// （`views/math/symbols.rs`）逐符号驱动，子集必须与它一一对应，
-/// 漏一个符号就是一处方框——而那正是本函数要消灭的故障形态。
-/// 整字体 + 全符号覆盖测试（`tests/presentation/math_glyph_test.rs`）更稳。
-///
-/// # 许可证
-///
-/// Bitstream Vera / TeX Gyre DJV Math 许可证允许随软件再分发（须附许可证），
-/// 见 `assets/fonts/DejaVuMathTeXGyre-LICENSE.txt`。
-const MATH_FALLBACK_FILE: &str = "DejaVuMathTeXGyre.ttf";
-
-/// 数学兜底字体在 `font_data` 中的键名。
-pub const MATH_FALLBACK_KEY: &str = "math-fallback";
-
-/// 把内置数学兜底字体挂进两个族（位置在 CJK 之前，见 [`extend_with_cjk`] 的链图）。
-///
-/// 字体随发行包以文件分发（体积红线）：找不到或读不通时**跳过**——数学符号
-/// 缺字形只影响公式观感，不阻断启动（`font_definitions` 的调用方不因此报错）。
-fn extend_with_math_fallback(definitions: &mut FontDefinitions) {
-    let Some(path) = builtin_font_path(MATH_FALLBACK_FILE) else {
-        return;
-    };
-    let Ok(bytes) = std::fs::read(path) else {
-        return;
-    };
-    definitions.font_data.insert(
-        MATH_FALLBACK_KEY.to_owned(),
-        Arc::new(FontData::from_owned(bytes)),
-    );
-    for family in [FontFamily::Proportional, FontFamily::Monospace] {
-        definitions
-            .families
-            .entry(family)
-            .or_default()
-            .push(MATH_FALLBACK_KEY.to_owned());
-    }
-}
-
-/// CJK 字体在 `font_data` 中的键名。
-pub const CJK_KEY: &str = "cjk";
-
-/// 内置 CJK 兜底字体（Noto Sans SC 的 GB2312 子集，1.5MB）。
-///
-/// # 为什么内置 CJK 兜底，而不是继续只依赖系统字体
-///
-/// 原实现只找系统 CJK 字体（雅黑 / 苹方 / Noto CJK…），意味着
-/// **精简 Linux、最小化容器、部分 CI 镜像里中文全是方框**——而这正是
-/// 「切主题后编辑区乱码」类问题在最难复现的环境里的形态。内置一份子集后，
-/// 所有平台都至少有 GB2312 覆盖，不再看操作系统的脸色。
-///
-/// # 为什么是 GB2312 子集而不是整字体
-///
-/// 整字体 8.5MB、子集 1.5MB。差额来自 GB2312 之外的汉字（繁体、扩展区）
-/// 与用不到的字重——而那些字符在**有系统中文字体的机器上**仍由系统字体
-/// 渲染（内置子集排在系统 CJK 之后，见 [`extend_with_cjk`] 的链图），
-/// 所以子集化不损失实际观感，只决定「裸机」上的覆盖下限。
-/// GB2312 = 6763 汉字 + 1342 符号，是「日常中文不出方框」的经典底线。
-///
-/// # 子集化方法（可复现）
-///
-/// ```text
-/// pyftsubset NotoSansSC-Regular.ttf --text-file=gb2312.txt \
-///   --no-hinting --layout-features='' --name-IDs=0,1,2,3,4,5,6
-/// ```
-///
-/// `gb2312.txt` 由 GB2312 双字节码位经 Python `gb2312` 编解码器枚举而成
-/// （94×94 网格里能解出的字符，共 8105 个）。未修改任何字形。
-///
-/// # 许可证
-///
-/// SIL OFL-1.1，允许随软件再分发。版权与来源见
-/// `assets/fonts/Fonts-LICENSE.txt` 第 4 节。
-const BUILTIN_CJK_FILE: &str = "NotoSansSC-Subset.ttf";
-
-/// 内置 CJK 兜底在 `font_data` 中的键名。
-pub const BUILTIN_CJK_KEY: &str = "builtin-cjk";
-
-/// 把内置 CJK 子集挂进两个族，位置在**最末**（系统 CJK 之后）。
-///
-/// 无条件挂载（文件可解析时）：它轻量、只服务「系统什么中文字体都没有」
-/// 的场景，有系统字体时永远排在后排，不抢渲染。字体随发行包以文件分发
-/// （体积红线），缺失时跳过——此时裸机中文回落到系统 CJK。
-fn extend_with_builtin_cjk(definitions: &mut FontDefinitions) {
-    let Some(path) = builtin_font_path(BUILTIN_CJK_FILE) else {
-        return;
-    };
-    let Ok(bytes) = std::fs::read(path) else {
-        return;
-    };
-    definitions.font_data.insert(
-        BUILTIN_CJK_KEY.to_owned(),
-        Arc::new(FontData::from_owned(bytes)),
-    );
-    for family in [FontFamily::Proportional, FontFamily::Monospace] {
-        definitions
-            .families
-            .entry(family)
-            .or_default()
-            .push(BUILTIN_CJK_KEY.to_owned());
-    }
-}
-
-/// 候选字体路径，按「字形覆盖 + 观感」排序，靠前者优先。
-#[cfg(target_os = "windows")]
-fn candidate_paths() -> Vec<PathBuf> {
-    // 用 `%WINDIR%` 而非写死 `C:\Windows`：Windows 可装在非 C 盘。
-    let fonts = std::env::var_os("WINDIR")
-        .map_or_else(|| PathBuf::from("C:\\Windows"), PathBuf::from)
-        .join("Fonts");
-    ["msyh.ttc", "Deng.ttf", "simhei.ttf", "simsun.ttc"]
-        .iter()
-        .map(|name| fonts.join(name))
-        .collect()
-}
-
-/// macOS：苹方为系统默认中文界面字体。
-#[cfg(target_os = "macos")]
-fn candidate_paths() -> Vec<PathBuf> {
-    [
-        "/System/Library/Fonts/PingFang.ttc",
-        "/System/Library/Fonts/STHeiti Light.ttc",
-        "/Library/Fonts/Arial Unicode.ttf",
-    ]
-    .iter()
-    .map(PathBuf::from)
-    .collect()
-}
-
-/// Linux：发行版差异大，按常见安装路径依次尝试。
-#[cfg(all(unix, not(target_os = "macos")))]
-fn candidate_paths() -> Vec<PathBuf> {
-    [
-        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-        "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf",
-        "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
-        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
-        "/usr/share/fonts/truetype/arphic/uming.ttc",
-    ]
-    .iter()
-    .map(PathBuf::from)
-    .collect()
+    to_choices(&discover_font_sources(&default_roots()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use crate::shared::fonts::DEFAULT_EDITOR_FONT_KEY;
+    use egui::{FontData, FontFamily};
+
+    /// 内置字体资产（`assets/fonts/`）是否随仓库存在。
+    ///
+    /// 干净克隆删除该目录后，依赖内置字体文件的测试应**跳过**而非失败
+    /// （见 R-20 验收判据）；本机有系统 CJK 时其余逻辑仍由系统字体兜底。
+    fn builtin_font_assets_present() -> bool {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("assets/fonts")
+            .is_dir()
+    }
 
     /// 本机应当能找到一个 CJK 字体（三大平台都有标准路径）。
     ///
@@ -885,7 +386,7 @@ mod tests {
     /// 漏一处注册就 panic（`panic = "abort"` 下即窗口消失）。
     #[test]
     fn selected_font_renderable_through_builtin_monospace_font_id() {
-        let Some(source) = discover_font_sources().into_iter().next() else {
+        let Some(source) = discover_font_sources(&default_roots()).into_iter().next() else {
             eprintln!("跳过：本机未发现可选字体");
             return;
         };
@@ -929,7 +430,11 @@ mod tests {
     /// 内置字体已改为文件分发，同样按「路径存在」校验。
     #[test]
     fn discover_font_sources_only_returns_existing_files() {
-        for source in discover_font_sources() {
+        if !builtin_font_assets_present() {
+            eprintln!("跳过：内置字体资产 assets/fonts 缺失");
+            return;
+        }
+        for source in discover_font_sources(&default_roots()) {
             assert!(
                 source.path.is_file(),
                 "发现了不存在的字体文件：{:?}",
@@ -946,7 +451,7 @@ mod tests {
                 source.display_name
             );
         }
-        let sources = discover_font_sources();
+        let sources = discover_font_sources(&default_roots());
         let keys: Vec<&str> = sources.iter().map(|s| s.key.as_str()).collect();
         let mut sorted = keys.clone();
         sorted.sort_unstable();
@@ -967,6 +472,10 @@ mod tests {
     /// 会先命中，同一页公式里出现两种形状的符号；排到最前则会抢西文。
     #[test]
     fn math_fallback_sits_between_western_and_cjk() {
+        if !builtin_font_assets_present() {
+            eprintln!("跳过：内置字体资产 assets/fonts 缺失");
+            return;
+        }
         let mut defs = FontDefinitions::default();
         extend_with_math_fallback(&mut defs);
         extend_with_cjk(&mut defs, vec![0u8; 8]);
@@ -994,6 +503,10 @@ mod tests {
     /// 这一步同时守护「随仓库分发的字体文件是好的」。
     #[test]
     fn embedded_math_font_parses_and_covers_symbols() {
+        if !builtin_font_assets_present() {
+            eprintln!("跳过：内置字体资产 assets/fonts 缺失");
+            return;
+        }
         let setup = font_definitions(None);
         let ctx = egui::Context::default();
         ctx.set_fonts(setup.definitions);
@@ -1019,6 +532,10 @@ mod tests {
     /// 用户机器没装 JetBrains Mono 就永远选不到它。
     #[test]
     fn builtin_editor_fonts_are_registered_and_selectable() {
+        if !builtin_font_assets_present() {
+            eprintln!("跳过：内置字体资产 assets/fonts 缺失");
+            return;
+        }
         let setup = font_definitions(None);
         for (key, name, _) in BUILTIN_EDITOR_FONTS {
             assert!(
@@ -1054,6 +571,10 @@ mod tests {
     /// 共同钉住整条兜底链：西文 → 数学 → 系统 CJK → 内置 CJK。
     #[test]
     fn builtin_cjk_sits_after_system_cjk_in_both_families() {
+        if !builtin_font_assets_present() {
+            eprintln!("跳过：内置字体资产 assets/fonts 缺失");
+            return;
+        }
         let mut defs = FontDefinitions::default();
         extend_with_math_fallback(&mut defs);
         extend_with_cjk(&mut defs, vec![0u8; 8]);
@@ -1088,6 +609,10 @@ mod tests {
     /// `panic = "abort"` 下会直接终止进程，`set_fonts` 即试金石。
     #[test]
     fn builtin_cjk_subset_alone_provides_glyphs_for_chinese() {
+        if !builtin_font_assets_present() {
+            eprintln!("跳过：内置字体资产 assets/fonts 缺失");
+            return;
+        }
         let mut defs = FontDefinitions::default();
         extend_with_builtin_cjk(&mut defs);
         let ctx = egui::Context::default();
@@ -1105,6 +630,46 @@ mod tests {
             assert!(
                 has,
                 "内置 CJK 子集应独立覆盖 GB2312 常用汉字与标点（{font:?}）"
+            );
+        }
+    }
+
+    /// **R-20 注入式单测**：发现逻辑必须接受注入的根目录，
+    /// 且项目 fonts 目录优先于系统等宽候选。
+    ///
+    /// 这条把「发现」从硬编码路径里解放出来——删掉 `assets/fonts/` 的干净克隆
+    /// 也能验证优先级，而无须依赖真实字体文件。变异与回退场景见 `tools/mut_r20.py`。
+    #[test]
+    fn discovery_prefers_project_fonts_dir_over_system_candidates() {
+        let dir = tempfile::tempdir().expect("应可创建临时目录");
+        let path = dir.path().join("ProjectPriorityMono.ttf");
+        std::fs::write(&path, b"fake-font-bytes").expect("应可写入假字体");
+        let sources = discover_font_sources(&[dir.path().to_path_buf()]);
+        let project = sources
+            .iter()
+            .find(|s| s.display_name == "ProjectPriorityMono")
+            .expect("注入的项目 fonts 目录里的字体应被发现");
+        assert!(
+            project.key.starts_with("user:"),
+            "项目字体键应以 user: 前缀：{}",
+            project.key
+        );
+        // 项目字体须排在系统等宽候选之前（若存在）。
+        let sys_names: Vec<String> = system_mono_candidates()
+            .into_iter()
+            .map(|(_, n)| n)
+            .collect();
+        if let Some(sys_idx) = sources
+            .iter()
+            .position(|s| sys_names.iter().any(|n| n == &s.display_name))
+        {
+            let proj_idx = sources
+                .iter()
+                .position(|s| s.display_name == "ProjectPriorityMono")
+                .expect("上面已确认存在");
+            assert!(
+                proj_idx < sys_idx,
+                "项目字体须优先于系统等宽候选：项目@{proj_idx} 系统@{sys_idx}"
             );
         }
     }
