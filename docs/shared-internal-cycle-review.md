@@ -127,6 +127,17 @@ V11-54 P0「`shared/system.rs` 在共享内核做进程调用」**已由 R-03（
 4. **方案 C（守卫）另立小项**，本档案仅登记意向，不并入 V11-55 验收；
 5. 本档案替代 R-21 实施记录中的搁置备注，成为该问题的唯一事实源；R-21 记录保持历史原样不改写。
 
+## 5.1 实施结果（2026-10-21，`93127c2`）
+
+**方案 A 已落地，环已破除**：
+
+- `file_filter()` 与 `FILTER_NAME` 从 `text_format.rs` 迁入 `dialog.rs`（跨模块 `impl TextFormats`，同 crate 合法）。字段 `extensions` 私有，实现取扩展名改走既有的 `extensions()` 访问器——**零行为差异**（`default_filters` 内容迁移前后逐字节一致）。
+- 迁移后 shared 内部依赖图全单向：`dialog → {error, path, text_format}` / `event → {error, geometry, ids}` / `image_asset → {path, result}` / `result → {error}`，**无环**。
+- 测试随实现迁入 dialog.rs 新建的 `tests` 模块：派生判据 `file_filter_is_derived_from_the_whitelist`（原 text_format.rs 测试原文迁入）+ 新增对拍 `default_filters_derives_from_the_whitelist`（直接锚定 `BUILTIN_TEXT_EXTENSIONS` 与 `FILTER_NAME`，防 dialog 侧另立清单；若与 `file_filter()` 结果比对则是同义反复，锚定源头才有牙齿）。
+- 变异验证 `tools/mut_v11_55.py` **2/2 全捕获**：① `default_filters` 绕过派生改硬编码清单 → 对拍用例红；② `file_filter` 切断派生改硬编码 `&["md"]` → 派生判据红。
+- 四道门禁实测：fmt ✓ / check-arch ✓（0 违规）/ clippy 0 lint（`-D warnings`）/ `cargo test --all-targets` **2099 passed / 0 failed / 4 ignored**（2098 + 1 对拍用例）。
+- 附案（第 3 条定位声明）与方案 C（守卫小项）维持原建议，未并入本次验收。
+
 ---
 
 ## 6. 附录：实测命令（可复现）
