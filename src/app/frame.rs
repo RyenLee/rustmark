@@ -41,6 +41,7 @@ use crate::application::workspace::queries::{ListRecentQuery, ReadFileQuery, Sea
 use crate::application::workspace::service::TREE_MAX_DEPTH;
 use crate::domain::export::errors::ExportError;
 use crate::domain::preferences::value_objects::ActionId;
+use crate::shared::encoding::TextEncoding;
 use crate::shared::error::AppError;
 use crate::shared::export_format::{ExportFormat, PageSize};
 use crate::shared::fonts::EditorFontChoice;
@@ -64,7 +65,7 @@ use crate::presentation::state::find_replace_ui_state::{
 use crate::presentation::state::preview_ui_state::PreviewUiState;
 use crate::presentation::state::quick_open_ui_state::QuickOpenUiState;
 use crate::presentation::state::scroll_sync_state::Side;
-use crate::presentation::state::settings_ui_state::{SettingsUiState, Snapshot};
+use crate::presentation::state::settings_ui_state::{SettingsTab, SettingsUiState, Snapshot};
 use crate::presentation::state::shortcut_overview_ui_state::ShortcutOverviewUiState;
 use crate::presentation::state::sidebar_ui_state::SidebarUiState;
 use crate::presentation::state::sidebar_ui_state::{
@@ -531,7 +532,9 @@ mod preview;
 mod recovery;
 mod scheduler;
 mod settings;
+mod shortcut_overview;
 mod sidebar;
+mod status_bar;
 mod tabs;
 mod ui;
 mod workspace;

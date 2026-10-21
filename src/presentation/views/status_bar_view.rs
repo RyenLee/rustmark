@@ -38,9 +38,10 @@ const GOAL_BAR: Vec2 = Vec2::new(46.0, 6.0);
 /// 留下一个过期值——状态栏显示上一个文档的编码比不显示更糟。
 /// 代价只是一次 `HashMap` 查询（应用层旁路表），每帧可忽略。
 fn sync_encoding(app: &mut EditorApp) {
-    app.status_bar.encoding = app
-        .active_doc
-        .and_then(|id| app.services.documents.encoding_of(id));
+    app.set_status_bar_encoding(
+        app.active_doc
+            .and_then(|id| app.services.documents.encoding_of(id)),
+    );
 }
 
 /// 绘制底部状态栏。

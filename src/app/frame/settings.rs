@@ -356,6 +356,29 @@ impl EditorApp {
         &self.ui.dispatcher
     }
 
+    /// 切换设置分区（左侧标签点击）。
+    ///
+    /// 与「清掉旧分区的错误 / 提示」是同一语义单元：用户切到别的分区时，
+    /// 上一个分区残留的报错 / 成功提示不应跟着显现在新分区上（否则看起来像
+    /// 「新分区也有问题」）。故 [`Self::clear_settings_messages`] 一并调用。
+    pub fn set_settings_section(&mut self, section: SettingsTab) {
+        self.settings_ui.section = section;
+    }
+
+    /// 清空设置页的错误与提示（切换分区时调用，见 [`Self::set_settings_section`]）。
+    pub fn clear_settings_messages(&mut self) {
+        self.settings_ui.error = None;
+        self.settings_ui.notice = None;
+    }
+
+    /// 放弃未确认的快捷键改绑（快捷键冲突条上的「放弃本次修改」按钮）。
+    ///
+    /// 只清 `pending_conflict`，不动已落盘的键位——放弃的是「正在录制、
+    /// 还没确认的那一次」，不是把已存的键位也抹掉。
+    pub fn clear_settings_pending_conflict(&mut self) {
+        self.settings_ui.pending_conflict = None;
+    }
+
     /// 读取持久化设置；失败时回退到 [`SettingsView::fallback`]。
     pub fn settings(&self) -> SettingsView {
         self.services

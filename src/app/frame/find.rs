@@ -29,6 +29,14 @@ impl EditorApp {
         self.reveal_match(found);
     }
 
+    /// 查找框是否持有焦点（每帧由 `find_replace_view` 的 `TextEdit` 焦点状态回写）。
+    ///
+    /// 聚焦时值为 `true`、失焦时为 `false`，供「焦点变化」触发的副作用
+    /// （如自动展开面板）读取——状态必须落在应用层，因为多个视图会读它。
+    pub fn set_find_focused(&mut self, focused: bool) {
+        self.find.find_focused = focused;
+    }
+
     /// 选中某个命中并把它滚进视口。
     pub(super) fn reveal_match(
         &mut self,

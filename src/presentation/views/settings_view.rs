@@ -184,9 +184,8 @@ fn nav(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
                 .add_sized([NAV_WIDTH, 28.0], egui::Button::new(text).frame(false))
                 .clicked()
             {
-                app.settings_ui.section = *tab;
-                app.settings_ui.error = None;
-                app.settings_ui.notice = None;
+                app.set_settings_section(*tab);
+                app.clear_settings_messages();
             }
         }
     });
