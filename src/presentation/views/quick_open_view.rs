@@ -221,13 +221,13 @@ fn results(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, list: &[QuickOpenIte
                     egui::vec2(ui.available_width(), ROW_H),
                     egui::Sense::click(),
                 );
-                if i == selected {
-                    ui.painter()
-                        .rect_filled(rect, egui::CornerRadius::same(4), theme.accent_soft);
-                } else if response.hovered() {
-                    ui.painter()
-                        .rect_filled(rect, egui::CornerRadius::same(4), theme.bg_tertiary);
-                }
+                widgets::row::paint_row_background(
+                    ui.painter(),
+                    rect,
+                    i == selected,
+                    response.hovered(),
+                    theme,
+                );
                 // 文字色三分（问题 045，与文件树同一判据）：白名单外的文件
                 // 用次要色——快速打开列的是**工作区全部文件**，其中图片 /
                 // 二进制打不开；不置灰的话用户会以为「点了没反应」。

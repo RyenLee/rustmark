@@ -1,89 +1,27 @@
 //! Export 上下文的值对象（S3-13 配套）。
+//!
+//! # 导出格式与页面尺寸为什么不在这里定义
+//!
+//! [`ExportFormat`] 与 [`PageSize`] 的**唯一真源**在
+//! [`crate::shared::export_format`]：它们同时被领域层（任务校验）、
+//! 表现层（导出对话框）与基础设施层（导出器路由）需要，而
+//! `docs/architecture-constraints.md` §4 规定表现层不得依赖 `domain`——
+//! 真源留在本层，表现层就**用不到**它，于是只能再抄一份
+//! （这就是 R-07 之前 `ExportFormatChoice` 的由来：两份同构枚举靠字符串对齐，
+//! 没有编译期保证）。
+//!
+//! 本模块**转出**它们，是为了让领域层的公开路径
+//! （`domain::export::value_objects::ExportFormat`）保持不变——
+//! 换的是归属，不是可达性。
 
 use serde::{Deserialize, Serialize};
 
 use crate::shared::ids::DocumentId;
 
-/// 导出格式。
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Default, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ExportFormat {
-    /// 独立 HTML（默认）。
-    #[default]
-    Html,
-    /// Markdown 原文（用于「另存副本」）。
-    Markdown,
-    /// PDF（交由系统打印管线，见 ADR-004）。
-    Pdf,
-    /// 长图（PNG）。
-    Image,
-}
-
-impl ExportFormat {
-    /// 该格式对应的文件扩展名（不含点号）。
-    pub const fn extension(&self) -> &'static str {
-        match self {
-            Self::Html => "html",
-            Self::Markdown => "md",
-            Self::Pdf => "pdf",
-            Self::Image => "png",
-        }
-    }
-
-    /// 是否支持目录（TOC）。
-    ///
-    /// HTML 与 PDF 支持；Markdown 与长图不支持（长图是单张图片，没有页码）。
-    pub const fn supports_toc(&self) -> bool {
-        matches!(self, Self::Html | Self::Pdf)
-    }
-
-    /// 是否支持分页。
-    pub const fn supports_pagination(&self) -> bool {
-        matches!(self, Self::Pdf)
-    }
-
-    /// 是否需要指定页面尺寸。
-    pub const fn needs_page_size(&self) -> bool {
-        matches!(self, Self::Pdf)
-    }
-
-    /// 中文显示名。
-    pub const fn label(&self) -> &'static str {
-        match self {
-            Self::Html => "HTML",
-            Self::Markdown => "Markdown",
-            Self::Pdf => "PDF",
-            Self::Image => "图片",
-        }
-    }
-}
-
-impl std::fmt::Display for ExportFormat {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.label())
-    }
-}
-
-/// 页面尺寸（仅 PDF 使用）。
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Default, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PageSize {
-    /// A4（默认）。
-    #[default]
-    A4,
-    /// Letter。
-    Letter,
-}
-
-impl PageSize {
-    /// 中文显示名。
-    pub const fn label(&self) -> &'static str {
-        match self {
-            Self::A4 => "A4",
-            Self::Letter => "Letter",
-        }
-    }
-}
+/// 导出格式（唯一真源见 [`crate::shared::export_format`]）。
+pub use crate::shared::export_format::ExportFormat;
+/// 页面尺寸（唯一真源见 [`crate::shared::export_format`]）。
+pub use crate::shared::export_format::PageSize;
 
 /// 导出选项。
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]

@@ -93,6 +93,7 @@ struct State {
     open_file: Option<Reply>,
     save_file: Option<Reply>,
     pick_folder: Option<Reply>,
+    pick_image: Option<Reply>,
     confirm: Option<Reply>,
     last_filters: Vec<FileFilter>,
     last_suggested: String,
@@ -100,6 +101,7 @@ struct State {
     open_calls: usize,
     save_calls: usize,
     folder_calls: usize,
+    image_calls: usize,
     confirm_calls: usize,
 }
 
@@ -130,6 +132,13 @@ impl FakeDialog {
         fake
     }
 
+    /// 构造一个「选择图片返回该路径」的替身（R-04b）。
+    pub fn picking_image(path: &str) -> Self {
+        let fake = Self::new();
+        fake.lock().pick_image = Some(Reply::path(path));
+        fake
+    }
+
     /// 设置「打开文件」的回应。
     pub fn set_open_file(&self, reply: Reply) {
         self.lock().open_file = Some(reply);
@@ -143,6 +152,16 @@ impl FakeDialog {
     /// 设置「选择文件夹」的回应。
     pub fn set_pick_folder(&self, reply: Reply) {
         self.lock().pick_folder = Some(reply);
+    }
+
+    /// 设置「选择图片」的回应（R-04b）。
+    pub fn set_pick_image(&self, reply: Reply) {
+        self.lock().pick_image = Some(reply);
+    }
+
+    /// 「选择图片」的调用次数。
+    pub fn image_calls(&self) -> usize {
+        self.lock().image_calls
     }
 
     /// 设置「确认框」的回应（`Reply::Yes` / `Reply::No` / `Reply::Cancelled`）。
@@ -216,6 +235,15 @@ impl DialogPort for FakeDialog {
         let mut s = self.lock();
         s.folder_calls += 1;
         s.pick_folder
+            .clone()
+            .unwrap_or(Reply::Cancelled)
+            .into_result()
+    }
+
+    fn pick_image(&self) -> Result<FilePath, AppError> {
+        let mut s = self.lock();
+        s.image_calls += 1;
+        s.pick_image
             .clone()
             .unwrap_or(Reply::Cancelled)
             .into_result()

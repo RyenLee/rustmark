@@ -3,12 +3,10 @@
 use std::cell::RefCell;
 use std::sync::Arc;
 
-use egui::text::TextWrapping;
-
+use super::span_job;
 use super::*;
 use crate::application::dto::SpanView;
 use crate::presentation::theme::builtin::palette_signature;
-use crate::shared::geometry::floor_char_boundary;
 
 /// 单行高亮统计：供单元测试断言「仅变更行重建」与调试面板显示命中率。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -250,7 +248,18 @@ pub fn clear_highlight_caches() {
 /// `spans` 必须是**行内字节区间**且已按起点升序（调用方按此约定传入）；
 /// `bg_marks` 是行内查找命中区间 `(start, end, current)`。两者合并：
 /// 取边界并集后逐段决定前景色（语法样式）与是否叠加查找命中背景。
-pub(super) fn build_line_job(
+///
+/// # 本函数是「编辑区那一侧」的薄封装
+///
+/// 切段逻辑已收敛到 [`super::span_job`]（R-10）：本函数只负责
+/// 「编辑区用哪套样式表」——即 [`StyleMapper::format`]
+/// （编辑区字号 / 等宽 / 编辑区行高）。
+///
+/// 可见性为 `pub(crate)` 而非 `pub(super)`：真帧对拍用例要把它与
+/// **预览区代码块路径**放在同一帧里渲染并比对颜色序列，
+/// 而预览区路径住在 `presentation::views::preview_view`——
+/// `pub(super)`（限 `theme` 模块内）够不着。
+pub(crate) fn build_line_job(
     theme: &Theme,
     line: &str,
     spans: &[SpanView],
@@ -259,75 +268,7 @@ pub(super) fn build_line_job(
 ) -> egui::text::LayoutJob {
     let mapper = StyleMapper::new(theme);
     let base = mapper.format("plain");
-    // `text` 必须留空：下面所有文本都经 `LayoutJob::append` 写入，而 `append`
-    // 会把它推进 `text` 并据此计算 `byte_range`。egui 0.37 起 `Fonts::layout_job`
-    // 会做 `debug_sanity_check`——要求各 `section` 从字节 0 起、无缝隙地铺满
-    // `job.text`；若这里预填 `line`，首个 section 会从 `line.len()` 开始，
-    // 断言即失败（0.33 无此断言，故旧代码侥幸可用）。
-    let mut job = egui::text::LayoutJob {
-        wrap: TextWrapping {
-            max_width: if wrap_width > 0.0 {
-                wrap_width
-            } else {
-                f32::INFINITY
-            },
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-
-    // 语法样式区间与查找命中背景合并：取两者边界的并集，逐段决定格式。
-    //
-    // **所有边界必须先吸附到字符边界（DEF-04）**：span 与查找命中的坐标都来自
-    // 外部（解析器 / 查找器），与 `line` 未必同源——文本已改而 span 停在上一版时，
-    // 边界会落到多字节字符的中间，下面的 `&line[lo..hi]` 就会 panic。
-    // 本项目 `panic = "abort"`，一次 panic 即窗口消失，故一律向下吸附：
-    // 最坏只是某一段少上色，绝不崩。
-    let snap = |b: usize| floor_char_boundary(line, b);
-    let mut bounds: Vec<usize> = vec![0, line.len()];
-    for s in spans {
-        bounds.push(snap(s.range.start));
-        bounds.push(snap(s.range.end));
-    }
-    for &(s, e, _) in bg_marks {
-        bounds.push(snap(s));
-        bounds.push(snap(e));
-    }
-    bounds.sort_unstable();
-    bounds.dedup();
-
-    for pair in bounds.windows(2) {
-        let lo = pair[0];
-        let hi = pair[1];
-        if lo >= hi {
-            continue;
-        }
-        // 前景色：覆盖 [lo, hi) 的语法 span，否则基础色。
-        let mut fmt = spans
-            .iter()
-            .find(|s| s.range.start <= lo && lo < s.range.end)
-            .map(|s| mapper.format(&s.style))
-            .unwrap_or_else(|| base.clone());
-        // 查找命中背景：该段落在任一命中区间内则叠加背景。
-        if let Some(&(_, _, current)) = bg_marks.iter().find(|&&(s, e, _)| s <= lo && lo < e) {
-            fmt.background = if current {
-                theme.find_current_bg
-            } else {
-                theme.find_bg
-            };
-        }
-        job.append(&line[lo..hi], 0.0, fmt);
-    }
-    // 空行（line 为空）必须保留一个「空 section」，否则 egui 会把该行排成 0 高度：
-    // 见 epaint `text_layout.rs` —— `Paragraph::empty_paragraph_height` 只在
-    // `layout_section` 处理到**非空** section 时才被置为 `line_height`；纯空 job
-    // 不触发任何 `layout_section`（没有 section 可迭代），空段落高度维持默认 0.0，
-    // 于是整行高度为 0。拼回整文档 `Galley` 后，连续回车产生的空行统统不可见，
-    // 行号栏又按 0 高度空行定位 → 与正文错位。这正是 V11-16「连续 N 次回车只显示
-    // 一个空行、须再打字符才换行」的真正根因——与 IME / 回车事件无关，是自定义
-    // 逐行排版器对空行高度处理的缺失。补一个空 section 即可让 egui 正确赋予行高。
-    if job.sections.is_empty() {
-        job.append(line, 0.0, base);
-    }
+    let policy = SpanPolicy::union(base, wrap_width, |style| mapper.format(style), bg_marks);
+    let (job, _hits) = span_job::build_job(theme, line, spans, &policy, |_| false);
     job
 }

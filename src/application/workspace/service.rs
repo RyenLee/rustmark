@@ -15,6 +15,7 @@ use crate::domain::workspace::value_objects::{CloseDecision, EntryKind, Workspac
 
 use crate::shared::error::AppError;
 use crate::shared::event::EventBus;
+use crate::shared::geometry::floor_char_boundary;
 use crate::shared::ids::{DocumentId, WorkspaceId};
 use crate::shared::path::FilePath;
 use crate::shared::result::AppResult;
@@ -515,21 +516,6 @@ fn search_text(
         }
     }
     hits
-}
-
-/// 把字节索引向下对齐到最近的字符边界（不超过原索引）。
-///
-/// `idx` 不小于文本长度时返回文本长度；UTF-8 最长字符 4 字节，故对齐
-/// 最多回退 3 字节。函数单调不减：`a <= b` 时 `floor(a) <= floor(b)`，
-/// 调用方据此保证切片区间 `start <= end` 仍然成立。
-fn floor_char_boundary(text: &str, mut idx: usize) -> usize {
-    if idx >= text.len() {
-        return text.len();
-    }
-    while !text.is_char_boundary(idx) {
-        idx -= 1;
-    }
-    idx
 }
 
 /// 编译期断言：`WorkspaceAppService` 可跨线程共享。

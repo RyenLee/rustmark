@@ -1,4 +1,4 @@
-//! 工作区：文件树扫描 / 条目操作 / 打开文件 / 全局搜索分组。
+//! 工作区：文件树扫描 / 条目操作 / 打开管线（守卫 / 拒绝文案 / 入口 / 实现）。
 use super::*;
 
 /// 工作区文件树的**已装载条目**。
@@ -131,15 +131,14 @@ impl EditorApp {
     /// 未保存过的新文档没有路径，此时返回 `None`——**不**回退到进程工作目录：
     /// GUI 程序的 CWD 取决于启动方式，用户完全无法预测，
     /// 把文件写到一个他看不见的地方比「要求先保存」糟糕得多。
+    ///
+    /// 走 [`Self::current_document_file`]（轻量摘要）：此前用
+    /// `get_document` 取全文快照只为拿一个路径——导出对话框每帧都可能
+    /// 问一次，白付一次 O(全文) 克隆（问题 043 的教训）。
     pub fn active_document_dir(&self) -> Option<String> {
-        let doc = self.active_doc?;
-        let view = self
-            .services
-            .documents
-            .get_document(GetDocumentQuery { id: doc })
-            .ok()?;
-        let path = view.path?;
-        path.parent().map(|parent| parent.as_str().to_string())
+        self.current_document_file()?
+            .parent()
+            .map(|parent| parent.as_str().to_string())
     }
 
     /// 当前文档标题去掉 `.md` 后缀（导出 / 另存为的建议文件名用）。
@@ -182,16 +181,20 @@ impl EditorApp {
     /// 另存为对话框的**建议文件名**（带扩展名）。
     ///
     /// 未命名文档给 `未命名.md`：系统对话框不会替我们补后缀，
-    /// 建议名不带 `.md` 时用户点确认就得到一个双击打不开的文件。
+    /// 建议名不带扩展名时用户点确认就得到一个双击打不开的文件。
     /// 「未命名」是领域给的标题（`Document` 的默认 title），
     /// 它本身不是合法文件名之一，但加上扩展名即可用。
+    ///
+    /// 扩展名取 [`text_format::default_extension`]（白名单首选的唯一出处），
+    /// 不在此处硬编码 `.md`——白名单的首选变了这里必须跟着变。
     pub fn suggested_save_name(&self) -> String {
+        let ext = text_format::default_extension();
         match self.active_document_title_stem() {
             Some(stem) if stem.contains('.') => stem,
-            Some(stem) => format!("{stem}.md"),
+            Some(stem) => format!("{stem}.{ext}"),
             // 一个文档都没有时：给一个像样的默认值而不是空串，
             // 空串会让对话框停在「未命名」并要求用户自己敲名字。
-            None => "未命名.md".to_string(),
+            None => format!("未命名.{ext}"),
         }
     }
 
@@ -275,9 +278,9 @@ impl EditorApp {
     ///
     /// # 可打开的格式白名单（问题 045）
     ///
-    /// 只有 [`crate::shared::text_format::TextFormats`] 放行的扩展名
-    /// （内置：`md` / `markdown` / `mdown` / `mkd` / `txt` / `text` / `csv`，
-    /// 大小写不敏感）能被打开；图片与二进制一律拒绝并提示。守卫放在
+    /// 只有 [`crate::shared::text_format::TextFormats`] 放行的扩展名能被打开；
+    /// 内置清单见 [`crate::shared::text_format::BUILTIN_TEXT_EXTENSIONS`]
+    /// （大小写不敏感）。图片与二进制一律拒绝并提示。守卫放在
     /// 本方法开头，故**五条入口**（文件树 / 搜索跳转 / 最近文件 /
     /// 快速打开 / 拖放）一次性全覆盖，各调用方不必各自判一遍。
     ///
@@ -363,6 +366,14 @@ impl EditorApp {
         })?;
         self.active_doc = Some(id);
         self.find.on_document_switched(id);
+        // 新开文档光标归零：这里**不**走 `restore_active_doc_cursor`——
+        // 它在 `per_doc_cursor` 里必然无记录（`open` 对新路径给新 ID），
+        // 恢复结果恒为 0，却会顺带写一个 `pending_cursor = (0, 0)`。
+        // 那个一次性通道值会在随后几帧把 egui 脱字符强设回 0，正好覆盖
+        // 「打开文件后 focus_at_end 再回车」这类紧邻操作落定的光标
+        // （实测 `enter_at_various_cursor_positions_keeps_gutter_in_sync`
+        // 因此把光标错放到第一行中间）。新文档的 0 由 egui 内容替换自然
+        // 给出，无需主动重设。
         self.editor.cursor = 0;
         self.editor.anchor = None;
         self.ui.sync.reset();
@@ -376,6 +387,51 @@ impl EditorApp {
             .workspace
             .touch_recent(TouchRecentCommand { path: file_path });
         Ok(())
+    }
+
+    // ================================================================
+    // 打开管线（R-21 从 files.rs 归位：守卫 / 拒绝文案 / 入口 / 实现同家）
+    // ================================================================
+
+    /// 该路径能否**作为文本**打开（问题 045）。
+    ///
+    /// 文件树置灰、双击拦截、拖放分类、打开守卫共用这一条判据；
+    /// 实现体只查 [`TextFormats`]，不碰磁盘（扩展名判定零 IO，
+    /// 可以安全地放进每帧的渲染循环）。
+    pub fn can_open_as_text(&self, path: &str) -> bool {
+        self.text_formats.accepts(path)
+    }
+
+    /// 非白名单格式的拒绝提示文案（唯一出处）。
+    ///
+    /// 关联函数而非 `&self` 方法：表现层要在**置灰的行**上直接用同一句话
+    /// 做悬停说明，那时手边不一定有可变借用。
+    pub fn unsupported_format_notice(path: &str) -> String {
+        let name = file_name_of(path);
+        format!("暂不支持打开该格式：{name}")
+    }
+
+    /// 把「该格式暂不支持」报到状态栏。
+    ///
+    /// 文件树双击非白名单文件时调用——那条路径**不**走打开管线
+    /// （入口已禁用），但仍要给用户一个原因，否则表现得像「点了没反应」。
+    pub fn report_unsupported_format(&mut self, path: &str) {
+        self.set_status_notice(Self::unsupported_format_notice(path));
+    }
+
+    /// 打开一个文件（用于最近文件、文件对话框）。
+    ///
+    /// 失败时**自己**把原因报到状态栏，不只把 `Err` 往上抛：
+    /// 欢迎页点一个已被删除的最近文件时，调用方若忘了展示错误，
+    /// 用户看到的就是「点了没反应」——比任何错误提示都更让人困惑。
+    /// 报错的职责放在这里而不是各调用方，是为了**按构造**保证可见。
+    pub fn open_path(&mut self, path: &str) -> AppResult<()> {
+        let result = self.open_workspace_file(path);
+        if let Err(e) = &result {
+            let name = file_name_of(path);
+            self.set_status_error(&format!("无法打开 {name}：{e}"));
+        }
+        result
     }
 
     /// 展开某路径的所有祖先目录。
@@ -489,32 +545,4 @@ impl EditorApp {
         }
         self.scan_workspace(&root).unwrap_or(0)
     }
-}
-
-/// 把领域命中转成表现层的分组结构，并算出每条命中的高亮区间。
-///
-/// 高亮区间在**字符**坐标下算（理由同`scroll_sync` 那套换算）：
-/// 片段要交给 egui 排版，按字节切中文会错位——「一」在UTF-8 里 3 字节，
-/// 字节 7 落在字符 9 的中间，切出来的两半都不是完整字符。
-///
-/// 查询词与选项由调用方传入而不是从 `result` 里找：`SearchResultView`
-/// 本身不携带查询（它是领域 DTO，不该知道 UI 传了什么）。
-pub(crate) fn group_search_hits(
-    result: &SearchResultView,
-    query: &str,
-    case_sensitive: bool,
-) -> Vec<SearchGroup> {
-    let rows: Vec<(String, usize, String)> = result
-        .hits
-        .iter()
-        .map(|hit| (hit.path.as_str().to_string(), hit.line, hit.snippet.clone()))
-        .collect();
-    let mut groups = group_hits(&rows);
-    for group in &mut groups {
-        for hit in &mut group.hits {
-            hit.highlight =
-                locate_in_snippet(&hit.snippet, query, case_sensitive).unwrap_or((0, 0));
-        }
-    }
-    groups
 }

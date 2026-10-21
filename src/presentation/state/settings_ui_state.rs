@@ -109,6 +109,8 @@ pub struct Snapshot {
     pub lint: LintRulesView,
     /// 打开文档数量上限（问题 038）。
     pub max_open_documents: u32,
+    /// 写作目标（字数；0 = 未设）。
+    pub writing_goal: u32,
 }
 
 /// 待确认的快捷键冲突。
@@ -146,6 +148,13 @@ pub struct SettingsUiState {
     pub shortcut_rollback: Vec<(UiAction, String)>,
     /// 本次会话是否改过任何设置（决定「取消」是否有事可做）。
     pub dirty: bool,
+    /// 写作目标输入框的临时文本（R-05）。
+    ///
+    /// 放这里而不是视图局部变量：egui 的 `TextEdit` 需要**稳定**的 `String`
+    /// 持源串，否则每帧重建会让用户刚敲的字符在下一帧被「从设置值重算」覆盖。
+    /// 这是「视图状态」不是「业务副本」——它只描述「输入框里现在敲了什么」，
+    /// 落盘值仍由 `EditorSettingsView::writing_goal` 独占；本字段只是它的编辑缓冲。
+    pub writing_goal_text: String,
 }
 
 impl SettingsUiState {
@@ -153,6 +162,7 @@ impl SettingsUiState {
     pub fn new() -> Self {
         Self {
             section: SettingsTab::Appearance,
+            writing_goal_text: String::new(),
             ..Default::default()
         }
     }
@@ -177,6 +187,7 @@ impl SettingsUiState {
         self.notice = None;
         self.shortcut_rollback.clear();
         self.dirty = false;
+        self.writing_goal_text.clear();
     }
 
     /// 是否有未确认的修改（「取消」按钮据此禁用）。
@@ -246,6 +257,27 @@ impl SettingsUiState {
     }
 }
 
+/// 写作目标输入框文本 → 落盘值（R-05）。
+///
+/// 纯函数、无副作用，单独抽出是为了让「0 / 空串 = 未设」的归一逻辑
+/// 能被单元测试与变异验证直接钉住，不必借 egui 渲染去驱动整个设置页。
+///
+/// - 空串 → 0（未设）；
+/// - `"0"` → 0（未设）：显式敲 0 与留空同义；
+/// - 其它数字 → 该数字（领域以 `WritingGoal::is_set` 判定 0 = 未设，存 0 即正确）；
+/// - 非数字且非空 → 保留 `current`，避免一次手滑把已设目标清掉。
+pub fn normalize_writing_goal(raw: &str, current: u32) -> u32 {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return 0;
+    }
+    match raw.parse::<u32>() {
+        Ok(0) => 0,
+        Ok(words) => words,
+        Err(_) => current,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -263,6 +295,7 @@ mod tests {
             show_line_numbers: false,
             lint: LintRulesView::default(),
             max_open_documents: 12,
+            writing_goal: 0,
         }
     }
 
@@ -314,5 +347,20 @@ mod tests {
         let taken = state.take_shortcut_rollback();
         assert_eq!(taken, vec![(UiAction::Bold, "Ctrl+B".to_string())]);
         assert!(!state.needs_shortcut_rollback(), "取走后应清空");
+    }
+
+    #[test]
+    fn normalize_writing_goal_treats_zero_and_empty_as_unset() {
+        // 0 与空串都归一到 0（未设）；正数原样；非数字保留原值。
+        assert_eq!(normalize_writing_goal("0", 1000), 0, "显式 0 = 未设");
+        assert_eq!(normalize_writing_goal("", 1000), 0, "空串 = 未设");
+        assert_eq!(normalize_writing_goal("   ", 1000), 0, "纯空白 = 未设");
+        assert_eq!(normalize_writing_goal("1000", 0), 1000, "正数原样");
+        assert_eq!(normalize_writing_goal("abc", 500), 500, "非数字保留原目标");
+        assert_eq!(
+            normalize_writing_goal("12x", 500),
+            500,
+            "半截数字保留原目标"
+        );
     }
 }

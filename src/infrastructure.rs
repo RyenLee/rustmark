@@ -8,4 +8,5 @@ pub mod highlighting;
 pub mod parsing;
 pub mod persistence;
 pub mod spell;
+pub mod system;
 pub mod text;

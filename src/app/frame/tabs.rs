@@ -17,6 +17,48 @@ impl EditorApp {
             .unwrap_or_default()
     }
 
+    /// 存下当前活动文档的光标 / 选区（切走前调用，R-06）。
+    ///
+    /// 在 `active_doc` 被改写**之前**取 `editor.cursor` / `editor.anchor`——
+    /// 彼时它们仍是用户在这份文档里留下的真实位置（编辑区每帧经
+    /// `set_editor_selection` 同步进来）。切走后再存就晚了：`active_doc`
+    /// 已指向新文档，紧接着的 `refresh_text` 还会 `clamp_to` 掉旧偏移。
+    pub(super) fn stash_active_doc_cursor(&mut self) {
+        if let Some(id) = self.active_doc {
+            let anchor = self.editor.anchor.unwrap_or(self.editor.cursor);
+            self.per_doc_cursor.insert(id, (self.editor.cursor, anchor));
+        }
+    }
+
+    /// 恢复活动文档的光标 / 选区（R-06）。
+    ///
+    /// 取代原先切换时「硬置 `cursor = 0`」：每份文档各自记一份光标，
+    /// 切回时原位呈现；无记录（从未编辑过）时默认 0，与旧行为一致。
+    ///
+    /// # 为什么必须走 `pending_cursor`
+    ///
+    /// 切文档时 egui 的 `TextEdit` 内部光标态会被内容替换**重置**；只改
+    /// `editor.cursor` 不够——下一帧 egui 会把自己的旧态（已归零）写回来，
+    /// 表现就是「切回标签光标弹回开头」。故这里把字符偏移写进
+    /// `pending_cursor` 一次性通道，由 `apply_pending_editor_state` 在下一帧
+    /// 主动重设 egui 的脱字符。
+    ///
+    /// # 调用方必须先 `refresh_text()`
+    ///
+    /// `byte_to_char` 的换算依赖当前 `editor_text`（**新**文档内容）：
+    /// 拿旧文本算，同一个字节偏移会换算成新文档里错误的字符位置。
+    pub(super) fn restore_active_doc_cursor(&mut self) {
+        let (cursor_byte, anchor_byte) = self
+            .active_doc
+            .and_then(|id| self.per_doc_cursor.get(&id).copied())
+            .unwrap_or((0, 0));
+        self.editor.cursor = cursor_byte;
+        self.editor.anchor = (anchor_byte != cursor_byte).then_some(anchor_byte);
+        let cursor_char = editor_ops::byte_to_char(&self.editor_text, cursor_byte);
+        let anchor_char = editor_ops::byte_to_char(&self.editor_text, anchor_byte);
+        self.pending_cursor = Some((cursor_char, anchor_char));
+    }
+
     /// 切换到指定文档（多标签）。
     ///
     /// 领域按 `DocumentId` 各自保存内容，`active_doc` 只是 UI 视角的「当前页」；
@@ -25,19 +67,22 @@ impl EditorApp {
         if self.active_doc == Some(id) {
             return;
         }
+        // 先存当前文档的光标 / 选区（R-06）：切走前 `active_doc` 还是旧的，
+        // `editor.cursor` / `editor.anchor` 也还是用户在这份文档里的真实位置。
+        self.stash_active_doc_cursor();
         self.active_doc = Some(id);
         // 查找状态跨文档策略在此生效（S6-08）：保留查询与选项，
         // 但清空属于旧文档的命中。不调的话「下一个」会按旧文档的
         // 字节偏移跳到新文档的无关位置，甚至越界。
         self.find.on_document_switched(id);
-        // 每文档独立的光标 / 选区尚未在 UI State 中建模（S6-12 范畴），
-        // 切换时回到文档开头，避免停在另一个文档的偏移上。
-        self.editor.cursor = 0;
-        self.editor.anchor = None;
+        // 先把绑定串换成新文档内容，再恢复光标——`byte_to_char` 要按
+        // 新文档的文本换算（见 `restore_active_doc_cursor`）。
+        self.refresh_text();
+        // R-06：恢复目标文档的光标 / 选区，取代原先的「硬置 0」。
+        self.restore_active_doc_cursor();
         // 两侧滚动偏移都归零，若不重置同步状态，这一帧会被判成「某一侧
         // 发生了巨大位移」并把对侧也拖走——表现为「切标签后预览自己滚了一下」。
         self.ui.sync.reset();
-        self.refresh_text();
         // 面板若开着，重扫一次让计数与新文档一致。
         if self.dialog.is_open(Overlay::Find) {
             self.sync_find();
@@ -69,11 +114,16 @@ impl EditorApp {
                 .documents
                 .clear_draft(&self.services.drafts_dir, id);
         }
+        // 关掉的是不是当前页？——决定末尾要不要恢复光标（R-06）。
+        // 关的不是当前页时**不能**恢复：`per_doc_cursor` 里当前文档的值是
+        // 上次切走时的陈旧快照，用户此后在当前文档里移动光标并不会更新它，
+        // 此刻拿它覆盖会把用户最新的光标打回历史位置。
+        let closing_active = self.active_doc == Some(id);
         // 关闭后重新取列表，挑一个相邻文档作为新的活动页（若关掉的是当前页）。
         let remaining = self.open_document_list();
         if remaining.is_empty() {
             self.active_doc = None;
-        } else if self.active_doc == Some(id) {
+        } else if closing_active {
             let idx = remaining.iter().position(|d| d.id == id).unwrap_or(0);
             let next = remaining
                 .get(idx.saturating_sub(1))
@@ -82,10 +132,14 @@ impl EditorApp {
                 self.active_doc = Some(doc.id);
             }
         }
-        self.editor.cursor = 0;
-        self.editor.anchor = None;
-        self.ui.sync.reset();
+        // 被关文档的光标记录随之失效（R-06）：留着只会在同 ID 复用时误导。
+        self.per_doc_cursor.remove(&id);
         self.refresh_text();
+        if closing_active {
+            // 活动页变了（或全部关完）：恢复新活动页的光标。
+            self.restore_active_doc_cursor();
+        }
+        self.ui.sync.reset();
     }
 
     /// 关闭当前标签页（快捷键 `CloseTab`）。
@@ -120,6 +174,8 @@ impl EditorApp {
         self.active_doc = None;
         self.editor_text.clear();
         self.editor.reset_for_new_document();
+        // 全部标签已关：per-document 光标表随之清空（R-06）。
+        self.per_doc_cursor.clear();
         self.ui.sync.reset();
         self.refresh_text();
     }

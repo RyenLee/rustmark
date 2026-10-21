@@ -18,6 +18,7 @@ impl EditorApp {
             show_line_numbers: view.editor.show_line_numbers,
             lint: view.editor.lint,
             max_open_documents: view.editor.max_open_documents,
+            writing_goal: view.editor.writing_goal,
         }
     }
 
@@ -25,6 +26,15 @@ impl EditorApp {
     pub(crate) fn open_settings(&mut self) {
         let snapshot = self.settings_snapshot();
         self.settings_ui.open(snapshot);
+        // 把当前写作目标种进输入框缓冲：0 = 未设 → 空串（提示「留空表示不设」）；
+        // 正数 → 其十进制文本。缓冲每帧从「落盘值」重算只在打开时发生，
+        // 之后由 `TextEdit` 自己持有并即时落盘，避免每帧覆盖用户敲入的字符。
+        let goal = self.settings().editor.writing_goal;
+        self.settings_ui.writing_goal_text = if goal == 0 {
+            String::new()
+        } else {
+            goal.to_string()
+        };
     }
 
     /// 写一个主题字段并立即生效（实时预览，S6-11 验收要求）。
@@ -151,8 +161,8 @@ impl EditorApp {
             // 侧栏宽度同理：它是拖拽定的、不经过设置页，「取消」不该把它
             // 打回主题默认（与 split_ratio 同一处理）。
             sidebar_width: self.settings().editor.sidebar_width,
-            // 设置页尚未提供写作目标输入框，保存时沿用当前值，避免被 0 覆盖。
-            writing_goal: self.settings().editor.writing_goal,
+            // 写作目标随「取消」回滚到打开设置那一刻（与缩进 / 上限同理由）。
+            writing_goal: snapshot.writing_goal,
             // 取消时把 lint 开关也回滚到打开设置那一刻（V11-08）。
             lint: snapshot.lint,
             // 打开文档上限同理：设置页改小了，「取消」要回到原值，
@@ -276,7 +286,18 @@ impl EditorApp {
     /// 只有设置确实是 `system` 时才重算。若不加这个判断，用户**显式**选定的
     /// 深/浅主题会被系统外观变化悄悄改回去——这是「跟随系统」最常见的实现错误。
     pub(super) fn refresh_system_theme(&mut self, ctx: &egui::Context) {
-        if self.ui.theme.kind != BuiltinTheme::System {
+        // 判断依据是**设置里用户选的种类**，不是 `ui.theme.kind`——
+        // 后者是「实际生效的明暗」（`resolve` 已把它改写成 `Light`/`Dark`），
+        // 用它判断「是否跟随系统」**恒为真**（`!= System` 恒成立），
+        // 于是本函数**永远提前返回**，跟随系统时系统外观变化不会自动刷新。
+        //
+        // 2026-10-20 实测：这是 R-09 收敛主题枚举时暴露出的既有缺陷。
+        // 表现层私有的 `BuiltinTheme` 缺 `Custom` 变体、`custom` 时被迫用
+        // `System` 顶替，两件事混在一起，使「当前是不是跟随系统」无从判断。
+        let Some(view) = self.theme_view() else {
+            return;
+        };
+        if ThemeKind::parse(&view.kind) != Some(ThemeKind::System) {
             return;
         }
         // egui 每帧把系统偏好写进 `visuals.dark_mode`（随系统外观变化更新），
@@ -286,9 +307,6 @@ impl EditorApp {
             return;
         }
         self.system_dark = system_dark;
-        let Some(view) = self.theme_view() else {
-            return;
-        };
         self.ui.set_theme(builtin::resolve(&view, system_dark));
     }
 
@@ -312,7 +330,14 @@ impl EditorApp {
         let mut view = settings.theme;
         // 以当前**正在显示**的主题明暗为准取反，而不是按 kind 字符串推导。
         let effective_dark = self.ui.theme.is_dark();
-        view.kind = if effective_dark { "light" } else { "dark" }.to_string();
+        // 走真源的 `as_str()`，不再手写 `"light"` / `"dark"` 字面量——
+        // 写错了编译不报错、运行期也不报错，只是用户的主题选不中。
+        view.kind = if effective_dark {
+            ThemeKind::Light.as_str()
+        } else {
+            ThemeKind::Dark.as_str()
+        }
+        .to_string();
         // 写盘失败不回滚内存状态：主题是**显示偏好**而非数据，
         // 拦住用户切换只会让界面「看起来没反应」。
         let _ = self.services.preferences.set_theme(SetThemeCommand {
@@ -329,6 +354,29 @@ impl EditorApp {
     /// 快捷键分发器（菜单 / 命令面板渲染共用同一份注册表）。
     pub fn dispatcher(&self) -> &ShortcutDispatcher {
         &self.ui.dispatcher
+    }
+
+    /// 切换设置分区（左侧标签点击）。
+    ///
+    /// 与「清掉旧分区的错误 / 提示」是同一语义单元：用户切到别的分区时，
+    /// 上一个分区残留的报错 / 成功提示不应跟着显现在新分区上（否则看起来像
+    /// 「新分区也有问题」）。故 [`Self::clear_settings_messages`] 一并调用。
+    pub fn set_settings_section(&mut self, section: SettingsTab) {
+        self.settings_ui.section = section;
+    }
+
+    /// 清空设置页的错误与提示（切换分区时调用，见 [`Self::set_settings_section`]）。
+    pub fn clear_settings_messages(&mut self) {
+        self.settings_ui.error = None;
+        self.settings_ui.notice = None;
+    }
+
+    /// 放弃未确认的快捷键改绑（快捷键冲突条上的「放弃本次修改」按钮）。
+    ///
+    /// 只清 `pending_conflict`，不动已落盘的键位——放弃的是「正在录制、
+    /// 还没确认的那一次」，不是把已存的键位也抹掉。
+    pub fn clear_settings_pending_conflict(&mut self) {
+        self.settings_ui.pending_conflict = None;
     }
 
     /// 读取持久化设置；失败时回退到 [`SettingsView::fallback`]。
@@ -349,8 +397,8 @@ impl EditorApp {
 
     /// 系统当前是否偏好深色（设置页「跟随系统」提示、状态栏主题文案用）。
     ///
-    /// 刻意暴露**系统偏好**而不是「当前生效主题」：后者在
-    /// `BuiltinTheme::System` 下已经被解析过一次，拿它判断
+    /// 刻意暴露**系统偏好**而不是「当前生效主题」：后者已经被
+    /// `resolve` 解析成具体的 `Light`/`Dark`，拿它判断
     /// 「系统是深是浅」等于拿答案去验证答案。
     pub fn system_prefers_dark(&self) -> bool {
         self.system_dark

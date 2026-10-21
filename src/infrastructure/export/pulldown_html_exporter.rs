@@ -39,9 +39,10 @@ use pulldown_cmark::{Options, html};
 use crate::domain::export::aggregate::ExportJob;
 use crate::domain::export::errors::ExportError;
 use crate::domain::export::services::{Exporter, TocBuilder};
-use crate::domain::export::value_objects::{ExportFormat, TocEntry};
+use crate::domain::export::value_objects::TocEntry;
 use crate::infrastructure::parsing::pulldown_parser::{desugar_image_sizes, parser_options};
 use crate::infrastructure::persistence::recent_files_store::atomic_write;
+use crate::shared::export_format::ExportFormat;
 
 use super::html_sanitize::sanitize_html;
 

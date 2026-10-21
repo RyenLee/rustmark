@@ -80,7 +80,7 @@ fn filter_row(app: &mut EditorApp, ui: &mut Ui) {
             )
             .changed()
         {
-            app.shortcut_overview_ui.query = query;
+            app.set_shortcut_overview_query(query);
         }
     });
 }

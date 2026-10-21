@@ -24,7 +24,7 @@ pub(super) fn search_tab(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
             .desired_width(ui.available_width()),
     );
     if response.changed() {
-        app.sidebar.search_query = query;
+        app.set_search_query(query);
     }
     // 范围切换器紧贴输入框：它是比下面那排选项更高一级的决定
     // （决定「搜谁」先于「怎么搜」），位置上也要读得出这个次序。
@@ -113,7 +113,7 @@ fn scope_row(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
                 .on_hover_text(scope.hint())
                 .clicked()
             {
-                app.sidebar.search_scope = scope;
+                app.set_search_scope(scope);
             }
         }
     });
@@ -141,7 +141,7 @@ fn toggle_row(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
                 .on_hover_text(toggle.hint())
                 .clicked()
             {
-                app.sidebar.search_options = options.toggled(toggle);
+                app.toggle_search_option(toggle);
             }
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -171,17 +171,16 @@ fn count_hits(app: &mut EditorApp) -> usize {
 /// 清屏色（黑），编辑区也被整体推右（与「检查」标签的黑框同一根因）。
 fn group_header(ui: &mut Ui, theme: &Theme, group: &SearchGroup) {
     ui.horizontal(|ui| {
-        // 右侧命中数预留一段固定宽，文件名截断到剩余宽。
-        let avail = (ui.available_width() - HITS_COUNT_RESERVE).max(0.0);
-        ui.allocate_ui_with_layout(
-            egui::vec2(avail, 0.0),
-            Layout::left_to_right(Align::Center),
-            |ui| {
-                ui.add(
-                    egui::Label::new(RichText::new(&group.file_name).color(theme.text_primary))
-                        .truncate(),
-                );
-            },
+        // 行高基准：空弱文本占位（不显示任何内容），只取其行高作为文件名段
+        // 的高度——`allocate_ui_with_layout(vec2(avail, 0.0), …)` 的 0 高会让
+        // 文件名被压到行垂直中点之下（问题 065，约半个行高错位）。占位文本为空、
+        // 不可见，不影响布局。
+        let baseline = ui.weak("");
+        widgets::text::elided_segment(
+            ui,
+            baseline.rect,
+            HITS_COUNT_RESERVE,
+            RichText::new(&group.file_name).color(theme.text_primary),
         );
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             ui.weak(format!("{}", group.hits.len()));

@@ -223,7 +223,7 @@ fn render_split(
                 .on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
             ui.painter()
                 .rect_filled(rect, egui::CornerRadius::ZERO, divider_color(ui, &grab));
-            app.ui.split_dragging = grab.dragged();
+            app.set_split_dragging(grab.dragged());
             if grab.dragged() {
                 // 每帧只累加本帧位移：`ratio` 是**上一帧写回后**的值，
                 // 跨帧累加因此天然成立，不需要额外的拖拽状态机。
@@ -316,7 +316,7 @@ fn render_sidebar_divider(app: &mut EditorApp, ui: &mut Ui, metrics: Metrics, wi
                 .on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
             ui.painter()
                 .rect_filled(rect, egui::CornerRadius::ZERO, divider_color(ui, &grab));
-            app.ui.sidebar_dragging = grab.dragged();
+            app.set_sidebar_dragging(grab.dragged());
             if grab.dragged() {
                 // 每帧只累加本帧位移：`width` 是**上一帧写回后**的生效值，
                 // 跨帧累加因此天然成立（与分割比例同一手法）。

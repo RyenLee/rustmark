@@ -1752,3 +1752,148 @@ fn double_clicking_the_sidebar_divider_resets_to_theme_default() {
         app.ui.sidebar_width
     );
 }
+
+// ===========================================================================
+// R-11 子批 3 · sidebar 组：状态写入口
+//
+// 侧栏视图对 `app.sidebar.*` 的直写已全部收敛为 `EditorApp` 方法
+// （见 `src/app/frame/sidebar.rs`）。下列用例一律走方法入口，
+// 不自己写字段——否则就是「自己设值再断言」的无牙齿判据。
+// ===========================================================================
+
+/// 提交失败后放回新建草稿：用户原本敲的三个值原样恢复。
+#[test]
+fn restoring_the_create_draft_puts_back_what_the_user_typed() {
+    let ws = workspace();
+    let root = ws.path().to_path_buf();
+    let (_cfg, mut app) = app_with_workspace(&root);
+
+    app.restore_create_draft("/w/docs".to_string(), "笔记.md".to_string(), false);
+
+    assert_eq!(
+        app.sidebar.creating,
+        Some(("/w/docs".to_string(), "笔记.md".to_string(), false)),
+        "新建草稿应原样放回编辑态，让用户改后重试"
+    );
+}
+
+/// 恢复草稿**只**回放草稿字段：失败原因与右键菜单不能被顺手抹掉。
+///
+/// 这是 `restore_*` 与状态结构体 `start_create` / `start_rename` 的分界——
+/// 后者是「开始编辑」入口，会连带清菜单与错误；前者是「失败后回放」，
+/// 抹掉错误用户就不知道自己错在哪。
+#[test]
+fn restoring_a_draft_keeps_the_error_and_the_menu() {
+    let ws = workspace();
+    let root = ws.path().to_path_buf();
+    let (_cfg, mut app) = app_with_workspace(&root);
+
+    app.sidebar.fail("目标目录只读".to_string());
+    app.sidebar.open_context_menu("/w/readme.md");
+
+    app.restore_rename_draft("/w/readme.md".to_string(), "readme.md".to_string());
+
+    assert_eq!(app.sidebar.renaming_path.as_deref(), Some("/w/readme.md"));
+    assert_eq!(app.sidebar.rename_draft, "readme.md");
+    assert!(
+        app.sidebar.error.is_some(),
+        "失败原因应保留——被抹掉用户就不知道自己错在哪"
+    );
+    assert!(
+        app.sidebar.menu_is_for("/w/readme.md"),
+        "右键菜单不应被恢复草稿顺手关掉"
+    );
+}
+
+/// 单选只改高亮，不开文档（打开是双击的动作）。
+#[test]
+fn selecting_a_row_highlights_without_opening_a_document() {
+    let ws = workspace();
+    let root = ws.path().to_path_buf();
+    let (_cfg, mut app) = app_with_workspace(&root);
+    assert!(
+        app.active_document_dir().is_none(),
+        "夹具前提：尚未打开任何文档"
+    );
+
+    app.select_sidebar_path("/w/docs/guide.md".to_string());
+
+    assert_eq!(
+        app.sidebar.selected_path.as_deref(),
+        Some("/w/docs/guide.md"),
+        "单选应把该行置为高亮"
+    );
+    assert!(app.active_document_dir().is_none(), "单选不得顺带打开文档");
+}
+
+/// 选中大纲条目只写高亮态（跳转由调用方另走 `goto_outline_line`）。
+#[test]
+fn selecting_an_outline_item_highlights_it() {
+    let ws = workspace();
+    let root = ws.path().to_path_buf();
+    let (_cfg, mut app) = app_with_workspace(&root);
+
+    app.select_outline_item("第二节".to_string());
+
+    assert_eq!(
+        app.sidebar.outline_selected.as_deref(),
+        Some("第二节"),
+        "大纲条目选中态应记录标题文本"
+    );
+}
+
+/// 搜索框回写（响应 `TextEdit::changed`）。
+#[test]
+fn setting_the_search_query_updates_the_field() {
+    let ws = workspace();
+    let root = ws.path().to_path_buf();
+    let (_cfg, mut app) = app_with_workspace(&root);
+
+    app.set_search_query("needle".to_string());
+
+    assert_eq!(app.sidebar.search_query, "needle");
+}
+
+/// 切换搜索范围。
+#[test]
+fn switching_the_search_scope_takes_effect() {
+    let ws = workspace();
+    let root = ws.path().to_path_buf();
+    let (_cfg, mut app) = app_with_workspace(&root);
+
+    app.set_search_scope(SearchScope::OpenDocuments);
+
+    assert_eq!(
+        app.sidebar.search_scope,
+        SearchScope::OpenDocuments,
+        "范围切换应立即生效（占位提示与扫描口径都读它）"
+    );
+}
+
+/// 搜索开关是**双态**的：再点一次即取消。
+#[test]
+fn toggling_a_search_option_flips_both_ways() {
+    use rustmark::presentation::state::sidebar_ui_state::SearchToggle;
+
+    let ws = workspace();
+    let root = ws.path().to_path_buf();
+    let (_cfg, mut app) = app_with_workspace(&root);
+    assert!(
+        app.sidebar.search_options.is_plain(),
+        "夹具前提：三个开关默认全关"
+    );
+
+    app.toggle_search_option(SearchToggle::CaseSensitive);
+    assert!(app.sidebar.search_options.case_sensitive, "第一次点应开启");
+    assert_eq!(
+        app.sidebar.search_options.active_count(),
+        1,
+        "只动被点的那一个开关"
+    );
+
+    app.toggle_search_option(SearchToggle::CaseSensitive);
+    assert!(
+        !app.sidebar.search_options.case_sensitive,
+        "再点一次应取消，不是无操作"
+    );
+}

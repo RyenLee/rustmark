@@ -29,20 +29,32 @@
 //! - `squiggle`：拼写错词波浪线与查找命中标记的纯几何 + 绘制。
 //! - `highlight_cache`：语法高亮两层缓存（整文档 / 逐行）、缓存签名与单行排版作业。
 //! - `highlight_layout`：逐行增量排版与整文档 `Galley` 拼接。
+//! - `span_job`：**唯一**的 span → [`egui::text::LayoutJob`] 构造器（R-10）；
+//!   编辑区 / 预览区代码块 / 预览区行内三处共用，差异由 `SpanPolicy` 显式表达。
 
-mod highlight_cache;
+mod galley_cache;
 mod highlight_layout;
+mod span_job;
 mod squiggle;
 
 #[cfg(test)]
 mod tests;
 
-pub use highlight_cache::{
+pub use galley_cache::{
     HighlightStats, atlas_token, clear_highlight_caches, last_highlight_stats, line_cache_len,
     line_tops,
 };
 pub use highlight_layout::{highlight_layout, highlight_layout_with_find};
+pub use span_job::{SpanHit, SpanPolicy, build_job};
 pub use squiggle::{FindMark, SpellMark, Squiggle, paint_squiggles, squiggles_for};
+
+/// 编辑区那一侧的单行 `LayoutJob` 构造（薄封装，切段逻辑见 [`build_job`]）。
+///
+/// 只给**同 crate 内**的测试用：真帧对拍要把它与预览区代码块路径
+/// 放在同一帧里渲染并比对颜色序列，而预览区路径住在 `presentation::views`。
+/// 生产代码请走 [`highlight_layout`]（它内部会调这个）。
+#[cfg(test)]
+pub(crate) use galley_cache::build_line_job;
 
 use egui::{Color32, TextFormat};
 
@@ -57,6 +69,223 @@ pub struct StyleMapper<'a> {
     theme: &'a Theme,
 }
 
+/// 样式名的**语义**：颜色 / 斜体 / 下划线 / 删除线 / 背景。
+///
+/// # 为什么把它单独抽出来（R-10）
+///
+/// 此前有**两张**样式表：
+///
+/// | 表 | 位置 | 覆盖面 |
+/// |---|---|---|
+/// | [`StyleMapper::format`] | `mapper.rs` | 24 种（编辑区 + 代码语法） |
+/// | `inline::span_format` | `preview_view/inline.rs` | 14 种（行内富文本） |
+///
+/// 两表**共同**的 7 种样式（`heading` / `quote` / `strong` / `emphasis` /
+/// `strikethrough` / `code` / `link`）的颜色**本就同源于 `theme.syn_*`**——
+/// 实测逐项相同（探针 2026-10-20）。真正重复的是「**样式名 → 语义**」的
+/// **派发逻辑**：改一处颜色语义要改两个 `match`。
+///
+/// 本结构把派发收敛到**一处**（[`StyleSemantics::of`]），两侧各自套上
+/// 自己的**度量**（字号 / 字体族 / 行高 / 线条粗细）。
+///
+/// # 为什么度量不合并
+///
+/// 实测两表的度量**刻意不同**，合并会让预览字号跟随编辑区设置漂移：
+///
+/// - 字号：编辑区 `theme.editor_font_size`（14px，用户可配置）
+///   vs 预览区 `theme.metrics.preview_font_size`（15px，固定）；
+/// - 字体族：编辑区**等宽**（源码视图）vs 预览区**比例字体**（排版视图）；
+/// - 行高：编辑区 `字号 × editor_line_height` vs 预览区 `字号 × preview_line_height`；
+/// - 线条粗细：编辑区 `hairline`（源码视图要细）vs 预览区 `Stroke::new(1.0)`。
+///
+/// 故 [`StyleSemantics`] 只管「这个样式长什么样」，不管「多大、什么字体」。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct StyleSemantics {
+    /// 前景色。
+    pub color: Color32,
+    /// 是否斜体。
+    pub italics: bool,
+    /// 下划线颜色（`None` = 不画下划线）。
+    pub underline: Option<Color32>,
+    /// 删除线颜色（`None` = 不画删除线）。
+    pub strikethrough: Option<Color32>,
+    /// 背景色（`None` = 透明）。
+    pub background: Option<Color32>,
+    /// 是否用**等宽**字体。
+    ///
+    /// 行内代码 / 键帽必须是等宽（`code` / `keycap`）。
+    pub monospace: bool,
+    /// 字号**倍率**（1.0 = 不缩放）。
+    ///
+    /// 上下标与脚注引用用略小字号近似（epaint 无基线位移），
+    /// 故是 `0.78`；其余样式都是 `1.0`。
+    pub size_scale: f32,
+}
+
+impl StyleSemantics {
+    /// 样式名 → 语义。
+    ///
+    /// 未知样式**不报错**：退回「正文色、无装饰」（见 [`StyleMapper`] 的类型文档）。
+    ///
+    /// # 覆盖范围
+    ///
+    /// 本函数是**两张样式表的并集**：
+    ///
+    /// - 编辑区侧的 24 种（`plain` / `heading` / `strong` / … / `keyword` / `string` / …）；
+    /// - 预览区行内侧的 7 种特有（`math` / `keycap` / `mark` / `task_done` /
+    ///   `sub` / `sup` / `footnote_ref`）。
+    ///
+    /// 两侧各自只用到自己那份，但**派发只有这一处**——
+    /// 新增一个样式名只改这里，两侧自动同步。
+    pub fn of(theme: &Theme, style: &str) -> Self {
+        // 「普通文本」是绝大多数分支的起点。
+        let plain = Self {
+            color: theme.text_primary,
+            italics: false,
+            underline: None,
+            strikethrough: None,
+            background: None,
+            monospace: false,
+            size_scale: 1.0,
+        };
+        match style {
+            // —— Markdown 语义 ——
+            // 标题只换色不换字号（见 [`StyleMapper::format`] 的文档）。
+            s if s == "heading" || s.starts_with("heading:") => Self {
+                color: theme.syn_heading,
+                ..plain
+            },
+            "strong" => Self {
+                color: theme.syn_bold,
+                ..plain
+            },
+            "emphasis" => Self {
+                color: theme.syn_italic,
+                italics: true,
+                ..plain
+            },
+            "strikethrough" => Self {
+                color: theme.text_secondary,
+                strikethrough: Some(theme.text_secondary),
+                ..plain
+            },
+            "code" => Self {
+                color: theme.syn_code,
+                background: Some(theme.code_bg),
+                monospace: true,
+                ..plain
+            },
+            "link" => Self {
+                color: theme.syn_link,
+                underline: Some(theme.syn_link),
+                ..plain
+            },
+            "image" => Self {
+                color: theme.syn_meta,
+                italics: true,
+                ..plain
+            },
+            "quote" => Self {
+                color: theme.syn_quote,
+                italics: true,
+                ..plain
+            },
+            "list_marker" | "list-marker" => Self {
+                color: theme.syn_marker,
+                ..plain
+            },
+            "table_border" | "table-border" => Self {
+                color: theme.syn_table,
+                ..plain
+            },
+            s if s == "task_marker" || s.starts_with("task_marker:") => Self {
+                color: theme.accent,
+                ..plain
+            },
+
+            // —— 代码语法（来自 syntect scope 映射）——
+            "keyword" | "operator" => Self {
+                color: theme.syn_italic,
+                ..plain
+            },
+            "string" => Self {
+                color: theme.success,
+                ..plain
+            },
+            "comment" => Self {
+                color: theme.text_secondary,
+                italics: true,
+                ..plain
+            },
+            "number" => Self {
+                color: theme.warning,
+                ..plain
+            },
+            "function" | "type" => Self {
+                color: theme.syn_code,
+                ..plain
+            },
+            "variable" | "identifier" => Self {
+                color: theme.syn_other,
+                ..plain
+            },
+            "punctuation" | "meta" | "escape" => Self {
+                color: theme.syn_meta,
+                ..plain
+            },
+
+            // —— 行内富文本特有（预览区侧）——
+            // 行内公式**排版失败**时的退化样式（成功时走二维排版）：
+            // 只做样式区分——倾斜 + 公式色。
+            "math" => Self {
+                color: theme.syn_code,
+                italics: true,
+                ..plain
+            },
+            // 键帽：等宽 + 底色，视觉上是一枚小按键。
+            "keycap" => Self {
+                color: theme.syn_code,
+                background: Some(theme.code_bg),
+                monospace: true,
+                size_scale: 0.92,
+                ..plain
+            },
+            // 高亮 ==标记==：叠一层查找命中的底色（语义同为「此处被标出」）。
+            "mark" => Self {
+                color: theme.text_primary,
+                background: Some(theme.find_bg),
+                ..plain
+            },
+            // 已勾选的任务项：次级色 + 删除线。
+            //
+            // 刻意**不**复用 `strikethrough` 样式：那个是给 `~~删除~~` 用的，
+            // 语义不同（一个是「用户划掉的文字」，一个是「已完成」）。
+            // 分开命名后，将来想给「已完成」换色（比如绿色对勾配色）不会波及删除线。
+            "task_done" => Self {
+                color: theme.text_secondary,
+                strikethrough: Some(theme.text_secondary),
+                ..plain
+            },
+            // 上下标：epaint 无基线位移，用略小字号近似。
+            "sub" | "sup" => Self {
+                color: theme.text_secondary,
+                size_scale: 0.78,
+                ..plain
+            },
+            // 脚注引用 `[^1]`：与上下标同一近似——小一号字 + 链接色。
+            // 它本质是文中指向脚注定义的交叉引用，用链接色才能传达「可对应」。
+            "footnote_ref" => Self {
+                color: theme.syn_link,
+                size_scale: 0.78,
+                ..plain
+            },
+
+            // 未知样式：退回正文色，不报错（见类型文档）。
+            _ => plain,
+        }
+    }
+}
+
 /// 标题级别 → 字号倍率。
 ///
 /// 与原型 `PreviewPane.vue` 的观感对齐：`h1` 最大，逐级递减，
@@ -69,6 +298,37 @@ const fn heading_scale(level: u8) -> f32 {
         4 => 1.15,
         5 => 1.05,
         _ => 1.0,
+    }
+}
+
+/// 语义 → `TextFormat`：把 [`StyleSemantics`] 套上**度量**。
+///
+/// 度量（字号 / 字体族 / 行高 / 线条粗细）由调用方给——这正是两张旧样式表
+/// 刻意不同的地方（见 [`StyleSemantics`] 的文档）。
+///
+/// `base_font` 是「正文用什么字体」；`monospace` 为真时改用它（行内代码）。
+fn apply_semantics(
+    sem: StyleSemantics,
+    base: &TextFormat,
+    base_font: egui::FontId,
+    mono_font: egui::FontId,
+    stroke_width: f32,
+) -> TextFormat {
+    // `TextFormat` 的下划线 / 删除线是 `Stroke`（不是 `Option`）：
+    // 「不画」= 零宽 `Stroke`（颜色也置为透明，避免残留下划线的绘制指令）。
+    let stroke = |c: Option<Color32>| match c {
+        Some(c) => egui::Stroke::new(stroke_width, c),
+        None => egui::Stroke::new(0.0_f32, Color32::TRANSPARENT),
+    };
+    TextFormat {
+        color: sem.color,
+        italics: sem.italics,
+        underline: stroke(sem.underline),
+        strikethrough: stroke(sem.strikethrough),
+        background: sem.background.unwrap_or(Color32::TRANSPARENT),
+        font_id: if sem.monospace { mono_font } else { base_font },
+        line_height: base.line_height,
+        ..Default::default()
     }
 }
 
@@ -96,6 +356,12 @@ impl<'a> StyleMapper<'a> {
     /// `TextFormat::line_height` 一旦给出，epaint 就**不再**按字体度量算行高，
     /// 于是中英文混排、系统字体回退（CJK 行高天然高于等宽数字）都不会破坏等距——
     /// 这是「所有内容等高」得以成立的机制。
+    ///
+    /// # 样式名 → 语义的派发在 [`StyleSemantics::of`]（R-10）
+    ///
+    /// 本函数只负责**编辑区这一侧的度量**（等宽、编辑区字号、编辑区行高、
+    /// hairline 线条）；「这个样式是什么颜色、要不要斜体」由共享的
+    /// [`StyleSemantics::of`] 决定——预览区行内走**同一份**派发。
     pub fn format(&self, style: &str) -> TextFormat {
         let body_size = self.theme.editor_font_size;
         let base = TextFormat {
@@ -104,101 +370,24 @@ impl<'a> StyleMapper<'a> {
             line_height: Some(body_size * self.theme.editor_line_height),
             ..Default::default()
         };
-
-        match style {
-            "plain" | "" => base,
-
-            // —— Markdown 语义 ——
-            // 标题只换色不换字号（见上方文档注释）：行高与正文严格相等。
-            s if s == "heading" || s.starts_with("heading:") => TextFormat {
-                color: self.theme.syn_heading,
-                ..base
-            },
-            "strong" => TextFormat {
-                color: self.theme.syn_bold,
-                ..base
-            },
-            "emphasis" => TextFormat {
-                color: self.theme.syn_italic,
-                italics: true,
-                ..base
-            },
-            "strikethrough" => TextFormat {
-                color: self.theme.text_secondary,
-                strikethrough: hairline(self.theme.text_secondary),
-                ..base
-            },
-            "code" => TextFormat {
-                color: self.theme.syn_code,
-                background: self.theme.code_bg,
-                ..base
-            },
-            "link" => TextFormat {
-                color: self.theme.syn_link,
-                underline: hairline(self.theme.syn_link),
-                ..base
-            },
-            "image" => TextFormat {
-                color: self.theme.syn_meta,
-                italics: true,
-                ..base
-            },
-            "quote" => TextFormat {
-                color: self.theme.syn_quote,
-                italics: true,
-                ..base
-            },
-            "list_marker" | "list-marker" => TextFormat {
-                color: self.theme.syn_marker,
-                ..base
-            },
-            "table_border" | "table-border" => TextFormat {
-                color: self.theme.syn_table,
-                ..base
-            },
-            s if s == "task_marker" || s.starts_with("task_marker:") => TextFormat {
-                color: self.theme.accent,
-                ..base
-            },
-
-            // —— 代码语法（来自 syntect scope 映射）——
-            "keyword" | "operator" => TextFormat {
-                color: self.theme.syn_italic,
-                ..base
-            },
-            "string" => TextFormat {
-                color: self.theme.success,
-                ..base
-            },
-            "comment" => TextFormat {
-                color: self.theme.text_secondary,
-                italics: true,
-                ..base
-            },
-            "number" => TextFormat {
-                color: self.theme.warning,
-                ..base
-            },
-            "function" => TextFormat {
-                color: self.theme.syn_code,
-                ..base
-            },
-            "type" => TextFormat {
-                color: self.theme.syn_code,
-                ..base
-            },
-            "variable" | "identifier" => TextFormat {
-                color: self.theme.syn_other,
-                ..base
-            },
-            "punctuation" | "meta" | "escape" => TextFormat {
-                color: self.theme.syn_meta,
-                ..base
-            },
-
-            // 未知样式：退回正文色，不报错（见类型文档）。
-            _ => base,
-        }
+        let sem = StyleSemantics::of(self.theme, style);
+        // 编辑区**不缩放字号**：`StyleSemantics::size_scale` 只对预览区有意义
+        // （上下标 / 脚注引用 / 键帽都是行内富文本，编辑区不渲染它们——
+        // 见 `SpanStyle` 与 `InlineStyle` 两个枚举的变体集合）。
+        // 故这里恒用 `body_size`，**忽略** `size_scale`。
+        let font = if sem.monospace {
+            egui::FontId::monospace(body_size)
+        } else {
+            base.font_id.clone()
+        };
+        apply_semantics(
+            sem,
+            &base,
+            base.font_id.clone(),
+            font,
+            // 编辑区是源码视图，线条用 hairline（比预览区细）。
+            1.0,
+        )
     }
 
     /// 样式 → 颜色（只要颜色时用；等价于 `format(..).color`）。
@@ -292,7 +481,7 @@ pub fn apply(ctx: &egui::Context, theme: &Theme) {
     // 钉成 egui 启动时的默认值（`Style::default()` → `Visuals::dark()` 的
     // `TwoCoverageMinusCoverageSq`）：应用生命周期内该值永不变化，
     // `begin_pass` 永远不会因它重建 Fonts。
-    // （图集填充率 >80% 导致的重建由 `highlight_cache::atlas_token`
+    // （图集填充率 >80% 导致的重建由 `galley_cache::atlas_token`
     // 纳入缓存键兜底，见那儿的长注释。）
     //
     // 0.37 起该字段从 `Visuals::text_alpha_from_coverage` 迁到了

@@ -221,29 +221,27 @@ impl ExportAppService {
 }
 
 /// 由字符串解析导出格式；未知格式返回 `Err`。
+///
+/// 解析规则（可识别的取值、大小写、空白、历史别名）全在
+/// [`ExportFormat::parse`] 这一处——本函数只负责把「不认识的」
+/// 翻译成用户看得懂的错误文案。
 fn parse_format(raw: &str) -> AppResult<ExportFormat> {
-    match raw.to_ascii_lowercase().as_str() {
-        "html" => Ok(ExportFormat::Html),
-        "markdown" | "md" => Ok(ExportFormat::Markdown),
-        "pdf" => Ok(ExportFormat::Pdf),
-        "image" | "png" => Ok(ExportFormat::Image),
-        other => Err(AppError::domain(format!(
-            "未知导出格式：{other}（应为 html / markdown / pdf / image）"
-        ))),
-    }
+    ExportFormat::parse(raw).ok_or_else(|| {
+        AppError::domain(format!(
+            "未知导出格式：{}（应为 html / markdown / pdf / image）",
+            raw.trim()
+        ))
+    })
 }
 
 /// 由 DTO 构造导出选项。
 fn to_options(request: &ExportRequestView) -> AppResult<ExportOptions> {
-    let page_size = match request.page_size.to_ascii_lowercase().as_str() {
-        "letter" => PageSize::Letter,
-        "a4" => PageSize::A4,
-        other => {
-            return Err(AppError::domain(format!(
-                "未知页面尺寸：{other}（应为 a4 / letter）"
-            )));
-        }
-    };
+    let page_size = PageSize::parse(&request.page_size).ok_or_else(|| {
+        AppError::domain(format!(
+            "未知页面尺寸：{}（应为 a4 / letter）",
+            request.page_size.trim()
+        ))
+    })?;
     Ok(ExportOptions::new(
         request.include_toc,
         request.embed_images,

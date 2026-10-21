@@ -1,5 +1,7 @@
 //! 文件树的投影模型：扁平扫描条目折成带缩进的可见行，以及名字编辑提交。
 
+use crate::shared::path::file_name_of;
+
 /// 文件树的一行（**投影**，非缓存）。
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct TreeRow {
@@ -95,7 +97,7 @@ pub fn tree_rows(
         if depth > 0 && !visible_ancestors(path, root, expanded) {
             continue;
         }
-        let name = path.rsplit('/').next().unwrap_or(path).to_string();
+        let name = file_name_of(path).to_string();
         out.push(TreeRow {
             path: path.clone(),
             name,

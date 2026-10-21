@@ -1,4 +1,4 @@
-use super::highlight_cache::build_line_job;
+use super::galley_cache::build_line_job;
 use super::*;
 use crate::application::dto::{RangeView, SpanView};
 use egui::Color32;
@@ -426,4 +426,367 @@ fn atlas_growth_preserves_existing_glyph_positions() {
         uvs_before,
         "图集增长不得移动既有字形的位置（令牌重排因此只是保守，不会漏排）"
     );
+}
+
+// ============================================================================
+// 样式表合并（R-10 第 3 条）：两张表 → 一份派发
+// ============================================================================
+
+/// 旧 `inline::span_format` 的**原文抄录**（合并前的第二张样式表）。
+///
+/// 抄进来当 oracle：合并把「样式名 → 语义」的派发收敛到
+/// [`StyleSemantics::of`]，本函数是「合并前预览区行内长什么样」的**唯一**记录。
+/// 若哪天共享派发出 bug，本函数与新实现的差异会当场暴露。
+///
+/// 与 `inline.rs` 的现行实现逐字符对应——**故意不改**，它就是历史快照。
+fn legacy_inline_span_format(
+    theme: &Theme,
+    style: &str,
+    size: f32,
+    line_height: f32,
+) -> egui::TextFormat {
+    use egui::{FontId, Stroke};
+    let base = egui::TextFormat {
+        color: theme.text_primary,
+        font_id: FontId::proportional(size),
+        line_height: Some(line_height),
+        ..Default::default()
+    };
+    match style {
+        "heading" => egui::TextFormat {
+            color: theme.syn_heading,
+            ..base
+        },
+        "quote" => egui::TextFormat {
+            color: theme.syn_quote,
+            italics: true,
+            ..base
+        },
+        "strong" => egui::TextFormat {
+            color: theme.syn_bold,
+            ..base
+        },
+        "emphasis" => egui::TextFormat {
+            color: theme.syn_italic,
+            italics: true,
+            ..base
+        },
+        "strikethrough" => egui::TextFormat {
+            color: theme.text_secondary,
+            strikethrough: Stroke::new(1.0_f32, theme.text_secondary),
+            ..base
+        },
+        "code" => egui::TextFormat {
+            color: theme.syn_code,
+            background: theme.code_bg,
+            font_id: FontId::monospace(size),
+            ..base
+        },
+        "link" => egui::TextFormat {
+            color: theme.syn_link,
+            underline: Stroke::new(1.0_f32, theme.syn_link),
+            ..base
+        },
+        "math" => egui::TextFormat {
+            color: theme.syn_code,
+            italics: true,
+            ..base
+        },
+        "keycap" => egui::TextFormat {
+            color: theme.syn_code,
+            background: theme.code_bg,
+            font_id: FontId::monospace(size * 0.92),
+            ..base
+        },
+        "mark" => egui::TextFormat {
+            color: theme.text_primary,
+            background: theme.find_bg,
+            ..base
+        },
+        "task_done" => egui::TextFormat {
+            color: theme.text_secondary,
+            strikethrough: Stroke::new(1.0_f32, theme.text_secondary),
+            ..base
+        },
+        "sub" | "sup" => egui::TextFormat {
+            color: theme.text_secondary,
+            font_id: FontId::proportional(size * 0.78),
+            ..base
+        },
+        "footnote_ref" => egui::TextFormat {
+            color: theme.syn_link,
+            font_id: FontId::proportional(size * 0.78),
+            ..base
+        },
+        _ => base,
+    }
+}
+
+/// 旧 `StyleMapper::format` 的**原文抄录**（合并前的第一张样式表）。
+///
+/// 同上：编辑区侧的合并前快照。
+fn legacy_mapper_format(theme: &Theme, style: &str) -> egui::TextFormat {
+    let body_size = theme.editor_font_size;
+    let base = egui::TextFormat {
+        color: theme.text_primary,
+        font_id: egui::FontId::monospace(body_size),
+        line_height: Some(body_size * theme.editor_line_height),
+        ..Default::default()
+    };
+    match style {
+        "plain" | "" => base,
+        s if s == "heading" || s.starts_with("heading:") => egui::TextFormat {
+            color: theme.syn_heading,
+            ..base
+        },
+        "strong" => egui::TextFormat {
+            color: theme.syn_bold,
+            ..base
+        },
+        "emphasis" => egui::TextFormat {
+            color: theme.syn_italic,
+            italics: true,
+            ..base
+        },
+        "strikethrough" => egui::TextFormat {
+            color: theme.text_secondary,
+            strikethrough: egui::Stroke::new(1.0_f32, theme.text_secondary),
+            ..base
+        },
+        "code" => egui::TextFormat {
+            color: theme.syn_code,
+            background: theme.code_bg,
+            ..base
+        },
+        "link" => egui::TextFormat {
+            color: theme.syn_link,
+            underline: egui::Stroke::new(1.0_f32, theme.syn_link),
+            ..base
+        },
+        "image" => egui::TextFormat {
+            color: theme.syn_meta,
+            italics: true,
+            ..base
+        },
+        "quote" => egui::TextFormat {
+            color: theme.syn_quote,
+            italics: true,
+            ..base
+        },
+        "list_marker" | "list-marker" => egui::TextFormat {
+            color: theme.syn_marker,
+            ..base
+        },
+        "table_border" | "table-border" => egui::TextFormat {
+            color: theme.syn_table,
+            ..base
+        },
+        s if s == "task_marker" || s.starts_with("task_marker:") => egui::TextFormat {
+            color: theme.accent,
+            ..base
+        },
+        "keyword" | "operator" => egui::TextFormat {
+            color: theme.syn_italic,
+            ..base
+        },
+        "string" => egui::TextFormat {
+            color: theme.success,
+            ..base
+        },
+        "comment" => egui::TextFormat {
+            color: theme.text_secondary,
+            italics: true,
+            ..base
+        },
+        "number" => egui::TextFormat {
+            color: theme.warning,
+            ..base
+        },
+        "function" => egui::TextFormat {
+            color: theme.syn_code,
+            ..base
+        },
+        "type" => egui::TextFormat {
+            color: theme.syn_code,
+            ..base
+        },
+        "variable" | "identifier" => egui::TextFormat {
+            color: theme.syn_other,
+            ..base
+        },
+        "punctuation" | "meta" | "escape" => egui::TextFormat {
+            color: theme.syn_meta,
+            ..base
+        },
+        _ => base,
+    }
+}
+
+/// `TextFormat` 的可比指纹：颜色 / 背景 / 字体族 / 字号 / 行高 / 装饰。
+fn fmt_fingerprint(f: &egui::TextFormat) -> String {
+    format!(
+        "color={:?} bg={:?} font={:?} size={} line_height={:?} ital={} strike=({},{:?}) ul=({},{:?})",
+        f.color,
+        f.background,
+        f.font_id.family,
+        f.font_id.size,
+        f.line_height,
+        f.italics,
+        f.strikethrough.width,
+        f.strikethrough.color,
+        f.underline.width,
+        f.underline.color,
+    )
+}
+
+/// 合并后，**编辑区侧**的样式必须与合并前**逐项相同**。
+///
+/// 覆盖两张旧表的**并集**：编辑区侧本来只认前 20 种，后 7 种
+/// （`math` / `keycap` / `mark` / `task_done` / `sub` / `sup` /
+/// `footnote_ref`）是「未知样式 → 正文色」。
+///
+/// 合并后共享派发认得这 7 种 → 编辑区侧**行为有变**（它们会带上颜色）。
+/// 这条用例把「有变」这件事**显式钉住**，而不是让它悄悄发生。
+///
+/// # 那 7 种在编辑区**不可达**
+///
+/// 编辑区的 span 来自 `MarkdownAppService::highlight` → syntect，
+/// 样式名由 `span_style_str(SpanStyle)` 产生；而 **`SpanStyle` 枚举没有**
+/// `Math` / `Keycap` / `Mark` / `TaskDone` / `Subscript` / `Superscript` /
+/// `FootnoteRef` 变体（那些在 `InlineStyle` 里，属预览区侧）。
+/// 故编辑区**永远**不会收到这 7 个样式名 → 行为差异**不可达**。
+///
+/// 那为什么不干脆让编辑区侧退回旧行为？——那要在派发表里再加一层
+/// 「这张表不认哪些样式」，把共享派发又拆成两半，正是本次要消除的东西。
+/// 现状（认得但用不上）是**更简单**的那个。
+#[test]
+fn merged_style_table_keeps_editor_side_behavior_for_reachable_styles() {
+    let theme = Theme::dark();
+    let mapper = StyleMapper::new(&theme);
+    // 编辑区侧**可能**收到的样式名（= `SpanStyle` 的 20 个变体 + 别名）。
+    let editor_styles = [
+        "plain",
+        "",
+        "heading",
+        "heading:3",
+        "emphasis",
+        "strong",
+        "strikethrough",
+        "code",
+        "link",
+        "image",
+        "quote",
+        "list_marker",
+        "list-marker",
+        "table_border",
+        "table-border",
+        "task_marker",
+        "task_marker:true",
+        "keyword",
+        "string",
+        "comment",
+        "number",
+        "function",
+        "type",
+        "variable",
+        "identifier",
+        "operator",
+        "punctuation",
+        "meta",
+        "escape",
+        // 未知样式：退回正文色，不报错。
+        "unknown_xyz",
+    ];
+    for s in editor_styles {
+        assert_eq!(
+            fmt_fingerprint(&mapper.format(s)),
+            fmt_fingerprint(&legacy_mapper_format(&theme, s)),
+            "编辑区样式 [{s}] 与合并前不等价"
+        );
+    }
+}
+
+/// 合并后，**预览区行内侧**的样式必须与合并前**逐项相同**。
+///
+/// 判据形态与上一条对称：抄录的 oracle 是「合并前的第二张样式表」。
+#[test]
+fn merged_style_table_keeps_preview_inline_behavior() {
+    let theme = Theme::dark();
+    let size = theme.metrics.preview_font_size;
+    let line_height = size * theme.metrics.preview_line_height;
+    // 预览区行内侧的样式名（= `InlineStyle` 的 14 个变体 + 基准样式）。
+    let inline_styles = [
+        "plain",
+        "",
+        "heading",
+        "quote",
+        "strong",
+        "emphasis",
+        "strikethrough",
+        "code",
+        "link",
+        "math",
+        "keycap",
+        "mark",
+        "task_done",
+        "sub",
+        "sup",
+        "footnote_ref",
+        // 未知样式：退回正文色。
+        "unknown_xyz",
+    ];
+    for s in inline_styles {
+        let new = crate::presentation::views::preview_view::test_only::span_format(
+            &theme,
+            s,
+            size,
+            line_height,
+        );
+        assert_eq!(
+            fmt_fingerprint(&new),
+            fmt_fingerprint(&legacy_inline_span_format(&theme, s, size, line_height)),
+            "预览区行内样式 [{s}] 与合并前不等价"
+        );
+    }
+}
+
+/// 两表**共同**的样式，颜色必须**逐项相同**。
+///
+/// 这是方案文档 R-10 第 3 条「改一处颜色两处同步」的**核心判据**：
+/// 合并前两张表各写一遍 `match`，改一处颜色语义要改两处；
+/// 合并后派发只有一份 → 颜色**必然**同步。
+///
+/// 本用例从**两个方向**钉住：
+/// - 共同样式：颜色相同（这是「同步」的含义）；
+/// - 各自特有样式：颜色**不同**（否则「同步」就成了「一律相同」，
+///   反而丢掉了区分——比如编辑区的 `keyword` 与预览区的 `math` 不该同色）。
+#[test]
+fn shared_styles_have_identical_colors_in_both_tables() {
+    let theme = Theme::dark();
+    let mapper = StyleMapper::new(&theme);
+    let size = theme.metrics.preview_font_size;
+    let line_height = size * theme.metrics.preview_line_height;
+
+    let common = [
+        "heading",
+        "quote",
+        "strong",
+        "emphasis",
+        "strikethrough",
+        "code",
+        "link",
+    ];
+    for s in common {
+        let editor = mapper.format(s);
+        let preview = crate::presentation::views::preview_view::test_only::span_format(
+            &theme,
+            s,
+            size,
+            line_height,
+        );
+        assert_eq!(
+            editor.color, preview.color,
+            "共同样式 [{s}] 的颜色必须两表相同"
+        );
+    }
 }

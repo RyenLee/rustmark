@@ -1,4 +1,4 @@
-//! 文档生命周期用例：打开 / 新建 / 保存 / 另存 / 撤销重做 / 关闭，
+//! 文档生命周期用例：打开 / 新建 / 保存 / 另存 / 撤销重做 / 还原 / 关闭，
 //! 以及读入编码旁路表的维护。
 
 use crate::domain::document::aggregate::Document;
@@ -7,6 +7,7 @@ use crate::domain::document::repository::DocumentSnapshot;
 use crate::shared::encoding::TextEncoding;
 use crate::shared::error::AppError;
 use crate::shared::event::DomainEvent;
+use crate::shared::geometry::{ByteOffset, TextRange};
 use crate::shared::ids::DocumentId;
 use crate::shared::path::FilePath;
 use crate::shared::result::AppResult;
@@ -190,6 +191,65 @@ impl DocumentAppService {
             doc.redo(now)?;
             Self::drain_doc_events(doc)
         };
+        self.publish_all(events);
+        Ok(())
+    }
+
+    /// 从磁盘重新加载（「还原修改」，R-04a）。
+    ///
+    /// 语义：丢弃全部未保存修改，内容回到**磁盘版本**。与
+    /// [`Self::undo`] 是两件事——撤销回退一步编辑且可重做，还原直接对齐磁盘。
+    ///
+    /// # 实现要点
+    ///
+    /// 1. **磁盘真相经仓储读**（与 [`Self::open`] 同一条加载路径）：编码识别、
+    ///    BOM / CRLF 归一都在仓储里，在这里重读一遍必然漂移；
+    /// 2. **整篇替换走领域 `replace`**：与普通编辑同一条管道（撤销点、事件、
+    ///    光标后移），于是「还原」本身是一步**可撤销**的编辑——用户还原完
+    ///    发现还不如不改，Ctrl+Z 能回去；
+    /// 3. **替换后 `mark_saved`**：内容已与磁盘一致，脏标记必须清掉，
+    ///    否则标签显示脏点、关闭时弹保存对话框，而用户明明什么都没改；
+    /// 4. **光标落到文档头**：还原等价于「重新打开」，沿用新开文档的 0 位光标；
+    ///    旧光标对应的字节位置在新内容里已没有意义。
+    ///
+    /// 未命名文档没有磁盘版本，直接报错——猜一个保存位置比报错更糟。
+    pub fn revert(&mut self, cmd: RevertCommand) -> AppResult<()> {
+        let now = self.clock.now();
+        let (path, len) = {
+            let reg = self.lock_read()?;
+            let doc = reg
+                .get(cmd.id)
+                .ok_or_else(|| AppError::domain("文档未打开"))?;
+            let path = doc
+                .path()
+                .cloned()
+                .ok_or_else(|| AppError::domain("未命名文档尚未保存，无从还原"))?;
+            (path, doc.len_bytes())
+        };
+        let snapshot = self.repository.load(&path)?;
+        let encoding = snapshot.encoding;
+        let events = {
+            let mut reg = self.lock_write()?;
+            let doc = reg
+                .get_mut(cmd.id)
+                .ok_or_else(|| AppError::domain("文档未打开"))?;
+            let range = TextRange::new(ByteOffset::new(0), ByteOffset::new(len));
+            doc.replace(range, &snapshot.content, now)?;
+            doc.move_cursor(ByteOffset::new(0));
+            // `NotDirty`（替换无效果且文档本就干净）视为成功：内容与磁盘
+            // 一致正是本用例的目标状态，不是失败。
+            match doc.mark_saved(path, now) {
+                Ok(()) => {}
+                Err(DocumentError::NotDirty) => {}
+                Err(e) => return Err(e.into()),
+            }
+            Self::drain_doc_events(doc)
+        };
+        // 读入时识别到的编码可能变了（用户在外部转换了编码），同步旁路表，
+        // 否则状态栏显示一个假的编码名（V11-03）。
+        if let Some(encoding) = encoding {
+            self.encodings.insert(cmd.id, encoding);
+        }
         self.publish_all(events);
         Ok(())
     }

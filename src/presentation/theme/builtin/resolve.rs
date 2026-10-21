@@ -22,15 +22,22 @@ pub fn resolve(view: &ThemeView, system_preference_dark: bool) -> Theme {
             view.line_height,
         );
     }
-    let kind = BuiltinTheme::parse(&view.kind);
+    // 未知取值退回 `System`（再按系统偏好解析）而非报错：
+    // 旧配置里出现将来才引入的取值时，程序应当照常启动。
+    //
+    // 走**真源**的 `parse`，不再用表现层私有的副本——那份副本
+    // （`BuiltinTheme`）已于 R-09 删除。
+    let kind = ThemeKind::parse(&view.kind).unwrap_or(ThemeKind::System);
     let base = match kind {
-        BuiltinTheme::Light => BuiltinTheme::Light,
-        BuiltinTheme::Dark => BuiltinTheme::Dark,
-        BuiltinTheme::System => {
+        ThemeKind::Light => ThemeKind::Light,
+        ThemeKind::Dark => ThemeKind::Dark,
+        // `System` 跟随系统偏好；`Custom` 已在上面提前返回，走不到这里
+        // （真源枚举新增变体时，这条 match 会**编译失败**逼作者表态）。
+        ThemeKind::System | ThemeKind::Custom => {
             if system_preference_dark {
-                BuiltinTheme::Dark
+                ThemeKind::Dark
             } else {
-                BuiltinTheme::Light
+                ThemeKind::Light
             }
         }
     };

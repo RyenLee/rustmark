@@ -59,11 +59,13 @@ impl EditorApp {
         // 撤销待删目标。若跟着路径类结果一起短路返回，`pending_delete`
         // 会一直悬着，用户下次点「删除」反而被「已有确认在飞」吞掉。
         if let DialogOutcome::Confirm(result) = &outcome {
-            // 两类确认框（删除 / 全部关闭）共用同一个 `Confirm` 出口，
+            // 三类确认框（删除 / 全部关闭 / 还原）共用同一个 `Confirm` 出口，
             // 靠「哪个 pending 有值」分流——与 `PendingDialog` 当年
-            // 「一个字段多种含义」的缺陷相反：这里两个字段各自只有一种含义。
+            // 「一个字段多种含义」的缺陷相反：这里三个字段各自只有一种含义。
             if self.pending_close_all {
                 self.apply_close_all_confirm(result);
+            } else if self.pending_revert.is_some() {
+                self.apply_revert_confirm(result);
             } else {
                 self.apply_delete_confirm(result);
             }
@@ -121,11 +123,15 @@ impl EditorApp {
                     )),
                 }
             }
+            // 选择图片（R-04b）：导入资源目录 + 插链接的编排在 images.rs。
+            // 取消已在上面静默返回，走不到这里。
+            DialogOutcome::PickImage(Ok(path)) => self.apply_picked_image(path),
             // 非取消的错误：说明是「对话框系统不可用」这类问题，
             // 必须提示——静默会让用户以为点了没反应。
             DialogOutcome::OpenFile(Err(e)) => self.report_dialog_failure("打开文件", &e),
             DialogOutcome::SaveFile(Err(e)) => self.report_dialog_failure("另存为", &e),
             DialogOutcome::PickFolder(Err(e)) => self.report_dialog_failure("选择文件夹", &e),
+            DialogOutcome::PickImage(Err(e)) => self.report_dialog_failure("选择图片", &e),
             // 确认框已在上方先行处理（它有自己的取消语义）。此臂只为
             // 让编译器确认枚举穷尽——真走到这里说明前面的分支被改坏了。
             DialogOutcome::Confirm(_) => {}
@@ -162,8 +168,11 @@ impl EditorApp {
     }
 
     /// 路径末段（提示文案里显示的名字）。
+    ///
+    /// 走 `shared::path::file_name_of`：它同时认 `/` 与 `\`，Windows 的
+    /// 原始路径（`C:\a\b.md`）不会整条被当成文件名显示。
     pub(super) fn display_name(path: &str) -> &str {
-        path.rsplit('/').next().unwrap_or(path)
+        file_name_of(path)
     }
 
     /// 报告「对话框本身不可用」这类失败。
@@ -219,6 +228,40 @@ impl EditorApp {
         }
     }
 
+    /// 请求「还原修改」确认（登记意图 → 后台确认框 → 每帧取回，R-04a）。
+    ///
+    /// 与 [`Self::request_delete`] 同一套路：还原丢弃全部未保存修改，
+    /// 不可逆，而 `confirm` 是同步阻塞的原生模态框。文案报出文档名——
+    /// 用户要凭它确认「丢的确实是这一份」。
+    pub(super) fn request_revert(&mut self, id: DocumentId, path: &FilePath) {
+        if self.pending_revert.is_some() {
+            return;
+        }
+        self.pending_revert = Some(id);
+        let message = format!(
+            "「{}」有未保存的修改，「还原」将丢弃这些修改并从磁盘重新加载。确定继续吗？",
+            Self::display_name(path.as_str())
+        );
+        self.dialogs.spawn(DialogRequest::Confirm { message });
+    }
+
+    /// 兑现一次「还原修改」确认的答复（R-04a）。
+    ///
+    /// 三种答复与删除确认同义：是 → 执行还原；否 / 关掉对话框 → 什么都不做
+    /// （用户刚明确拒绝，再弹一条「已取消」是废话）；对话框系统不可用 →
+    /// 必须提示，否则用户以为还原了、实际内容没变。
+    pub(super) fn apply_revert_confirm(&mut self, result: &Result<bool, AppError>) {
+        let Some(id) = self.pending_revert.take() else {
+            return;
+        };
+        match result {
+            Ok(true) => self.run_revert(id),
+            Ok(false) => {}
+            Err(AppError::Cancelled) => {}
+            Err(e) => self.set_status_error(&format!("未能确认还原：{e}")),
+        }
+    }
+
     /// 请求删除一个工作区条目（**先弹二次确认，答复为「是」才真删**）。
     ///
     /// # 为什么不能在这里直接删
@@ -250,7 +293,7 @@ impl EditorApp {
     /// 而用户右键点到的是目录本身，很可能没意识到里面还有东西。
     /// 只写「确定删除 X？」属于把风险藏起来。
     fn delete_confirm_message(&self, path: &str) -> String {
-        let name = path.rsplit('/').next().unwrap_or(path);
+        let name = file_name_of(path);
         let is_directory = self
             .workspace_entries
             .items

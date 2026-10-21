@@ -6,6 +6,7 @@ use crate::app::frame::EditorApp;
 use crate::presentation::state::sidebar_ui_state::{NameEdit, TreeRow, tree_rows};
 use crate::presentation::theme::builtin::Theme;
 use crate::presentation::widgets;
+use crate::shared::path::file_name_of;
 
 use super::*;
 
@@ -477,11 +478,10 @@ fn restore_draft(app: &mut EditorApp, edit: NameEdit, label: &str) {
             name,
             is_directory,
         } => {
-            app.sidebar.creating = Some((parent, name, is_directory));
+            app.restore_create_draft(parent, name, is_directory);
         }
         NameEdit::Rename { path, name } => {
-            app.sidebar.renaming_path = Some(path);
-            app.sidebar.rename_draft = name;
+            app.restore_rename_draft(path, name);
         }
     }
     let _ = label;
@@ -499,7 +499,7 @@ fn delete_with_feedback(app: &mut EditorApp, path: &str) {
 
 /// 路径末段（显示用）。
 pub(super) fn display_name(path: &str) -> String {
-    path.rsplit('/').next().unwrap_or(path).to_string()
+    file_name_of(path).to_string()
 }
 
 /// 执行文件树的点击意图（在渲染结束后统一做，见 `FileIntent`）。
@@ -511,7 +511,7 @@ fn run_file_intent(app: &mut EditorApp, intent: FileIntent) {
         || intent.menu.is_some();
     if let Some(path) = intent.select {
         // 单选只改高亮，不开文档——打开是双击的动作（见 [`file_row`]）。
-        app.sidebar.selected_path = Some(path);
+        app.select_sidebar_path(path);
     }
     if let Some(path) = intent.toggle {
         app.sidebar.toggle_expanded(&path);

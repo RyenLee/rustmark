@@ -38,9 +38,10 @@ const GOAL_BAR: Vec2 = Vec2::new(46.0, 6.0);
 /// 留下一个过期值——状态栏显示上一个文档的编码比不显示更糟。
 /// 代价只是一次 `HashMap` 查询（应用层旁路表），每帧可忽略。
 fn sync_encoding(app: &mut EditorApp) {
-    app.status_bar.encoding = app
-        .active_doc
-        .and_then(|id| app.services.documents.encoding_of(id));
+    app.set_status_bar_encoding(
+        app.active_doc
+            .and_then(|id| app.services.documents.encoding_of(id)),
+    );
 }
 
 /// 绘制底部状态栏。
@@ -353,8 +354,8 @@ fn run_intent(app: &mut EditorApp, intent: IntentKind, now_ms: u64) {
             Ok(()) => app.status_bar.notice("已保存", now_ms),
             Err(e) => app.status_bar.error(format!("保存失败：{e}"), now_ms),
         },
-        IntentKind::Spell => app.editor.spell_check = !app.editor.spell_check,
-        IntentKind::Wrap => app.editor.word_wrap = !app.editor.word_wrap,
+        IntentKind::Spell => app.toggle_spell_check(),
+        IntentKind::Wrap => app.toggle_word_wrap(),
         IntentKind::Theme => app.execute(UiAction::ToggleTheme),
         IntentKind::Stats => app.execute(UiAction::DocumentStats),
     }

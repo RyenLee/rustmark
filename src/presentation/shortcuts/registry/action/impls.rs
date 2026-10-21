@@ -4,6 +4,16 @@ use super::*;
 
 impl UiAction {
     /// 全部动作（遍历用；「快捷键一览」与命令面板的全集）。
+    ///
+    /// # 这份清单必须与枚举变体**同步**
+    ///
+    /// 它是**手写清单**（`const` 数组），编译器管不到：加变体忘了
+    /// 加进这里 → 该动作**不出现在命令面板**、**快捷键一览少一项**，
+    /// 而**零报错**。其余的 `match`（`persisted_key` / `label` /
+    /// `group` / `keywords` / `default_combo`）都是穷举的，编译器会拦；
+    /// 唯独这份清单要靠用例钉住——
+    /// `tests/app/shortcut_action_guard_test.rs` 的
+    /// `the_presentation_action_list_matches_the_enum`。
     pub const ALL: &'static [UiAction] = &[
         UiAction::NewDocument,
         UiAction::OpenDocument,
@@ -66,51 +76,96 @@ impl UiAction {
 
     /// 稳定 `snake_case` 键，与领域 `ActionId::key()` **逐字一致**。
     ///
-    /// 只有领域里存在的动作才返回 `Some`——其余（`Revert` / `ToggleList` /
-    /// `InsertImage` / `GotoTabN` / `ShortcutOverview` / `About`）是纯 UI 动作，
+    /// 只有领域里存在的动作才返回 `Some`——其余是纯 UI 动作，
     /// 没有配置项，不参与改键持久化。
+    ///
+    /// # 为什么是穷举 `match` 而不是兜底
+    ///
+    /// 此前这里写的是「`Some(match self { …38 个分支… })` + 末尾的
+    /// 兜底分支直接 `return None`」——
+    /// 那个兜底让「新增一个动作」**编译通过但语义未定**：
+    /// 新动作默认落到「不可持久化」，而作者很可能以为它能持久化
+    /// （或反过来，以为兜底分支已被正确处理）。
+    /// 两种情况都**没有任何报错**，只有用户改完键重启后才发现没生效。
+    ///
+    /// 现在改成穷举：不可持久化的动作**逐个显式写 `None`**。
+    /// 新增 `UiAction` 变体时，**这里编译失败**——
+    /// 作者必须当场表态「它能不能持久化」，而不是继承一个默认值。
+    ///
+    /// 不可持久化的 19 个（实测，非估算）：
+    /// `OpenFolder` / `Revert` / `InsertImage` / `ToggleList` /
+    /// `ToggleOrderedList` / `MoveLineUp` / `MoveLineDown` /
+    /// `GotoTab1..9` / `ShortcutOverview` / `About` / `ToggleTheme`。
+    ///
+    /// # 「两表一致」由谁保证
+    ///
+    /// 领域 `ActionId`（38 项）与本表的可持久化部分（38 项）必须**逐字相等**。
+    /// 表现层不得依赖领域（`check-arch` 拦），故两者只能靠**字符串契约**对齐
+    /// ——这意味着「表里的键名写错 / 少写一个」这类漂移**编译期查不出**。
+    /// 它由两条用例守住：
+    /// - `tests/app/`：两侧 `ActionId::all()` 与本表逐项比对（跨层，故放 app）；
+    /// - `tests/presentation/`：`from_persisted_key` 往返 + 键集合自洽。
     pub const fn persisted_key(self) -> Option<&'static str> {
-        Some(match self {
-            UiAction::NewDocument => "new_document",
-            UiAction::OpenDocument => "open_document",
-            UiAction::Save => "save",
-            UiAction::SaveAs => "save_as",
-            UiAction::SaveAll => "save_all",
-            UiAction::CloseTab => "close_tab",
-            UiAction::Export => "export",
-            UiAction::Undo => "undo",
-            UiAction::Redo => "redo",
-            UiAction::Find => "find",
-            UiAction::Replace => "replace",
-            UiAction::FindInFiles => "find_in_files",
-            UiAction::Bold => "bold",
-            UiAction::Italic => "italic",
-            UiAction::Strikethrough => "strikethrough",
-            UiAction::InlineCode => "inline_code",
-            UiAction::InsertLink => "insert_link",
-            UiAction::CodeBlock => "code_block",
-            UiAction::InsertTable => "insert_table",
-            UiAction::ToggleQuote => "toggle_quote",
-            UiAction::PromoteHeading => "promote_heading",
-            UiAction::DemoteHeading => "demote_heading",
-            UiAction::Indent => "indent",
-            UiAction::Outdent => "outdent",
-            UiAction::ToggleTask => "toggle_task",
-            UiAction::TogglePreview => "toggle_preview",
-            UiAction::ToggleOutline => "toggle_outline",
-            UiAction::ToggleSidebar => "toggle_sidebar",
-            UiAction::ToggleStatusbar => "toggle_statusbar",
-            UiAction::CommandPalette => "command_palette",
-            UiAction::OpenSettings => "open_settings",
-            UiAction::ToggleFocusMode => "focus_mode",
-            UiAction::CloseOverlay => "close_overlay",
-            UiAction::DocumentStats => "document_stats",
-            UiAction::InsertSymbol => "insert_symbol",
-            UiAction::CompareDiff => "compare_diff",
-            UiAction::NextTab => "next_tab",
-            UiAction::PrevTab => "prev_tab",
-            _ => return None,
-        })
+        match self {
+            UiAction::NewDocument => Some("new_document"),
+            UiAction::OpenDocument => Some("open_document"),
+            UiAction::Save => Some("save"),
+            UiAction::SaveAs => Some("save_as"),
+            UiAction::SaveAll => Some("save_all"),
+            UiAction::CloseTab => Some("close_tab"),
+            UiAction::Export => Some("export"),
+            UiAction::Undo => Some("undo"),
+            UiAction::Redo => Some("redo"),
+            UiAction::Find => Some("find"),
+            UiAction::Replace => Some("replace"),
+            UiAction::FindInFiles => Some("find_in_files"),
+            UiAction::Bold => Some("bold"),
+            UiAction::Italic => Some("italic"),
+            UiAction::Strikethrough => Some("strikethrough"),
+            UiAction::InlineCode => Some("inline_code"),
+            UiAction::InsertLink => Some("insert_link"),
+            UiAction::CodeBlock => Some("code_block"),
+            UiAction::InsertTable => Some("insert_table"),
+            UiAction::ToggleQuote => Some("toggle_quote"),
+            UiAction::PromoteHeading => Some("promote_heading"),
+            UiAction::DemoteHeading => Some("demote_heading"),
+            UiAction::Indent => Some("indent"),
+            UiAction::Outdent => Some("outdent"),
+            UiAction::ToggleTask => Some("toggle_task"),
+            UiAction::TogglePreview => Some("toggle_preview"),
+            UiAction::ToggleOutline => Some("toggle_outline"),
+            UiAction::ToggleSidebar => Some("toggle_sidebar"),
+            UiAction::ToggleStatusbar => Some("toggle_statusbar"),
+            UiAction::CommandPalette => Some("command_palette"),
+            UiAction::OpenSettings => Some("open_settings"),
+            UiAction::ToggleFocusMode => Some("focus_mode"),
+            UiAction::CloseOverlay => Some("close_overlay"),
+            UiAction::DocumentStats => Some("document_stats"),
+            UiAction::InsertSymbol => Some("insert_symbol"),
+            UiAction::CompareDiff => Some("compare_diff"),
+            UiAction::NextTab => Some("next_tab"),
+            UiAction::PrevTab => Some("prev_tab"),
+            // —— 以下为纯 UI 动作：没有配置项，不参与改键持久化 ——
+            UiAction::OpenFolder => None,
+            UiAction::Revert => None,
+            UiAction::InsertImage => None,
+            UiAction::ToggleList => None,
+            UiAction::ToggleOrderedList => None,
+            UiAction::MoveLineUp => None,
+            UiAction::MoveLineDown => None,
+            UiAction::GotoTab1 => None,
+            UiAction::GotoTab2 => None,
+            UiAction::GotoTab3 => None,
+            UiAction::GotoTab4 => None,
+            UiAction::GotoTab5 => None,
+            UiAction::GotoTab6 => None,
+            UiAction::GotoTab7 => None,
+            UiAction::GotoTab8 => None,
+            UiAction::GotoTab9 => None,
+            UiAction::ShortcutOverview => None,
+            UiAction::About => None,
+            UiAction::ToggleTheme => None,
+        }
     }
 
     /// 由持久化键反查动作。

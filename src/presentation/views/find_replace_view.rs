@@ -108,7 +108,7 @@ fn draw_find_row(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
             response.request_focus();
         }
         if response.has_focus() {
-            app.find.find_focused = true;
+            app.set_find_focused(true);
         }
         if response.changed() {
             // 改了查询必须重扫：面板显示的 `n/m` 与「下一个」跳转目标
@@ -216,7 +216,7 @@ fn draw_replace_row(app: &mut EditorApp, ui: &mut Ui) {
         if response.has_focus() {
             // 替换框吃掉焦点时必须**放弃**抢焦点，否则用户在替换框里
             // 每敲一个字符都会被拽回查找框，一个字也打不进去。
-            app.find.find_focused = false;
+            app.set_find_focused(false);
         }
 
         if ui

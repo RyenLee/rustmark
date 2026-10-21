@@ -23,9 +23,9 @@ use std::sync::Arc;
 use crate::domain::export::aggregate::ExportJob;
 use crate::domain::export::errors::ExportError;
 use crate::domain::export::services::Exporter;
-use crate::domain::export::value_objects::ExportFormat;
 use crate::infrastructure::export::pulldown_html_exporter::PulldownHtmlExporter;
 use crate::infrastructure::export::system_pdf_exporter::SystemPdfExporter;
+use crate::shared::export_format::ExportFormat;
 
 /// 按格式路由到具体导出器的组合器。
 ///

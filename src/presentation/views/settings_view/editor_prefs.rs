@@ -37,7 +37,7 @@ pub(super) fn editor(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
     field(ui, theme, "行号栏", |ui| {
         let mut on = app.editor.line_numbers;
         if ui.checkbox(&mut on, "在编辑区左侧显示行号").changed() {
-            app.editor.line_numbers = on;
+            app.set_line_numbers(on);
             app.apply_editor_field(|e| e.show_line_numbers = on);
         }
     });
@@ -67,6 +67,32 @@ pub(super) fn editor(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
     ui.colored_label(
         theme.text_secondary,
         "达到上限后，新的打开请求会被拒绝并提示；已打开的文档与切换不受影响。",
+    );
+    // 写作目标（R-05）：此前设置页没有入口，只能沿用当前值。
+    // 即时落盘（与设置页其它项一致）；空串与 0 都归一为「未设」——
+    // 领域的 `WritingGoal::is_set` 以 0 表示未设，存 0 即语义正确，
+    // 不必额外搬一份「未设」标记（表现层也不得依赖 `domain` 去读那个常量）。
+    field(ui, theme, "写作目标（字数）", |ui| {
+        let current = app.settings().editor.writing_goal;
+        // 先让 `TextEdit` 把编辑写回缓冲，块结束即释放对 `app` 的可变借，
+        // 后面才能再调用 `apply_editor_field`。
+        let changed = {
+            let text = &mut app.settings_ui.writing_goal_text;
+            ui.text_edit_singleline(text).changed()
+        };
+        if changed {
+            let next = crate::presentation::state::settings_ui_state::normalize_writing_goal(
+                &app.settings_ui.writing_goal_text,
+                current,
+            );
+            if next != current {
+                app.apply_editor_field(|e| e.writing_goal = next);
+            }
+        }
+    });
+    ui.colored_label(
+        theme.text_secondary,
+        "达到目标后，底部状态栏显示完成进度；留空表示不设写作目标。",
     );
 }
 

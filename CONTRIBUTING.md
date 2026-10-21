@@ -57,12 +57,21 @@ fix(editor): 撤销栈按文档隔离，修复跨文件污染 [S3-08]
 
 | 层 | 禁止 |
 |---|---|
-| domain | `egui` / `eframe` / `rfd` / `syntect` / `pulldown_cmark` / `std::fs` / `std::io` / `anyhow` / `println!` |
-| application | 上述 UI 与解析器 crate、`std::fs`，且签名不得出现聚合根 |
-| infrastructure | `crate::application` / `crate::presentation` |
-| presentation | `crate::domain` / `crate::infrastructure` |
+| domain | `egui` / `eframe` / `rfd` / `syntect` / `pulldown_cmark` / `std::fs` / `std::io` / `anyhow` / `crate::app` / `crate::application` / `crate::infrastructure` / `crate::presentation` / 直接打印（`print!` / `println!` / `eprint!` / `eprintln!` / `dbg!`） |
+| application | 上述 UI 与解析器 crate、`std::fs`、`std::io`、`crate::app` / `crate::infrastructure` / `crate::presentation`，且签名不得出现聚合根 |
+| infrastructure | `crate::app` / `crate::application` / `crate::presentation` |
+| presentation | `crate::domain` / `crate::infrastructure` / `crate::app`（**唯一例外 `crate::app::frame`**：视图以 `&EditorApp` 接收应用状态） |
+| shared | 上述 UI crate + 全部业务层 |
 
-完整矩阵见 `.agent/architecture.md`。确需豁免时，在 `use` 行尾加 `// arch-allow: <crate>` 并在该文档登记。
+另有一条**全 src 生效**的规则：`request_repaint_after` 只允许出现在
+`app/frame/scheduler.rs`（定时任务一律 `arm` 到期点，由帧末统一预约）——**含组合根 `app/`**。
+
+完整矩阵见 `docs/architecture-constraints.md`（架构约束的唯一真源）。
+
+确需豁免时，在 `use` 行尾加 `// arch-allow: <对象>`——**只豁免你写明的那个对象**，
+不是整行放行。豁免必须在 `docs/architecture-constraints.md` §4.4 的豁免表里登记
+（`| 文件 | 对象 | 理由 |`），否则校验器报「豁免未登记」；若该行已没有依赖它的违规，
+则报「豁免无效」——**过时的豁免会被要求清理**。
 
 ## 4. 编码约定要点
 

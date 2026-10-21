@@ -1,12 +1,41 @@
 // 架构边界校验器 —— 由 `build.rs` 与 `src/bin/check-arch.rs` 通过 `include!` 共用。
 //
-// 只扫描 `use` 语句（不解析 AST）：牺牲对宏内引用的识别，换取零额外依赖与极快的构建期校验。
-// 逃生口：行尾注释 `// arch-allow: <crate>` 可豁免该行，豁免须在 `.agent/architecture.md` 登记。
+// # 它是怎么判的（词法级，不解析 AST，也不引入额外依赖）
+//
+// 1. **词法**：源码 → token 流。行注释、块注释（含嵌套）、字符串字面量、字符字面量
+//    全部剔除——否则「注释里提到 `crate::domain`」「错误信息里写了 `crate::domain`」
+//    会被误判成跨层依赖。
+// 2. **`use` 展开**：`use` 声明按 use-tree 语法展开成**完整路径**，覆盖
+//    `pub use` / `use a::{b, c}` / `use a::b as c` / `use a::*` / 跨行 / 前导 `::`。
+//    `extern crate a;`（2015 版式，`#[macro_use]` 场景）同等对待。
+// 3. **限定路径**：非 `use` 位置的 `a::b::C` 同样参与判定——
+//    `fn f(d: crate::domain::x::Y)` 也是跨层依赖。
+// 4. **匹配**：与各层禁止清单做「路径段前缀」匹配（`crate::domain` 命中
+//    `crate::domain::x::Y`，但不命中 `crate::domainfoo`）。
+// 5. **层判定**：先剥掉末段 `.rs` 再取首段。自由位置是**白名单**
+//    （`main.rs` / `lib.rs` / `bin/**`）；其它顶层名字判「未知层」并报错——
+//    默认放行等于新目录静默逃过全部层禁令。
+//
+// # 豁免（`arch-allow`）
+//
+// 行尾注释 `// arch-allow: <对象>` **只豁免该对象**（不再整行放行），
+// 且必须登记在 `docs/architecture-constraints.md` 的豁免表里（校验器逐条核对）。
+//
+// 豁免窗口分两种形状：**行尾**豁免只作用于本条语句；**独立成行**的豁免额外
+// 作用于紧邻的下一行。少了这个区分，行尾豁免会漏到下一行，把一条独立的
+// 违规一并压掉。
+//
+// # 帧预约唯一出口（T11 / ADR-009）
+//
+// `request_repaint_after` 在 `src/` 里**只允许**出现在 `app/frame/scheduler.rs`。
+// 这条规则对**所有**文件生效（含组合根 `app/`）——调用点自己预约帧，
+// 正是历史上「定时功能完全不生效」那三次的根因。它**不设豁免**。
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// 一处架构违规。
+#[derive(Debug)]
 pub struct Violation {
     /// 相对路径（便于 CI 日志直接阅读）。
     pub file: String,
@@ -25,6 +54,7 @@ const DOMAIN_FORBIDDEN: &[&str] = &[
     "std::fs",
     "std::io",
     "anyhow",
+    "crate::app",
     "crate::application",
     "crate::infrastructure",
     "crate::presentation",
@@ -38,13 +68,15 @@ const APPLICATION_FORBIDDEN: &[&str] = &[
     "pulldown_cmark",
     "std::fs",
     "std::io",
+    "crate::app",
     "crate::infrastructure",
     "crate::presentation",
 ];
 
-const INFRASTRUCTURE_FORBIDDEN: &[&str] = &["crate::application", "crate::presentation"];
+const INFRASTRUCTURE_FORBIDDEN: &[&str] =
+    &["crate::app", "crate::application", "crate::presentation"];
 
-const PRESENTATION_FORBIDDEN: &[&str] = &["crate::domain", "crate::infrastructure"];
+const PRESENTATION_FORBIDDEN: &[&str] = &["crate::app", "crate::domain", "crate::infrastructure"];
 
 /// `presentation/state/` 的额外禁令（S6-12）。
 ///
@@ -61,14 +93,106 @@ const PRESENTATION_FORBIDDEN: &[&str] = &["crate::domain", "crate::infrastructur
 /// 而那正是最需要守卫的时刻。
 const PRESENTATION_STATE_FORBIDDEN: &[&str] = &["crate::domain::document"];
 
-const SHARED_FORBIDDEN: &[&str] = &[    "egui",
+/// `presentation/state/` 不得回指 `views/`（R-13）。
+///
+/// # 为什么这是表现层内部最重要的一条方向
+///
+/// `views/` 读 `state/` 是**单向**的：视图采集状态、按状态绘制、
+/// 把用户操作写回状态。若 `state/` 反过来依赖 `views/`，数据流立刻成环——
+/// 「改一个开关要先构造视图」这类代码会出现，而立即模式框架下视图每帧
+/// 重建，环会以「状态被视图的渲染副作用污染」的形式发作，极难定位。
+///
+/// 实测存量（2026-10-20）：`state/` 对 `views` 的引用 **0 处**（命中 2 处
+/// 全在文档注释里），故这条规则当前**不改变任何编译结果**——它的价值
+/// 与 [`PRESENTATION_STATE_FORBIDDEN`] 相同：防未来松动。
+const PRESENTATION_STATE_VIEWS_FORBIDDEN: &[&str] = &["crate::presentation::views"];
+
+/// `presentation/rich/` 不得依赖的四个兄弟子层（R-13）。
+///
+/// ADR-007 已用编译期手段保证 `rich/` 对 egui 零依赖（自绘排版），
+/// 本项把「不得依赖 `views/` / `state/` / `theme/` / `widgets/`」机械化。
+///
+/// # 为什么 `rich/` 要比别的叶子更严
+///
+/// 它是**渲染算法**：输入一段结构化内容 + 度量，输出字形位置。
+/// 一旦它能读 `state/`，「排版结果随 UI 状态变化」就会进来——同一段
+/// 文档在侧栏开着与关着时排版不同，而这种差异不报错、也看不出原因。
+/// 依赖 `theme/` 同理：配色该由调用方给参数，不是自己查。
+const PRESENTATION_RICH_FORBIDDEN: &[&str] = &[
+    "crate::presentation::views",
+    "crate::presentation::state",
+    "crate::presentation::theme",
+    "crate::presentation::widgets",
+];
+
+/// `presentation/widgets/` 不得依赖 `views/`（R-13）。
+///
+/// 控件是**被视图复用**的叶子。它读视图就会形成「叶子→根」的反向边，
+/// 而复用关系一旦成环，控件再也抽不出来单独测试。
+const PRESENTATION_WIDGETS_FORBIDDEN: &[&str] = &["crate::presentation::views"];
+
+/// `presentation/icons.rs` 不得依赖 `views/`（R-13）。
+///
+/// 字形图标是**最底层的叶子**（渲染断言直接比对字形矩形），
+/// 它连 `widgets/` 都不该碰，更别提 `views/`。
+const PRESENTATION_ICONS_FORBIDDEN: &[&str] = &["crate::presentation::views"];
+
+/// `shared` 禁止的外部依赖与层引用。
+///
+/// # `std::process` 为什么在这里（R-03）
+///
+/// `shared` 自称「零外部依赖」，但 `system.rs` 曾在此用 `Command` 起进程，
+/// 文件头自认「`std::process` 不在禁止清单，故在此落位」——那是**绕规则
+/// 落位**：规则说这里不该有 IO，就改规则迁就代码。R-03 已把执行端移到
+/// `infrastructure::system`，此处补上禁令，防止回退。
+///
+/// 端口（trait）与纯逻辑校验可以留在 `shared`——它们不产生 IO。
+const SHARED_FORBIDDEN: &[&str] = &[
+    "egui",
     "eframe",
     "rfd",
     "syntect",
     "pulldown_cmark",
+    "std::process",
+    "crate::app",
     "crate::domain",
     "crate::application",
     "crate::infrastructure",
+    "crate::presentation",
+];
+
+/// 集成测试（`tests/**`）禁止的**库内部视角**前缀。
+///
+/// # 为什么测试不套用任何层的禁令
+///
+/// 测试是**消费者**，不是层：`tests/app/` 下的用例天然要同时看见四层
+/// （跨层断言只能放那儿），按 `tests/` 的目录名去套 `src/` 的层禁令
+/// 既不成立也会误判。
+///
+/// # 那这条规则拦什么
+///
+/// 拦「作者以为自己在 `src/` 里写代码」：`crate::` 在集成测试里指向的是
+/// **测试 crate 自身**，写 `use crate::domain::x::Y;` 说明心智模型错了，
+/// 正确写法是 `rustmark::domain::x::Y`（公开 API）。这类写法编译就过不了，
+/// 所以它不是「编译能过的偷看」，而是**从 `src/` 复制粘贴过来时**原样带
+/// 进来的坏味道——留着它，将来某天 `tests/support/` 里长出个同名模块
+/// 就会静默变成真的内部引用。
+///
+/// # 为什么不禁 `crate::support` 之类
+///
+/// `crate::support` / `crate::golden_fixture` 指向**测试自己的**共享模块
+/// （`tests/support/`、`tests/integration/golden_fixture.rs`），是集成测试
+/// 的正常组织方式。禁令只列**库层名**，天然放行它们。
+///
+/// 实测存量（2026-10-20）：`tests/` 下 `crate::<库层名>` 的真实引用为 **0**
+/// （`arch_violation_fixture.rs` 里出现的那些全是**字符串字面量**中的测试
+/// 数据，词法阶段即被剔除）。
+const TESTS_FORBIDDEN: &[&str] = &[
+    "crate::app",
+    "crate::domain",
+    "crate::application",
+    "crate::infrastructure",
+    "crate::shared",
     "crate::presentation",
 ];
 
@@ -87,30 +211,923 @@ const SHARED_FORBIDDEN: &[&str] = &[    "egui",
 const REPAINT_RESERVATION: &str = "request_repaint_after";
 const REPAINT_RESERVATION_HOME: &str = "app/frame/scheduler.rs";
 
-/// 取某层的禁用前缀。
+/// 领域层禁止的「直接打印」宏家族。
 ///
-/// **子层是叠加而非替换**：`presentation/state` 先取父层
-/// [`PRESENTATION_FORBIDDEN`]，再把 [`PRESENTATION_STATE_FORBIDDEN`]
-/// 接在后面。若写成只返回子层名单，`state/` 就不再受
-/// `crate::infrastructure` 等父层禁令约束——那是**放宽**而非收紧，
-/// 与「子层更严」的意图正好相反。
-fn forbidden_for(layer: &str) -> Vec<&'static str> {
-    match layer {
-        "domain" => DOMAIN_FORBIDDEN.to_vec(),
-        "application" => APPLICATION_FORBIDDEN.to_vec(),
-        "infrastructure" => INFRASTRUCTURE_FORBIDDEN.to_vec(),
-        "presentation" => PRESENTATION_FORBIDDEN.to_vec(),
-        "presentation/state" => {
-            let mut v = PRESENTATION_FORBIDDEN.to_vec();
-            v.extend_from_slice(PRESENTATION_STATE_FORBIDDEN);
-            v
+/// `print!` / `println!` 写 stdout，`eprint!` / `eprintln!` / `dbg!` 写 stderr。
+/// 旧实现只查 `println!` 字面量——`print!` 漏网、`eprintln!` 被当成 `println!`
+/// 报错（文案不准），且行尾注释里提到 `println!` 会被误报。
+const PRINT_MACROS: &[&str] = &["print", "println", "eprint", "eprintln", "dbg"];
+
+/// 豁免注释的标记串。
+const ARCH_ALLOW: &str = "arch-allow:";
+
+/// 豁免登记表在 `docs/architecture-constraints.md` 里的区段标记。
+const REGISTRY_BEGIN: &str = "<!-- arch-allow:registry -->";
+const REGISTRY_END: &str = "<!-- /arch-allow:registry -->";
+
+// ============================================================================
+// 层判定
+// ============================================================================
+
+/// 文件所属的层。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Layer {
+    Domain,
+    Application,
+    Infrastructure,
+    Presentation,
+    /// `presentation/state/` 子层（父层禁令**叠加**其上）。
+    PresentationState,
+    Shared,
+    /// 组合根：允许依赖全部层（`app.rs` / `app/**`）。
+    App,
+    /// 组合根之外的自由文件（`main.rs` / `lib.rs` / `bin/**`）：不受层级限制。
+    Free,
+    /// `presentation/views/` 子层（R-13 细粒度化）。
+    ///
+    /// 视图层可读 `state/`（那是它存在的理由），故**不**禁 `state`。
+    PresentationViews,
+    /// `presentation/rich/` 子层（R-13）：自绘排版（数学 / Mermaid）。
+    ///
+    /// ADR-007 已用编译期手段保证它对 egui 零依赖，本项把「不得依赖
+    /// `views/` / `state/` / `theme/` / `widgets/`」机械化。
+    PresentationRich,
+    /// `presentation/widgets/` 子层（R-13）：可复用控件。
+    PresentationWidgets,
+    /// `presentation/icons.rs`（R-13）：字形图标出口。
+    PresentationIcons,
+    /// 集成测试（`tests/**`）：**消费者**，不是层。
+    ///
+    /// 测试可以引用任何层的公开 API（`rustmark::domain::…`），但**不许**以
+    /// `crate::domain::…` 这种**库内部视角**书写——`crate::` 在集成测试里
+    /// 指的是**测试 crate 自身**，写 `crate::domain` 说明作者的心智模型是
+    /// 「我在 `src/` 里」，而那正是「绕过公开 API 偷看内部」的起点。
+    Tests,
+    /// 未登记的顶层位置——**不是自由文件，是覆盖缺口**。
+    ///
+    /// `main.rs` / `lib.rs` / `bin/` 是约定好的自由位置；其它顶层名字
+    /// （`src/foo.rs` / `src/utils/`）不在约束文档的模块树里。判 Unknown
+    /// 并直接报错：否则新目录会**静默**逃过全部层禁令——缺口要响，不要静。
+    Unknown,
+}
+
+impl Layer {
+    /// 层名（用于违规文案）。
+    fn label(self) -> &'static str {
+        match self {
+            Layer::Domain => "domain",
+            Layer::Application => "application",
+            Layer::Infrastructure => "infrastructure",
+            Layer::Presentation => "presentation",
+            Layer::PresentationState => "presentation/state",
+            Layer::PresentationViews => "presentation/views",
+            Layer::PresentationRich => "presentation/rich",
+            Layer::PresentationWidgets => "presentation/widgets",
+            Layer::PresentationIcons => "presentation/icons",
+            Layer::Shared => "shared",
+            Layer::App => "app",
+            Layer::Free => "free",
+            Layer::Tests => "tests",
+            Layer::Unknown => "unknown",
         }
-        "shared" => SHARED_FORBIDDEN.to_vec(),
-        _ => Vec::new(),
     }
 }
 
-fn collect_rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
+/// 由源文件相对 `src/` 的路径判定所属层。
+///
+/// # 为什么要把 `.rs` 后缀剥掉再判
+///
+/// Rust 的层级根模块文件叫 `src/domain.rs`（与 `src/domain/` 同级），
+/// 它**属于 domain 层**。旧实现按路径首段判定，首段是 `"domain.rs"` 而不是
+/// `"domain"` → 整份文件逃过所有检查。
+///
+/// 同理 `src/presentation/state.rs` 是 `presentation/state` 子层的根模块，
+/// 按同一套规则落子层。
+///
+/// # 自由位置是**白名单**，不是默认值
+///
+/// `main.rs` / `lib.rs` / `bin/**` 是约定好的自由位置（crate 入口与工具
+/// 二进制）。其它顶层名字一律判 [`Layer::Unknown`] 并报错——默认放行等于
+/// 「新目录静默逃过全部层禁令」，而这类缺口不产生编译错误、没人会注意到。
+///
+/// # `presentation` 内部的细粒度（R-13）
+///
+/// `presentation` 不是一个均匀的层：`views/` 是编排者，`state/` 是它读的
+/// 状态，`rich/` / `widgets/` / `icons.rs` 是被复用的叶子。四类之间必须
+/// **单向**（`state` 不得回指 `views`，叶子不得回指 `views`），否则
+/// 「状态层反过来驱动视图」会把立即模式的数据流缠成一团。
+///
+/// 判定时 `parts.get(1)` 同时覆盖两种形态：
+/// - `presentation/state/foo.rs` → `parts = ["presentation", "state", "foo"]`
+/// - `presentation/state.rs`（**层根文件**）→ `parts = ["presentation", "state"]`
+///   第二段同样是 `"state"`，故同一套规则覆盖根文件——这正是方案风险点
+///   里点名的「必须对层根文件同样生效」。
+fn layer_of(rel: &str) -> Layer {
+    let mut parts: Vec<&str> = rel.split('/').collect();
+    if let Some(stem) = parts.last().and_then(|l| l.strip_suffix(".rs")) {
+        let idx = parts.len() - 1;
+        parts[idx] = stem;
+    }
+    let head = parts.first().copied().unwrap_or("");
+    match head {
+        "domain" => Layer::Domain,
+        "application" => Layer::Application,
+        "infrastructure" => Layer::Infrastructure,
+        "shared" => Layer::Shared,
+        "presentation" => match parts.get(1).copied() {
+            Some("state") => Layer::PresentationState,
+            Some("views") => Layer::PresentationViews,
+            Some("rich") => Layer::PresentationRich,
+            Some("widgets") => Layer::PresentationWidgets,
+            // `icons.rs` 是**单文件**子层：`parts = ["presentation", "icons"]`。
+            Some("icons") => Layer::PresentationIcons,
+            _ => Layer::Presentation,
+        },
+        "app" => Layer::App,
+        // crate 入口与 `src/bin/` 工具：约定好的自由位置。
+        "bin" => Layer::Free,
+        "main" | "lib" if parts.len() == 1 => Layer::Free,
+        _ => Layer::Unknown,
+    }
+}
+
+/// 取某层的禁用前缀。
+///
+/// **子层是叠加而非替换**：`presentation/state` 先取父层
+/// [`PRESENTATION_FORBIDDEN`]，再把 [`PRESENTATION_STATE_FORBIDDEN`] 与
+/// [`PRESENTATION_STATE_VIEWS_FORBIDDEN`] 接在后面。若写成只返回子层名单，
+/// `state/` 就不再受 `crate::infrastructure` 等父层禁令约束——那是**放宽**
+/// 而非收紧，与「子层更严」的意图正好相反。
+fn forbidden_for(layer: Layer) -> Vec<&'static str> {
+    match layer {
+        Layer::Domain => DOMAIN_FORBIDDEN.to_vec(),
+        Layer::Application => APPLICATION_FORBIDDEN.to_vec(),
+        Layer::Infrastructure => INFRASTRUCTURE_FORBIDDEN.to_vec(),
+        Layer::Presentation => PRESENTATION_FORBIDDEN.to_vec(),
+        Layer::Shared => SHARED_FORBIDDEN.to_vec(),
+        // 集成测试：只禁「库内部视角」，不套任何层的禁令（见 TESTS_FORBIDDEN）。
+        Layer::Tests => TESTS_FORBIDDEN.to_vec(),
+        // —— R-13：presentation 内部细粒度 ——
+        //
+        // 全部沿用「子层叠加父层」：先取 PRESENTATION_FORBIDDEN，
+        // 再接本子层自己的名单。只返回子层名单等于**放宽**
+        // （`crate::infrastructure` 等父层禁令会失效）。
+        Layer::PresentationState => {
+            let mut v = PRESENTATION_FORBIDDEN.to_vec();
+            v.extend_from_slice(PRESENTATION_STATE_FORBIDDEN);
+            v.extend_from_slice(PRESENTATION_STATE_VIEWS_FORBIDDEN);
+            v
+        }
+        Layer::PresentationViews => PRESENTATION_FORBIDDEN.to_vec(),
+        Layer::PresentationRich => {
+            let mut v = PRESENTATION_FORBIDDEN.to_vec();
+            v.extend_from_slice(PRESENTATION_RICH_FORBIDDEN);
+            v
+        }
+        Layer::PresentationWidgets => {
+            let mut v = PRESENTATION_FORBIDDEN.to_vec();
+            v.extend_from_slice(PRESENTATION_WIDGETS_FORBIDDEN);
+            v
+        }
+        Layer::PresentationIcons => {
+            let mut v = PRESENTATION_FORBIDDEN.to_vec();
+            v.extend_from_slice(PRESENTATION_ICONS_FORBIDDEN);
+            v
+        }
+        // 组合根 / 自由文件 / 未登记位置：没有可判的层禁令。
+        // （Unknown 的「报未知层」在 `check_file` 里做——它要先于层禁令返回。）
+        Layer::App | Layer::Free | Layer::Unknown => Vec::new(),
+    }
+}
+
+/// 各层允许的「更窄豁免前缀」。
+///
+/// # 为什么需要这个机制
+///
+/// 表现层的视图函数普遍以 `&EditorApp` 接收应用状态
+/// （`crate::app::frame::EditorApp`）——这是**被认可的下行通道**：
+/// 组合根把状态句柄交给视图，视图读状态、发动作。
+///
+/// 若一刀切禁掉 `crate::app`，54 个表现层文件会同时报错。那不是「更严的
+/// 架构」，而是**一条没人能遵守的规则**——规则一旦无法遵守，例外就会
+/// 蔓延成惯例，最后连真正要拦的反向依赖也一起淹掉。
+///
+/// 但**不能**因此放开整个 `crate::app`：表现层只许碰 `app::frame`
+/// （状态句柄与对话框枚举），不许碰 `bootstrap` / `crash_log` /
+/// `dialog_runner` / `startup_timing` 这些**启动与基础设施编排**的东西——
+/// 那些是组合根的私事，视图伸手去拿就等于绕过了组合根。
+///
+/// # R-13 起 `views/` 也要这份豁免
+///
+/// `views/` 独立成子层后，`allowed_for` 若不同步跟上，
+/// **35 个视图文件会同时报错**（实测：全是 `use crate::app::frame::EditorApp`
+/// 与 `frame::PendingDialog`）——那不是「更严的架构」，而是规则没跟上
+/// 自己的细化。方案的既定原则（「超预期则放宽到具体文件而非放弃规则」）
+/// 在这里落地为：**豁免跟着子层细化走，窄前缀本身不变**。
+fn allowed_for(layer: Layer) -> &'static [&'static str] {
+    match layer {
+        Layer::Presentation
+        | Layer::PresentationState
+        | Layer::PresentationViews
+        | Layer::PresentationRich
+        | Layer::PresentationWidgets
+        | Layer::PresentationIcons => &["crate::app::frame"],
+        _ => &[],
+    }
+}
+
+/// 是否表现层（含其全部子层）。R-12 的「不得直写 app 状态字段」只对
+/// 表现层生效——`tests/` 与 `src/` 其它层不套这条规则。
+fn is_presentation_layer(layer: Layer) -> bool {
+    matches!(
+        layer,
+        Layer::Presentation
+            | Layer::PresentationState
+            | Layer::PresentationViews
+            | Layer::PresentationRich
+            | Layer::PresentationWidgets
+            | Layer::PresentationIcons
+    )
+}
+
+// ============================================================================
+// 词法
+// ============================================================================
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TokKind {
+    Ident,
+    /// `::`
+    PathSep,
+    LBrace,
+    RBrace,
+    LParen,
+    RParen,
+    Comma,
+    Semi,
+    Star,
+    /// `!`
+    Bang,
+    /// `.`（与 `Other` 分开：字段访问的 `x.y` 不该被当成路径起始）。
+    Dot,
+    /// `=`（赋值；与 `==` 区分开，R-12 直写守卫用）。
+    Assign,
+    /// `==`（相等比较；R-12 不得误伤判据里的 `==`）。
+    EqEq,
+    Other,
+}
+
+#[derive(Debug, Clone)]
+struct Token {
+    kind: TokKind,
+    /// 仅 `Ident` 有值。
+    text: String,
+    line: usize,
+}
+
+/// 一行 `// arch-allow: <对象>` 指令。
+#[derive(Debug, Clone)]
+struct Allow {
+    line: usize,
+    /// 豁免对象（如 `egui` / `crate::domain`）。
+    name: String,
+    /// 注释是否**独立成行**（该行在它之前没有代码 token）。
+    ///
+    /// 这个标记决定豁免窗口的形状，两者 deliberately 不同：
+    ///
+    /// - **行尾豁免**（`use egui; // arch-allow: egui`）只作用于**本条语句**；
+    /// - **独立成行的豁免**额外作用于**紧邻的下一行**（写在 `use egui;`
+    ///   上面的那种）。
+    ///
+    /// 少了这个区分，行尾豁免会顺着「起点前一行也认」漏到下一行，把一条
+    /// **独立的**违规一并压掉——豁免写在第 1 行，第 2 行的同类违规照样报到。
+    own_line: bool,
+}
+
+struct Lexed {
+    tokens: Vec<Token>,
+    allows: Vec<Allow>,
+}
+
+fn is_ident_start(c: char) -> bool {
+    c.is_alphabetic() || c == '_'
+}
+
+fn is_ident_continue(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
+struct Lexer<'a> {
+    src: &'a str,
+    bytes: &'a [u8],
+    pos: usize,
+    line: usize,
+    /// 最近一次 push 的 token 所在行（0 = 还没有 token）。
+    ///
+    /// 用于区分「独立成行的注释」与「行尾注释」——豁免窗口的形状取决于这个
+    /// 区分（见 [`Allow::own_line`]）。
+    last_tok_line: usize,
+}
+
+impl<'a> Lexer<'a> {
+    fn new(src: &'a str) -> Self {
+        Lexer {
+            src,
+            bytes: src.as_bytes(),
+            pos: 0,
+            line: 1,
+            last_tok_line: 0,
+        }
+    }
+
+    fn peek_char(&self) -> Option<char> {
+        self.src[self.pos..].chars().next()
+    }
+
+    fn bump_char(&mut self) -> Option<char> {
+        let c = self.peek_char()?;
+        self.pos += c.len_utf8();
+        if c == '\n' {
+            self.line += 1;
+        }
+        Some(c)
+    }
+
+    fn run(mut self) -> Lexed {
+        let mut tokens: Vec<Token> = Vec::new();
+        let mut allows: Vec<Allow> = Vec::new();
+        while self.pos < self.bytes.len() {
+            let Some(c) = self.peek_char() else { break };
+            match c {
+                '/' if self.bytes.get(self.pos + 1) == Some(&b'/') => {
+                    self.skip_line_comment(&mut allows);
+                }
+                '/' if self.bytes.get(self.pos + 1) == Some(&b'*') => {
+                    self.skip_block_comment(&mut allows);
+                }
+                'r' | 'b' if self.is_raw_string_start() => self.skip_raw_string(),
+                '"' => self.skip_string(),
+                '\'' => self.skip_char_or_lifetime(),
+                c if c.is_ascii_digit() => self.skip_number(),
+                c if is_ident_start(c) => self.read_ident(&mut tokens),
+                ':' if self.bytes.get(self.pos + 1) == Some(&b':') => {
+                    self.pos += 2;
+                    self.push(&mut tokens, TokKind::PathSep, String::new());
+                }
+                '{' => {
+                    self.pos += 1;
+                    self.push(&mut tokens, TokKind::LBrace, String::new());
+                }
+                '}' => {
+                    self.pos += 1;
+                    self.push(&mut tokens, TokKind::RBrace, String::new());
+                }
+                '(' => {
+                    self.pos += 1;
+                    self.push(&mut tokens, TokKind::LParen, String::new());
+                }
+                ')' => {
+                    self.pos += 1;
+                    self.push(&mut tokens, TokKind::RParen, String::new());
+                }
+                ',' => {
+                    self.pos += 1;
+                    self.push(&mut tokens, TokKind::Comma, String::new());
+                }
+                ';' => {
+                    self.pos += 1;
+                    self.push(&mut tokens, TokKind::Semi, String::new());
+                }
+                '*' => {
+                    self.pos += 1;
+                    self.push(&mut tokens, TokKind::Star, String::new());
+                }
+                '!' => {
+                    self.pos += 1;
+                    self.push(&mut tokens, TokKind::Bang, String::new());
+                }
+                // `=` 与 `==` 必须区分（R-12 直写守卫）：`app.x.y =` 是赋值要拦，
+                // `app.x.y == z` 是判据里的相等比较要放行。
+                '=' if self.bytes.get(self.pos + 1) == Some(&b'=') => {
+                    self.pos += 2;
+                    self.push(&mut tokens, TokKind::EqEq, String::new());
+                }
+                '=' => {
+                    self.pos += 1;
+                    self.push(&mut tokens, TokKind::Assign, String::new());
+                }
+                _ => {
+                    // 空白**不产生 token**——否则 `use egui;` 里 `use` 与 `egui`
+                    // 之间的空格会把这条声明拦腰截断（`parse_use_tree` 读到
+                    // `Other` 就返回空路径，整条 `use` 声明随之漏检）。
+                    // 但换行**必须**计入行号，故走 `bump_char`。
+                    if c.is_whitespace() {
+                        self.bump_char();
+                        continue;
+                    }
+                    // `.` 单独标记：字段访问的 `x.y` 与路径起始要能区分开。
+                    let kind = if c == '.' {
+                        TokKind::Dot
+                    } else {
+                        TokKind::Other
+                    };
+                    self.push(&mut tokens, kind, String::new());
+                    self.bump_char();
+                }
+            }
+        }
+        Lexed { tokens, allows }
+    }
+
+    fn push(&mut self, tokens: &mut Vec<Token>, kind: TokKind, text: String) {
+        self.last_tok_line = self.line;
+        tokens.push(Token {
+            kind,
+            text,
+            line: self.line,
+        });
+    }
+
+    fn is_raw_string_start(&self) -> bool {
+        let mut i = self.pos;
+        if self.bytes.get(i) == Some(&b'b') {
+            i += 1;
+        }
+        if self.bytes.get(i) != Some(&b'r') {
+            return false;
+        }
+        i += 1;
+        while self.bytes.get(i) == Some(&b'#') {
+            i += 1;
+        }
+        self.bytes.get(i) == Some(&b'"')
+    }
+
+    fn skip_line_comment(&mut self, allows: &mut Vec<Allow>) {
+        // 文档注释（`///` / `//!`）不产生豁免——文档里提到标记串不等于豁免。
+        let is_doc = matches!(self.bytes.get(self.pos + 2), Some(b'/') | Some(b'!'));
+        // 本行在注释之前有没有代码 token：有 → 行尾注释；没有 → 独立成行。
+        let own_line = self.last_tok_line != self.line;
+        let start = self.pos + 2;
+        while let Some(c) = self.peek_char() {
+            if c == '\n' {
+                break;
+            }
+            self.bump_char();
+        }
+        if !is_doc {
+            collect_allow(&self.src[start..self.pos], self.line, own_line, allows);
+        }
+    }
+
+    fn skip_block_comment(&mut self, allows: &mut Vec<Allow>) {
+        let is_doc = matches!(self.bytes.get(self.pos + 2), Some(b'*') | Some(b'!'));
+        let own_line = self.last_tok_line != self.line;
+        let start = self.pos;
+        let start_line = self.line;
+        self.pos += 2;
+        // 深度**从 1 起算**——开头的 `/*` 已经被上面消费掉了。
+        // 从 0 起算的话，遇到第一个 `*/` 就会把 depth 减成 -1，
+        // `usize` 下溢直接 panic；就算不 panic，也不会在注释结束时停下，
+        // 于是注释**后面**的代码全被当成注释吞掉。
+        let mut depth = 1usize;
+        while self.pos < self.bytes.len() {
+            if self.bytes[self.pos] == b'/' && self.bytes.get(self.pos + 1) == Some(&b'*') {
+                depth += 1;
+                self.pos += 2;
+            } else if self.bytes[self.pos] == b'*' && self.bytes.get(self.pos + 1) == Some(&b'/') {
+                depth -= 1;
+                self.pos += 2;
+                if depth == 0 {
+                    break;
+                }
+            } else {
+                self.bump_char();
+            }
+        }
+        if !is_doc {
+            collect_allow(&self.src[start..self.pos], start_line, own_line, allows);
+        }
+    }
+
+    fn skip_string(&mut self) {
+        self.bump_char();
+        while let Some(c) = self.peek_char() {
+            if c == '\\' {
+                self.bump_char();
+                self.bump_char();
+                continue;
+            }
+            self.bump_char();
+            if c == '"' {
+                break;
+            }
+        }
+    }
+
+    fn skip_raw_string(&mut self) {
+        let mut i = self.pos;
+        if self.bytes.get(i) == Some(&b'b') {
+            i += 1;
+        }
+        i += 1; // `r`
+        let mut hashes = 0usize;
+        while self.bytes.get(i) == Some(&b'#') {
+            hashes += 1;
+            i += 1;
+        }
+        i += 1; // 开引号
+        self.pos = i;
+        while self.pos < self.bytes.len() {
+            if self.bytes[self.pos] == b'"' {
+                let after = self.pos + 1;
+                let mut h = 0usize;
+                while h < hashes && self.bytes.get(after + h) == Some(&b'#') {
+                    h += 1;
+                }
+                if h == hashes {
+                    self.pos = after + hashes;
+                    return;
+                }
+            }
+            self.bump_char();
+        }
+    }
+
+    /// `'x'` / `'\n'` 是字符字面量；`'a` / `'static` 是生命周期。
+    fn skip_char_or_lifetime(&mut self) {
+        match self.bytes.get(self.pos + 1).copied() {
+            Some(b'\\') => {
+                self.pos += 1;
+                self.bump_char();
+                while let Some(c) = self.peek_char() {
+                    if c == '\'' {
+                        self.bump_char();
+                        break;
+                    }
+                    if c == '\\' {
+                        self.bump_char();
+                        self.bump_char();
+                        continue;
+                    }
+                    self.bump_char();
+                }
+            }
+            Some(_) => {
+                let ch = self.src[self.pos + 1..].chars().next();
+                if let Some(ch) = ch {
+                    let len = ch.len_utf8();
+                    if self.bytes.get(self.pos + 1 + len) == Some(&b'\'') {
+                        self.pos += 1 + len + 1;
+                        return;
+                    }
+                }
+                // 生命周期：只吃掉引号，其后的标识符照常读。
+                self.bump_char();
+            }
+            None => {
+                self.bump_char();
+            }
+        }
+    }
+
+    fn skip_number(&mut self) {
+        while let Some(c) = self.peek_char() {
+            if c.is_alphanumeric() || c == '_' || c == '.' {
+                self.bump_char();
+            } else {
+                break;
+            }
+        }
+    }
+
+    fn read_ident(&mut self, tokens: &mut Vec<Token>) {
+        let start = self.pos;
+        while let Some(c) = self.peek_char() {
+            if is_ident_continue(c) {
+                self.bump_char();
+            } else {
+                break;
+            }
+        }
+        let text = self.src[start..self.pos].to_string();
+        self.push(tokens, TokKind::Ident, text);
+    }
+}
+
+/// 词法层的调试出口：把源码解析成可读的 token 序列。
+///
+/// 词法层是「哪些东西会被判成路径」的唯一真源，出问题时需要一个
+/// 不用猜的窗口。返回形如 `1:Ident(use) 1:Ident(egui) 2:Semi(;)` 的多行文本；
+/// 豁免指令另起一行，形如 `allow@2:egui(trailing)` / `allow@1:egui(own_line)`
+/// ——`own_line` 决定豁免窗口的形状，调试窗口问题时必须看得见。
+///
+/// 只在测试目标里编译——`build.rs` 与 `check-arch` bin 都用不到它，
+/// 留着会变成 `dead_code` 告警（门禁是 `-D warnings`）。
+///
+/// `dead_code` 的豁免是必要的：`check-arch` bin 自己也带一个 test target，
+/// 那个单元里没有用例调用它（真正用它的用例在 `tests/` 下）。
+#[cfg(test)]
+#[allow(dead_code)]
+pub fn lex_dump(src: &str) -> String {
+    let lexed = Lexer::new(src).run();
+    let mut s = String::new();
+    for t in &lexed.tokens {
+        s.push_str(&format!("{}:{:?}({})\n", t.line, t.kind, t.text));
+    }
+    for a in &lexed.allows {
+        let shape = if a.own_line { "own_line" } else { "trailing" };
+        s.push_str(&format!("allow@{}:{}({})\n", a.line, a.name, shape));
+    }
+    s
+}
+
+/// 从一段注释文本里抽取 `arch-allow:` 指令。
+///
+/// 格式：`// arch-allow: <对象>[, <对象>]*`。
+///
+/// # 解析规则为什么不能「按空白切」
+///
+/// 豁免后面常跟理由文字，其中可能有 ASCII 词（如「已在 architecture.md 登记」）。
+/// 按空白切会把 `architecture.md` 也当成豁免对象 → 凭空多出一条无效豁免。
+///
+/// # 于是这里的规则是
+///
+/// 1. 按 `,` 切分（多对象用逗号分隔）；
+/// 2. 每段取**开头**的 `[A-Za-z0-9_:]` 连续片段作为对象名；
+/// 3. 若该片段**紧跟一个 `.`**，说明它其实是文件名的一部分（`architecture.md`）
+///    而不是对象名 → 丢弃这一段。
+///
+/// 于是 `egui（已在 architecture.md 登记）` → `egui`，
+/// 而 `egui, architecture.md 是登记处` → 只认 `egui`。
+///
+/// `own_line` 见 [`Allow::own_line`]：它决定这条豁免能罩住哪些行。
+fn collect_allow(text: &str, line: usize, own_line: bool, out: &mut Vec<Allow>) {
+    // 只取**第一个** `arch-allow:` 之后的片段——一条注释里写多个标记串
+    // 是笔误，按第一个处理即可。
+    let Some(part) = text.split(ARCH_ALLOW).nth(1) else {
+        return;
+    };
+    for piece in part.split(',') {
+        let trimmed = piece.trim_start();
+        let end = trimmed
+            .find(|c: char| !is_path_char(c))
+            .unwrap_or(trimmed.len());
+        let name = trimmed[..end].trim_end();
+        if name.is_empty() {
+            continue;
+        }
+        // 紧跟 `.` → 这段是文件名（如 `architecture.md`），不是对象名。
+        if trimmed[end..].starts_with('.') {
+            continue;
+        }
+        out.push(Allow {
+            line,
+            name: name.to_string(),
+            own_line,
+        });
+    }
+}
+fn is_path_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_' || c == ':'
+}
+
+// ============================================================================
+// `use` 树展开
+// ============================================================================
+
+/// 一条展开后的完整路径（以及它末段所在的行号）。
+type FlatPath = (String, usize);
+
+/// 解析 `use` 声明，展开成完整路径列表。
+///
+/// 返回 `(路径列表, 结束位置)`。覆盖：
+/// - `use a::b::C;`
+/// - `pub use a::b::C;` / `pub(crate) use …`（`use` 关键字本身会被识别）
+/// - `use a::{b, c};` / `use a::{self, b};` / 嵌套组
+/// - `use a::b as c;`（别名不影响依赖对象）
+/// - `use a::*;`（glob）
+/// - 前导 `::`（`use ::a::b;`）
+fn parse_use_tree(tokens: &[Token], start: usize, prefix: &[String]) -> (Vec<FlatPath>, usize) {
+    let mut i = start;
+    if tokens.get(i).map(|t| t.kind) == Some(TokKind::PathSep) {
+        i += 1;
+    }
+    if tokens.get(i).map(|t| t.kind) == Some(TokKind::LBrace) {
+        return parse_use_group(tokens, i, prefix);
+    }
+
+    let mut segs: Vec<String> = Vec::new();
+    let mut leaf_line = tokens.get(i).map(|t| t.line).unwrap_or(0);
+    while let Some(t) = tokens.get(i) {
+        if t.kind != TokKind::Ident {
+            break;
+        }
+        segs.push(t.text.clone());
+        leaf_line = t.line;
+        i += 1;
+        if tokens.get(i).map(|t| t.kind) != Some(TokKind::PathSep) {
+            break;
+        }
+        match tokens.get(i + 1).map(|t| t.kind) {
+            Some(TokKind::Ident) => i += 1,
+            Some(TokKind::LBrace) => {
+                let mut full = prefix.to_vec();
+                full.extend(segs.iter().cloned());
+                return parse_use_group(tokens, i + 1, &full);
+            }
+            Some(TokKind::Star) => {
+                i += 2;
+                let mut full = prefix.to_vec();
+                full.extend(segs.iter().cloned());
+                let mut path = full.join("::");
+                path.push_str("::*");
+                i = skip_use_alias(tokens, i);
+                return (vec![(path, leaf_line)], i);
+            }
+            _ => {
+                i += 1;
+                break;
+            }
+        }
+    }
+
+    let leaf = if segs.len() == 1 && segs[0] == "self" {
+        if prefix.is_empty() {
+            "self".to_string()
+        } else {
+            prefix.join("::")
+        }
+    } else {
+        let mut full = prefix.to_vec();
+        full.extend(segs.iter().cloned());
+        full.join("::")
+    };
+    i = skip_use_alias(tokens, i);
+    (vec![(leaf, leaf_line)], i)
+}
+
+/// 解析 `use a::{ … }` 的花括号组。`brace_idx` 指向 `{` 本身。
+fn parse_use_group(
+    tokens: &[Token],
+    brace_idx: usize,
+    prefix: &[String],
+) -> (Vec<FlatPath>, usize) {
+    let mut out: Vec<FlatPath> = Vec::new();
+    let mut i = brace_idx + 1;
+    while let Some(t) = tokens.get(i) {
+        match t.kind {
+            TokKind::RBrace => {
+                i += 1;
+                break;
+            }
+            TokKind::Comma => {
+                i += 1;
+            }
+            TokKind::Semi => break,
+            _ => {
+                let (paths, next) = parse_use_tree(tokens, i, prefix);
+                out.extend(paths);
+                i = if next > i { next } else { i + 1 };
+            }
+        }
+    }
+    (out, i)
+}
+
+/// 跳过 `as 别名` 部分（别名不改变依赖对象本身）。
+fn skip_use_alias(tokens: &[Token], mut i: usize) -> usize {
+    if tokens.get(i).map(|t| t.text.as_str()) == Some("as") {
+        i += 1;
+        if tokens.get(i).map(|t| t.kind) == Some(TokKind::Ident) {
+            i += 1;
+        }
+    }
+    i
+}
+
+// ============================================================================
+// 违例候选
+// ============================================================================
+
+/// 一条「疑似违规」：路径 + 命中的禁止项 + 报告行号 + 豁免适用窗口。
+struct Candidate {
+    path: String,
+    banned: &'static str,
+    /// 报告用行号。
+    line: usize,
+    /// 豁免指令可出现的行号窗口（含两端）。
+    ///
+    /// 窗口只是**必要条件**：行尾豁免必须落在窗口内；独立成行的豁免额外
+    /// 认「窗口起点前一行」（见 [`Allow::own_line`] 与 `check_file` 里的判定）。
+    win_start: usize,
+    win_end: usize,
+    /// 来源标注：`use` / `extern crate` / `引用`（非 use 位置的限定路径）。
+    source: &'static str,
+}
+
+impl Candidate {
+    /// 违规文案里的来源标注。
+    fn kind(&self) -> &'static str {
+        self.source
+    }
+}
+
+/// 路径是否命中禁止项（按**路径段**前缀匹配）。
+///
+/// `crate::domain` 命中 `crate::domain::x::Y`，但不命中 `crate::domainfoo`；
+/// `egui` 命中 `egui::Context`。
+fn matches_ban(path: &str, banned: &str) -> bool {
+    path == banned
+        || (path.len() > banned.len()
+            && path.starts_with(banned)
+            && path.as_bytes()[banned.len()] == b':')
+}
+
+/// 豁免对象名是否覆盖某个禁止项。
+///
+/// 写 `crate::domain` 能豁免 `crate::domain::document`（子层那条），
+/// 写 `crate::domain::document` 也能豁免父层的 `crate::domain`——
+/// 两种写法都认，避免「豁免写细了反而没生效」。
+fn allow_covers(name: &str, banned: &str) -> bool {
+    name == banned
+        || (banned.len() > name.len()
+            && banned.starts_with(name)
+            && banned.as_bytes()[name.len()] == b':')
+        || (name.len() > banned.len()
+            && name.starts_with(banned)
+            && name.as_bytes()[banned.len()] == b':')
+}
+
+// ============================================================================
+// 豁免登记表
+// ============================================================================
+
+/// `docs/architecture-constraints.md` 里的豁免登记表。
+#[derive(Debug, Default)]
+struct Registry {
+    /// `(文件相对 src 的路径, 豁免对象)`。
+    rows: Vec<(String, String)>,
+}
+
+impl Registry {
+    fn contains(&self, file: &str, name: &str) -> bool {
+        self.rows.iter().any(|(f, n)| f == file && n == name)
+    }
+}
+
+/// 读取豁免登记表。登记表路径约定为 `<manifest>/docs/architecture-constraints.md`。
+fn load_registry(src_root: &Path) -> Registry {
+    let manifest = src_root.parent().unwrap_or(src_root);
+    let path = manifest.join("docs").join("architecture-constraints.md");
+    let Ok(text) = fs::read_to_string(&path) else {
+        return Registry::default();
+    };
+    parse_registry(&text)
+}
+
+fn parse_registry(text: &str) -> Registry {
+    let mut rows: Vec<(String, String)> = Vec::new();
+    let mut in_table = false;
+    for line in text.lines() {
+        let t = line.trim();
+        if t.starts_with(REGISTRY_BEGIN) {
+            in_table = true;
+            continue;
+        }
+        if t.starts_with(REGISTRY_END) {
+            in_table = false;
+            continue;
+        }
+        if !in_table || !t.starts_with('|') {
+            continue;
+        }
+        let cells: Vec<&str> = t.trim_matches('|').split('|').map(|c| c.trim()).collect();
+        if cells.len() < 2 {
+            continue;
+        }
+        let file = cells[0].trim_matches('`').trim();
+        let name = cells[1].trim_matches('`').trim();
+        if file.is_empty() || name.is_empty() || file.starts_with('-') || file == "文件" {
+            continue;
+        }
+        rows.push((normalize_registry_file(file), name.to_string()));
+    }
+    Registry { rows }
+}
+
+/// 登记表里的文件列允许写成 `src/domain/x.rs` 或 `domain/x.rs`，统一成后者。
+fn normalize_registry_file(raw: &str) -> String {
+    let s = raw.replace('\\', "/");
+    let s = s.strip_prefix("./").unwrap_or(s.as_str());
+    s.strip_prefix("src/").unwrap_or(s).to_string()
+}
+
+// ============================================================================
+// 主扫描
+// ============================================================================
+
+fn collect_rs_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
     if let Ok(entries) = fs::read_dir(dir) {
         for entry in entries.flatten() {
             let path = entry.path();
@@ -123,112 +1140,234 @@ fn collect_rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// 由源文件相对 `src/` 的路径判定所属层。
-///
-/// `main.rs` / `lib.rs` / `bin/` 属于组合根或工具，不做限制（返回 `""`）。
-/// `presentation/state/` 单独成层（子层）——见 [`PRESENTATION_STATE_FORBIDDEN`]。
-fn layer_of(rel: &str) -> String {
-    // `rel` 已统一为 `/` 分隔（Windows 下亦如此），故按 `/` 切分，不能用 MAIN_SEPARATOR。
-    let mut parts = rel.split('/');
-    match parts.next() {
-        Some("domain") => "domain".to_string(),
-        Some("application") => "application".to_string(),
-        Some("infrastructure") => "infrastructure".to_string(),
-        Some("presentation") => match parts.next() {
-            Some("state") => "presentation/state".to_string(),
-            _ => "presentation".to_string(),
-        },
-        Some("shared") => "shared".to_string(),
-        _ => String::new(),
-    }
-}
-
-/// 文件指纹：mtime（纳秒）+ 字节长度。
-///
-/// 只用秒级 mtime 会让「同一秒内的两次写入」产生相同指纹（在快速重写文件的场景下会漏检）。
-fn file_stamp(path: &Path) -> String {
-    let modified = fs::metadata(path)
-        .and_then(|m| m.modified())
-        .map(|t| {
-            t.duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
-        })
-        .unwrap_or(0);
-    let len = fs::metadata(path).map(|m| m.len()).unwrap_or(0);
-    format!("{modified}:{len}")
-}
-
 /// 扫描 `src_root` 下的全部 `.rs` 文件，返回违规列表（空表示通过）。
+///
+/// **签名保持不变**（`build.rs` 与 `check-arch` bin 之外的调用点、以及
+/// `tests/arch_violation_fixture.rs` 的既有用例都只用它）。要连 `tests/`
+/// 一起扫，用 [`scan_with_tests`]。
+///
+/// 之所以仍保留：`scan` 是「只扫 `src/`」这一口径的显式表达，fixture 的
+/// 「`scan` 不报、`scan_with_tests` 报」正是 R-02 验收判据的形状。
+#[allow(dead_code)]
 pub fn scan(src_root: &Path) -> Vec<Violation> {
+    scan_impl(src_root, None)
+}
+
+/// 扫描 `src_root` **与** `tests_root`，返回违规列表（空表示通过）。
+///
+/// # 两侧的层判定不同
+///
+/// - `src/` 走 [`layer_of`]（按目录判层，未知顶层名字报「未知层」）；
+/// - `tests/` 下**全部**文件统一判 [`Layer::Tests`]——测试是消费者不是层，
+///   且 `tests/` 的目录名（`tests/domain/`、`tests/presentation/`）是
+///   **测试目标的划分**，与 `src/` 的层毫无关系。若按目录名判层，
+///   `tests/presentation/main.rs` 会被套上表现层禁令，
+///   `tests/domain/main.rs` 会被套上领域层禁令——那是**误判**。
+///
+/// `tests/` 侧的文件在报告里带 `tests/` 前缀，与 `src/` 侧的可区分。
+pub fn scan_with_tests(src_root: &Path, tests_root: &Path) -> Vec<Violation> {
+    scan_impl(src_root, Some(tests_root))
+}
+
+fn scan_impl(src_root: &Path, tests_root: Option<&Path>) -> Vec<Violation> {
+    let registry = load_registry(src_root);
+    let mut violations = Vec::new();
+
     let mut files = Vec::new();
     collect_rs_files(src_root, &mut files);
     files.sort();
 
-    let mut violations = Vec::new();
-    for path in files {
+    for path in &files {
         let rel = path
             .strip_prefix(src_root)
-            .unwrap_or(&path)
+            .unwrap_or(path)
             .to_string_lossy()
             .replace('\\', "/");
         let layer = layer_of(&rel);
-        if layer.is_empty() {
-            continue;
-        }
-        let forbidden = forbidden_for(&layer);
-        let Ok(content) = fs::read_to_string(&path) else {
+        let Ok(content) = fs::read_to_string(path) else {
             continue;
         };
+        let lexed = Lexer::new(&content).run();
+        violations.extend(check_file(&rel, layer, &lexed, &registry));
+    }
 
-        for (idx, raw_line) in content.lines().enumerate() {
-            let line_no = idx + 1;
-            let line = raw_line.trim();
-
-            // 定时任务的帧预约只允许一个出口（T11 / ADR-009）。
-            // 先剥掉行尾注释：文档里大段解释「为什么不能自己预约」时会出现这个词。
-            let code = line.split("//").next().unwrap_or(line);
-            if code.contains(REPAINT_RESERVATION)
-                && !rel.ends_with(REPAINT_RESERVATION_HOME)
-            {
-                violations.push(Violation {
-                    file: rel.clone(),
-                    line: line_no,
-                    detail: format!(
-                        "定时任务的帧预约必须走 FrameScheduler（{REPAINT_RESERVATION} 只允许出现在 \
-                         {REPAINT_RESERVATION_HOME}）：调用点只 `arm` 到期点，否则「新增定时功能\
-                         就漏预约」的老问题会原样复发"
-                    ),
-                });
-            }
-
-            // 领域层禁止向 stdout 直接输出
-            if layer == "domain" && line.contains("println!") && !line.starts_with("//") {
-                violations.push(Violation {
-                    file: rel.clone(),
-                    line: line_no,
-                    detail: "领域层禁止 println!（应通过错误或事件表达）".to_string(),
-                });
-            }
-
-            let Some(rest) = line.strip_prefix("use ") else {
+    if let Some(tests_root) = tests_root {
+        let mut test_files = Vec::new();
+        collect_rs_files(tests_root, &mut test_files);
+        test_files.sort();
+        for path in &test_files {
+            let rel = path
+                .strip_prefix(tests_root)
+                .unwrap_or(path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            // 带 `tests/` 前缀：报告里一眼能看出违规在测试侧，
+            // 且不会与 `src/presentation/…` 之类的同名路径混淆。
+            let rel = format!("tests/{rel}");
+            let Ok(content) = fs::read_to_string(path) else {
                 continue;
             };
-            if line.contains("arch-allow:") {
-                continue;
+            let lexed = Lexer::new(&content).run();
+            violations.extend(check_file(&rel, Layer::Tests, &lexed, &registry));
+        }
+    }
+
+    violations
+}
+
+/// 统一的违规报告文本。
+///
+/// `build.rs` 与 `check-arch` bin 共用同一份格式——两处各写一遍必然漂移。
+pub fn format_report(violations: &[Violation]) -> String {
+    let mut s = String::new();
+    s.push_str(&format!(
+        "架构边界校验失败，共 {} 处违规：\n",
+        violations.len()
+    ));
+    for v in violations {
+        s.push_str(&format!("  {}:{} —— {}\n", v.file, v.line, v.detail));
+    }
+    s.push_str("\n规则见 docs/architecture-constraints.md\n");
+    s
+}
+
+fn check_file(rel: &str, layer: Layer, lexed: &Lexed, registry: &Registry) -> Vec<Violation> {
+    let mut violations: Vec<Violation> = Vec::new();
+    let tokens = &lexed.tokens;
+
+    // ---- 定时任务的帧预约只允许一个出口（T11 / ADR-009）----
+    // 对**所有**文件生效（含组合根 app/）：调用点自己预约帧，
+    // 正是历史上「定时功能完全不生效」的根因。
+    for (idx, t) in tokens.iter().enumerate() {
+        if t.kind == TokKind::Ident
+            && t.text == REPAINT_RESERVATION
+            && rel != REPAINT_RESERVATION_HOME
+        {
+            violations.push(Violation {
+                file: rel.to_string(),
+                line: t.line,
+                detail: format!(
+                    "定时任务的帧预约必须走 FrameScheduler（{REPAINT_RESERVATION} 只允许出现在 \
+                     {REPAINT_RESERVATION_HOME}）：调用点只 `arm` 到期点，否则「新增定时功能\
+                     →就漏预约」的老问题会原样复发"
+                ),
+            });
+        }
+        // 领域层禁止直接向标准输出/错误输出打印。
+        if layer == Layer::Domain
+            && t.kind == TokKind::Ident
+            && PRINT_MACROS.contains(&t.text.as_str())
+            && tokens.get(idx + 1).map(|n| n.kind) == Some(TokKind::Bang)
+        {
+            violations.push(Violation {
+                file: rel.to_string(),
+                line: t.line,
+                detail: format!(
+                    "领域层禁止 {}!（应通过错误或领域事件表达；标准输出会被诊断信息污染）",
+                    t.text
+                ),
+            });
+        }
+    }
+
+    // ---- R-12：表现层不得直写 app 状态字段（赋值形态）----
+    //
+    // `app.<state>.<field> =` 是 R-11 消除掉的「视图直接改 EditorApp 字段」
+    // 形状。R-11 把它收敛到 `EditorApp` 的方法入口，本规则把「零直写」
+    // 机械化：将来有人图省事在视图里直接 `app.x.y = z`，编译照过、
+    // 单测未必覆盖，这条把它钉死。
+    //
+    // 已知边界（必须放行）：
+    // - `&mut app.<state>.<field>`（egui 控件必须拿 `&mut String` /
+    //   `&mut bool`，如 `TextEdit::singleline(&mut app.x.y)` /
+    //   `ui.checkbox(&mut app.x.y, …)`）——那是**借用**，序列以 `)` 收尾，
+    //   不以 `=` 收尾，自然不命中。
+    // - `app.x.y == z` 是**比较**不是赋值，用 `EqEq` 与 `Assign` 区分开，
+    //   不能误伤判据里的相等比较（`!=` 是 `Bang` 后跟 `Assign`，同样不命中）。
+    // R-12-ANCHOR-START
+    if is_presentation_layer(layer) {
+        let mut k = 0;
+        while k < tokens.len() {
+            if tokens[k].kind == TokKind::Ident && tokens[k].text == "app" {
+                // 构造点访问路径 `app.<ident>( .<ident> )*`。
+                let mut path = String::from("app");
+                let mut j = k;
+                while tokens.get(j + 1).map(|n| n.kind) == Some(TokKind::Dot)
+                    && tokens.get(j + 2).map(|n| n.kind) == Some(TokKind::Ident)
+                {
+                    path.push('.');
+                    path.push_str(&tokens[j + 2].text);
+                    j += 2;
+                }
+                // 至少一段点访问 + 紧随其后的单个 `=`（不是 `==` / `!=`）。
+                if tokens.get(j + 1).map(|n| n.kind) == Some(TokKind::Assign) {
+                    violations.push(Violation {
+                        file: rel.to_string(),
+                        line: tokens[k].line,
+                        detail: format!(
+                            "presentation 层不得直写 app 状态字段（{path} = …）：视图应通过 \
+                             EditorApp 的方法入口写状态，不得直接改字段（见架构改造 R-11；\
+                             已知边界：`&mut {path}` 借用与 `{path} == …` 比较）"
+                        ),
+                    });
+                    k = j + 2;
+                    continue;
+                }
             }
-            // 必须先剥离行尾注释再去分号：`use egui; // 说明` 若先 trim_end_matches(';')，
-            // 得到的是 `egui; // 说明`，永远匹配不到 `egui`（该缺陷由注入实验发现）。
-            let without_comment = rest.split("//").next().unwrap_or(rest);
-            let use_path = without_comment.trim().trim_end_matches(';').trim();
-            for &banned in &forbidden {
-                if use_path == banned || use_path.starts_with(&format!("{banned}::")) {
-                    // 只给**子层自己那条**禁令附「为什么」。父层禁令也走这个
-                    // 循环，若无条件附加，`use crate::infrastructure` 在
-                    // `state/` 里也会显示「业务数据来自 DTO」——
-                    // 那句话跟基础设施依赖无关，是误导。
-                    let reason = if layer == "presentation/state"
-                        && PRESENTATION_STATE_FORBIDDEN.contains(&banned)
+            k += 1;
+        }
+    }
+    // R-12-ANCHOR-END
+
+    // ---- 未登记的顶层位置：覆盖缺口，必须响 ----
+    //
+    // 放在帧预约检查**之后**：那条规则与层无关，未知文件同样受它约束。
+    if layer == Layer::Unknown {
+        violations.push(Violation {
+            file: rel.to_string(),
+            line: 1,
+            detail: format!(
+                "未知层：{rel} 不在架构约束的模块树里（docs/architecture-constraints.md）。\
+                 要么把它归入既有层（domain / application / infrastructure / shared / \
+                 presentation / app），要么它是 src/bin/ 工具；若确实需要新的层类别，\
+                 先改约束文档与校验器，再放代码"
+            ),
+        });
+        return violations;
+    }
+
+    // ---- 依赖路径判定 ----
+    //
+    // 没有层禁令的层（组合根 / 自由文件）跳过候选收集，但**豁免体检照跑**——
+    // 那些位置写 `arch-allow` 同样是噪音，应当报出来而不是被静默忽略。
+    let mut used_allow = vec![false; lexed.allows.len()];
+    let forbidden = forbidden_for(layer);
+    if !forbidden.is_empty() {
+        let candidates = collect_candidates(tokens, &forbidden, allowed_for(layer));
+        for cand in &candidates {
+            let hit = lexed
+                .allows
+                .iter()
+                .enumerate()
+                .find(|(_, a)| {
+                    allow_covers(&a.name, cand.banned)
+                        && (cand.win_start <= a.line && a.line <= cand.win_end
+                            // 独立成行的豁免额外罩住紧邻的下一行；行尾豁免不罩——
+                            // 否则第 1 行的行尾豁免会把第 2 行的独立违规一并压掉。
+                            || (a.own_line && cand.win_start == a.line + 1))
+                })
+                .map(|(idx, _)| idx);
+            match hit {
+                Some(idx) => {
+                    used_allow[idx] = true;
+                }
+                None => {
+                    let reason = if layer == Layer::Tests {
+                        "（集成测试是消费者不是层：引用库请写公开 API `rustmark::…`；\
+                         `crate::` 在测试里指向测试 crate 自身，写 `crate::<层名>` \
+                         说明是从 src/ 复制粘贴过来的库内部视角）"
+                    } else if layer == Layer::PresentationState
+                        && PRESENTATION_STATE_FORBIDDEN.contains(&cand.banned)
                     {
                         "（UI State 只放视图状态：开关 / 滚动 / 焦点 / 临时输入；\
                          业务数据一律来自 DTO，见 docs/06 表现层与交互实现）"
@@ -236,31 +1375,178 @@ pub fn scan(src_root: &Path) -> Vec<Violation> {
                         ""
                     };
                     violations.push(Violation {
-                        file: rel.clone(),
-                        line: line_no,
-                        detail: format!("{layer} 层禁止依赖 {banned}（use {use_path}）{reason}"),
+                        file: rel.to_string(),
+                        line: cand.line,
+                        detail: format!(
+                            "{} 层禁止依赖 {}（{} {}）{}",
+                            layer.label(),
+                            cand.banned,
+                            cand.kind(),
+                            cand.path,
+                            reason
+                        ),
                     });
                 }
             }
         }
     }
+
+    // ---- 豁免指令自身的体检 ----
+    //
+    // 对**所有**层生效（含组合根 / 自由文件）：那些位置没有层禁令，
+    // 因此那里的 `arch-allow` 必然是无对象的噪音——报出来，而不是
+    // 因为「提前返回」被静默忽略（三态表才对所有文件成立）。
+    for (idx, a) in lexed.allows.iter().enumerate() {
+        if used_allow[idx] {
+            if !registry.contains(rel, &a.name) {
+                violations.push(Violation {
+                    file: rel.to_string(),
+                    line: a.line,
+                    detail: format!(
+                        "arch-allow 豁免未登记：{}（须在 docs/architecture-constraints.md 的豁免表里登记 \
+                         「{} | {}」）",
+                        a.name, rel, a.name
+                    ),
+                });
+            }
+            continue;
+        }
+        // 该行确实有帧预约违规时，说清楚「这条规则不设豁免」——
+        // 否则读者会以为是窗口写错了，去挪注释位置而不是删掉预约。
+        let repaint_here = violations
+            .iter()
+            .any(|v| v.line == a.line && v.detail.contains(REPAINT_RESERVATION));
+        let detail = if repaint_here {
+            format!(
+                "arch-allow 豁免无效：{}（该行确实有违规，但「{REPAINT_RESERVATION} 只允许出现在 \
+                 {REPAINT_RESERVATION_HOME}」这条规则不设豁免）",
+                a.name
+            )
+        } else {
+            format!(
+                "arch-allow 豁免无效：{}（该行没有依赖它的违规，豁免要么写错、要么已过时）",
+                a.name
+            )
+        };
+        violations.push(Violation {
+            file: rel.to_string(),
+            line: a.line,
+            detail,
+        });
+    }
+
     violations
 }
 
-/// 源文件指纹（路径 + mtime），用于 `build.rs` 缓存判定是否需要重扫。
-#[allow(dead_code)] // 仅 build.rs 使用；check-arch bin 走全量扫描
-pub fn signature(src_root: &Path) -> String {
-    let mut files = Vec::new();
-    collect_rs_files(src_root, &mut files);
-    files.sort();
-    let mut sig = String::new();
-    for path in files {
-        let rel = path
-            .strip_prefix(src_root)
-            .unwrap_or(&path)
-            .to_string_lossy()
-            .replace('\\', "/");
-        sig.push_str(&format!("{rel}:{}\n", file_stamp(&path)));
+/// 收集全部「疑似违规」候选。
+fn collect_candidates(
+    tokens: &[Token],
+    forbidden: &[&'static str],
+    allowed: &[&'static str],
+) -> Vec<Candidate> {
+    let mut out: Vec<Candidate> = Vec::new();
+    let mut i = 0usize;
+    while i < tokens.len() {
+        let t = &tokens[i];
+        // `use` 声明：整体展开成完整路径。
+        if t.kind == TokKind::Ident && t.text == "use" {
+            let (paths, end) = parse_use_tree(tokens, i + 1, &[]);
+            let stmt_end = end
+                .checked_sub(1)
+                .and_then(|k| tokens.get(k))
+                .map(|x| x.line)
+                .unwrap_or(t.line);
+            for (path, line) in paths {
+                push_candidates(
+                    &mut out, &path, line, t.line, stmt_end, "use", forbidden, allowed,
+                );
+            }
+            i = if end > i { end } else { i + 1 };
+            continue;
+        }
+        // `extern crate egui;` / `extern crate egui as e;`
+        // （2015 版式依赖声明，`#[macro_use]` 重导出场景仍会出现）
+        // ——与 `use` 同等对待：只认 `use` 会让这条整类漏检。
+        // 注意 `extern "C" { … }` / `extern "C" fn` 的 `extern` 后面跟的是
+        // 字符串（不产生 token）或 `{` / `fn`，到不了这里。
+        if t.kind == TokKind::Ident
+            && t.text == "extern"
+            && tokens.get(i + 1).map(|n| n.text.as_str()) == Some("crate")
+        {
+            let (paths, end) = parse_use_tree(tokens, i + 2, &[]);
+            let stmt_end = end
+                .checked_sub(1)
+                .and_then(|k| tokens.get(k))
+                .map(|x| x.line)
+                .unwrap_or(t.line);
+            for (path, line) in paths {
+                push_candidates(
+                    &mut out, &path, line, t.line, stmt_end, "extern crate", forbidden, allowed,
+                );
+            }
+            i = if end > i { end } else { i + 1 };
+            continue;
+        }
+        // 其它位置的限定路径：`a::b::C`。
+        //
+        // 「首段前面是 `.`」的排除项：`x.y::z` 里 `y::z` 不是一条路径，
+        // 而是字段访问后接了一段路径片段——把 `y::z` 单独拎出来判，
+        // 会造出源码里根本不存在的「依赖」。
+        if t.kind == TokKind::Ident
+            && tokens.get(i + 1).map(|n| n.kind) == Some(TokKind::PathSep)
+            && tokens.get(i + 2).map(|n| n.kind) == Some(TokKind::Ident)
+            && !(i > 0 && tokens.get(i - 1).map(|n| n.kind) == Some(TokKind::Dot))
+        {
+            let start = i;
+            let mut j = i + 1;
+            while tokens.get(j).map(|n| n.kind) == Some(TokKind::PathSep)
+                && tokens.get(j + 1).map(|n| n.kind) == Some(TokKind::Ident)
+            {
+                j += 2;
+            }
+            let segs: Vec<String> = tokens[start..j]
+                .iter()
+                .filter(|x| x.kind == TokKind::Ident)
+                .map(|x| x.text.clone())
+                .collect();
+            let path = segs.join("::");
+            push_candidates(
+                &mut out, &path, t.line, t.line, t.line, "引用", forbidden, allowed,
+            );
+            i = j;
+            continue;
+        }
+        i += 1;
     }
-    sig
+    out
+}
+
+#[allow(clippy::too_many_arguments)]
+fn push_candidates(
+    out: &mut Vec<Candidate>,
+    path: &str,
+    line: usize,
+    win_start: usize,
+    win_end: usize,
+    source: &'static str,
+    forbidden: &[&'static str],
+    allowed: &[&'static str],
+) {
+    for &banned in forbidden {
+        if !matches_ban(path, banned) {
+            continue;
+        }
+        // 命中了更窄的允许前缀 → 放行（如表现层的 `crate::app::frame`）。
+        if allowed.iter().any(|a| matches_ban(path, a)) {
+            continue;
+        }
+        out.push(Candidate {
+            path: path.to_string(),
+            banned,
+            line,
+            win_start,
+            win_end,
+            source,
+        });
+    }
 }

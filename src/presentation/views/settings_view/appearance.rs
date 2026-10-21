@@ -3,7 +3,7 @@
 use egui::Ui;
 
 use crate::app::frame::EditorApp;
-use crate::presentation::theme::builtin::Theme;
+use crate::presentation::theme::builtin::{Theme, theme_kind_label};
 
 use super::*;
 
@@ -12,10 +12,15 @@ pub(super) fn appearance(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
     let view = app.settings().theme;
     field(ui, theme, "主题", |ui| {
         ui.horizontal_wrapped(|ui| {
-            for (kind, label) in THEME_KINDS {
-                let selected = view.kind == *kind;
-                if ui.selectable_label(selected, *label).clicked() && !selected {
-                    let kind = (*kind).to_string();
+            for kind in THEME_KIND_ORDER {
+                let kind_str = kind.as_str();
+                let selected = view.kind == kind_str;
+                if ui
+                    .selectable_label(selected, theme_kind_label(*kind))
+                    .clicked()
+                    && !selected
+                {
+                    let kind = kind_str.to_string();
                     app.apply_theme_field(|t| t.kind = kind);
                 }
             }

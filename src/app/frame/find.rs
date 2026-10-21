@@ -29,6 +29,14 @@ impl EditorApp {
         self.reveal_match(found);
     }
 
+    /// 查找框是否持有焦点（每帧由 `find_replace_view` 的 `TextEdit` 焦点状态回写）。
+    ///
+    /// 聚焦时值为 `true`、失焦时为 `false`，供「焦点变化」触发的副作用
+    /// （如自动展开面板）读取——状态必须落在应用层，因为多个视图会读它。
+    pub fn set_find_focused(&mut self, focused: bool) {
+        self.find.find_focused = focused;
+    }
+
     /// 选中某个命中并把它滚进视口。
     pub(super) fn reveal_match(
         &mut self,
@@ -178,4 +186,36 @@ impl EditorApp {
         // 否则 Ctrl+Z 会先撤掉 egui 自己的输入历史，替换撤不回来。
         self.clear_undoer_next = true;
     }
+}
+
+/// 把领域命中转成表现层的分组结构，并算出每条命中的高亮区间。
+///
+/// 高亮区间在**字符**坐标下算（理由同`scroll_sync` 那套换算）：
+/// 片段要交给 egui 排版，按字节切中文会错位——「一」在UTF-8 里 3 字节，
+/// 字节 7 落在字符 9 的中间，切出来的两半都不是完整字符。
+///
+/// 查询词与选项由调用方传入而不是从 `result` 里找：`SearchResultView`
+/// 本身不携带查询（它是领域 DTO，不该知道 UI 传了什么）。
+///
+/// R-21 从 `workspace.rs` 归位到此：它是查找结果的**呈现加工**，
+/// 与 `find` 面板同家（原先 `outline.rs` 反向导入 `workspace` 的这个
+/// 纯函数，方向与命名相反）。
+pub(crate) fn group_search_hits(
+    result: &SearchResultView,
+    query: &str,
+    case_sensitive: bool,
+) -> Vec<SearchGroup> {
+    let rows: Vec<(String, usize, String)> = result
+        .hits
+        .iter()
+        .map(|hit| (hit.path.as_str().to_string(), hit.line, hit.snippet.clone()))
+        .collect();
+    let mut groups = group_hits(&rows);
+    for group in &mut groups {
+        for hit in &mut group.hits {
+            hit.highlight =
+                locate_in_snippet(&hit.snippet, query, case_sensitive).unwrap_or((0, 0));
+        }
+    }
+    groups
 }

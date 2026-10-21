@@ -1,6 +1,6 @@
 //! # rustmark —— 原生轻量级 Markdown 编辑器
 //!
-//! 分层结构（依赖方向严格单向，见 `.agent/architecture.md`）：
+//! 分层结构（依赖方向严格单向，见 `docs/architecture-constraints.md`）：
 //!
 //! ```text
 //! presentation ──► application ──► domain ◄── infrastructure

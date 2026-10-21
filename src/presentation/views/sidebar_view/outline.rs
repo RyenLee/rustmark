@@ -74,7 +74,7 @@ pub(super) fn outline_tab(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
                     },
                 );
                 if response.clicked() {
-                    app.sidebar.outline_selected = Some(item.text.clone());
+                    app.select_outline_item(item.text.clone());
                     jump = Some(item.line);
                 }
             }

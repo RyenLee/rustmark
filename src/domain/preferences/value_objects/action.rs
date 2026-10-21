@@ -95,7 +95,29 @@ pub enum ActionId {
 }
 
 impl ActionId {
-    /// 全部动作（用于「快捷键一览」与冲突检测的全量遍历）。
+    /// 全部动作（**可持久化**动作全集）。
+    ///
+    /// # 它与 `default_bindings()` 不是一回事
+    ///
+    /// 本清单 = 「**能被改键持久化**」的动作全集；
+    /// [`ShortcutTable::default_bindings`] = 「**有默认键位**」的动作集。
+    ///
+    /// 「可持久化但无默认键位」是**合法**状态：「显示 / 隐藏状态栏」
+    /// 用户可在设置页自行录制，但产品上**不占用快捷键**，
+    /// 故它在本清单里、却不在默认键位表里。
+    ///
+    /// # 这份清单必须与枚举变体**同步**
+    ///
+    /// 它是**手写清单**，编译器管不到：加变体忘了加进这里 →
+    /// 该动作**不出现在命令面板**、**不可改键**，而**零报错**。
+    /// 表现层的 `UiAction::persisted_key` 认它、领域这里不认 →
+    /// 改键时报「尚未映射到领域动作」。
+    ///
+    /// 2026-10-20 实测：本清单**真的漏登记过** `ToggleStatusbar`
+    /// （枚举 38 / 清单 37），症状是「显示/隐藏状态栏」改键时弹
+    /// 「尚未映射到领域动作，无法改键」。由
+    /// `tests/app/shortcut_action_guard_test.rs` 的
+    /// `the_domain_action_list_matches_the_enum` 钉住。
     pub const fn all() -> &'static [ActionId] {
         &[
             Self::NewDocument,
@@ -129,6 +151,7 @@ impl ActionId {
             Self::CloseOverlay,
             Self::DocumentStats,
             Self::ToggleSidebar,
+            Self::ToggleStatusbar,
             Self::FindInFiles,
             Self::SaveAll,
             Self::InsertSymbol,

@@ -83,7 +83,7 @@ pub(super) fn shortcuts(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
                 clear_conflict = true;
             }
             if ui.button("放弃本次修改").clicked() {
-                app.settings_ui.pending_conflict = None;
+                app.clear_settings_pending_conflict();
             }
         });
     }

@@ -17,6 +17,7 @@
 use std::collections::HashSet;
 
 use crate::application::dto::RecentFileView;
+use crate::shared::path::file_name_of;
 
 /// 候选上限。
 ///
@@ -153,12 +154,11 @@ pub fn candidates_from_workspace(
         if *is_dir {
             continue;
         }
-        let name = path
-            .rsplit('/')
-            .next()
-            .filter(|s| !s.is_empty())
-            .unwrap_or(path)
-            .to_string();
+        let name = match file_name_of(path) {
+            "" => path,
+            other => other,
+        }
+        .to_string();
         out.push(QuickOpenItem {
             path: path.clone(),
             name,

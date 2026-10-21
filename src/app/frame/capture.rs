@@ -174,11 +174,11 @@ impl EditorApp {
         // 不该因为「像素晚一帧到」就在视图层另起一套。
         let destination = FilePath::new(path).map_err(|e| AppError::io(e.to_string()))?;
         let request = ExportRequestView {
-            format: "image".to_string(),
+            format: ExportFormat::Image.as_str().to_string(),
             include_toc: false,
             embed_images: false,
             theme: self.export_ui.theme.clone(),
-            page_size: "a4".to_string(),
+            page_size: PageSize::A4.as_str().to_string(),
             paginate: false,
         };
         let job_id = self.services.export.create_job(CreateExportJobCommand {
@@ -261,11 +261,11 @@ impl EditorApp {
 
         let destination = FilePath::new(path).map_err(|e| AppError::io(e.to_string()))?;
         let request = ExportRequestView {
-            format: "image".to_string(),
+            format: ExportFormat::Image.as_str().to_string(),
             include_toc: false,
             embed_images: false,
             theme: self.export_ui.theme.clone(),
-            page_size: "a4".to_string(),
+            page_size: PageSize::A4.as_str().to_string(),
             paginate: false,
         };
         let job_id = self.services.export.create_job(CreateExportJobCommand {

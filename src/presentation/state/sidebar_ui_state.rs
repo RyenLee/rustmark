@@ -20,6 +20,8 @@ mod tree;
 pub use search::*;
 pub use tree::*;
 
+use crate::shared::text_format::default_extension;
+
 /// 侧边栏 UI 状态。
 #[derive(Clone, Debug, Default)]
 pub struct SidebarUiState {
@@ -182,13 +184,18 @@ impl SidebarUiState {
     }
 
     /// 开始新建（`parent` 为 `None` 表示建在工作区根目录）。
+    ///
+    /// 文件的默认名用 `未命名.<默认扩展名>`，扩展名取
+    /// [`crate::shared::text_format::default_extension`]（白名单首选的
+    /// 唯一出处）——此处硬编码 `.md` 会在白名单首选变化时漏改，
+    /// 给出用户一个打不开的默认名。
     pub fn start_create(&mut self, parent: Option<&str>, is_directory: bool) {
         self.creating = Some((
             parent.unwrap_or_default().to_string(),
             if is_directory {
                 "新建文件夹".to_string()
             } else {
-                "未命名.md".to_string()
+                format!("未命名.{}", default_extension())
             },
             is_directory,
         ));

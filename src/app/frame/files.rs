@@ -1,4 +1,7 @@
-//! 文件与文档操作：保存 / 新建 / 状态栏提示 / 路径读取 / 自动保存 / 拖放打开。
+//! 文件与文档操作：保存 / 新建 / 路径读取 / 自动保存 / 拖放打开。
+//!
+//! 状态栏写入口在 `status_bar.rs`（R-21 归位），光标插入在 `editor.rs`，
+//! 打开管线（守卫 / 拒绝文案 / 入口 / 实现）在 `workspace.rs`。
 use super::*;
 
 impl EditorApp {
@@ -38,20 +41,23 @@ impl EditorApp {
         }
     }
 
-    /// 在状态栏显示一条错误。
+    /// 当前文档的**保存路径**（`None` = 未保存过的新文档）。
     ///
-    /// 时钟取自 `services.markdown`（所有应用服务共用同一个 `Clock`），
-    /// 不直接调 `SystemClock`：消息的「4 秒后消失」是可测规则，
-    /// 用系统时钟就没法写测试验证它。
-    pub fn set_status_error(&mut self, text: &str) {
-        let now = self.services.markdown.now().millis();
-        self.status_bar.error(text, now);
-    }
-
-    /// 在状态栏显示一条普通提示。
-    pub fn set_status_notice(&mut self, text: impl Into<String>) {
-        let now = self.services.markdown.now().millis();
-        self.status_bar.notice(text, now);
+    /// 这是「当前文档路径」的**唯一出处**（V11-54a / R-15）：
+    /// 此前有三处各自取路径（`current_document_path` 的哨兵字符串、
+    /// `document_dir` 的 `PathBuf`、`active_document_dir` 的 `String`），
+    /// 语义相近却**成本不同**（`active_document_dir` 走 `get_document`
+    /// 全文快照，每帧调用就是白付一次 O(全文) 克隆——问题 043 的教训）。
+    ///
+    /// 走轻量摘要（`get_tab_summary`）而非 `get_document`：面包屑每帧都取，
+    /// 后者要付一次全文快照只为拿一个路径。
+    pub fn current_document_file(&self) -> Option<FilePath> {
+        let id = self.active_doc?;
+        self.services
+            .documents
+            .get_tab_summary(GetDocumentQuery { id })
+            .ok()?
+            .path
     }
 
     /// 当前文档的面包屑路径；无活动文档或无路径时返回「未命名文档」。
@@ -59,20 +65,9 @@ impl EditorApp {
     /// 走轻量摘要而非 `get_document`：面包屑每帧都取，后者要付一次
     /// 全文快照只为拿一个路径（问题 043）。
     pub fn current_document_path(&self) -> String {
-        let Some(id) = self.active_doc else {
-            return "未命名文档".to_string();
-        };
-        match self
-            .services
-            .documents
-            .get_tab_summary(GetDocumentQuery { id })
-        {
-            Ok(view) => view
-                .path
-                .map(|p| p.as_str().to_string())
-                .unwrap_or_else(|| "未命名文档".to_string()),
-            Err(_) => "未命名文档".to_string(),
-        }
+        self.current_document_file()
+            .map(|p| p.as_str().to_string())
+            .unwrap_or_else(|| "未命名文档".to_string())
     }
 
     // ================================================================
@@ -81,69 +76,7 @@ impl EditorApp {
 
     /// 当前生效主题的显示名（「关于」面板用）。
     pub fn theme_kind_label(&self) -> &'static str {
-        match self.ui.theme.kind {
-            BuiltinTheme::Dark => "深色",
-            BuiltinTheme::Light => "浅色",
-            BuiltinTheme::System => "跟随系统",
-        }
-    }
-
-    /// 在光标处插入一段文本（符号面板 / 工具栏插入结构共用）。
-    ///
-    /// 走领域 `insert_text` 而非直接改 `editor_text`，理由与
-    /// S6-07 的「三入口一致」同源：直接改 UI 文本会绕过一次撤销点，
-    /// 让用户「插入一个 emoji 之后按 Ctrl+Z 什么也没撤销」。
-    ///
-    /// # 插入点必须取 **UI 光标**而非领域光标
-    ///
-    /// 两者是不同的坐标系：领域记的是**上一次领域命令后**的光标，
-    /// UI 记的是 egui `TextEdit` 当前画出来的那个。而大纲跳转
-    /// （[`Self::goto_byte_offset`]）、查找命中（`reveal_match`）
-    /// 都只改 UI 光标——用户看到光标跳到了第 40 行，
-    /// 领域那边还停在第 3 行。此时按「插入符号」若读领域光标，
-    /// 内容会插到用户**看不见**的位置。
-    /// （`move_line` / `run_format` 同样取 UI 光标，规则一致。）
-    ///
-    /// 光标停在插入内容**之后**：停在内容里意味着用户接着打字
-    /// 会把文字插进代码块标记中间——这是插入类操作最常见的投诉。
-    ///
-    /// 有选区时**替换选区**：用户选中一段文字再插链接，
-    /// 得到「选中文字链接选中文字」是几乎所有编辑器的行为，
-    /// 也符合「插入」这个词的含义。
-    pub fn insert_at_cursor(&mut self, text: &str) -> AppResult<()> {
-        let Some(id) = self.ensure_document() else {
-            return Ok(());
-        };
-        // 选区优先：无选区时 `selection()` 返回 `None`，退回光标。
-        // 选区优先：无选区时 `selection()` 返回 `None`，退回光标。
-        let (start, end) = self
-            .editor
-            .selection()
-            .unwrap_or((self.editor.cursor, self.editor.cursor));
-        let end = end.max(start);
-        if start != end {
-            self.services.documents.replace_range(ReplaceRangeCommand {
-                id,
-                range: TextRange::new(ByteOffset::new(start), ByteOffset::new(end)),
-                text: text.to_string(),
-            })?;
-        } else {
-            self.services.documents.insert_text(InsertTextCommand {
-                id,
-                offset: start,
-                text: text.to_string(),
-            })?;
-        }
-        self.refresh_text();
-        let after = start + text.len();
-        // 领域光标也要跟上：否则下一次插入仍会用旧位置（见上）。
-        self.editor.set_selection(after, after);
-        self.pending_cursor = Some((
-            editor_ops::byte_to_char(&self.editor_text, after),
-            editor_ops::byte_to_char(&self.editor_text, after),
-        ));
-        self.clear_undoer_next = true;
-        Ok(())
+        crate::presentation::theme::builtin::theme_kind_label(self.ui.theme.kind)
     }
 
     /// 读取一个工作区文件的文本内容（差异对比的右侧）。
@@ -203,6 +136,63 @@ impl EditorApp {
         // 内容没变但「已保存」状态变了，仍要回读让脏标记与标签标题一致。
         self.refresh_text();
         Ok(())
+    }
+
+    /// 「还原修改」（R-04a）：从磁盘重新加载当前文档，丢弃未保存修改。
+    ///
+    /// 与 [`Self::undo_edit`] 是两件事：撤销回退一步编辑，还原回到磁盘版本。
+    /// 路由表里 `Revert` 是独立动作（UI 标签「还原修改」），不是 `Undo` 的别名。
+    ///
+    /// # 三条分支
+    ///
+    /// - 无活动文档 / 未命名文档：没有磁盘版本可还原，提示后返回
+    ///   （未命名文档猜一个保存位置比不动作更糟）；
+    /// - 文档干净：直接还原，不为一个零风险操作弹框；
+    /// - 文档脏：先走确认框（丢弃修改不可逆），答复「是」才兑现。
+    pub fn revert_document(&mut self) {
+        let Some(id) = self.ensure_document() else {
+            return;
+        };
+        let Some(path) = self.current_document_file() else {
+            self.set_status_notice("未命名文档尚未保存过，无从还原");
+            return;
+        };
+        if self.current_document_dirty() {
+            self.request_revert(id, &path);
+            return;
+        }
+        self.run_revert(id);
+    }
+
+    /// 兑现还原：调应用层用例 → 清草稿 → 同步 UI。
+    ///
+    /// **草稿必须清**：自动保存的 `.draft` 里躺着刚被丢弃的修改，
+    /// 不清则下次启动会问「是否恢复未保存修改」——把用户明确扔掉的内容
+    /// 又捡回来，还与「还原」的语义直接矛盾（保存后清草稿同此理）。
+    pub(super) fn run_revert(&mut self, id: DocumentId) {
+        match self.services.documents.revert(RevertCommand { id }) {
+            Ok(()) => {
+                let _ = self
+                    .services
+                    .documents
+                    .clear_draft(&self.services.drafts_dir, id);
+                if self.active_doc == Some(id) {
+                    // 领域内容已换：回读文本 + 把 egui 光标对齐到领域光标
+                    // （还原后光标在文档头，与「重新打开」一致）。
+                    self.sync_cursor_from_domain();
+                    let name = self
+                        .current_document_file()
+                        .map(|p| Self::display_name(p.as_str()).to_string())
+                        .unwrap_or_else(|| "文档".to_string());
+                    self.set_status_notice(format!("已还原「{name}」"));
+                } else {
+                    // 确认框是模态的，正常情况下走不到这里；保留 generic 文案
+                    // 是为了「按 id 兑现」不依赖「当时谁是活动文档」。
+                    self.set_status_notice("已还原");
+                }
+            }
+            Err(e) => self.set_status_error(&format!("还原失败：{e}")),
+        }
     }
 
     /// 保存**全部**已修改文档（`Ctrl+Alt+S` / 「文件 → 保存全部」）。
@@ -391,32 +381,6 @@ impl EditorApp {
         }
     }
 
-    /// 该路径能否**作为文本**打开（问题 045）。
-    ///
-    /// 文件树置灰、双击拦截、拖放分类、打开守卫共用这一条判据；
-    /// 实现体只查 [`TextFormats`]，不碰磁盘（扩展名判定零 IO，
-    /// 可以安全地放进每帧的渲染循环）。
-    pub fn can_open_as_text(&self, path: &str) -> bool {
-        self.text_formats.accepts(path)
-    }
-
-    /// 非白名单格式的拒绝提示文案（唯一出处）。
-    ///
-    /// 关联函数而非 `&self` 方法：表现层要在**置灰的行**上直接用同一句话
-    /// 做悬停说明，那时手边不一定有可变借用。
-    pub fn unsupported_format_notice(path: &str) -> String {
-        let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
-        format!("暂不支持打开该格式：{name}")
-    }
-
-    /// 把「该格式暂不支持」报到状态栏。
-    ///
-    /// 文件树双击非白名单文件时调用——那条路径**不**走打开管线
-    /// （入口已禁用），但仍要给用户一个原因，否则表现得像「点了没反应」。
-    pub fn report_unsupported_format(&mut self, path: &str) {
-        self.set_status_notice(Self::unsupported_format_notice(path));
-    }
-
     /// 打开最近文件列表（按最近使用降序）。
     ///
     /// 欢迎页与「文件 → 最近」共用。**每次现取**而不是缓存：
@@ -429,21 +393,6 @@ impl EditorApp {
             .unwrap_or_default()
     }
 
-    /// 打开一个文件（用于最近文件、文件对话框）。
-    ///
-    /// 失败时**自己**把原因报到状态栏，不只把 `Err` 往上抛：
-    /// 欢迎页点一个已被删除的最近文件时，调用方若忘了展示错误，
-    /// 用户看到的就是「点了没反应」——比任何错误提示都更让人困惑。
-    /// 报错的职责放在这里而不是各调用方，是为了**按构造**保证可见。
-    pub fn open_path(&mut self, path: &str) -> AppResult<()> {
-        let result = self.open_workspace_file(path);
-        if let Err(e) = &result {
-            let name = path.rsplit('/').next().unwrap_or(path);
-            self.set_status_error(&format!("无法打开 {name}：{e}"));
-        }
-        result
-    }
-
     /// 文件拖放打开（P2）。
     ///
     /// egui/winit 后端在「拖放发生的那一帧」把文件填进 `ctx.input().raw.dropped_files`，
@@ -451,7 +400,8 @@ impl EditorApp {
     ///
     /// 行为（推荐方案）：
     /// - 按扩展名分类（`classify_dropped`，判据是**全应用唯一**的格式白名单）——
-    ///   白名单内（内置：`md` / `markdown` / `mdown` / `mkd` / `txt` / `text` / `csv`）
+    ///   白名单内的扩展名（内置清单见
+    ///   [`crate::shared::text_format::BUILTIN_TEXT_EXTENSIONS`]）
     ///   逐个打开为标签；其余扩展名拒绝并在状态栏提示；
     /// - 拖入无本地路径的「虚拟文件」（如浏览器拖拽）忽略；
     /// - 一次拖入多个文件：全部可识别的都打开（批量），不截断到第一个；

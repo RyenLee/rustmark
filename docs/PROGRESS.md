@@ -50,7 +50,7 @@
   - **V11-04 PDF 开放（方案 B）**：开放入口并诚实提示「经系统打印对话框」，打印副作用抽为可注入 `PrintDispatcher`，CI 不弹框。
   - **V11-05 写作目标进度条**：领域 `WritingGoal` + 应用 `goal_progress` + 状态栏百分比/细进度条/达成去重提示，旧 TOML 配置缺字段按「未设置」兼容。
 
-**验证链最新记录**（2026-10-14 实测）：`fmt --check` 零差异 · `clippy --all-targets -- -D warnings` 0 告警 · `check-arch` OK · 全量 `cargo test --all-targets` **1623 passed / 0 failed / 0 ignored**（有界性能断言只在 release 生效，debug 仅打印指标，见 `docs/testing.md`）。2026-10-09~10 的各轮历史实测快照（含 7 条红的发现与处置）已归档于 `docs/v1.1-backlog.md` §2（V11-14/15）与 `docs/testing.md` 状态块。
+**验证链最新记录**（2026-10-20 实测）：`fmt --check` 零差异 · `clippy --all-targets --all-features -- -D warnings` 0 告警 · `check-arch` OK · 全量 `cargo test --all-targets` **1879 passed / 0 failed / 4 ignored**（有界性能断言只在 release 生效，debug 仅打印指标，见 `docs/testing.md`）。2026-10-09~10 的各轮历史实测快照（含 7 条红的发现与处置）已归档于 `docs/v1.1-backlog.md` §2（V11-14/15）与 `docs/testing.md` 状态块。
 
 **离线预发布演练记录**（2026-10-09，`tools/release_dryrun.py`）：绿路径 **13/13 通过**（tag v0.1.0 ↔ Cargo.toml 0.1.0 一致、产物 sha256 重算一致、Notes 按阶段聚合、无私钥入仓、回滚步骤齐备）；红路径 `--tag v9.9.9` → 11/12 且 **exit 1**，证明门禁会红。
 
@@ -74,13 +74,15 @@
 **阶段 01–09 已全部完成，无进行中的阶段。** 下一阶段为 **v1.1**，
 任务规划、逐项说明与完成记录以 [`docs/v1.1-backlog.md`](./v1.1-backlog.md) 为**唯一入口**（本文不重复其总览表）。
 
-截至 2026-10-14 的状态摘要：
+截至 2026-10-20 的状态摘要：
 
-- **功能项已全部完成**：V11-03~09、V11-12~26 均 ✅；验证链 1623 passed / 0 failed。
+- **功能项已全部完成**：V11-03~09、V11-12~26 均 ✅；验证链 1879 passed / 0 failed / 4 ignored。
 - **剩余仅环境前置项**：V11-02（macOS / Linux 真机回归，P0）、V11-01（远端发布演练）、
   V11-10 / V11-11（证书预算 / 痛点驱动）——见 backlog §3。
-- **已知超限项**：`NFR-PERF-01` 安装包体积 10.93 MiB > 10 MB 红线 0.93 MiB，
-  缓解方案待 v1.1 评审决策，见 `docs/metrics.md` §2.4。
+- **架构改造进行中**：V11-54 / V11-54a（全库架构评估 + 21 条改造项方案），
+  已落地 R-14 / R-15 / R-16（见 `docs/architecture-refactor-plan.md` §5.3 进度表）。
+- **已知超限项**：`NFR-PERF-01` 安装包体积 **11.36 MiB**（2026-10-20 实测）> 10 MB 红线 1.36 MiB，
+  缓解方案待 v1.1 评审决策，见 `docs/metrics.md` §2.6。
 
 ---
 
@@ -172,7 +174,7 @@ cargo run --bin check-arch     # 架构边界校验
 
 | 编号      | 决策     | 结论                                                                                            | 依据                                                                   |
 | ------- | ------ | --------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| ADR-001 | UI 框架  | **egui + eframe 0.33.3**（wgpu 后端），不采用 Tauri                                                   | 需求文档 §5.1 / §5.2；与原型 `DESIGN-OVERVIEW.md` §1「目标态 Tauri v2」冲突，以需求文档为准 |
+| ADR-001 | UI 框架  | **egui + eframe**（wgpu 后端），不采用 Tauri（**当前锁定 0.37.0**，见 `Cargo.toml`；本表记的是当初决策） | 需求文档 §5.1 / §5.2；与原型 `DESIGN-OVERVIEW.md` §1「目标态 Tauri v2」冲突，以需求文档为准 |
 | ADR-002 | 解析与高亮  | pulldown-cmark 0.13（`default-features = false`）+ syntect 5.3（`default-fancy`，语言集裁剪 + dump 加载） | 需求文档 §5.1、§8.1                                                       |
 | ADR-003 | 文本缓冲   | ropey 1.6.1 实现领域层 `TextBuffer` trait，领域层不直接依赖 ropey 类型                                        | 需求文档 §6.4 允许 domain → ropey，但建议以 trait 隔离以便测试                        |
 | ADR-004 | 导出 PDF | P1，采用「系统打印/导出对话框」外置方案，不内嵌 PDF 引擎                                                              | 体积预算 5–7 MB，内嵌引擎会击穿 ≤10 MB 目标                                        |

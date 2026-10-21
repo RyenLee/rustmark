@@ -209,7 +209,7 @@ fn draw_tab_strip(app: &mut EditorApp, ui: &mut Ui) {
                     // 表现即问题 042：「◀ 能滚、▶ 点了没反应」。故存在应用状态里。
                     let now_active = app.active_doc.map(|id| id.as_u64());
                     let changed = app.ui.tabstrip_last_active != now_active;
-                    app.ui.tabstrip_last_active = now_active;
+                    app.set_tabstrip_last_active(now_active);
                     // 横向布局是**必须的**，见函数头规则 2。
                     ui.horizontal_top(|ui| {
                         // 横向间隙归零：egui 会在每个 widget 之后自动追加
@@ -418,10 +418,13 @@ fn draw_tab_strip(app: &mut EditorApp, ui: &mut Ui) {
             } else {
                 theme.text_secondary
             };
-            if enabled && response.hovered() {
-                ui.painter()
-                    .rect_filled(rect, egui::CornerRadius::same(4), theme.bg_tertiary);
-            }
+            widgets::row::paint_row_background(
+                ui.painter(),
+                rect,
+                false,
+                enabled && response.hovered(),
+                &theme,
+            );
             paint_nav_arrow(ui.painter(), rect, dir, color);
             if enabled && response.clicked() {
                 scroll_x += dir * NAV_STEP;
@@ -433,7 +436,7 @@ fn draw_tab_strip(app: &mut EditorApp, ui: &mut Ui) {
     scroll_x = scroll_x.clamp(0.0, max_offset);
     // 只更新权威偏移；下一帧由 `scroll_offset` 构造器把它喂回滚动区，
     // 不再直接写 `State`（egui 0.37 的 `offset` 字段已私有）。
-    app.ui.tabstrip_scroll_x = scroll_x;
+    app.set_tabstrip_scroll_x(scroll_x);
 
     // 「全部关闭」按钮：固定矩形贴在条带右端（不随滚动区滚动）。
     //
@@ -470,10 +473,7 @@ fn draw_tab_strip(app: &mut EditorApp, ui: &mut Ui) {
         } else {
             theme.text_secondary
         };
-        if response.hovered() {
-            ui.painter()
-                .rect_filled(rect, egui::CornerRadius::same(4), theme.bg_tertiary);
-        }
+        widgets::row::paint_row_background(ui.painter(), rect, false, response.hovered(), &theme);
         // 图标：圆角方框（一枚「标签」）+ 内部 ×——「关掉整排标签」的语义，
         // 与单个标签右上角的裸 × 区分。向量手绘（项目纪律：图标不走字形，
         // 本机字体链路缺 ◀ / ▶ / ▾ 这类装饰字形）。语义文字走悬停提示。

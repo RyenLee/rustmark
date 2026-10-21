@@ -469,7 +469,7 @@ fn boundary_invalid_utf8_does_not_crash() {
     //
     // 注意：`docs/07` §S7-04 原文写的是「非法 UTF-8 返回明确错误」，
     // 与实现不一致。此处断言的是**实际契约**（不崩溃 + 保留其余内容）；
-    // 契约是否需变更见 `docs/large-file-report.md` 的待确认项。
+    // 契约是否需变更见 `docs/archive/stage-reports/large-file-report.md` 的待确认项。
     let mut bytes = b"# \xe4\xb8\xad\xe6\x96\x87".to_vec(); // 合法中文
     bytes.extend_from_slice(&[0xFF, 0xFE, 0x80]); // 非法续字节
     bytes.extend_from_slice(b"\n\ntail\n");

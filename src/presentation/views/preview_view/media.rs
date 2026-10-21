@@ -20,7 +20,6 @@
 use egui::{Align, Layout};
 
 use crate::application::dto::ImageSpecView;
-use crate::shared::system;
 
 use super::*;
 
@@ -260,7 +259,9 @@ pub(super) fn draw_image_spec(
                                 )
                                 .clicked()
                         {
-                            let _ = system::open_external(&url);
+                            // 同 inline.rs 的行内链接：走 opener 端口而非
+                            // 直调 shared 的自由函数（R-03 把进程调用移出 shared）。
+                            let _ = app.services.opener.open(&url);
                         }
                     },
                 );

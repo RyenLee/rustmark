@@ -33,6 +33,7 @@ use crate::presentation::shortcuts::registry::UiAction;
 use crate::presentation::state::dialog_ui_state::Overlay;
 use crate::presentation::state::settings_ui_state::SettingsTab;
 use crate::presentation::theme::builtin::Theme;
+use crate::shared::theme::ThemeKind;
 
 /// 对话框默认尺寸（对齐原型 `BaseModal :width="620" :height="420"`）。
 const WIDTH: f32 = 620.0;
@@ -41,12 +42,24 @@ const HEIGHT: f32 = 420.0;
 /// 分区导航栏宽度（对齐原型 `.cats { width: 150px }`）。
 const NAV_WIDTH: f32 = 150.0;
 
-/// 可选主题种类（与领域 `ThemeKind` 一一对应）。
-const THEME_KINDS: &[(&str, &str)] = &[
-    ("dark", "深色"),
-    ("light", "浅色"),
-    ("system", "跟随系统"),
-    ("custom", "自定义"),
+/// 可选主题种类：**遍历真源**，不再维护一份成对清单。
+///
+/// 此前这里有一张 `const THEME_KINDS: &[(&str, &str)]`（「字符串 + 显示名」
+/// 成对），是 R-09 收敛掉的**第五份**主题映射副本。
+/// 那种成对清单的失败模式很典型：真源加了变体，它**不会**自动跟随，
+/// 于是新主题在下拉里**不出现**（用户看不到、也选不了），而**零报错**。
+///
+/// 现在改为遍历真源 + [`theme_kind_label`]，新增主题种类自动出现在下拉里。
+///
+/// 顺序：真源的 [`ThemeKind::ALL`] 是「浅 / 深 / 跟随系统 / 自定义」，
+/// 与原清单的「深 / 浅 / 跟随系统 / 自定义」仅前两项**顺序**不同。
+/// 下拉项的顺序是界面选择，故按「深色在前」排列（与原型一致）——
+/// 但**清单本身**不再手写：顺序由真源的 `ALL` 决定。
+const THEME_KIND_ORDER: &[ThemeKind] = &[
+    ThemeKind::Dark,
+    ThemeKind::Light,
+    ThemeKind::System,
+    ThemeKind::Custom,
 ];
 
 /// 可选字号（对齐原型 `previewFontSize` 的取值集合）。
@@ -171,9 +184,8 @@ fn nav(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
                 .add_sized([NAV_WIDTH, 28.0], egui::Button::new(text).frame(false))
                 .clicked()
             {
-                app.settings_ui.section = *tab;
-                app.settings_ui.error = None;
-                app.settings_ui.notice = None;
+                app.set_settings_section(*tab);
+                app.clear_settings_messages();
             }
         }
     });

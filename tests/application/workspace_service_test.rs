@@ -334,6 +334,67 @@ fn search_snippet_never_splits_utf8_chars() {
     assert_eq!(hit.col, 128);
 }
 
+/// 摘要窗口的字符边界必须**向下**吸附（V11-54a / R-14）。
+///
+/// # 为什么上面那条用例不够
+///
+/// `search_snippet_never_splits_utf8_chars` 只断言「不 panic + 覆盖命中」——
+/// **向上取整同样能过**，所以它钉不住「向下」这个语义。删掉对齐逻辑它会 panic，
+/// 但把「向下」换成「向上」它一声不响。
+///
+/// # 判据设计
+///
+/// 用例内容让摘要窗口的**两端都落在多字节字符中间**：
+/// - 窗口起点 = `128 - 24 = 104` 字节 → 落在「文」字中间（该字占 103..106）；
+/// - 窗口终点 = `134 + 24 = 158` 字节 → 落在「中」字中间（该字占 154..157）。
+///
+/// 向下吸附 → 起点 103（首字符「文」）、终点 157（末字符「中」）；
+/// 向上吸附 → 起点 106（首字符「测」）、终点 160（末字符「文」）。
+///
+/// 两者的**首字符与末字符都不同**，因此断言首尾字符即可区分方向；
+/// 字节长度（54）再钉一道，防「整体平移但首尾恰好同字」的漏网。
+#[test]
+fn search_snippet_snaps_to_char_boundaries_downward() {
+    let f = build();
+    let content = format!("{}needle{}", "🎉中文测试".repeat(8), "🎉中文测试".repeat(8));
+    seed_files(&f, &["/d/mixed.md"], &content);
+
+    let result = f
+        .service
+        .search(SearchQuery {
+            pattern: "needle".to_string(),
+            regex: false,
+            case_sensitive: false,
+            whole_word: false,
+            only_document: None,
+            only_open_documents: false,
+        })
+        .unwrap();
+    assert_eq!(result.hits.len(), 1);
+    let hit = &result.hits[0];
+
+    // 窗口两端向下吸附到最近的字符边界：起点 103、终点 157。
+    assert_eq!(
+        hit.snippet.chars().next(),
+        Some('文'),
+        "摘要起点应向下吸附到「文」字开头（字节 103），而非向上取整的「测」：{:?}",
+        hit.snippet
+    );
+    assert_eq!(
+        hit.snippet.chars().last(),
+        Some('中'),
+        "摘要终点应向下吸附到「中」字结尾（字节 157），而非向上取整的「文」：{:?}",
+        hit.snippet
+    );
+    // 字节长度 = 157 - 103 = 54。
+    assert_eq!(
+        hit.snippet.len(),
+        54,
+        "摘要字节长度应为 54（103..157），方向或偏移不对：{:?}",
+        hit.snippet
+    );
+}
+
 /// 范围切换器：「当前文档」只搜那一个文档（V11-28）。
 ///
 /// 限定目标用**未落盘草稿**：它的 ID 由调用方给出，而磁盘文件的 ID 是

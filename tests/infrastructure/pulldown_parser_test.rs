@@ -248,9 +248,37 @@ fn blockquote_adjacent_paragraphs_stay_separate() {
 
 #[test]
 fn thematic_break_is_parsed() {
-    // pulldown-cmark 不为分隔线产出标签，这里只验证**不崩溃**且段落仍正确切分。
-    let blocks = parse("a\n\n---\n\nb\n");
-    assert!(!blocks.is_empty());
+    // `---` 必须解析成**分割线块**（`BlockKind::Rule`），而不是：
+    // - 被丢弃（预览画不出水平线，滚动同步也会漏掉这条结构）；
+    // - 当普通段落（预览画不出线，还会把 `---` 当正文显示出来）。
+    // pulldown-cmark 为分隔线发**独立的** `Event::Rule`（无配对标签），
+    // 解析器据此当场产出 `Rule` 块（见 `pulldown_parser/inline.rs` 的
+    // `Event::Rule` 分支）。
+    let text = "a\n\n---\n\nb\n";
+    let blocks = parse(text);
+
+    assert_eq!(
+        blocks.len(),
+        3,
+        "应产出「段落 + 分割线 + 段落」三块，实际：{:?}",
+        blocks.iter().map(|b| b.kind()).collect::<Vec<_>>()
+    );
+    assert_eq!(blocks[0].kind(), &BlockKind::Paragraph);
+    assert_eq!(blocks[0].content(), "a");
+    assert_eq!(
+        blocks[1].kind(),
+        &BlockKind::Rule,
+        "`---` 应解析成分割线（Rule）而非普通段落或被丢弃"
+    );
+    assert_eq!(blocks[2].kind(), &BlockKind::Paragraph);
+    assert_eq!(blocks[2].content(), "b");
+    // 分割线块的源码区间必须恰好覆盖 `---`（滚动同步按区间定位，
+    // 裁掉尾随换行是解析器的既有行为）。
+    assert_eq!(
+        source_of(text, 1),
+        "---",
+        "分割线块的源码区间应恰好覆盖 `---`"
+    );
 }
 
 #[test]

@@ -25,15 +25,19 @@ use std::sync::Arc;
 
 use rustmark::app::bootstrap::{ConfigPaths, Services};
 use rustmark::app::frame::EditorApp;
-use rustmark::application::document::commands::ReplaceRangeCommand;
+use rustmark::application::document::commands::{ReplaceRangeCommand, SaveToPathCommand};
 use rustmark::application::dto::ExportRequestView;
 use rustmark::presentation::shortcuts::registry::UiAction;
 use rustmark::presentation::state::dialog_ui_state::Overlay;
-use rustmark::presentation::state::export_ui_state::ExportFormatChoice;
+use rustmark::presentation::state::export_ui_state::{
+    is_available, pdf_caveat, unavailable_reason,
+};
 use rustmark::presentation::state::scroll_sync_state::Side;
 use rustmark::presentation::views::export_view::{FILE_STEM_INPUT_ID, OUTPUT_DIR_INPUT_ID};
 use rustmark::presentation::views::{main_view, overlays};
+use rustmark::shared::export_format::{ExportFormat, PageSize};
 use rustmark::shared::geometry::{ByteOffset, TextRange};
+use rustmark::shared::path::FilePath;
 
 /// 导出用语料：覆盖标题层级、粗体、行内代码、列表、分隔线、中文。
 const CONTENT: &str = "# 一级标题\n\n正文含 **粗体** 与 `代码`，还有中文。\n\n## 二级标题\n\n- 列表项一\n- 列表项二\n\n---\n\n结尾段落。\n";
@@ -159,18 +163,13 @@ fn markdown_export_writes_the_source_verbatim() {
 /// 注入假调度覆盖。
 #[test]
 fn pdf_export_is_offered_with_an_honest_caveat() {
-    assert!(
-        ExportFormatChoice::Pdf.is_available(),
-        "PDF 已开放（V11-04）"
-    );
+    assert!(is_available(ExportFormat::Pdf), "PDF 已开放（V11-04）");
     assert_eq!(
-        ExportFormatChoice::Pdf.unavailable_reason(),
+        unavailable_reason(ExportFormat::Pdf),
         None,
         "开放后不应再有「不可用」的原因文案"
     );
-    let caveat = ExportFormatChoice::Pdf
-        .pdf_caveat()
-        .expect("PDF 必须有前置声明（产物经系统打印对话框）");
+    let caveat = pdf_caveat(ExportFormat::Pdf).expect("PDF 必须有前置声明（产物经系统打印对话框）");
     assert!(caveat.contains("系统打印"), "声明应说清经系统打印产出");
     assert!(
         caveat.contains("另存为 PDF"),
@@ -364,7 +363,7 @@ fn switching_format_clamps_unsupported_options() {
     let (_cfg, mut app) = app_with_out(&out);
 
     app.export_ui.include_toc = true;
-    app.export_ui.set_format(ExportFormatChoice::Markdown);
+    app.export_ui.set_format(ExportFormat::Markdown);
 
     assert!(
         !app.export_ui.include_toc,
@@ -380,11 +379,14 @@ fn pdf_toc_implies_pagination() {
     let out = out_dir(&dir);
     let (_cfg, mut app) = app_with_out(&out);
 
-    app.export_ui.set_format(ExportFormatChoice::Pdf);
-    app.export_ui.include_toc = true;
-    // 模拟视图里的联动：勾目录时补分页。
-    app.export_ui.paginate = true;
+    app.export_ui.set_format(ExportFormat::Pdf);
+    // 走真实入口：勾目录这**一个**动作就要连带补上分页。
+    //
+    // 不可再像从前那样由测试自己补 `paginate` 再断言它——那样断言读的是
+    // 自己刚写进去的值，联动漏了也照样绿（判据自指）。
+    app.set_pdf_include_toc(true);
 
+    assert!(app.export_ui.include_toc, "目录开关应被勾上");
     assert!(
         app.export_ui.paginate,
         "PDF 目录必须配分页（领域规则 `TocRequiresPagination`）"
@@ -452,7 +454,10 @@ fn closing_export_clears_the_running_flag() {
     app.export_ui.begin();
     assert!(app.export_ui.running);
 
-    app.export_ui.running = false;
+    // 只走关闭路径，**不**自己先清 running：否则断言读的是自己写的值，
+    // 「close() 到底清不清 running」这条用例根本没测（判据自指）。
+    // 视图里原先那句额外的 running 复位已被 R-11 子批 1 删掉，
+    // 正是因为 `close()` 本身就清——本用例现在能证明这一点。
     app.export_ui.close();
     app.dialog.close(Overlay::Export);
 
@@ -826,5 +831,170 @@ fn typing_into_the_file_name_box_actually_edits_the_file_name() {
         app.export_ui.resolved_path.contains('z'),
         "文件名变了，「将导出到 …」也要跟着变：{}",
         app.export_ui.resolved_path
+    );
+}
+
+// ————————————————————————————————————————————————————————————
+// R-11 子批 1：导出浮层状态的写入口收敛到 app 层
+// ————————————————————————————————————————————————————————————
+//
+// 这批用例一律走 `EditorApp` 的方法入口，**不**直接给 `app.export_ui.<字段>`
+// 赋值再断言它：那样断言读的是自己刚写进去的值，方法改成空实现也照样绿
+// （判据自指，本项目已多次撞上）。R-11 是纯重构、用户可见行为不变，
+// 唯一能区分「改对了」与「改漏了」的判据就是「方法真的把值写进了状态」。
+
+/// 把当前文档存到磁盘——让 `active_document_dir()` 有值可断言。
+fn save_current_document(app: &mut EditorApp, path: &Path) {
+    let id = app.ensure_document().expect("应有活动文档");
+    let target = FilePath::new(path.to_string_lossy().as_ref()).expect("路径应合法");
+    app.services
+        .documents
+        .save_to(SaveToPathCommand { id, path: target })
+        .expect("保存应成功");
+    app.refresh_text();
+}
+
+/// 打开导出浮层会填好建议文件名 / 主题 / 默认输出目录。
+///
+/// 三条断言分别钉住 `open_export_overlay` 的三个赋值；任一个漏写都会红。
+#[test]
+fn opening_export_fills_the_suggested_name_theme_and_directory() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_dir(&dir);
+    let (_cfg, mut app) = app_with_out(&out);
+    // 文档未存盘时 `active_document_dir()` 为空，先落盘才测得出输出目录。
+    let saved = dir.path().join("notes.md");
+    save_current_document(&mut app, &saved);
+
+    let expected_dir = app
+        .active_document_dir()
+        .expect("文档已存盘，应能取到所在目录");
+    let expected_theme = app.ui.theme.kind.as_str().to_string();
+
+    // 清空三个字段，确保断言读到的是本次初始化写进去的值。
+    app.export_ui.file_stem = String::new();
+    app.export_ui.theme = String::new();
+    app.export_ui.output_dir = String::new();
+
+    app.open_export_overlay();
+
+    assert!(
+        !app.export_ui.file_stem.is_empty(),
+        "应填上建议文件名（取自当前文档标题）"
+    );
+    assert!(
+        !app.export_ui.file_stem.ends_with(".md"),
+        "建议文件名应去掉扩展名：{}",
+        app.export_ui.file_stem
+    );
+    assert_eq!(
+        app.export_ui.theme, expected_theme,
+        "导出主题应取当前生效主题，而不是硬编码"
+    );
+    assert_eq!(
+        app.export_ui.output_dir, expected_dir,
+        "默认输出目录应取文档所在目录"
+    );
+}
+
+/// 图片格式的「整篇长图」开关经方法写入状态。
+#[test]
+fn long_image_flag_is_written_through_the_app_method() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_dir(&dir);
+    let (_cfg, mut app) = app_with_out(&out);
+    app.export_ui.set_format(ExportFormat::Image);
+    assert!(!app.export_ui.long_image, "前置：初始不勾长图");
+
+    app.set_export_long_image(true);
+
+    assert!(app.export_ui.long_image, "勾上长图后状态应被写入");
+}
+
+/// 「包含目录」开关经方法写入状态。
+#[test]
+fn include_toc_flag_is_written_through_the_app_method() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_dir(&dir);
+    let (_cfg, mut app) = app_with_out(&out);
+    app.export_ui.set_format(ExportFormat::Html);
+    assert!(!app.export_ui.include_toc, "前置：初始不勾目录");
+
+    app.set_export_include_toc(true);
+
+    assert!(app.export_ui.include_toc, "勾上目录后状态应被写入");
+}
+
+/// 「内联图片」开关经方法写入状态。
+#[test]
+fn embed_images_flag_is_written_through_the_app_method() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_dir(&dir);
+    let (_cfg, mut app) = app_with_out(&out);
+    assert!(!app.export_ui.embed_images, "前置：初始不勾内联图片");
+
+    app.set_export_embed_images(true);
+
+    assert!(app.export_ui.embed_images, "勾上内联图片后状态应被写入");
+}
+
+/// PDF 纸张尺寸经方法写入状态（换一个与初始不同的尺寸才测得出变化）。
+#[test]
+fn page_size_is_written_through_the_app_method() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_dir(&dir);
+    let (_cfg, mut app) = app_with_out(&out);
+    app.export_ui.set_format(ExportFormat::Pdf);
+    let current = app.export_ui.page_size;
+    let target = PageSize::ALL
+        .iter()
+        .find(|size| **size != current)
+        .copied()
+        .expect("应存在另一种纸张尺寸");
+
+    app.set_export_page_size(target);
+
+    assert_eq!(
+        app.export_ui.page_size, target,
+        "选了纸张后状态应被写入（初始 {current:?}）"
+    );
+}
+
+/// 「按标题分页」开关经方法写入状态。
+#[test]
+fn pagination_flag_is_written_through_the_app_method() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_dir(&dir);
+    let (_cfg, mut app) = app_with_out(&out);
+    app.export_ui.set_format(ExportFormat::Pdf);
+    assert!(!app.export_ui.paginate, "前置：初始不分页");
+
+    app.set_export_paginate(true);
+
+    assert!(app.export_ui.paginate, "勾上分页后状态应被写入");
+}
+
+/// 取消 PDF 目录时**不得**把分页又勾回来。
+///
+/// 与上一条互补：`set_pdf_include_toc` 只在**勾上**时补分页，
+/// 无条件补会让用户「取消目录 → 分页被悄悄打开」。
+#[test]
+fn unchecking_pdf_toc_leaves_pagination_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_dir(&dir);
+    let (_cfg, mut app) = app_with_out(&out);
+    app.export_ui.set_format(ExportFormat::Pdf);
+
+    app.set_pdf_include_toc(true);
+    assert!(app.export_ui.paginate, "前置：勾目录应补上分页");
+
+    // 用户手动取消分页，再取消目录。
+    app.set_export_paginate(false);
+    app.set_pdf_include_toc(false);
+
+    assert!(!app.export_ui.include_toc, "目录应被取消");
+    assert!(
+        !app.export_ui.paginate,
+        "取消目录不该把分页又勾回来——联动只在勾上时生效"
     );
 }

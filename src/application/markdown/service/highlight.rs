@@ -8,7 +8,7 @@ use crate::shared::result::AppResult;
 use crate::application::dto::{RangeView, SpanView};
 
 use super::super::queries::*;
-use super::highlight_cache::empty_spans;
+use super::span_cache::empty_spans;
 use super::view_mapper::span_style_str;
 use super::{MarkdownAppService, TRUNCATE_THRESHOLD_BYTES, lock_or_recover};
 

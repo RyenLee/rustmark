@@ -44,6 +44,8 @@ pub enum DialogRequest {
     },
     /// 选择工作区目录。
     PickFolder,
+    /// 选择图片文件（R-04b：插入图片）。
+    PickImage,
     /// 确认框（是 / 否），用于不可逆操作前的二次确认（V11-06）。
     Confirm {
         /// 提示文案（应说明**要删什么**与「不可恢复」）。
@@ -60,6 +62,8 @@ pub enum DialogOutcome {
     SaveFile(Result<FilePath, AppError>),
     /// 选择目录的结果。
     PickFolder(Result<FilePath, AppError>),
+    /// 选择图片的结果（R-04b）。
+    PickImage(Result<FilePath, AppError>),
     /// 确认框的结果：`Ok(true)` = 用户点了「是」。
     Confirm(Result<bool, AppError>),
 }
@@ -73,7 +77,9 @@ impl DialogOutcome {
     /// 宁可让调用方显式处理 `None`。
     pub fn path_result(&self) -> Option<&Result<FilePath, AppError>> {
         match self {
-            Self::OpenFile(r) | Self::SaveFile(r) | Self::PickFolder(r) => Some(r),
+            Self::OpenFile(r) | Self::SaveFile(r) | Self::PickFolder(r) | Self::PickImage(r) => {
+                Some(r)
+            }
             Self::Confirm(_) => None,
         }
     }
@@ -85,7 +91,7 @@ impl DialogOutcome {
     /// 症状是「取消保存也会弹错误框」。
     pub fn is_cancelled(&self) -> bool {
         match self {
-            Self::OpenFile(r) | Self::SaveFile(r) | Self::PickFolder(r) => {
+            Self::OpenFile(r) | Self::SaveFile(r) | Self::PickFolder(r) | Self::PickImage(r) => {
                 matches!(r, Err(AppError::Cancelled))
             }
             Self::Confirm(r) => matches!(r, Err(AppError::Cancelled)),
@@ -147,6 +153,7 @@ impl DialogRunner {
                         DialogOutcome::SaveFile(port.save_file(&suggested, &default_filters()))
                     }
                     DialogRequest::PickFolder => DialogOutcome::PickFolder(port.pick_folder()),
+                    DialogRequest::PickImage => DialogOutcome::PickImage(port.pick_image()),
                     DialogRequest::Confirm { message } => {
                         DialogOutcome::Confirm(port.confirm(&message))
                     }

@@ -1,9 +1,10 @@
 //! 行内富文本：span → `TextFormat`、`LayoutJob` 排版与分隔符规范化。
 
-use egui::text::{CCursor, CharIndex, LayoutJob, TextFormat, TextWrapping};
+use egui::text::{CCursor, CharIndex, LayoutJob, TextFormat};
 use egui::{Align2, FontId, Pos2, Rect, Stroke, Ui, Vec2};
 
 use crate::application::dto::{RangeView, SpanView};
+use crate::presentation::theme::mapper::{SpanHit, SpanPolicy, StyleSemantics, build_job};
 use crate::presentation::views::math::{self, MathLayout};
 use crate::shared::geometry::clamp_to_char_boundaries;
 use crate::shared::system;
@@ -16,97 +17,56 @@ use super::*;
 /// `theme.editor_font_size`（编辑区设置），且带编辑区的行高——直接拿来渲染预览
 /// 会让预览字号跟随编辑区设置漂移。这里显式用预览字号族，并统一给出
 /// `line_height`，使同一段文本里的不同样式**不改变行高**（上下标变小也不撑行）。
-fn span_format(theme: &Theme, style: &str, size: f32, line_height: f32) -> TextFormat {
+///
+/// # 样式名 → 语义的派发已收敛（R-10）
+///
+/// 本函数此前是**第二张**样式表，与 [`StyleMapper::format`] 各写一遍
+/// 「样式名 → 颜色 / 斜体 / 下划线 / 删除线 / 背景」的 `match`。
+/// 现改为：派发走共享的 [`StyleSemantics::of`]，本函数只负责
+/// **预览区这一侧的度量**（比例字体、预览字号、预览行高、1.0 线条）。
+///
+/// 实测依据（探针 2026-10-20）：两表**共同**的 7 种样式
+/// （`heading` / `quote` / `strong` / `emphasis` / `strikethrough` /
+/// `code` / `link`）颜色本就**完全相同**（同源于 `theme.syn_*`），
+/// 故合并后**用户可见效果不变**——这条由 `style_tables_keep_their_look`
+/// （`mapper/tests.rs`）对照合并前的快照钉住。
+/// 可见性为 `pub(crate)` 而非 `pub(super)`：`theme::mapper` 的样式表
+/// 合并用例（`mapper/tests.rs`）要把它与**编辑区侧**的样式表做同表对照，
+/// 而 `pub(super)`（限 `preview_view` 模块内）够不着跨模块访问。
+/// R-03 起经 `preview_view::test_only` 再导出给集成测试，故此处为 `pub`。
+#[doc(hidden)]
+pub fn span_format(theme: &Theme, style: &str, size: f32, line_height: f32) -> TextFormat {
     let base = TextFormat {
         color: theme.text_primary,
         font_id: FontId::proportional(size),
         line_height: Some(line_height),
         ..Default::default()
     };
-    match style {
-        // 标题基准样式（调用方给出标题字号）：只需换色，字号由 `size` 决定。
-        "heading" => TextFormat {
-            color: theme.syn_heading,
-            ..base
-        },
-        // 引用基准样式：次级色 + 斜体（与旧实现的观感一致）。
-        "quote" => TextFormat {
-            color: theme.syn_quote,
-            italics: true,
-            ..base
-        },
-        "strong" => TextFormat {
-            color: theme.syn_bold,
-            ..base
-        },
-        "emphasis" => TextFormat {
-            color: theme.syn_italic,
-            italics: true,
-            ..base
-        },
-        "strikethrough" => TextFormat {
-            color: theme.text_secondary,
-            strikethrough: Stroke::new(1.0_f32, theme.text_secondary),
-            ..base
-        },
-        "code" => TextFormat {
-            color: theme.syn_code,
-            background: theme.code_bg,
-            font_id: FontId::monospace(size),
-            ..base
-        },
-        "link" => TextFormat {
-            color: theme.syn_link,
-            underline: Stroke::new(1.0_f32, theme.syn_link),
-            ..base
-        },
-        // 行内公式**排版失败**时的退化样式（成功时走二维排版，见
-        // `render_with_math`）：只做样式区分——倾斜 + 公式色，并把 `$`
-        // 分隔符去掉（分隔符是语法，不是内容）。
-        "math" => TextFormat {
-            color: theme.syn_code,
-            italics: true,
-            ..base
-        },
-        // 键帽：等宽 + 底色，视觉上是一枚小按键。
-        "keycap" => TextFormat {
-            color: theme.syn_code,
-            background: theme.code_bg,
-            font_id: FontId::monospace(size * 0.92),
-            ..base
-        },
-        // 高亮 ==标记==：叠一层查找命中的底色（语义同为「此处被标出」）。
-        "mark" => TextFormat {
-            color: theme.text_primary,
-            background: theme.find_bg,
-            ..base
-        },
-        // 已勾选的任务项：整行次级色 + 删除线。
-        //
-        // 刻意**不**复用 `strikethrough` 样式：那个是给 `~~删除~~` 用的，
-        // 语义不同（一个是「用户划掉的文字」，一个是「已完成」）。
-        // 分开命名后，将来想给「已完成」换色（比如绿色对勾配色）不会波及删除线。
-        "task_done" => TextFormat {
-            color: theme.text_secondary,
-            strikethrough: Stroke::new(1.0_f32, theme.text_secondary),
-            ..base
-        },
-        // 上下标：epaint 无基线位移，用略小字号近似（行高由 `base.line_height`
-        // 固定，故不会把行撑高、不破坏与相邻行的对齐）。
-        "sub" | "sup" => TextFormat {
-            color: theme.text_secondary,
-            font_id: FontId::proportional(size * 0.78),
-            ..base
-        },
-        // 脚注引用 `[^1]`：与上下标同一近似——小一号字 + 链接色。
-        // 它本质是文中指向脚注定义的交叉引用，用链接色才能传达「可对应」；
-        // 显示文本由 `footnote_ref_mark` 换成标号 `1`（剥掉 `[^` `]` 语法）。
-        "footnote_ref" => TextFormat {
-            color: theme.syn_link,
-            font_id: FontId::proportional(size * 0.78),
-            ..base
-        },
-        _ => base,
+    let sem = StyleSemantics::of(theme, style);
+    // 预览区：比例字体为正文，行内代码 / 键帽用等宽；
+    // 上下标 / 脚注引用按 `size_scale` 缩小（行高仍取 `base` 的，故不撑行）。
+    let font = if sem.monospace {
+        FontId::monospace(size * sem.size_scale)
+    } else if sem.size_scale != 1.0 {
+        FontId::proportional(size * sem.size_scale)
+    } else {
+        base.font_id
+    };
+    // `TextFormat` 的下划线 / 删除线是 `Stroke`（不是 `Option`）：
+    // 「不画」= 零宽 `Stroke`（颜色也置为透明）。
+    let stroke = |c: Option<egui::Color32>| match c {
+        Some(c) => Stroke::new(1.0_f32, c),
+        None => Stroke::new(0.0_f32, egui::Color32::TRANSPARENT),
+    };
+    TextFormat {
+        color: sem.color,
+        italics: sem.italics,
+        underline: stroke(sem.underline),
+        strikethrough: stroke(sem.strikethrough),
+        background: sem.background.unwrap_or(egui::Color32::TRANSPARENT),
+        font_id: font,
+        line_height: base.line_height,
+        ..Default::default()
     }
 }
 
@@ -216,17 +176,6 @@ pub(super) fn render_inline_text(
     ui.interact(rect, ui.scope_id().with("rinline"), sense)
 }
 
-/// 某行内片段在排版后文本里的字符区间（用于点击命中）。
-///
-/// `idx` 是片段在 `spans` 中的下标；`c0` / `c1` 是该片段在 `LayoutJob`
-/// 拼接文本中的**字符**区间（不是字节——字形遍历与字符序一致，字节会因
-/// 多字节字符错位）。
-struct SpanHit {
-    idx: usize,
-    c0: usize,
-    c1: usize,
-}
-
 /// 由排版结果与片段字符区间，算出每个可点击片段在 galley 坐标系里的矩形。
 ///
 /// 逐行求交：一段文本可能折成多行，片段矩形是这些行的并集（这正是
@@ -270,12 +219,17 @@ fn span_rects(galley: &egui::Galley, hits: &[SpanHit]) -> Vec<(usize, Rect)> {
 
 /// 行内片段点击分发：链接打开、脚注引用跳转。
 ///
-/// - `link`：绝对 / 相对地址交系统默认程序打开（`system::open_external`）；
+/// - `link`：绝对 / 相对地址交系统默认程序打开（`services.opener`，
+///   端口在 `shared`、实现在 `infrastructure`，见 R-03）；
 ///   `#锚点` 在 `internal_targets` 里找对应标题块并跳转；地址经
 ///   `system::is_safe_to_open` 过滤，拒绝 `javascript:` 等 XSS 向量。
 /// - `footnote_ref`：依标号在 `internal_targets` 里找脚注定义块并跳转
 ///   （预览点击跳转与连续滚动同步解耦，见 `scroll_sync` 改造）。
-fn handle_span_click(
+/// 可见性：`pub(super)` 供 `preview_view` 内的调用方使用；R-03 起 additionally
+/// 经 `preview_view::test_only` 再导出给集成测试（外链改走 opener 端口后，
+/// 「点击 link 会调 open、不安全地址不调」要在集成测试里断言）。
+#[doc(hidden)]
+pub fn handle_span_click(
     app: &mut EditorApp,
     sv: &SpanView,
     content: &str,
@@ -294,7 +248,9 @@ fn handle_span_click(
                 return;
             }
             if system::is_safe_to_open(url) {
-                let _ = system::open_external(url);
+                // 打开失败不打扰用户：链接打不开时预览区照常显示，
+                // 弹窗反而挡住阅读（与旧实现 `let _ =` 的取舍一致）。
+                let _ = app.services.opener.open(url);
             }
         }
         "footnote_ref" => {
@@ -316,7 +272,16 @@ fn handle_span_click(
 /// 返回的 `Vec<SpanHit>` 只记录「链接 / 脚注引用」这类需要交互的片段
 /// （其余片段不记录，省去无谓的命中矩形）；字符区间相对拼接后的 job 文本，
 /// 供 [`span_rects`] 定位。
-fn build_text_job(
+///
+/// # 本函数是「预览区行内那一侧」的薄封装
+///
+/// 切段逻辑已收敛到 [`crate::presentation::theme::mapper::build_job`]（R-10）；
+/// 本函数只负责「预览区行内用哪套样式」——即 [`span_format`]
+/// （预览字号族 + 预览行高 + 行内特有样式），
+/// 以及两处**行内特有**语义：
+/// - `done_overlay`（任务项已勾选 → 整行次级色 + 删除线）；
+/// - 文本改写（math 剥分隔符、脚注引用换标号）。
+pub(super) fn build_text_job(
     theme: &Theme,
     content: &str,
     spans: &[SpanView],
@@ -330,74 +295,25 @@ fn build_text_job(
         base_style,
     } = typo;
     let base = span_format(theme, base_style, size, line_height);
-    let mut job = LayoutJob {
-        wrap: TextWrapping {
-            max_width: wrap_width.max(0.0),
-            ..Default::default()
-        },
-        ..Default::default()
+    // 样式闭包：行内样式 + （已勾选时的）完成态覆盖。
+    let style_of = |style: &str| {
+        let fmt = span_format(theme, style, size, line_height);
+        if done { done_overlay(theme, fmt) } else { fmt }
     };
-    let mut hits: Vec<SpanHit> = Vec::new();
-    let len = content.len();
-    let mut cursor = 0usize;
-    let mut char_cursor = 0usize;
-    if spans.is_empty() {
-        let mut fmt = base.clone();
-        if done {
-            fmt = done_overlay(theme, fmt);
+    // 文本改写：`math` 剥掉 `$` / `$$` 分隔符（它们是语法，不是内容），
+    // `footnote_ref` 把 `[^1]` 换成标号 `1`（否则正文里会以原始
+    // Markdown 形态显示 `[^1]`）。
+    let rewrite = |raw: &str, style: &str| -> String {
+        match style {
+            "math" => strip_math_delimiters(raw).to_string(),
+            "footnote_ref" => footnote_ref_mark(raw).to_string(),
+            _ => raw.to_string(),
         }
-        job.append(content, 0.0, fmt);
-    } else {
-        for (idx, span) in spans.iter().enumerate() {
-            // 越界 / 落在多字节字符中间的区间会被吸附或退化为空——跳过而不是崩。
-            let Some((start, end)) = clamp_to_char_boundaries(
-                content,
-                span.range.start.min(len),
-                span.range.end.min(len),
-            ) else {
-                continue;
-            };
-            let start = start.max(cursor);
-            let end = end.max(start);
-            if start > cursor {
-                let base_slice = &content[cursor..start];
-                job.append(base_slice, 0.0, base.clone());
-                char_cursor += base_slice.chars().count();
-            }
-            if end > start {
-                let mut fmt = span_format(theme, &span.style, size, line_height);
-                if done {
-                    fmt = done_overlay(theme, fmt);
-                }
-                // 行内公式剥掉 `$` / `$$` 分隔符：它们是语法，不是内容。
-                // 不剥的话预览里会显示成 `$E=mc^2$`，看起来像没解析成功。
-                // 脚注引用同理：`[^1]` 换成标号 `1`（上标小字 + 链接色），
-                // 否则正文里会以原始 Markdown 形态显示 `[^1]`。
-                let slice = match span.style.as_str() {
-                    "math" => strip_math_delimiters(&content[start..end]),
-                    "footnote_ref" => footnote_ref_mark(&content[start..end]),
-                    _ => &content[start..end],
-                };
-                let slice_chars = slice.chars().count();
-                job.append(slice, 0.0, fmt);
-                // 仅给需要交互的片段记命中区间（链接 / 脚注引用）。
-                if span.style == "link" || span.style == "footnote_ref" {
-                    hits.push(SpanHit {
-                        idx,
-                        c0: char_cursor,
-                        c1: char_cursor + slice_chars,
-                    });
-                }
-                char_cursor += slice_chars;
-            }
-            cursor = end.max(cursor);
-        }
-        if cursor < len {
-            let tail = &content[cursor..];
-            job.append(tail, 0.0, base.clone());
-        }
-    }
-    (job, hits)
+    };
+    let policy = SpanPolicy::cursor(base, wrap_width, style_of, Some(&rewrite));
+    build_job(theme, content, spans, &policy, |style| {
+        style == "link" || style == "footnote_ref"
+    })
 }
 
 // ============================================================================
@@ -672,7 +588,7 @@ fn render_with_math(
 }
 
 /// 给一个行内格式叠上「已完成」装饰（次级色 + 删除线）。
-fn done_overlay(theme: &Theme, mut fmt: TextFormat) -> TextFormat {
+pub(super) fn done_overlay(theme: &Theme, mut fmt: TextFormat) -> TextFormat {
     fmt.color = theme.text_secondary;
     fmt.strikethrough = Stroke::new(1.0_f32, theme.text_secondary);
     fmt

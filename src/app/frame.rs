@@ -16,7 +16,8 @@ use crate::app::bootstrap::Services;
 use crate::app::dialog_runner::{DialogOutcome, DialogRequest, DialogRunner};
 use crate::application::document::commands::{
     CloseCommand, FormatCommand, FormatKind, InsertTextCommand, NewDocumentCommand,
-    OpenFileCommand, RedoCommand, ReplaceRangeCommand, SaveCommand, SaveToPathCommand, UndoCommand,
+    OpenFileCommand, RedoCommand, ReplaceRangeCommand, RevertCommand, SaveCommand,
+    SaveToPathCommand, UndoCommand,
 };
 use crate::application::document::queries::{
     GetContentQuery, GetDocumentQuery, GetStatsQuery, ListOpenDocumentsQuery,
@@ -40,11 +41,14 @@ use crate::application::workspace::queries::{ListRecentQuery, ReadFileQuery, Sea
 use crate::application::workspace::service::TREE_MAX_DEPTH;
 use crate::domain::export::errors::ExportError;
 use crate::domain::preferences::value_objects::ActionId;
+use crate::shared::encoding::TextEncoding;
 use crate::shared::error::AppError;
+use crate::shared::export_format::{ExportFormat, PageSize};
 use crate::shared::fonts::EditorFontChoice;
-use crate::shared::path::FilePath;
+use crate::shared::path::{FilePath, file_name_of};
 use crate::shared::result::AppResult;
 use crate::shared::text_format::{self, TextFormats};
+use crate::shared::theme::ThemeKind;
 use crate::shared::time::Timestamp;
 
 use crate::presentation::shortcuts::dispatcher::{Dispatch, ShortcutDispatcher};
@@ -61,7 +65,7 @@ use crate::presentation::state::find_replace_ui_state::{
 use crate::presentation::state::preview_ui_state::PreviewUiState;
 use crate::presentation::state::quick_open_ui_state::QuickOpenUiState;
 use crate::presentation::state::scroll_sync_state::Side;
-use crate::presentation::state::settings_ui_state::{SettingsUiState, Snapshot};
+use crate::presentation::state::settings_ui_state::{SettingsTab, SettingsUiState, Snapshot};
 use crate::presentation::state::shortcut_overview_ui_state::ShortcutOverviewUiState;
 use crate::presentation::state::sidebar_ui_state::SidebarUiState;
 use crate::presentation::state::sidebar_ui_state::{
@@ -69,7 +73,7 @@ use crate::presentation::state::sidebar_ui_state::{
 };
 use crate::presentation::state::status_bar_ui_state::StatusBarUiState;
 use crate::presentation::state::symbol_ui_state::SymbolUiState;
-use crate::presentation::theme::builtin::{self, BuiltinTheme, Theme};
+use crate::presentation::theme::builtin::{self, Theme};
 use crate::presentation::theme::mapper;
 use crate::presentation::views::editor_ops;
 use crate::presentation::views::scroll_sync::{LineIndex, RevealIntent, TARGET_MARGIN};
@@ -239,6 +243,21 @@ pub struct EditorApp {
     /// egui 的 `TextEdit` 在内部记一套光标状态；领域命令改了文本后，
     /// 必须显式把这个位置写回 egui，否则光标会停在错误的偏移（多字节边界尤其明显）。
     pending_cursor: Option<(usize, usize)>,
+    /// 每份打开文档各自的光标 / 选区（R-06：切标签保留光标）。
+    ///
+    /// 键 [`DocumentId`]，值 `(cursor, anchor)` **字节偏移**——与
+    /// [`EditorUiState::cursor`] / [`EditorUiState::anchor`] 同单位；无选区时
+    /// `anchor == cursor`（等价于 `anchor: Option<usize>` 的 `None`，这里用
+    /// 相等值省掉一层 `Option`）。
+    ///
+    /// 为什么不在领域层：光标是**视图状态**（见 `editor_ui_state` 模块注释），
+    /// 而「哪份文档的光标配哪份文档」天然随标签生命周期生灭——领域
+    /// `Document` 关闭后这条记录即失效，故由 UI 侧持有、随关标签清除
+    /// （`close_document` / `close_all_documents`）。
+    ///
+    /// 切走时由 `stash_active_doc_cursor` 记、切回时由
+    /// `restore_active_doc_cursor` 取（见 `frame::tabs`）。
+    per_doc_cursor: std::collections::HashMap<DocumentId, (usize, usize)>,
     /// 上一次领域编辑后需要清空 egui 内置撤销栈。
     ///
     /// 理由：egui 的 `TextEdit` 自带撤销栈并会响应 Ctrl+Z；若不清除，
@@ -329,6 +348,14 @@ pub struct EditorApp {
     /// 布尔而非路径：待确认的目标就是「当前打开的全部文档」，
     /// 没有第二个自由度，记路径反而是假精度。
     pending_close_all: bool,
+    /// 已发出确认框、等待用户答复的「还原修改」目标（R-04a）。
+    ///
+    /// 与 [`Self::pending_delete`] 同款两步走：还原丢弃全部未保存修改，
+    /// 不可逆；确认框同步阻塞，故登记目标 → 后台问 → 每帧取回。
+    /// 记 **DocumentId** 而非布尔：目标是「请求还原时的那一个文档」，
+    /// 答复回来后按 id 兑现，不按「当时谁是活动文档」——后者会把
+    /// 「确认期间用户切了标签」变成还原错文档。
+    pending_revert: Option<DocumentId>,
     /// 后台工作区扫描的待处理结果（PickFolder 首次扫描路径异步化）。
     ///
     /// channel 发回 `(root, Result<Vec<FileEntryView>, String>)` ——
@@ -454,6 +481,7 @@ impl EditorApp {
             stats_pace: StatsPace::default(),
             scheduler: FrameScheduler::default(),
             pending_cursor: None,
+            per_doc_cursor: std::collections::HashMap::new(),
             clear_undoer_next: false,
             ime_composing: false,
             ime_composing_until_ms: 0,
@@ -465,6 +493,7 @@ impl EditorApp {
             screenshot_sink: std::sync::Arc::new(std::sync::Mutex::new(None)),
             pending_delete: None,
             pending_close_all: false,
+            pending_revert: None,
             scan_pending: None,
             scan_loading: false,
             // 真实值在下面按持久化设置覆盖（与 `split_ratio` 同一手法）。
@@ -507,15 +536,23 @@ impl EditorApp {
 mod actions;
 mod capture;
 mod dialog;
+mod diff;
 mod drag_drop;
 mod editor;
+mod export;
 mod files;
 mod find;
+mod images;
 mod outline;
+mod preview;
 mod recovery;
 mod scheduler;
 mod settings;
+mod shortcut_overview;
+mod sidebar;
+mod status_bar;
 mod tabs;
+mod ui;
 mod workspace;
 pub(crate) use drag_drop::classify_dropped;
 pub(crate) use scheduler::{Deadline, FrameScheduler};

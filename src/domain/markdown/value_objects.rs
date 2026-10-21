@@ -9,7 +9,7 @@
 //! # 与 syntect 解耦
 //!
 //! [`SpanStyle`] 是**自有枚举**，绝不携带 `syntect` 的类型——否则领域层会被
-//! 外部库污染（`.agent/architecture.md`：domain 禁止 `syntect`）。
+//! 外部库污染（`docs/architecture-constraints.md`：domain 禁止 `syntect`）。
 //!
 //! # 模块结构
 //!

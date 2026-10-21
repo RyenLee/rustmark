@@ -141,12 +141,35 @@ fn default_bindings_have_no_blocking_conflicts() {
         "默认绑定不得自带冲突：{:?}",
         table.conflicts()
     );
-    assert!(
-        ActionId::all()
-            .iter()
-            .all(|a| table.binding_for(*a).is_some()),
-        "每个动作都应有默认绑定"
-    );
+    // 「可持久化但**无默认键位**」是合法状态，不是漏登记。
+    //
+    // `ActionId::all()` 是「**可持久化**动作全集」，而
+    // `default_bindings()` 是「**有默认键位**的动作集」——两者不是一回事。
+    // 「显示 / 隐藏状态栏」可持久化（用户可在设置页自行录制），
+    // 但产品上**不占用快捷键**，故不在默认表里。
+    //
+    // 此前这条断言写成「每个动作都应有默认绑定」，把两个集合当成一个，
+    // 于是「`ToggleStatusbar` 进了 `all()`」这件事**无法被表达**——
+    // 它要么被排除在 `all()` 外（于是改键时报「尚未映射到领域动作」），
+    // 要么进 `all()` 而本断言变红。两条路都是缺陷。
+    //
+    // 故此处改为：**除显式声明的例外外**，每个动作都应有默认绑定。
+    // 例外清单是**显式**的：新增这类动作时必须改这一行，
+    // 提交 diff 里看得见「又多了一个不占快捷键的动作」。
+    const NO_DEFAULT_BINDING: &[ActionId] = &[ActionId::ToggleStatusbar];
+
+    let missing: Vec<ActionId> = ActionId::all()
+        .iter()
+        .copied()
+        .filter(|a| table.binding_for(*a).is_none())
+        .collect();
+    for action in &missing {
+        assert!(
+            NO_DEFAULT_BINDING.contains(action),
+            "动作 {action:?} 没有任何默认绑定，也没有被列入「无默认键位」例外清单——\
+             请给它一个默认键位，或明确声明它不占快捷键"
+        );
+    }
 }
 
 #[test]

@@ -1,5 +1,6 @@
 //! 编辑器内部操作：行列换算、编辑同步、格式变换。
 use super::*;
+use crate::presentation::state::editor_ui_state::SpellSuggestMenu;
 
 mod ime;
 
@@ -131,7 +132,7 @@ impl EditorApp {
 
     /// 状态栏统计（防抖版；建议一 / 问题 039）。
     ///
-    /// 与 [`crate::application::markdown::service::highlight_cache::HighlightPace`]
+    /// 与 [`crate::application::markdown::service::span_cache::HighlightPace`]
     /// 同源：打字期不每击键整篇重算（`compute_stats` 在 1MB 上 ≈ 9.5ms，
     /// 见 `docs/metrics.md` §3.2.5），而是沿用「上一次静止时算出的结果」，
     /// 直到文档**静止满 [`super::STATS_DEBOUNCE_MS`]** 才刷新。
@@ -298,13 +299,15 @@ impl EditorApp {
     ///
     /// 未保存的草稿没有目录 → 返回 `None`，此时相对路径图片无法解析，
     /// 预览显示占位而非报错。
+    ///
+    /// 走 [`Self::current_document_file`]（轻量摘要）：此前经
+    /// `current_document_path()` 的**哨兵字符串**（「未命名文档」）
+    /// 反推「有没有路径」——用展示文案当判据，一旦文案变了就误判。
     pub(crate) fn document_dir(&self) -> Option<std::path::PathBuf> {
-        let raw = self.current_document_path();
-        if raw.is_empty() || raw == "未命名文档" {
-            return None;
-        }
-        let path = std::path::Path::new(&raw);
-        path.parent().map(|p| p.to_path_buf())
+        let path = self.current_document_file()?;
+        path.parent()
+            .as_ref()
+            .map(|p| std::path::PathBuf::from(p.as_str()))
     }
 
     /// 整篇替换（缩进 / 反缩进 / 移动行这类**全文本变换**走这里）。
@@ -463,6 +466,64 @@ impl EditorApp {
         }
     }
 
+    /// 在光标处插入一段文本（符号面板 / 工具栏插入结构共用）。
+    ///
+    /// 走领域 `insert_text` 而非直接改 `editor_text`，理由与
+    /// S6-07 的「三入口一致」同源：直接改 UI 文本会绕过一次撤销点，
+    /// 让用户「插入一个 emoji 之后按 Ctrl+Z 什么也没撤销」。
+    ///
+    /// # 插入点必须取 **UI 光标**而非领域光标
+    ///
+    /// 两者是不同的坐标系：领域记的是**上一次领域命令后**的光标，
+    /// UI 记的是 egui `TextEdit` 当前画出来的那个。而大纲跳转
+    /// （[`Self::goto_byte_offset`]）、查找命中（`reveal_match`）
+    /// 都只改 UI 光标——用户看到光标跳到了第 40 行，
+    /// 领域那边还停在第 3 行。此时按「插入符号」若读领域光标，
+    /// 内容会插到用户**看不见**的位置。
+    /// （`move_line` / `run_format` 同样取 UI 光标，规则一致。）
+    ///
+    /// 光标停在插入内容**之后**：停在内容里意味着用户接着打字
+    /// 会把文字插进代码块标记中间——这是插入类操作最常见的投诉。
+    ///
+    /// 有选区时**替换选区**：用户选中一段文字再插链接，
+    /// 得到「选中文字链接选中文字」是几乎所有编辑器的行为，
+    /// 也符合「插入」这个词的含义。
+    pub fn insert_at_cursor(&mut self, text: &str) -> AppResult<()> {
+        let Some(id) = self.ensure_document() else {
+            return Ok(());
+        };
+        // 选区优先：无选区时 `selection()` 返回 `None`，退回光标。
+        // 选区优先：无选区时 `selection()` 返回 `None`，退回光标。
+        let (start, end) = self
+            .editor
+            .selection()
+            .unwrap_or((self.editor.cursor, self.editor.cursor));
+        let end = end.max(start);
+        if start != end {
+            self.services.documents.replace_range(ReplaceRangeCommand {
+                id,
+                range: TextRange::new(ByteOffset::new(start), ByteOffset::new(end)),
+                text: text.to_string(),
+            })?;
+        } else {
+            self.services.documents.insert_text(InsertTextCommand {
+                id,
+                offset: start,
+                text: text.to_string(),
+            })?;
+        }
+        self.refresh_text();
+        let after = start + text.len();
+        // 领域光标也要跟上：否则下一次插入仍会用旧位置（见上）。
+        self.editor.set_selection(after, after);
+        self.pending_cursor = Some((
+            editor_ops::byte_to_char(&self.editor_text, after),
+            editor_ops::byte_to_char(&self.editor_text, after),
+        ));
+        self.clear_undoer_next = true;
+        Ok(())
+    }
+
     /// 缩进单位（空格），来自设置 `tab_size`。
     pub(super) fn tab_unit(&self) -> String {
         " ".repeat(self.settings().editor.tab_size.max(1) as usize)
@@ -495,6 +556,18 @@ impl EditorApp {
         // 全部调用点都是命令 / 事件驱动的（不是每帧），故不会把计时无限推后。
         let now_ms = self.services.markdown.now().millis();
         self.preview.mark_edited(now_ms);
+    }
+
+    /// 由视图侧设置编辑区绑定串（`TextEdit` 直接绑定的 `String`）。
+    ///
+    /// 视图在「用户本帧真的改了文本」时，就地拼出与领域一致的最终串写回
+    /// `editor_text`，再发领域命令——这样 [`Self::flush_edit`] 就不必再从
+    /// 领域整篇回读（那次回读会在每一帧把绑定给 egui 的字符串整体替换一遍，
+    /// 迫使 `TextEdit` 每敲一个键就重新推导光标 / 选区 / 撤销栈，表现为编辑区
+    /// 闪烁）。R-12 把「视图不得直写 `app.editor_text`」机械化，故这条改由
+    /// 方法入口收敛（见 `docs/architecture-constraints.md`）。
+    pub(crate) fn set_editor_text(&mut self, text: String) {
+        self.editor_text = text;
     }
 
     /// 当前活动文档 ID（**测试用**）。
@@ -545,5 +618,61 @@ impl EditorApp {
     /// 是界面闪烁的上游原因（见 [`Self::flush_edit`]）。
     pub fn pending_cursor_for_diag(&self) -> Option<(usize, usize)> {
         self.pending_cursor
+    }
+
+    /// 某份文档记下的光标 / 选区（**测试用**，R-06）。
+    ///
+    /// 断言「切走时真的记了、切回时真的取了」：只断言 `editor.cursor`
+    /// 分不清「表里有值」与「恰好默认 0」。
+    pub fn per_doc_cursor_for_diag(&self, id: DocumentId) -> Option<(usize, usize)> {
+        self.per_doc_cursor.get(&id).copied()
+    }
+}
+
+// ————————————————————————————————————————————————————————————
+// R-11 子批 3（editor 组）：编辑区 UI 状态的写入口
+// ————————————————————————————————————————————————————————————
+//
+// 表现层不再直写 `app.editor.*`，与 `frame::export` / `frame::diff` 同构。
+// 每个方法只对应原先的一处直写，不顺手重构选项的组织方式。
+
+impl EditorApp {
+    /// 记下 egui 报上来的光标 / 选区（**已**从字符索引换算成字节偏移）。
+    ///
+    /// 两者总是一起来：只写光标会留下过期的锚点，下一次拖拽选区会
+    /// 从旧锚点算起。
+    pub fn set_editor_selection(&mut self, cursor: usize, anchor: Option<usize>) {
+        self.editor.cursor = cursor;
+        self.editor.anchor = anchor;
+    }
+
+    /// 关闭「你可能想输入」菜单。
+    pub fn close_spell_menu(&mut self) {
+        self.editor.spell_menu = None;
+    }
+
+    /// 右键落在错词上时开菜单；传 `None` 等同关闭。
+    pub fn set_spell_menu(&mut self, menu: Option<SpellSuggestMenu>) {
+        self.editor.spell_menu = menu;
+    }
+
+    /// 记下编辑区的滚动偏移（渲染后由 egui 的滚动容器报上来）。
+    pub fn set_editor_scroll_y(&mut self, y: f32) {
+        self.editor.scroll_y = y;
+    }
+
+    /// 行号显示开关。
+    pub fn set_line_numbers(&mut self, on: bool) {
+        self.editor.line_numbers = on;
+    }
+
+    /// 切换拼写检查（状态栏点击）。
+    pub fn toggle_spell_check(&mut self) {
+        self.editor.spell_check = !self.editor.spell_check;
+    }
+
+    /// 切换自动换行（状态栏点击）。
+    pub fn toggle_word_wrap(&mut self) {
+        self.editor.word_wrap = !self.editor.word_wrap;
     }
 }

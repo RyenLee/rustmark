@@ -11,7 +11,9 @@ mod breadcrumb_test;
 mod editor_frame_geometry_test;
 mod editor_view_test;
 mod enter_ime_test;
+// R-03：预览区外链改经 opener 端口（假实现可断言）。
 mod export_view_test;
+mod external_opener_test;
 mod find_replace_view_test;
 mod highlight_layout_bench;
 mod highlight_layout_test;
@@ -27,6 +29,7 @@ mod preview_view_test;
 mod s6_11f_test;
 mod s6_12_test;
 mod scroll_sync_test;
+mod search_alignment_test;
 mod settings_view_test;
 mod shortcut_registry_test;
 mod sidebar_boundary_test;
@@ -34,6 +37,8 @@ mod sidebar_toggle_test;
 mod sidebar_view_test;
 mod spell_menu_test;
 mod spell_squiggle_test;
+// R-10 对拍：统一构造器 vs 三套旧实现。
+mod span_job_parity_test;
 mod status_bar_view_test;
 mod tab_strip_test;
 mod textedit_cost_attribution_test;
