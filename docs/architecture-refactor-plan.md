@@ -1344,6 +1344,30 @@ widgets 不清 / icons 不清 / views 丢窄豁免 / 窄豁免外溢到整个 `c
   - `grep -rn "旁车\|sidecar" docs/adr/` → 有记录；
   - ADR 索引与 `docs/adr/` 文件数一致。
 
+**实施结果（2026-10-21）**：
+
+- **★ 与方案编号偏差（已说明）**：方案撰写时 ADR 只到 009；实际 R-13 已先行
+  创建 `ADR-010-presentation-internal-direction.md`，**覆盖了方案原 ADR-012 的
+  「表现层状态所有权与内部依赖规则」主题**。故 R-19 实际补的是 **ADR-011**（动作路由
+  与双意图）与 **ADR-012**（图标系统与资源布局），而非方案原编号的 010/011/012。
+  原方案 R-19 第 3 项（表现层状态所有权 ADR）已由 R-13 的 ADR-010 交付，本项目不再重复。
+- **两份 ADR 均写「已落地决定」而非「计划稿」**（方案风险点明确要求）：
+  - `ADR-011-action-routing-and-dual-intent.md`：① 动作路由——`action_route`
+    穷举表 + `ActionRoute::Unbound` 显式声明、**故意不写 `_ =>` 兜底**（新增
+    `UiAction` 变体编译失败逼你接线），配套守卫 `unbound_actions_are_explicit`；
+    ② 跳转双意图 `RevealIntent`（Top / IntoViewport），枚举而非布尔参数。
+  - `ADR-012-icon-system-and-resource-layout.md`：① 废止字形图标、全改向量手绘；
+    ② 图标规格 = 数据（`IconOp` 表 + `Paint`/`Tone` 两维自由度 + 16×16 栅格，
+    单测 `icon_ops_stay_inside_the_grid` 把守越界）；③ 草稿旁车协议
+    `<doc_id>.draft` + `<doc_id>.draft.path`（问题 069，恢复保文件名）；④ 字体
+    外置随包分发（`assets/fonts/` 运行时发现，非 `include_bytes!` 内嵌），R-20
+    拆分后三来源共用同一条发现路径，打包脚本 `scripts/package-*` 约束布局不变。
+- **README 索引同步**：`docs/README.md` 决策记录表补 **011 / 012**；现
+  `001–012` 共 12 条，与 `ls docs/adr/*.md | wc -l` 的 **12** 一致（R-18 第 3 条的
+  ADR 索引补 007/008/009/010/011 至此全部满足）。
+- **验收判据复核**：`grep -rn "ActionRoute" docs/adr/` → ADR-011 命中；
+  `grep -rn "旁车\|sidecar" docs/adr/` → ADR-012 命中；索引条目数 == ADR 文件数 == 12。
+
 #### R-20 · `infrastructure/fonts.rs` 拆分
 
 - **改造内容**：把 1111 行（生产 646 / 测试 465）拆成三层：
@@ -1562,7 +1586,7 @@ widgets 不清 / icons 不清 / views 丢窄豁免 / 窄豁免外溢到整个 `c
 | M5 后 | R-12 | 2026-10-21 | 2026-10-21 | **2090** / 4 / OK | `eeaab0f`；`tools/arch_check.rs` 新增 token 级赋值形态规则（表现层 `app.<…> =` 必报、`==`/`&mut` 自然放行）；顺带收口 R-11 两层 grep 漏掉的单层直写 `app.editor_text =`（→ `EditorApp::set_editor_text`）；新增 4 例 + 变异 **1 轮全捕获**；**R-11 成果由构建期机械固化** |
 | M6 | R-17 | 2026-10-21 | 2026-10-21 | **2097** / 4 / OK | `de63c70`；widgets 收口：search 限宽段 0 高反模式→`elided_segment`（Rect 高度杜绝传 0）+ 新增第 4 组件 `paint_row_background` 收口 4 处行底色（独立封装而非给 `clickable_row` 加参数，避免与父级底色叠加两次）；新增 4 例（搜索对齐集成 1 + paint_row_background 单测 3）+ 变异 **3/3 全捕获** |
 | M6 | R-20 | 2026-10-21 | 2026-10-21 | **2098** / 4 / OK | `1c90c2f`；fonts.rs 拆 discovery/assembly/门面三层（discover_font_sources 改接受注入根目录、default_roots 薄适配）；6 个内置资产测试在 assets/fonts 缺失时 skip；新增注入式单测 1 + 变异 **2/2 全捕获** |
-| M6 | R-19 | | | | |
+| M6 | R-19 | 2026-10-21 | 2026-10-21 | 2098 / 4 / OK（纯文档，测试数不变） | ADR 补齐：方案原 ADR-012 主题（表现层状态所有权）已由 R-13 的 ADR-010 交付，故 R-19 实际补 `ADR-011` 动作路由与双意图 + `ADR-012` 图标系统与资源布局（向量手绘/规格即数据/草稿旁车/字体外置）；README 索引补 011/012，现 001–012 共 12 条与 `docs/adr/` 文件数一致 |
 | M6 | R-21 | | | | |
 
 ---

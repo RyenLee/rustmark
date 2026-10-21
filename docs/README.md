@@ -71,6 +71,8 @@
 | [ADR-008](./adr/ADR-008-widgets-layer-boundary.md) | `presentation/widgets/` 的收口标准（≥2 处重复 + 写错不报错 + 直觉写法看起来合理） |
 | [ADR-009](./adr/ADR-009-frame-scheduler.md) | 帧循环定时任务的统一调度：登记表 + 唯一预约出口（`request_repaint_after` 只许出现在 `app/frame/scheduler.rs`） |
 | [ADR-010](./adr/ADR-010-presentation-internal-direction.md) | `presentation` 内部依赖方向单向化 + `tests/` 禁库内部视角（R-02 / R-13） |
+| [ADR-011](./adr/ADR-011-action-routing-and-dual-intent.md) | 动作路由：穷举路由表 + `Unbound` 显式声明（无 `_` 兜底）；跳转双意图 `RevealIntent` |
+| [ADR-012](./adr/ADR-012-icon-system-and-resource-layout.md) | 图标系统：向量手绘废止字形 + 规格即数据（16×16 栅格）；草稿旁车协议；字体外置随包分发 |
 
 ## 流水与素材（logs/ 与 pic/）
 
