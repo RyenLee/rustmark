@@ -1441,6 +1441,22 @@ widgets 不清 / icons 不清 / views 丢窄豁免 / 窄豁免外溢到整个 `c
   - `grep -rn "use crate::app" src/presentation/` → 0 命中新增（净变化为 0）；
   - `cargo test --all-targets` 全绿，且第 8 项用例通过「去掉 hr 分支 → 红」的变异验证。
 
+**实施结果（2026-10-21，`de0d3d8`，合并一个 commit）**：
+
+- **6 项落地**：
+  1. **命名冲突**：`presentation/theme/mapper/highlight_cache.rs` → `galley_cache.rs`（Galley 缓存）、`application/markdown/service/highlight_cache.rs` → `span_cache.rs`（span 缓存）；6 处 import + 5 处注释路径同步更新，`highlight_cache::` 模块路径残留清零（`clear_highlight_caches` 等同名函数/字段不动）。
+  2. **打开管线归位**：`can_open_as_text` / `unsupported_format_notice` / `report_unsupported_format` / `open_path` 从 `files.rs` 并入 `workspace.rs`（紧随 `open_workspace_file`），「守卫 / 拒绝文案 / 入口 / 实现」同家；`open_workspace_file` 仍是打开文档唯一实现。
+  3. **状态栏方法归位**：`set_status_error` / `set_status_notice` 并入**既有** `frame/status_bar.rs`（R-11 建的「状态栏写入口」）。
+  4. **编辑器操作归位**：`insert_at_cursor` 并入 `frame/editor.rs`（与 `move_line` / `run_format` 同簇）。
+  5. **纯函数归位**：`group_search_hits` 从 `workspace.rs` 并入 `frame/find.rs`，`outline.rs` 导入改指 find。
+  6. **判据加强**：`thematic_break_is_parsed` 加强为「块数 == 3 + 中间块是 `BlockKind::Rule` + 源码区间恰好覆盖 `---`」；变异 `tools/mut_r21.py` **2/2 全捕获**。
+- **★ 与方案偏差（3 处，均已核实并记录）**：
+  - **第 3 项目标文件**：方案写「移到 `src/app/frame/status.rs`」；实际 frame 已有 `status_bar.rs`（R-11 建、职责即「状态栏写入口」），并入它而非新建文件——状态栏写入口真正集中在一处。
+  - **第 5 项前提**：方案称 `group_search_hits` 被 `presentation/views/outline.rs` 反向导入；实际 `outline.rs` 在 `src/app/frame/`，属 app 内部导入，搬移无跨层风险。
+  - **第 2 / 3 项（shared 归位与内部环）未做**：方案前提「`text_format` 5 个使用点全在 app 层」**实测为假**——`text_format` 被 `presentation/state/sidebar_ui_state.rs` 用、`lru` 被 `presentation/views/preview_view.rs` 用、`text` 被 4 个 presentation 文件用；下沉到 app/application 会触发「表现层 → app」check-arch 违例。这些模块本就属于 shared（值对象 + 纯函数层），**不搬移**；`shared` 内部环（`text_format` ↔ `dialog`）随之搁置，解耦需另寻方案（如 `FileFilter` 下沉到更低层），超出低风险清理范围，登记待后续评估。
+- **门禁四绿实测（2026-10-21）**：fmt✓ / check-arch✓（0 违规）/ clippy 0 lint（`-D warnings`）/ `cargo test --all-targets` = **2098 passed / 0 failed / 4 ignored**（逐行 `grep '^test result:'` 求和；纯搬迁 + 改名 + 加强既有用例，测试数不变）。
+- **验收判据复核**：`grep -rn "highlight_cache::" src/ tests/` → **0 命中**（模块路径层面）；`grep -rn "use crate::app" src/presentation/` 净变化为 0（搬移全在 app/frame 内部，check-arch 0 违规佐证）；第 8 项变异 2/2（hr 分支改永不匹配 → 红；Rule 降级成段落 → 红）。
+
 ---
 
 ## 5. 实施计划
@@ -1587,7 +1603,7 @@ widgets 不清 / icons 不清 / views 丢窄豁免 / 窄豁免外溢到整个 `c
 | M6 | R-17 | 2026-10-21 | 2026-10-21 | **2097** / 4 / OK | `de63c70`；widgets 收口：search 限宽段 0 高反模式→`elided_segment`（Rect 高度杜绝传 0）+ 新增第 4 组件 `paint_row_background` 收口 4 处行底色（独立封装而非给 `clickable_row` 加参数，避免与父级底色叠加两次）；新增 4 例（搜索对齐集成 1 + paint_row_background 单测 3）+ 变异 **3/3 全捕获** |
 | M6 | R-20 | 2026-10-21 | 2026-10-21 | **2098** / 4 / OK | `1c90c2f`；fonts.rs 拆 discovery/assembly/门面三层（discover_font_sources 改接受注入根目录、default_roots 薄适配）；6 个内置资产测试在 assets/fonts 缺失时 skip；新增注入式单测 1 + 变异 **2/2 全捕获** |
 | M6 | R-19 | 2026-10-21 | 2026-10-21 | 2098 / 4 / OK（纯文档，测试数不变） | ADR 补齐：方案原 ADR-012 主题（表现层状态所有权）已由 R-13 的 ADR-010 交付，故 R-19 实际补 `ADR-011` 动作路由与双意图 + `ADR-012` 图标系统与资源布局（向量手绘/规格即数据/草稿旁车/字体外置）；README 索引补 011/012，现 001–012 共 12 条与 `docs/adr/` 文件数一致 |
-| M6 | R-21 | | | | |
+| M6 | R-21 | 2026-10-21 | 2026-10-21 | **2098** / 4 / OK（测试数不变） | `de0d3d8`；清理包 6 项合并一 commit：两处 highlight_cache 改名（galley/span）/ 打开管线归位 workspace / 状态栏方法并入既有 status_bar.rs / insert_at_cursor 归位 editor / group_search_hits 归位 find / thematic_break 判据加强；变异 **2/2**；★ 第 2/3 项（shared 归位与内部环）因会破坏 check-arch（presentation 依赖这些 shared 模块）未做 |
 
 ---
 
