@@ -34,7 +34,7 @@
 - 全量**测试执行**耗时约 37s（2026-10-14 实测，热构建；release 构建另计）；连续 3 次运行结果一致
   是 S9-01 的稳定性验收，见任务清单状态段。
 
-> **当前状态（2026-10-20 实测）**：`cargo test --all-targets` 为 **2055 passed / 0 failed / 4 ignored**，全量回归约 44s（热构建）。
+> **当前状态（2026-10-21 实测）**：`cargo test --all-targets` 为 **2076 passed / 0 failed / 4 ignored**，全量回归约 44s（热构建）。相对 2026-10-20 基线 2055，净增 **+21**，来自 R-11 子批 2（`diff_ui`）与子批 3 的 editor/sidebar/preview 各组（其中 preview 组新增 3 例，其余为各组既有真帧回归随改造落地计入）。
 > 4 个 `ignored` 分布于 4 个测试目标，均为**有意忽略**：2 个性能基准（`#[ignore = "…需 release 下显式运行"]`）、1 个生成型 golden（`"生成型用例：需要时用 --ignored 手动跑"`）、1 个需外网（`"需外网"`）。
 > 2026-10-10 深夜曾实测 1519 passed / 7 failed，7 项分三类：① `presentation` 的 4 条 `top_menu_test`——工具栏「格式」组已**平铺为按钮**，测试仍按「分组下拉标题」定位，属**期望滞后于代码**；② `integration` 的 2 条语料快照——解析器新增 `header_spans`/`rows_spans`/`depth`/`ordinal`/`spans` 字段后 `{:?}` 快照文本已变，`tests/data/golden/*.expected` 未重生成，属**期望滞后**；③ `infrastructure` 的 `real_export_writes_a_real_pdf_to_the_chosen_path`——无头 Edge 在沙箱环境不产出 PDF，属**环境限制**。
 > **三类均已关闭**（V11-14 / V11-15，详见 `docs/v1.1-backlog.md`）：①②随 2026-10-11~14 批次修复（测试改按平铺按钮定位、golden 重生成复核），③经 2026-10-14 复测确认在当前环境通过。

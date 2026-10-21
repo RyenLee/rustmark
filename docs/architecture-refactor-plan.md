@@ -996,10 +996,16 @@ UI 选格式 ──► ExportFormat（领域唯一枚举）
 
 #### R-11 · `presentation ↔ app` 状态所有权收敛
 
-> **子批 1（`export_ui`）已落地（2026-10-20，commit `96c2fa8`）**，作为 R-06
-> 的前置条件单独提出。落地形态与原文有 4 处偏差，原因与实测证据见本节
-> 末尾的「实施偏差 · 子批 1」小节；**原文保留**以便对照。
-> 子批 2（`diff_ui`）与子批 3（其余 49 处）**尚未开始**。
+> **子批 1（`export_ui`，8 处）已落地**（2026-10-20，commit `96c2fa8`），作为
+> R-06 的前置条件单独提出；落地偏差见本节「实施偏差 · 子批 1」。
+> **子批 2（`diff_ui`，3 处）已落地**（2026-10-20，commit `5f5a7ab`）。
+> **子批 3 按 state 结构体分组推进**，已完成 `editor`(11) / `sidebar`(8) /
+> `preview`(5) 三组（commit `92f7755` / `de0bd68` / `aa6c252`）；剩余
+> `ui`(main_view 2 + toolbar_view 2) / `settings_ui`(4) / `find`(2) /
+> `status_bar`(1) / `shortcut_overview`(1) 共 **12 处**待收口。全库
+> `src/presentation/views` 真实直写由改造前 **46 处**降至 **12 处**（方案
+> 「59 处」含 13 处 `==` 误报，真实赋值 46；逐组 commit 见「实施偏差 · 子批 2 /
+> 子批 3」）。
 
 - **改造内容**：把 presentation 层对 app 状态字段的 **59 处直写**（`grep -rEn 'app\.[a-z_]+\.[a-z_]+\s*=' src/presentation/`）改为调用 app 层方法。
   - **子批 1（`export_ui`，7 处）**：`src/presentation/views/export_view.rs:221/231/236/265/272/276/280` → 在 `src/app/frame/actions.rs` 或新建 `src/app/frame/export.rs` 提供 `set_export_error()` / `clear_export_result()` / `set_export_path()` 等方法。
@@ -1052,6 +1058,49 @@ UI 选格式 ──► ExportFormat（领域唯一枚举）
   判据）+ `tools/mut_r11_1.py` **变异 10 轮全捕获、0 无牙齿**。
 - **门禁**：fmt OK / check-arch OK / clippy 0 lint /
   test **2055 passed / 0 failed / 4 ignored**（基线 2048 → +7）。
+
+##### 实施偏差 · 子批 2（`diff_ui`，2026-10-20，commit `5f5a7ab`）
+
+1. **处数吻合**：`diff_view.rs:70/94/95` 实测 3 处直写，新建
+   `src/app/frame/diff.rs` 提供 `open_diff_overlay` / `set_diff_error` /
+   `clear_diff_selection` 三个写入口；`open_overlay` 的 diff 初始化同批下沉。
+2. **新增 0 例 + `tools/mut_r11_2.py` 变异 5 轮全捕获、0 无牙齿**（5 个方法/
+   分支入口各一轮）。
+3. **门禁**：fmt OK / check-arch OK / clippy 0 lint / test 全绿。
+
+##### 实施偏差 · 子批 3（按 state 结构体分组，2026-10-21）
+
+- **分组决策变更**：方案原定「其余 49 处一并提交」，实测按 state 拆成
+  `editor` / `sidebar` / `preview` / `ui` / `settings_ui` / `find` /
+  `status_bar` / `shortcut_overview` 八组，**每组独立 commit**（比方案原定更可
+  回退）；真实存量（排除 `==` 误报）改造前 46 → 子批 1 后 38 → 子批 2 后 36 →
+  editor 后 25 → sidebar 后 17 → preview 后 **12**，与剩余八组口径一致。
+- **`editor` 组（11 处，commit `92f7755`）**：`frame/editor.rs` 加 7 方法
+  （`set_editor_selection` / `set_editor_spell_menu` / `clear_editor_spell_menu`
+  / `set_editor_scroll_y` / `set_editor_line_numbers` / `toggle_editor_spell_check`
+  / `toggle_editor_word_wrap`）。
+  - **类型错修正**：`EditorUiState` 注释写「字节偏移」但字段是裸 `usize`
+    （`cursor: usize` / `anchor: Option<usize>`），首版签名按 `ByteOffset` 写
+    直接编译失败 → 修正为裸 `usize`。
+  - **切换类保留取反语义**：`spell_check` / `word_wrap` 原 `x = !x`，方法化为
+    `toggle_*`，**不**改为「调用方传布尔」（那会把切换语义挪到视图且调用点散落）。
+    判据用「调用后 == !调用前」断言，不写死初始值（默认值由偏好播种）。
+  - `tools/mut_r11_3_editor.py` **变异 7 轮全捕获**。
+- **`sidebar` 组（8 处，commit `de0bd68`）**：新建 `frame/sidebar.rs` 7 方法
+  （`start_sidebar_rename` / `set_sidebar_selected` / `set_sidebar_outline_selected`
+  / `set_sidebar_search_query` / `set_sidebar_search_scope` /
+  `toggle_sidebar_search_option` / `restore_sidebar_draft`）。
+  - `tools/mut_r11_3_sidebar.py` **变异 7 轮全捕获**。
+- **`preview` 组（5 处，commit `aa6c252`）**：新建 `frame/preview.rs` 3 方法
+  （`store_preview_render` / `set_preview_blocks` / `set_preview_scroll_y`）；
+  `store_preview_render` 把 `blocks` / `rects` / `scroll_y` **三字段作为同一语义
+  单元一起落定**，防无声漏写（这正是第 4 轮部分实现变异要钉的）。
+  - import 修正：`BlockRect` 来自 `scroll_sync_state` 而非 `preview_ui_state`
+    （`BlockView` 来自 `application::dto`）。
+  - 新增 3 例 + `tools/mut_r11_3_preview.py` **变异 4 轮全捕获**（含「只写
+    blocks、漏写 rects/scroll_y」的部分实现变异）。
+  - **门禁**：fmt OK / check-arch OK / clippy 0 lint / test **2076 passed /
+    0 failed / 4 ignored**（sidebar 后 2073 → +3）。
 
 #### R-12 · 新增机械规则「presentation 不得直写 app 状态字段」
 
@@ -1430,10 +1479,13 @@ widgets 不清 / icons 不清 / views 丢窄豁免 / 窄豁免外溢到整个 `c
 
 **M5 · 结构改造：状态所有权（6 人日）**
 
-- 顺序：**子批 1（`export_ui`，7 处）** → 门禁 + 导出相关测试 → **子批 2（`diff_ui`）** → 门禁 + 差异对比测试 →
-  **子批 3（其余 49 处，按 state 结构体分组）** → 门禁 + 全量。
-- 交付物：3 个 commit（每子批一个）。
-- 验收：`grep -rEn 'app\.[a-z_]+\.[a-z_]+\s*=' src/presentation/` → 0；全量测试绿。
+- 顺序：**子批 1（`export_ui`）** → 门禁 + 导出相关测试 → **子批 2（`diff_ui`）** → 门禁 + 差异对比测试 →
+  **子批 3（按 state 结构体分组：editor / sidebar / preview / ui / settings_ui /
+  find / status_bar / shortcut_overview，每组独立 commit）** → 门禁 + 全量。
+- 交付物：每个子批（含子批 3 的每组）一个 commit，当前已落 `96c2fa8` /
+  `5f5a7ab` / `92f7755` / `de0bd68` / `aa6c252`，剩余 5 组待提交。
+- 验收：`grep -rEn 'app\.[a-z_]+\.[a-z_]+\s*=' src/presentation/views/` → 0
+  （当前剩 12 处，属剩余 5 组）；全量测试绿。
 
 **M6 · 收尾（5 人日）**
 
@@ -1472,7 +1524,8 @@ widgets 不清 / icons 不清 / views 丢窄豁免 / 窄豁免外溢到整个 `c
 | M4 | R-04 | 2026-10-20 | 2026-10-20 | **2044** / 4 / OK | `1462337`；Revert=从磁盘重载（非撤销，方案正文偏差，见 §4.2 R-04「实施偏差」）；InsertImage=选图→复制到 assets→插相对链接；`action_route` 的 `Unbound` 清单清零；新增 14 集成例 + 6 lib 例 + 变异 **11 轮全捕获** |
 | M4 | R-05 | 2026-10-20 | 2026-10-20 | **2048** / 4 / OK | `bd61fd4`；设置页补写作目标输入框，`normalize_writing_goal` 纯函数 + 纳入取消回滚快照；新增 3 集成例 + 1 lib 例 + 变异 **2 轮全捕获**；**R-11 改造时需回头收口输入框直写**（详见 §4.2 R-05 风险点） |
 | M5 | R-11 子批 1（`export_ui`） | 2026-10-20 | 2026-10-20 | **2055** / 4 / OK | `96c2fa8`；导出浮层 **8 处直写清零**（方案列 7 处，实测另有 1 处冗余写）；`open_overlay` 的 Export 初始化下沉到 `frame/export.rs`；新增 7 例 + 变异 **10 轮全捕获**；顺带修 2 处无牙齿判据；**方案「59 处」口径含 13 处 `==` 误报，真实赋值 46 → 38**（详见 §4.2 R-11「实施偏差 · 子批 1」） |
-| M5 | R-11 子批 2/3 | | | | `diff_ui` 3 处 + 其余 49 处，**尚未开始** |
+| M5 | R-11 子批 2（`diff_ui`） | 2026-10-20 | 2026-10-20 | 全绿 / OK | `5f5a7ab`；差异浮层 **3 处直写清零**；`open_overlay` 的 diff 初始化下沉到 `frame/diff.rs`；变异 **5 轮全捕获** |
+| M5 | R-11 子批 3（editor/sidebar/preview） | 2026-10-21 | 2026-10-21 | **2076** / 4 / OK | `92f7755`+`de0bd68`+`aa6c252`；按 state 分组三 commit，清零 **24 处**（editor 11 / sidebar 8 / preview 5）；每组独立变异验证（7/7/4 轮全捕获）；`src/presentation/views` 真实直写由改造前 46 降至 **12**；剩余 `ui` 4 / `settings_ui` 4 / `find` 2 / `status_bar` 1 / `shortcut_overview` 1 待收口 |
 | M4/M5 后 | R-06 | | | | **前置（R-11 子批 1）已落地，可做**（原记「依赖 M5 子批 1」） |
 | M5 后 | R-12 | | | | 依赖 R-11 全部子批；**规则正则须排除 `==`，否则误报 13 处** |
 | M6 | R-17 | | | | |
