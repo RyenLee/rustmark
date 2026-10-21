@@ -589,6 +589,12 @@ UI 选格式 ──► ExportFormat（领域唯一枚举）
 
 #### R-06 · 切标签保留光标（每文档独立光标/选区）
 
+> **已落地（2026-10-21，commit `a62d620`）**。落地形态与原文有 4 处偏差（原文保留以便对照）：
+> ① 光标表放在 **`EditorApp`（app 层）** 而非 `presentation/state/editor_ui_state.rs`——「哪份文档的光标配哪份文档」天然随标签生命周期生灭，app 层持有、随关标签清除更内聚；值用 `(usize, usize)`（**字节**偏移，无选区时 anchor==cursor）而非 `CursorState`。
+> ② 恢复**经 `pending_cursor` 一次性通道**：切回帧把恢复位置按**新文档**文本 `byte_to_char` 换算成字符偏移写进 `pending_cursor`，由 `apply_pending_editor_state` 在下一帧主动重设 egui 脱字符——方案已点明「egui 内部态切文档时重置、需主动重设」，落地即复用这条既有通道。
+> ③ `open_file` 新开文档**不**走恢复：其恢复值恒 0，却会写一个 `pending_cursor=(0,0)`，污染「打开后 focus_at_end 再回车」这类紧邻操作（实测 `enter_at_various_cursor_positions_keeps_gutter_in_sync` 因此把光标错放到第一行中间）；新文档的 0 由 egui 内容替换自然给出。
+> ④ 真帧判据**改读 egui `TextEditState` 脱字符位置**而非原文的「`Shape::Text` 光标矩形 y 不变」：文本字形 y 与光标无关、区分不了新旧行为，caret 线在无头 shapes 里无稳定捕获先例，`scroll_y` 无头下恒 0——直读 `TextEditState` 才既区分新旧、又不依赖焦点/滚动。
+
 - **改造内容**：`src/app/frame/tabs.rs:33-35` 注释「每文档独立的光标 / 选区尚未在 UI State 中建模（S6-12 范畴），切换时回到文档开头」→ 在 `presentation/state/editor_ui_state.rs` 增加 per-document 的光标 / 选区表（`HashMap<DocumentId, CursorState>`），切标签时存取、切换回时恢复。
 - **涉及文件**：`src/presentation/state/editor_ui_state.rs`（新增字段 + 存取方法）、`src/app/frame/tabs.rs`（切换时存取）、`src/app/frame/editor.rs`（`pending_cursor` 的写回与新表协同）、`src/presentation/views/editor_view.rs`（渲染时取当前文档的光标）
 - **影响范围**：多文档场景的用户可见行为变化（**这是行为变更，不是纯重构**）；需考虑文档关闭时清理表项、文档数上限 12 → 表大小有界。
@@ -1530,7 +1536,7 @@ widgets 不清 / icons 不清 / views 丢窄豁免 / 窄豁免外溢到整个 `c
 | M5 | R-11 子批 2（`diff_ui`） | 2026-10-20 | 2026-10-20 | 全绿 / OK | `5f5a7ab`；差异浮层 **3 处直写清零**；`open_overlay` 的 diff 初始化下沉到 `frame/diff.rs`；变异 **5 轮全捕获** |
 | M5 | R-11 子批 3（editor/sidebar/preview） | 2026-10-21 | 2026-10-21 | **2076** / 4 / OK | `92f7755`+`de0bd68`+`aa6c252`；按 state 分组三 commit，清零 **24 处**（editor 11 / sidebar 8 / preview 5）；每组独立变异验证（7/7/4 轮全捕获）；`src/presentation/views` 真实直写由改造前 46 降至 **12** |
 | M5 | R-11 子批 3（ui/settings_ui/find/status_bar/shortcut_overview） | 2026-10-21 | 2026-10-21 | **2086** / 4 / OK | `e8157a2` + `3b4dc00`；收尾 8 处（ui 4 / settings_ui 4 / find 2 / status_bar 1 / shortcut_overview 1），新建 `frame/ui.rs` / `frame/status_bar.rs` / `frame/shortcut_overview.rs`、复用 `frame/settings.rs` / `frame/find.rs`；6 例 + 变异 **6 轮全捕获**；**`src/presentation/views` 真实直写由 12 降至 0，R-11 整体完成** |
-| M4/M5 后 | R-06 | | | | **前置（R-11 子批 1）已落地，可做**（原记「依赖 M5 子批 1」） |
+| M4/M5 后 | R-06 | 2026-10-21 | 2026-10-21 | **2093** / 4 / OK | `a62d620`；`EditorApp` 新增 `per_doc_cursor: HashMap<DocumentId,(usize,usize)>`（随关标签 / 全关清除）；`switch_document` 先 stash → `refresh_text` → restore（按新文本 `byte_to_char` 写 `pending_cursor` 让 egui 主动重设脱字符）；`close_document` 仅「关当前页」才 restore（否则表里是陈旧快照，会把最新光标打回旧值）；`open_file` 新文档**不** restore（避免 `pending_cursor=(0,0)` 污染紧邻操作，实测修 `enter_at_various_cursor_positions`）；`tests/app/tab_cursor_test.rs` 三层判据（表记/取 + pending_cursor 排入并被渲染帧消费 + 真帧读 `TextEditState` 脱字符）+ 变异 **3/3 全捕获** |
 | M5 后 | R-12 | 2026-10-21 | 2026-10-21 | **2090** / 4 / OK | `eeaab0f`；`tools/arch_check.rs` 新增 token 级赋值形态规则（表现层 `app.<…> =` 必报、`==`/`&mut` 自然放行）；顺带收口 R-11 两层 grep 漏掉的单层直写 `app.editor_text =`（→ `EditorApp::set_editor_text`）；新增 4 例 + 变异 **1 轮全捕获**；**R-11 成果由构建期机械固化** |
 | M6 | R-17 | | | | |
 | M6 | R-20 | | | | |
