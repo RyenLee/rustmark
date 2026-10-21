@@ -1,5 +1,6 @@
 //! 侧栏「整行可点」容器。
 
+use crate::presentation::theme::builtin::Theme;
 use egui::{Response, Sense, Ui};
 
 /// 排一行内容，并在**整行矩形**上挂 `Sense::click()` 命中区。
@@ -66,6 +67,30 @@ pub fn clickable_row<R>(
     let row_id = ui.scope_id().with(id_salt);
     let response = ui.interact(inner.response.rect, row_id, Sense::click());
     (response, inner.inner)
+}
+
+/// 在给定行矩形上画「选中 → `accent_soft` / 悬停 → `bg_tertiary`」的圆角（4pt）底色。
+///
+/// 这是 `quick_open_view` / `command_palette_view` / 顶栏标签条导航箭头 /
+/// 「全部关闭」按钮 4 处**逐字重复**的配方（见 R-17 / 问题清单）。背景必须在
+/// 内容**之下**绘制（先画再排内容），调用方负责顺序——本函数不分配矩形、
+/// 不返回命中区，只收口「圆角半径 + 两种底色」这两行易错的重复，让
+/// `CornerRadius::same(4)` 与那两个主题色没有别的写法可选（ADR-008 的判据）。
+///
+/// `selected` 与 `hovered` 由调用方从各自的 `Response` 传入——本函数不重新
+/// 探测指针，避免与「布局 pass 期间 `hovered()` 未定」的时序耦合。
+pub fn paint_row_background(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    selected: bool,
+    hovered: bool,
+    theme: &Theme,
+) {
+    if selected {
+        painter.rect_filled(rect, egui::CornerRadius::same(4), theme.accent_soft);
+    } else if hovered {
+        painter.rect_filled(rect, egui::CornerRadius::same(4), theme.bg_tertiary);
+    }
 }
 
 #[cfg(test)]
@@ -135,5 +160,74 @@ mod tests {
         });
         assert_eq!(ids.len(), 2, "两帧都应有两次取样");
         assert_ne!(ids[0], ids[1], "不同 salt 必须派生出不同的行交互 id");
+    }
+
+    /// `paint_row_background` 选中态必须画 `accent_soft` 圆角底色、且不画
+    /// `bg_tertiary`（R-17 收口的配方，任何改错颜色/半径的写法都应被这条卡住）。
+    #[test]
+    fn paint_row_background_selected_draws_accent_soft() {
+        let theme = Theme::dark();
+        let ctx = egui::Context::default();
+        let rect = egui::Rect::from_min_size(egui::pos2(10.0, 10.0), egui::vec2(100.0, 20.0));
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            paint_row_background(ui.painter(), rect, true, false, &theme);
+        });
+        let accent = out
+            .shapes
+            .iter()
+            .filter(|cs| matches!(&cs.shape, egui::Shape::Rect(r) if r.fill == theme.accent_soft))
+            .count();
+        let tertiary = out
+            .shapes
+            .iter()
+            .filter(|cs| matches!(&cs.shape, egui::Shape::Rect(r) if r.fill == theme.bg_tertiary))
+            .count();
+        out.textures_delta.clear();
+        assert!(accent >= 1, "选中态必须画 accent_soft 圆角底色");
+        assert_eq!(tertiary, 0, "选中态不应画 bg_tertiary");
+    }
+
+    /// 悬停（非选中）态必须画 `bg_tertiary`、不画 `accent_soft`。
+    #[test]
+    fn paint_row_background_hovered_draws_bg_tertiary() {
+        let theme = Theme::dark();
+        let ctx = egui::Context::default();
+        let rect = egui::Rect::from_min_size(egui::pos2(10.0, 10.0), egui::vec2(100.0, 20.0));
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            paint_row_background(ui.painter(), rect, false, true, &theme);
+        });
+        let tertiary = out
+            .shapes
+            .iter()
+            .filter(|cs| matches!(&cs.shape, egui::Shape::Rect(r) if r.fill == theme.bg_tertiary))
+            .count();
+        let accent = out
+            .shapes
+            .iter()
+            .filter(|cs| matches!(&cs.shape, egui::Shape::Rect(r) if r.fill == theme.accent_soft))
+            .count();
+        out.textures_delta.clear();
+        assert!(tertiary >= 1, "悬停态必须画 bg_tertiary 圆角底色");
+        assert_eq!(accent, 0, "悬停态不应画 accent_soft");
+    }
+
+    /// 既非选中也非悬停时，不应画任何圆角底色（否则会把无关行染上背景）。
+    #[test]
+    fn paint_row_background_draws_nothing_when_neither() {
+        let theme = Theme::dark();
+        let ctx = egui::Context::default();
+        let rect = egui::Rect::from_min_size(egui::pos2(10.0, 10.0), egui::vec2(100.0, 20.0));
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            paint_row_background(ui.painter(), rect, false, false, &theme);
+        });
+        let any = out
+            .shapes
+            .iter()
+            .filter(|cs| {
+                matches!(&cs.shape, egui::Shape::Rect(r) if r.fill == theme.accent_soft || r.fill == theme.bg_tertiary)
+            })
+            .count();
+        out.textures_delta.clear();
+        assert_eq!(any, 0, "既非选中也非悬停时不应画任何圆角底色");
     }
 }

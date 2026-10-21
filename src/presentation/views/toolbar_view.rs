@@ -418,10 +418,13 @@ fn draw_tab_strip(app: &mut EditorApp, ui: &mut Ui) {
             } else {
                 theme.text_secondary
             };
-            if enabled && response.hovered() {
-                ui.painter()
-                    .rect_filled(rect, egui::CornerRadius::same(4), theme.bg_tertiary);
-            }
+            widgets::row::paint_row_background(
+                ui.painter(),
+                rect,
+                false,
+                enabled && response.hovered(),
+                &theme,
+            );
             paint_nav_arrow(ui.painter(), rect, dir, color);
             if enabled && response.clicked() {
                 scroll_x += dir * NAV_STEP;
@@ -470,10 +473,7 @@ fn draw_tab_strip(app: &mut EditorApp, ui: &mut Ui) {
         } else {
             theme.text_secondary
         };
-        if response.hovered() {
-            ui.painter()
-                .rect_filled(rect, egui::CornerRadius::same(4), theme.bg_tertiary);
-        }
+        widgets::row::paint_row_background(ui.painter(), rect, false, response.hovered(), &theme);
         // 图标：圆角方框（一枚「标签」）+ 内部 ×——「关掉整排标签」的语义，
         // 与单个标签右上角的裸 × 区分。向量手绘（项目纪律：图标不走字形，
         // 本机字体链路缺 ◀ / ▶ / ▾ 这类装饰字形）。语义文字走悬停提示。

@@ -27,6 +27,7 @@ use crate::app::frame::EditorApp;
 use crate::presentation::state::command_palette_ui_state::CommandRow;
 use crate::presentation::state::dialog_ui_state::Overlay;
 use crate::presentation::theme::builtin::Theme;
+use crate::presentation::widgets;
 
 /// 对话框默认尺寸（对齐原型 `.palette { width: 540px }`）。
 const WIDTH: f32 = 540.0;
@@ -218,13 +219,13 @@ fn results(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, list: &[CommandRow])
                 // 直接链式调用会 move 掉它，后面再用就编译不过。
                 let hovered = response.hovered();
                 let clicked = response.clicked();
-                if i == selected {
-                    ui.painter()
-                        .rect_filled(rect, egui::CornerRadius::same(4), theme.accent_soft);
-                } else if hovered {
-                    ui.painter()
-                        .rect_filled(rect, egui::CornerRadius::same(4), theme.bg_tertiary);
-                }
+                widgets::row::paint_row_background(
+                    ui.painter(),
+                    rect,
+                    i == selected,
+                    hovered,
+                    theme,
+                );
                 draw_label(ui, theme, row, rect, i == selected);
                 draw_meta(ui, theme, row, rect);
                 if hovered {

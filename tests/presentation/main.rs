@@ -29,6 +29,7 @@ mod preview_view_test;
 mod s6_11f_test;
 mod s6_12_test;
 mod scroll_sync_test;
+mod search_alignment_test;
 mod settings_view_test;
 mod shortcut_registry_test;
 mod sidebar_boundary_test;
