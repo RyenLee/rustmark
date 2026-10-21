@@ -1100,21 +1100,26 @@ UI 选格式 ──► ExportFormat（领域唯一枚举）
   - **门禁**：fmt OK / check-arch OK / clippy 0 lint / test **2076 passed /
     0 failed / 4 ignored**（sidebar 后 2073 → +3）。
 
-#### R-12 · 新增机械规则「presentation 不得直写 app 状态字段」
+#### R-12 · 新增机械规则「presentation 不得直写 app 状态字段」（2026-10-21 完成，commit `eeaab0f`）
 
-- **改造内容**：在 `tools/arch_check.rs` 增加一条**赋值形态**规则：扫描 `src/presentation/**`（以及未来的 `src/app/frame/**`），命中 `app.<标识符>.<标识符> =` 或 `self.<state字段>.<字段> =` 这类**对 UI state 字段的赋值**时报违规。豁免语法：`// arch-allow: app-state-write`。
-  - 配套约定：**只允许对 `app` 的**方法**调用**做状态变更**；`app` 的**字段读取**（`app.active_doc`、`app.ui.theme`）仍允许。
-- **涉及文件**：`tools/arch_check.rs`（新规则）、`src/presentation/**`（R-11 完成后自动合规）、`tests/arch_violation_fixture.rs`（注入用例）
-- **影响范围**：构建期规则；命中数为 0 才可启用。
+- **改造内容**：在 `tools/arch_check.rs` 增加一条**赋值形态**规则（token 级）：对**所有表现层**（`presentation` 及其全部子层 `state` / `views` / `rich` / `widgets` / `icons`），扫描 `app.<标识符>( .<标识符> )* =` 这种**对 app 状态字段的赋值**，命中即报违规。
+  - 实现要点：词法器新增 `Assign` / `EqEq` 两种 token，把 `=` 与 `==` 区分开；规则只认紧随其后的**单个 `=`（赋值）**，天然排除 `==` 比较（`!=` 是 `Bang` 后跟 `Assign`，同样不命中）。
+  - **已知边界（自然放行，无需豁免机制）**：
+    - `&mut app.<state>.<field>`（egui 控件必须拿 `&mut String` / `&mut bool`，如 `TextEdit::singleline(&mut app.x.y)`、`ui.checkbox(&mut app.x.y, …)`）——那是**借用**，序列以 `)` 收尾不以 `=` 收尾，自动不命中；
+    - `app.<state>.<field> == z` 是**判据里的相等比较**，靠 `EqEq` token 排除。
+  - 故意**不**用 `arch-allow` 豁免：合法的状态变更都走 `EditorApp` 的方法入口（R-11 已收敛），不存在「必须直写」的合法场景；`&mut` 借用由 token 形态排除而非豁免。
+  - **只允许对 `app` 的方法调用做状态变更**；`app` 的字段读取（`app.active_doc`、`app.ui.theme`）仍允许。
+- **涉及文件**：`tools/arch_check.rs`（新规则 + 词法器 `Assign`/`EqEq`）、`src/presentation/views/editor_view.rs`（R-11 两层 grep 口径漏掉的**单层**直写 `app.editor_text =` 收口到 `EditorApp::set_editor_text`）、`src/app/frame/editor.rs`（新增 `set_editor_text`）、`tests/arch_violation_fixture.rs`（4 个注入/边界用例）、`tools/mut_r12.py`（变异验证）
+- **影响范围**：构建期规则；命中数为 0 才可启用 → 启用即 0 命中（R-11 已将真实直写清零）。
 - **依赖关系**：**严格依赖 R-01（token 级匹配）+ R-11（直写清零）**。
-- **风险点**：
-  - 规则太宽会误伤**合法的**字段写入（如 `app.services` 内部的缓存字段、不是 UI state 的字段）→ 规则需限定「只查已知 UI state 结构体的字段名」，即维护一份**状态字段名清单**（可从 `presentation/state/*.rs` 自动提取，或硬编码在规则里）；
-  - 规则太窄会漏（用 `app.export_ui.error = ...` 之外的写法绕过，如 `let s = &mut app.export_ui; s.error = ...`）→ 接受这个残余风险（Rust 的借用规则会让这种写法少见），在 ADR 中如实登记。
-- **回滚方案**：规则的 `enabled` 标志置 false（一行）。
-- **验收判据**：
-  - 注入用例：`app.export_ui.error = Some("x".into());` → `scan()` 必须报违规；
+- **与方案原设计的偏差（实施偏差）**：
+  - 方案原文设计「只查已知 UI state 字段名清单」+ 豁免 `// arch-allow: app-state-write` + 也扫 `src/app/frame/**`。实际实施**不维护字段名清单**（直接禁「任何 `app.<…> =` 赋值」，因为 app 状态字段的所有权本就该全部经方法入口）、**不用豁免**（无合法直写需放行）、**不扫 `app/frame/**`**（那是状态所有者自身，写自己的字段合法）。方案设计是 R-11 之前的推测，R-11 落地后「全部经方法」已成事实，故规则可以更干净。
+  - 方案验收用例 `app.export_ui.error = Some(..)` 仍被本规则覆盖（属 `app.<ident>.<ident> =` 形态）。
+- **验收判据（实测全绿）**：
+  - 注入用例：`presentation/views/foo_view.rs` 写 `app.a.b = 1;` → `scan()` 必须报「不得直写 app 状态字段」；`app.x = z;`（单层，对应 `app.editor_text =` 残留形态）同样必报；
+  - 边界用例：`&mut app.a.b` 借用、`app.a.b == 1` 比较 → 必须放行（0 命中）；
   - 全量 `cargo run --bin check-arch` → OK（0 命中）；
-  - 变异验证：把规则的判定改成永远返回「无违规」→ 注入用例红。
+  - 变异验证（`tools/mut_r12.py`）：把规则判定改成 `if false` → 两条注入用例当场变红（1/1 变异点全捕获）。
 
 #### R-13 · 表现层内部依赖规则（`views` ↔ `state`）
 
@@ -1526,7 +1531,7 @@ widgets 不清 / icons 不清 / views 丢窄豁免 / 窄豁免外溢到整个 `c
 | M5 | R-11 子批 3（editor/sidebar/preview） | 2026-10-21 | 2026-10-21 | **2076** / 4 / OK | `92f7755`+`de0bd68`+`aa6c252`；按 state 分组三 commit，清零 **24 处**（editor 11 / sidebar 8 / preview 5）；每组独立变异验证（7/7/4 轮全捕获）；`src/presentation/views` 真实直写由改造前 46 降至 **12** |
 | M5 | R-11 子批 3（ui/settings_ui/find/status_bar/shortcut_overview） | 2026-10-21 | 2026-10-21 | **2086** / 4 / OK | `e8157a2` + `3b4dc00`；收尾 8 处（ui 4 / settings_ui 4 / find 2 / status_bar 1 / shortcut_overview 1），新建 `frame/ui.rs` / `frame/status_bar.rs` / `frame/shortcut_overview.rs`、复用 `frame/settings.rs` / `frame/find.rs`；6 例 + 变异 **6 轮全捕获**；**`src/presentation/views` 真实直写由 12 降至 0，R-11 整体完成** |
 | M4/M5 后 | R-06 | | | | **前置（R-11 子批 1）已落地，可做**（原记「依赖 M5 子批 1」） |
-| M5 后 | R-12 | | | | 依赖 R-11 全部子批（**已满足**）；**规则正则须排除 `==`，否则误报 13 处**；可上线固化 R-11 成果 |
+| M5 后 | R-12 | 2026-10-21 | 2026-10-21 | **2090** / 4 / OK | `eeaab0f`；`tools/arch_check.rs` 新增 token 级赋值形态规则（表现层 `app.<…> =` 必报、`==`/`&mut` 自然放行）；顺带收口 R-11 两层 grep 漏掉的单层直写 `app.editor_text =`（→ `EditorApp::set_editor_text`）；新增 4 例 + 变异 **1 轮全捕获**；**R-11 成果由构建期机械固化** |
 | M6 | R-17 | | | | |
 | M6 | R-20 | | | | |
 | M6 | R-19 | | | | |
