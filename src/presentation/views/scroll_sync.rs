@@ -309,7 +309,7 @@ fn drive_preview(app: &mut EditorApp) -> bool {
     else {
         return false;
     };
-    app.preview.scroll_y = target;
+    app.set_preview_scroll_y(target);
     true
 }
 

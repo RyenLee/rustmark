@@ -491,7 +491,7 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
             .render_preview(RenderPreviewQuery { doc_id, version })
         {
             Ok(view) => {
-                app.preview.blocks = view.blocks;
+                app.set_preview_blocks(view.blocks);
                 app.preview.set_degraded(view.truncated);
             }
             Err(e) => {
@@ -654,9 +654,7 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
             .inner
         });
 
-    app.preview.blocks = blocks;
-    app.preview.rects = out.inner;
-    app.preview.scroll_y = out.state.clamped_offset().y;
+    app.store_preview_render(blocks, out.inner, out.state.clamped_offset().y);
     app.ui
         .sync
         .set_geometry(Side::Preview, out.content_size.y, out.inner_rect.height());

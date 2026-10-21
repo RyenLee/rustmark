@@ -527,6 +527,7 @@ mod files;
 mod find;
 mod images;
 mod outline;
+mod preview;
 mod recovery;
 mod scheduler;
 mod settings;

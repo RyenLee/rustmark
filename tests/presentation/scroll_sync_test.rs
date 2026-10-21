@@ -946,3 +946,89 @@ fn consecutive_frames_do_not_bounce_back() {
         "持续滚动期间应至少成功驱动过一次"
     );
 }
+
+// ============================================================================
+// R-11 子批 3 · preview 组：状态写入口
+//
+// 预览区对 `app.preview.*` 的直写已收敛为 `EditorApp` 方法
+// （见 `src/app/frame/preview.rs`）。下列用例一律走方法入口。
+// ============================================================================
+
+/// 跑几帧让预览区有真实内容（后续用例的前提）。
+fn previewed_app() -> (tempfile::TempDir, EditorApp, egui::Context) {
+    let (dir, mut app) = app_with("# 标题\n\n正文第一段。\n\n## 小节\n\n正文第二段。\n");
+    let ctx = egui::Context::default();
+    frames(&mut app, &ctx, 3);
+    assert!(
+        !app.preview.blocks.is_empty(),
+        "夹具前提：跑帧后预览应已有块序列"
+    );
+    (dir, app, ctx)
+}
+
+/// 块序列整体替换（缓存未命中、渲染返回时）。
+#[test]
+fn set_preview_blocks_replaces_the_cached_sequence() {
+    let (_dir, mut app, _ctx) = previewed_app();
+    let original = std::mem::take(&mut app.preview.blocks);
+
+    app.set_preview_blocks(Vec::new());
+    assert!(
+        app.preview.blocks.is_empty(),
+        "替换应生效：传空序列即清空缓存"
+    );
+
+    app.set_preview_blocks(original);
+    assert!(!app.preview.blocks.is_empty(), "放回原序列应恢复内容");
+}
+
+/// 帧末产出三字段**一起**落定——漏写 rects 会让滚动同步拿旧矩形换算，
+/// 大图解码那一帧直接跳错块（无声缺陷）。
+#[test]
+fn store_preview_render_lands_all_three_fields_together() {
+    let (_dir, mut app, _ctx) = previewed_app();
+    let blocks = std::mem::take(&mut app.preview.blocks);
+    let rects = vec![
+        BlockRect {
+            id: 1,
+            top: 0.0,
+            bottom: 10.0,
+        },
+        BlockRect {
+            id: 2,
+            top: 10.0,
+            bottom: 20.0,
+        },
+    ];
+
+    app.store_preview_render(blocks.clone(), rects.clone(), 42.0);
+
+    assert_eq!(
+        app.preview.blocks.len(),
+        blocks.len(),
+        "块序列应放回（take 的逆操作）"
+    );
+    assert_eq!(app.preview.rects, rects, "本帧块矩形应一并落定");
+    assert_eq!(app.preview.scroll_y, 42.0, "滚动偏移应一并落定");
+}
+
+/// 滚动同步驱动预览区：只写偏移，不碰块序列与矩形。
+#[test]
+fn set_preview_scroll_y_writes_the_offset_only() {
+    let (_dir, mut app, _ctx) = previewed_app();
+    let blocks_before = app.preview.blocks.len();
+    let rects_before = app.preview.rects.clone();
+
+    app.set_preview_scroll_y(123.5);
+
+    assert_eq!(app.preview.scroll_y, 123.5);
+    assert_eq!(
+        app.preview.blocks.len(),
+        blocks_before,
+        "滚动驱动不应重建块序列"
+    );
+    assert_eq!(
+        app.preview.rects, rects_before,
+        "滚动驱动不应改动块矩形（那是帧末采集的）"
+    );
+}
