@@ -533,6 +533,7 @@ mod scheduler;
 mod settings;
 mod sidebar;
 mod tabs;
+mod ui;
 mod workspace;
 pub(crate) use drag_drop::classify_dropped;
 pub(crate) use scheduler::{Deadline, FrameScheduler};
