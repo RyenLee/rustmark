@@ -1270,6 +1270,109 @@ fn presentation_may_not_reach_the_rest_of_the_composition_root() {
 }
 
 // ============================================================================
+// 七之补、R-12：presentation 不得直写 app 状态字段（赋值形态）
+// ============================================================================
+
+/// **R-12 点名判据**：`presentation/views/x.rs` 写 `app.a.b = z;`
+/// → 必须报「不得直写 app 状态字段」。
+///
+/// 这条把 R-11 收敛掉的形状**机械化**：R-11 把 `app.<state>.<field> =`
+/// 收敛到 `EditorApp` 的方法入口，本规则把「零直写」钉死——将来有人
+/// 在视图里图省事直接 `app.x.y = z`，编译照过、单测未必覆盖，这条必报。
+#[test]
+fn presentation_direct_write_of_app_state_field_is_detected() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "presentation/views/foo_view.rs",
+        "//! x\nfn f(app: &mut crate::app::frame::EditorApp) {\n    app.a.b = 1;\n}\n",
+    );
+
+    let violations = arch_check::scan(&root);
+    assert_eq!(
+        violations.len(),
+        1,
+        "表现层直写 app 状态字段必须被拦：{:?}",
+        described(&violations)
+    );
+    assert!(
+        violations[0].detail.contains("不得直写 app 状态字段"),
+        "应点名 R-12 规则：{:?}",
+        violations[0]
+    );
+}
+
+/// 单层直写同样要拦：`app.x = z;`（R-11 的两层 grep 口径曾漏掉这一形态，
+/// `editor_view.rs` 的 `app.editor_text =` 正是这种）。
+#[test]
+fn presentation_single_level_write_of_app_state_field_is_detected() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "presentation/views/foo_view.rs",
+        "//! x\nfn f(app: &mut crate::app::frame::EditorApp) {\n    app.editor_text = String::new();\n}\n",
+    );
+
+    let violations = arch_check::scan(&root);
+    assert_eq!(
+        violations.len(),
+        1,
+        "单层直写 app 字段也必须被拦：{:?}",
+        described(&violations)
+    );
+    assert!(
+        violations[0].detail.contains("不得直写 app 状态字段"),
+        "{:?}",
+        violations[0]
+    );
+}
+
+/// **R-12 的已知边界**：`&mut app.a.b`（egui 控件必须拿 `&mut`）是**借用**
+/// 不是赋值，必须放行——否则 `TextEdit::singleline(&mut app.x.y)` 这类
+/// 既合法又必要的代码会被误伤。
+#[test]
+fn presentation_may_borrow_app_state_field_for_egui() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "presentation/views/foo_view.rs",
+        "//! x\nfn f(app: &mut crate::app::frame::EditorApp) {\n    \
+         TextEdit::singleline(&mut app.a.b);\n}\n",
+    );
+
+    assert!(
+        arch_check::scan(&root).is_empty(),
+        "egui 控件的 &mut 借用不是直写，应放行：{:?}",
+        described(&arch_check::scan(&root))
+    );
+}
+
+/// **R-12 的已知边界**：`app.a.b == z` 是判据里的相等比较，不是赋值，必须放行。
+///
+/// 这条钉住「`=` 与 `==` 必须区分」——若词法器把两者混为一谈，
+/// `export_view.rs` 里十多处 `app.export_ui.format == …` 会整批误报。
+#[test]
+fn presentation_may_compare_app_state_field() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "presentation/views/foo_view.rs",
+        "//! x\nfn f(app: &mut crate::app::frame::EditorApp) {\n    \
+         let selected = app.a.b == 1;\n}\n",
+    );
+
+    assert!(
+        arch_check::scan(&root).is_empty(),
+        "相等比较不是赋值，应放行：{:?}",
+        described(&arch_check::scan(&root))
+    );
+}
+
+// ============================================================================
 // 八、豁免机制的三态
 // ============================================================================
 

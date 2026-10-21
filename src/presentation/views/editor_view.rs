@@ -388,7 +388,7 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
                     // 把起点拉到了行首），故切片安全。
                     let bs = edit.byte_start.min(prev.len());
                     let be = edit.byte_end.min(prev.len());
-                    app.editor_text = format!("{}{}{}", &prev[..bs], edit.inserted, &prev[be..]);
+                    app.set_editor_text(format!("{}{}{}", &prev[..bs], edit.inserted, &prev[be..]));
                     // 第二个参数必须是 `prev.len()`（领域旧文本长度），**不是**
                     // `app.editor_text.len()`——上一行刚把 `editor_text` 拼成
                     // 变换后的新串，「退出列表」分支会把文本改短，新长度装不下

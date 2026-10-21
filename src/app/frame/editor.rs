@@ -500,6 +500,18 @@ impl EditorApp {
         self.preview.mark_edited(now_ms);
     }
 
+    /// 由视图侧设置编辑区绑定串（`TextEdit` 直接绑定的 `String`）。
+    ///
+    /// 视图在「用户本帧真的改了文本」时，就地拼出与领域一致的最终串写回
+    /// `editor_text`，再发领域命令——这样 [`Self::flush_edit`] 就不必再从
+    /// 领域整篇回读（那次回读会在每一帧把绑定给 egui 的字符串整体替换一遍，
+    /// 迫使 `TextEdit` 每敲一个键就重新推导光标 / 选区 / 撤销栈，表现为编辑区
+    /// 闪烁）。R-12 把「视图不得直写 `app.editor_text`」机械化，故这条改由
+    /// 方法入口收敛（见 `docs/architecture-constraints.md`）。
+    pub(crate) fn set_editor_text(&mut self, text: String) {
+        self.editor_text = text;
+    }
+
     /// 当前活动文档 ID（**测试用**）。
     ///
     /// `active_doc` 是 `pub(crate)`，集成测试（`tests/` 下）读不到。

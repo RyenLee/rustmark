@@ -436,6 +436,20 @@ fn allowed_for(layer: Layer) -> &'static [&'static str] {
     }
 }
 
+/// 是否表现层（含其全部子层）。R-12 的「不得直写 app 状态字段」只对
+/// 表现层生效——`tests/` 与 `src/` 其它层不套这条规则。
+fn is_presentation_layer(layer: Layer) -> bool {
+    matches!(
+        layer,
+        Layer::Presentation
+            | Layer::PresentationState
+            | Layer::PresentationViews
+            | Layer::PresentationRich
+            | Layer::PresentationWidgets
+            | Layer::PresentationIcons
+    )
+}
+
 // ============================================================================
 // 词法
 // ============================================================================
@@ -456,6 +470,10 @@ enum TokKind {
     Bang,
     /// `.`（与 `Other` 分开：字段访问的 `x.y` 不该被当成路径起始）。
     Dot,
+    /// `=`（赋值；与 `==` 区分开，R-12 直写守卫用）。
+    Assign,
+    /// `==`（相等比较；R-12 不得误伤判据里的 `==`）。
+    EqEq,
     Other,
 }
 
@@ -587,6 +605,16 @@ impl<'a> Lexer<'a> {
                 '!' => {
                     self.pos += 1;
                     self.push(&mut tokens, TokKind::Bang, String::new());
+                }
+                // `=` 与 `==` 必须区分（R-12 直写守卫）：`app.x.y =` 是赋值要拦，
+                // `app.x.y == z` 是判据里的相等比较要放行。
+                '=' if self.bytes.get(self.pos + 1) == Some(&b'=') => {
+                    self.pos += 2;
+                    self.push(&mut tokens, TokKind::EqEq, String::new());
+                }
+                '=' => {
+                    self.pos += 1;
+                    self.push(&mut tokens, TokKind::Assign, String::new());
                 }
                 _ => {
                     // 空白**不产生 token**——否则 `use egui;` 里 `use` 与 `egui`
@@ -1241,6 +1269,55 @@ fn check_file(rel: &str, layer: Layer, lexed: &Lexed, registry: &Registry) -> Ve
             });
         }
     }
+
+    // ---- R-12：表现层不得直写 app 状态字段（赋值形态）----
+    //
+    // `app.<state>.<field> =` 是 R-11 消除掉的「视图直接改 EditorApp 字段」
+    // 形状。R-11 把它收敛到 `EditorApp` 的方法入口，本规则把「零直写」
+    // 机械化：将来有人图省事在视图里直接 `app.x.y = z`，编译照过、
+    // 单测未必覆盖，这条把它钉死。
+    //
+    // 已知边界（必须放行）：
+    // - `&mut app.<state>.<field>`（egui 控件必须拿 `&mut String` /
+    //   `&mut bool`，如 `TextEdit::singleline(&mut app.x.y)` /
+    //   `ui.checkbox(&mut app.x.y, …)`）——那是**借用**，序列以 `)` 收尾，
+    //   不以 `=` 收尾，自然不命中。
+    // - `app.x.y == z` 是**比较**不是赋值，用 `EqEq` 与 `Assign` 区分开，
+    //   不能误伤判据里的相等比较（`!=` 是 `Bang` 后跟 `Assign`，同样不命中）。
+    // R-12-ANCHOR-START
+    if is_presentation_layer(layer) {
+        let mut k = 0;
+        while k < tokens.len() {
+            if tokens[k].kind == TokKind::Ident && tokens[k].text == "app" {
+                // 构造点访问路径 `app.<ident>( .<ident> )*`。
+                let mut path = String::from("app");
+                let mut j = k;
+                while tokens.get(j + 1).map(|n| n.kind) == Some(TokKind::Dot)
+                    && tokens.get(j + 2).map(|n| n.kind) == Some(TokKind::Ident)
+                {
+                    path.push('.');
+                    path.push_str(&tokens[j + 2].text);
+                    j += 2;
+                }
+                // 至少一段点访问 + 紧随其后的单个 `=`（不是 `==` / `!=`）。
+                if tokens.get(j + 1).map(|n| n.kind) == Some(TokKind::Assign) {
+                    violations.push(Violation {
+                        file: rel.to_string(),
+                        line: tokens[k].line,
+                        detail: format!(
+                            "presentation 层不得直写 app 状态字段（{path} = …）：视图应通过 \
+                             EditorApp 的方法入口写状态，不得直接改字段（见架构改造 R-11；\
+                             已知边界：`&mut {path}` 借用与 `{path} == …` 比较）"
+                        ),
+                    });
+                    k = j + 2;
+                    continue;
+                }
+            }
+            k += 1;
+        }
+    }
+    // R-12-ANCHOR-END
 
     // ---- 未登记的顶层位置：覆盖缺口，必须响 ----
     //
