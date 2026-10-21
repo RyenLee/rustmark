@@ -478,11 +478,10 @@ fn restore_draft(app: &mut EditorApp, edit: NameEdit, label: &str) {
             name,
             is_directory,
         } => {
-            app.sidebar.creating = Some((parent, name, is_directory));
+            app.restore_create_draft(parent, name, is_directory);
         }
         NameEdit::Rename { path, name } => {
-            app.sidebar.renaming_path = Some(path);
-            app.sidebar.rename_draft = name;
+            app.restore_rename_draft(path, name);
         }
     }
     let _ = label;
@@ -512,7 +511,7 @@ fn run_file_intent(app: &mut EditorApp, intent: FileIntent) {
         || intent.menu.is_some();
     if let Some(path) = intent.select {
         // 单选只改高亮，不开文档——打开是双击的动作（见 [`file_row`]）。
-        app.sidebar.selected_path = Some(path);
+        app.select_sidebar_path(path);
     }
     if let Some(path) = intent.toggle {
         app.sidebar.toggle_expanded(&path);

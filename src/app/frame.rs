@@ -530,6 +530,7 @@ mod outline;
 mod recovery;
 mod scheduler;
 mod settings;
+mod sidebar;
 mod tabs;
 mod workspace;
 pub(crate) use drag_drop::classify_dropped;

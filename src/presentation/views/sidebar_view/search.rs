@@ -24,7 +24,7 @@ pub(super) fn search_tab(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
             .desired_width(ui.available_width()),
     );
     if response.changed() {
-        app.sidebar.search_query = query;
+        app.set_search_query(query);
     }
     // 范围切换器紧贴输入框：它是比下面那排选项更高一级的决定
     // （决定「搜谁」先于「怎么搜」），位置上也要读得出这个次序。
@@ -113,7 +113,7 @@ fn scope_row(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
                 .on_hover_text(scope.hint())
                 .clicked()
             {
-                app.sidebar.search_scope = scope;
+                app.set_search_scope(scope);
             }
         }
     });
@@ -141,7 +141,7 @@ fn toggle_row(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
                 .on_hover_text(toggle.hint())
                 .clicked()
             {
-                app.sidebar.search_options = options.toggled(toggle);
+                app.toggle_search_option(toggle);
             }
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
