@@ -132,7 +132,7 @@ impl EditorApp {
 
     /// 状态栏统计（防抖版；建议一 / 问题 039）。
     ///
-    /// 与 [`crate::application::markdown::service::highlight_cache::HighlightPace`]
+    /// 与 [`crate::application::markdown::service::span_cache::HighlightPace`]
     /// 同源：打字期不每击键整篇重算（`compute_stats` 在 1MB 上 ≈ 9.5ms，
     /// 见 `docs/metrics.md` §3.2.5），而是沿用「上一次静止时算出的结果」，
     /// 直到文档**静止满 [`super::STATS_DEBOUNCE_MS`]** 才刷新。
@@ -464,6 +464,64 @@ impl EditorApp {
             self.replace_all(new_text);
             self.pending_cursor = Some((new_cursor, new_cursor));
         }
+    }
+
+    /// 在光标处插入一段文本（符号面板 / 工具栏插入结构共用）。
+    ///
+    /// 走领域 `insert_text` 而非直接改 `editor_text`，理由与
+    /// S6-07 的「三入口一致」同源：直接改 UI 文本会绕过一次撤销点，
+    /// 让用户「插入一个 emoji 之后按 Ctrl+Z 什么也没撤销」。
+    ///
+    /// # 插入点必须取 **UI 光标**而非领域光标
+    ///
+    /// 两者是不同的坐标系：领域记的是**上一次领域命令后**的光标，
+    /// UI 记的是 egui `TextEdit` 当前画出来的那个。而大纲跳转
+    /// （[`Self::goto_byte_offset`]）、查找命中（`reveal_match`）
+    /// 都只改 UI 光标——用户看到光标跳到了第 40 行，
+    /// 领域那边还停在第 3 行。此时按「插入符号」若读领域光标，
+    /// 内容会插到用户**看不见**的位置。
+    /// （`move_line` / `run_format` 同样取 UI 光标，规则一致。）
+    ///
+    /// 光标停在插入内容**之后**：停在内容里意味着用户接着打字
+    /// 会把文字插进代码块标记中间——这是插入类操作最常见的投诉。
+    ///
+    /// 有选区时**替换选区**：用户选中一段文字再插链接，
+    /// 得到「选中文字链接选中文字」是几乎所有编辑器的行为，
+    /// 也符合「插入」这个词的含义。
+    pub fn insert_at_cursor(&mut self, text: &str) -> AppResult<()> {
+        let Some(id) = self.ensure_document() else {
+            return Ok(());
+        };
+        // 选区优先：无选区时 `selection()` 返回 `None`，退回光标。
+        // 选区优先：无选区时 `selection()` 返回 `None`，退回光标。
+        let (start, end) = self
+            .editor
+            .selection()
+            .unwrap_or((self.editor.cursor, self.editor.cursor));
+        let end = end.max(start);
+        if start != end {
+            self.services.documents.replace_range(ReplaceRangeCommand {
+                id,
+                range: TextRange::new(ByteOffset::new(start), ByteOffset::new(end)),
+                text: text.to_string(),
+            })?;
+        } else {
+            self.services.documents.insert_text(InsertTextCommand {
+                id,
+                offset: start,
+                text: text.to_string(),
+            })?;
+        }
+        self.refresh_text();
+        let after = start + text.len();
+        // 领域光标也要跟上：否则下一次插入仍会用旧位置（见上）。
+        self.editor.set_selection(after, after);
+        self.pending_cursor = Some((
+            editor_ops::byte_to_char(&self.editor_text, after),
+            editor_ops::byte_to_char(&self.editor_text, after),
+        ));
+        self.clear_undoer_next = true;
+        Ok(())
     }
 
     /// 缩进单位（空格），来自设置 `tab_size`。

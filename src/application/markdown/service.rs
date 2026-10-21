@@ -28,11 +28,11 @@
 //! - `view_mapper`：领域渲染产物 → DTO 的映射函数。
 
 mod highlight;
-mod highlight_cache;
 mod lint;
 mod navigation;
 mod preview;
 mod render_cache;
+mod span_cache;
 mod spell;
 mod spell_cache;
 mod view_mapper;
@@ -50,8 +50,8 @@ use crate::application::document::DocumentContentProvider;
 
 use super::commands::ClearCacheCommand;
 
-pub use highlight_cache::{HighlightCache, HighlightPace};
 pub use render_cache::{DebouncePolicy, RenderCache};
+pub use span_cache::{HighlightCache, HighlightPace};
 pub use spell_cache::SpellCache;
 
 /// 超过该字节数（500 KiB）的源文档标记为截断预览（FR-06 应用层判定）。

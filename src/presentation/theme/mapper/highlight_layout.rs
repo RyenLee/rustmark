@@ -5,7 +5,7 @@ use std::sync::Arc;
 use egui::emath::GuiRounding;
 use egui::text::{ByteIndex, TextWrapping};
 
-use super::highlight_cache::{
+use super::galley_cache::{
     HighlightStats, LARGE_FILE_BYTES, LAST_STATS, LINE_LAYOUT, LineLayout, WHOLE_CACHE,
     atlas_token, build_line_job, editor_metrics_signature,
 };

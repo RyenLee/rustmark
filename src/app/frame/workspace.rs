@@ -1,4 +1,4 @@
-//! 工作区：文件树扫描 / 条目操作 / 打开文件 / 全局搜索分组。
+//! 工作区：文件树扫描 / 条目操作 / 打开管线（守卫 / 拒绝文案 / 入口 / 实现）。
 use super::*;
 
 /// 工作区文件树的**已装载条目**。
@@ -389,6 +389,51 @@ impl EditorApp {
         Ok(())
     }
 
+    // ================================================================
+    // 打开管线（R-21 从 files.rs 归位：守卫 / 拒绝文案 / 入口 / 实现同家）
+    // ================================================================
+
+    /// 该路径能否**作为文本**打开（问题 045）。
+    ///
+    /// 文件树置灰、双击拦截、拖放分类、打开守卫共用这一条判据；
+    /// 实现体只查 [`TextFormats`]，不碰磁盘（扩展名判定零 IO，
+    /// 可以安全地放进每帧的渲染循环）。
+    pub fn can_open_as_text(&self, path: &str) -> bool {
+        self.text_formats.accepts(path)
+    }
+
+    /// 非白名单格式的拒绝提示文案（唯一出处）。
+    ///
+    /// 关联函数而非 `&self` 方法：表现层要在**置灰的行**上直接用同一句话
+    /// 做悬停说明，那时手边不一定有可变借用。
+    pub fn unsupported_format_notice(path: &str) -> String {
+        let name = file_name_of(path);
+        format!("暂不支持打开该格式：{name}")
+    }
+
+    /// 把「该格式暂不支持」报到状态栏。
+    ///
+    /// 文件树双击非白名单文件时调用——那条路径**不**走打开管线
+    /// （入口已禁用），但仍要给用户一个原因，否则表现得像「点了没反应」。
+    pub fn report_unsupported_format(&mut self, path: &str) {
+        self.set_status_notice(Self::unsupported_format_notice(path));
+    }
+
+    /// 打开一个文件（用于最近文件、文件对话框）。
+    ///
+    /// 失败时**自己**把原因报到状态栏，不只把 `Err` 往上抛：
+    /// 欢迎页点一个已被删除的最近文件时，调用方若忘了展示错误，
+    /// 用户看到的就是「点了没反应」——比任何错误提示都更让人困惑。
+    /// 报错的职责放在这里而不是各调用方，是为了**按构造**保证可见。
+    pub fn open_path(&mut self, path: &str) -> AppResult<()> {
+        let result = self.open_workspace_file(path);
+        if let Err(e) = &result {
+            let name = file_name_of(path);
+            self.set_status_error(&format!("无法打开 {name}：{e}"));
+        }
+        result
+    }
+
     /// 展开某路径的所有祖先目录。
     pub(super) fn expand_ancestors(&mut self, path: &str) {
         let mut current = path.to_string();
@@ -500,32 +545,4 @@ impl EditorApp {
         }
         self.scan_workspace(&root).unwrap_or(0)
     }
-}
-
-/// 把领域命中转成表现层的分组结构，并算出每条命中的高亮区间。
-///
-/// 高亮区间在**字符**坐标下算（理由同`scroll_sync` 那套换算）：
-/// 片段要交给 egui 排版，按字节切中文会错位——「一」在UTF-8 里 3 字节，
-/// 字节 7 落在字符 9 的中间，切出来的两半都不是完整字符。
-///
-/// 查询词与选项由调用方传入而不是从 `result` 里找：`SearchResultView`
-/// 本身不携带查询（它是领域 DTO，不该知道 UI 传了什么）。
-pub(crate) fn group_search_hits(
-    result: &SearchResultView,
-    query: &str,
-    case_sensitive: bool,
-) -> Vec<SearchGroup> {
-    let rows: Vec<(String, usize, String)> = result
-        .hits
-        .iter()
-        .map(|hit| (hit.path.as_str().to_string(), hit.line, hit.snippet.clone()))
-        .collect();
-    let mut groups = group_hits(&rows);
-    for group in &mut groups {
-        for hit in &mut group.hits {
-            hit.highlight =
-                locate_in_snippet(&hit.snippet, query, case_sensitive).unwrap_or((0, 0));
-        }
-    }
-    groups
 }

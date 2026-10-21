@@ -1,4 +1,7 @@
-//! 文件与文档操作：保存 / 新建 / 状态栏提示 / 路径读取 / 自动保存 / 拖放打开。
+//! 文件与文档操作：保存 / 新建 / 路径读取 / 自动保存 / 拖放打开。
+//!
+//! 状态栏写入口在 `status_bar.rs`（R-21 归位），光标插入在 `editor.rs`，
+//! 打开管线（守卫 / 拒绝文案 / 入口 / 实现）在 `workspace.rs`。
 use super::*;
 
 impl EditorApp {
@@ -38,22 +41,6 @@ impl EditorApp {
         }
     }
 
-    /// 在状态栏显示一条错误。
-    ///
-    /// 时钟取自 `services.markdown`（所有应用服务共用同一个 `Clock`），
-    /// 不直接调 `SystemClock`：消息的「4 秒后消失」是可测规则，
-    /// 用系统时钟就没法写测试验证它。
-    pub fn set_status_error(&mut self, text: &str) {
-        let now = self.services.markdown.now().millis();
-        self.status_bar.error(text, now);
-    }
-
-    /// 在状态栏显示一条普通提示。
-    pub fn set_status_notice(&mut self, text: impl Into<String>) {
-        let now = self.services.markdown.now().millis();
-        self.status_bar.notice(text, now);
-    }
-
     /// 当前文档的**保存路径**（`None` = 未保存过的新文档）。
     ///
     /// 这是「当前文档路径」的**唯一出处**（V11-54a / R-15）：
@@ -90,64 +77,6 @@ impl EditorApp {
     /// 当前生效主题的显示名（「关于」面板用）。
     pub fn theme_kind_label(&self) -> &'static str {
         crate::presentation::theme::builtin::theme_kind_label(self.ui.theme.kind)
-    }
-
-    /// 在光标处插入一段文本（符号面板 / 工具栏插入结构共用）。
-    ///
-    /// 走领域 `insert_text` 而非直接改 `editor_text`，理由与
-    /// S6-07 的「三入口一致」同源：直接改 UI 文本会绕过一次撤销点，
-    /// 让用户「插入一个 emoji 之后按 Ctrl+Z 什么也没撤销」。
-    ///
-    /// # 插入点必须取 **UI 光标**而非领域光标
-    ///
-    /// 两者是不同的坐标系：领域记的是**上一次领域命令后**的光标，
-    /// UI 记的是 egui `TextEdit` 当前画出来的那个。而大纲跳转
-    /// （[`Self::goto_byte_offset`]）、查找命中（`reveal_match`）
-    /// 都只改 UI 光标——用户看到光标跳到了第 40 行，
-    /// 领域那边还停在第 3 行。此时按「插入符号」若读领域光标，
-    /// 内容会插到用户**看不见**的位置。
-    /// （`move_line` / `run_format` 同样取 UI 光标，规则一致。）
-    ///
-    /// 光标停在插入内容**之后**：停在内容里意味着用户接着打字
-    /// 会把文字插进代码块标记中间——这是插入类操作最常见的投诉。
-    ///
-    /// 有选区时**替换选区**：用户选中一段文字再插链接，
-    /// 得到「选中文字链接选中文字」是几乎所有编辑器的行为，
-    /// 也符合「插入」这个词的含义。
-    pub fn insert_at_cursor(&mut self, text: &str) -> AppResult<()> {
-        let Some(id) = self.ensure_document() else {
-            return Ok(());
-        };
-        // 选区优先：无选区时 `selection()` 返回 `None`，退回光标。
-        // 选区优先：无选区时 `selection()` 返回 `None`，退回光标。
-        let (start, end) = self
-            .editor
-            .selection()
-            .unwrap_or((self.editor.cursor, self.editor.cursor));
-        let end = end.max(start);
-        if start != end {
-            self.services.documents.replace_range(ReplaceRangeCommand {
-                id,
-                range: TextRange::new(ByteOffset::new(start), ByteOffset::new(end)),
-                text: text.to_string(),
-            })?;
-        } else {
-            self.services.documents.insert_text(InsertTextCommand {
-                id,
-                offset: start,
-                text: text.to_string(),
-            })?;
-        }
-        self.refresh_text();
-        let after = start + text.len();
-        // 领域光标也要跟上：否则下一次插入仍会用旧位置（见上）。
-        self.editor.set_selection(after, after);
-        self.pending_cursor = Some((
-            editor_ops::byte_to_char(&self.editor_text, after),
-            editor_ops::byte_to_char(&self.editor_text, after),
-        ));
-        self.clear_undoer_next = true;
-        Ok(())
     }
 
     /// 读取一个工作区文件的文本内容（差异对比的右侧）。
@@ -452,32 +381,6 @@ impl EditorApp {
         }
     }
 
-    /// 该路径能否**作为文本**打开（问题 045）。
-    ///
-    /// 文件树置灰、双击拦截、拖放分类、打开守卫共用这一条判据；
-    /// 实现体只查 [`TextFormats`]，不碰磁盘（扩展名判定零 IO，
-    /// 可以安全地放进每帧的渲染循环）。
-    pub fn can_open_as_text(&self, path: &str) -> bool {
-        self.text_formats.accepts(path)
-    }
-
-    /// 非白名单格式的拒绝提示文案（唯一出处）。
-    ///
-    /// 关联函数而非 `&self` 方法：表现层要在**置灰的行**上直接用同一句话
-    /// 做悬停说明，那时手边不一定有可变借用。
-    pub fn unsupported_format_notice(path: &str) -> String {
-        let name = file_name_of(path);
-        format!("暂不支持打开该格式：{name}")
-    }
-
-    /// 把「该格式暂不支持」报到状态栏。
-    ///
-    /// 文件树双击非白名单文件时调用——那条路径**不**走打开管线
-    /// （入口已禁用），但仍要给用户一个原因，否则表现得像「点了没反应」。
-    pub fn report_unsupported_format(&mut self, path: &str) {
-        self.set_status_notice(Self::unsupported_format_notice(path));
-    }
-
     /// 打开最近文件列表（按最近使用降序）。
     ///
     /// 欢迎页与「文件 → 最近」共用。**每次现取**而不是缓存：
@@ -488,21 +391,6 @@ impl EditorApp {
             .workspace
             .list_recent(ListRecentQuery)
             .unwrap_or_default()
-    }
-
-    /// 打开一个文件（用于最近文件、文件对话框）。
-    ///
-    /// 失败时**自己**把原因报到状态栏，不只把 `Err` 往上抛：
-    /// 欢迎页点一个已被删除的最近文件时，调用方若忘了展示错误，
-    /// 用户看到的就是「点了没反应」——比任何错误提示都更让人困惑。
-    /// 报错的职责放在这里而不是各调用方，是为了**按构造**保证可见。
-    pub fn open_path(&mut self, path: &str) -> AppResult<()> {
-        let result = self.open_workspace_file(path);
-        if let Err(e) = &result {
-            let name = file_name_of(path);
-            self.set_status_error(&format!("无法打开 {name}：{e}"));
-        }
-        result
     }
 
     /// 文件拖放打开（P2）。

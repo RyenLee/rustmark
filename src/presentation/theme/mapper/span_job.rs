@@ -7,7 +7,7 @@
 //!
 //! | 实现 | 位置 | 场景 |
 //! |---|---|---|
-//! | `build_line_job` | `mapper/highlight_cache.rs` | 编辑区逐行排版 |
+//! | `build_line_job` | `mapper/galley_cache.rs` | 编辑区逐行排版 |
 //! | `highlighted_code_job` | `views/preview_view/code.rs` | 预览区代码块 |
 //! | `build_text_job` | `views/preview_view/inline.rs` | 预览区行内富文本 |
 //!

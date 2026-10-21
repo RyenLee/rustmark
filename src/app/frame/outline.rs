@@ -1,6 +1,6 @@
 //! 大纲 / 查找拼写：侧栏的「大纲」「检查」标签与跳转通路。
 use super::*;
-use crate::app::frame::workspace::group_search_hits;
+use crate::app::frame::find::group_search_hits;
 
 impl EditorApp {
     /// 取当前文档的大纲（`None` 表示没有活动文档或解析失败）。

@@ -32,7 +32,7 @@
 //! - `span_job`：**唯一**的 span → [`egui::text::LayoutJob`] 构造器（R-10）；
 //!   编辑区 / 预览区代码块 / 预览区行内三处共用，差异由 `SpanPolicy` 显式表达。
 
-mod highlight_cache;
+mod galley_cache;
 mod highlight_layout;
 mod span_job;
 mod squiggle;
@@ -40,7 +40,7 @@ mod squiggle;
 #[cfg(test)]
 mod tests;
 
-pub use highlight_cache::{
+pub use galley_cache::{
     HighlightStats, atlas_token, clear_highlight_caches, last_highlight_stats, line_cache_len,
     line_tops,
 };
@@ -54,7 +54,7 @@ pub use squiggle::{FindMark, SpellMark, Squiggle, paint_squiggles, squiggles_for
 /// 放在同一帧里渲染并比对颜色序列，而预览区路径住在 `presentation::views`。
 /// 生产代码请走 [`highlight_layout`]（它内部会调这个）。
 #[cfg(test)]
-pub(crate) use highlight_cache::build_line_job;
+pub(crate) use galley_cache::build_line_job;
 
 use egui::{Color32, TextFormat};
 
@@ -481,7 +481,7 @@ pub fn apply(ctx: &egui::Context, theme: &Theme) {
     // 钉成 egui 启动时的默认值（`Style::default()` → `Visuals::dark()` 的
     // `TwoCoverageMinusCoverageSq`）：应用生命周期内该值永不变化，
     // `begin_pass` 永远不会因它重建 Fonts。
-    // （图集填充率 >80% 导致的重建由 `highlight_cache::atlas_token`
+    // （图集填充率 >80% 导致的重建由 `galley_cache::atlas_token`
     // 纳入缓存键兜底，见那儿的长注释。）
     //
     // 0.37 起该字段从 `Visuals::text_alpha_from_coverage` 迁到了

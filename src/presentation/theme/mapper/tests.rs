@@ -1,4 +1,4 @@
-use super::highlight_cache::build_line_job;
+use super::galley_cache::build_line_job;
 use super::*;
 use crate::application::dto::{RangeView, SpanView};
 use egui::Color32;

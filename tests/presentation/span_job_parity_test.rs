@@ -50,7 +50,8 @@ use rustmark::shared::geometry::{clamp_to_char_boundaries, floor_char_boundary};
 
 /// 旧 `build_line_job`（边界并集语义）——编辑区那一侧。
 ///
-/// 抄自 `67210f2^:src/presentation/theme/mapper/highlight_cache.rs`。
+/// 抄自 `67210f2^:src/presentation/theme/mapper/highlight_cache.rs`（该文件
+/// 后更名为 `galley_cache.rs`，此处保留原始提交路径以示出处）。
 fn legacy_build_line_job(
     theme: &Theme,
     line: &str,
@@ -224,7 +225,7 @@ fn new_code_job(theme: &Theme, text: &str, spans: &[SpanView], wrap_width: f32) 
     job
 }
 
-/// 新编辑区那一侧的构造（与 `highlight_cache.rs` 现在的调用一致）。
+/// 新编辑区那一侧的构造（与 `galley_cache.rs` 现在的调用一致）。
 fn new_editor_job(
     theme: &Theme,
     line: &str,
