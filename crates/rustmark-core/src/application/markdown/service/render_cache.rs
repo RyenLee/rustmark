@@ -64,7 +64,7 @@ impl RenderCache {
     /// 取缓存命中（要求版本号一致，否则视为失效）。
     ///
     /// 命中时触碰访问序并把键挪到尾部（最新），使**正在预览的文档**永不被误驱逐。
-    pub fn get(&mut self, id: DocumentId, revision: u64) -> Option<&Vec<RenderedBlock>> {
+    pub(crate) fn get(&mut self, id: DocumentId, revision: u64) -> Option<&Vec<RenderedBlock>> {
         let hit = self
             .entries
             .peek(&id)
@@ -80,28 +80,18 @@ impl RenderCache {
     }
 
     /// 写入缓存（达到容量且为新键时，驱逐访问序最旧的一个键）。
-    pub fn insert(&mut self, id: DocumentId, revision: u64, blocks: Vec<RenderedBlock>) {
+    pub(crate) fn insert(&mut self, id: DocumentId, revision: u64, blocks: Vec<RenderedBlock>) {
         self.entries.insert(id, CachedRender { revision, blocks });
     }
 
     /// 失效单个文档的缓存。
-    pub fn invalidate(&mut self, id: DocumentId) {
+    pub(crate) fn invalidate(&mut self, id: DocumentId) {
         self.entries.invalidate(&id);
     }
 
     /// 失效全部缓存（主题切换后调用）。
-    pub fn invalidate_all(&mut self) {
+    pub(crate) fn invalidate_all(&mut self) {
         self.entries.invalidate_all();
-    }
-
-    /// 缓存条目数。
-    pub fn len(&self) -> usize {
-        self.entries.len()
-    }
-
-    /// 是否为空。
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
     }
 }
 
@@ -118,7 +108,7 @@ mod tests {
         assert!(cache.get(id(1), 1).is_some());
         // 插入第 3 个，应驱逐最旧的 2，保留近期用过的 1。
         cache.insert(id(3), 1, vec![]);
-        assert_eq!(cache.len(), 2);
+        assert_eq!(cache.entries.len(), 2);
         assert!(cache.get(id(1), 1).is_some(), "近期命中的文档不应被驱逐");
         assert!(cache.get(id(2), 1).is_none(), "最旧且未再访问的应被驱逐");
         assert!(cache.get(id(3), 1).is_some());

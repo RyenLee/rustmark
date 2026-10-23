@@ -148,7 +148,7 @@ pub struct DefinitionBody {
 
 impl DefinitionBody {
     /// 构造定义正文。
-    pub(crate) fn new(text: impl Into<String>, spans: Vec<InlineSpan>) -> Self {
+    pub fn new(text: impl Into<String>, spans: Vec<InlineSpan>) -> Self {
         Self {
             text: text.into(),
             spans,
@@ -179,7 +179,7 @@ pub struct DefinitionEntry {
 
 impl DefinitionEntry {
     /// 构造条目。
-    pub(crate) fn new(term: impl Into<String>, term_spans: Vec<InlineSpan>) -> Self {
+    pub fn new(term: impl Into<String>, term_spans: Vec<InlineSpan>) -> Self {
         Self {
             term: term.into(),
             term_spans,

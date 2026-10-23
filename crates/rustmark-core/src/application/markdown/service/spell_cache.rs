@@ -19,7 +19,7 @@ struct CachedSpell {
 ///
 /// 与 [`HighlightCache`](super::HighlightCache) 同构，故刻意复用其容量常量而非另立配置。
 /// 驱逐策略本体在 [`LruMap`]（D-4 收敛：四处缓存共用一份实现）。
-pub struct SpellCache {
+pub(crate) struct SpellCache {
     entries: LruMap<DocumentId, CachedSpell>,
     /// 命中次数（调试 / 测试断言用）。
     pub hits: u64,
@@ -38,7 +38,7 @@ impl SpellCache {
     }
 
     /// 读取；版本不匹配视为未命中。
-    pub fn get(&mut self, doc_id: DocumentId, revision: u64) -> Option<Vec<(usize, usize)>> {
+    pub(crate) fn get(&mut self, doc_id: DocumentId, revision: u64) -> Option<Vec<(usize, usize)>> {
         let matched = self
             .entries
             .peek(&doc_id)
@@ -55,33 +55,18 @@ impl SpellCache {
     }
 
     /// 写入（超容量且为新键时，驱逐访问序最旧的一个键）。
-    pub fn insert(&mut self, doc_id: DocumentId, revision: u64, hits: Vec<(usize, usize)>) {
+    pub(crate) fn insert(&mut self, doc_id: DocumentId, revision: u64, hits: Vec<(usize, usize)>) {
         self.entries.insert(doc_id, CachedSpell { revision, hits });
     }
 
     /// 失效单个文档的缓存。
-    pub fn invalidate(&mut self, id: DocumentId) {
+    pub(crate) fn invalidate(&mut self, id: DocumentId) {
         self.entries.invalidate(&id);
     }
 
     /// 失效全部缓存。
-    pub fn invalidate_all(&mut self) {
+    pub(crate) fn invalidate_all(&mut self) {
         self.entries.invalidate_all();
-    }
-
-    /// 清空（等价于 [`Self::invalidate_all`]）。
-    pub fn clear(&mut self) {
-        self.invalidate_all();
-    }
-
-    /// 条目数。
-    pub fn len(&self) -> usize {
-        self.entries.len()
-    }
-
-    /// 是否为空。
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
     }
 }
 
@@ -98,7 +83,7 @@ mod tests {
         let _ = cache.get(id(1), 1);
         // 插入第 3 个，应驱逐最旧的 2，保留近期用过的 1。
         cache.insert(id(3), 1, vec![]);
-        assert_eq!(cache.len(), 2);
+        assert_eq!(cache.entries.len(), 2);
         assert!(cache.get(id(1), 1).is_some(), "近期命中的文档不应被驱逐");
         assert!(cache.get(id(2), 1).is_none(), "最旧且未再访问的应被驱逐");
         assert!(cache.get(id(3), 1).is_some());

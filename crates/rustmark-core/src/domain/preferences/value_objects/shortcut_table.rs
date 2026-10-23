@@ -80,7 +80,7 @@ pub struct Conflict {
 
 impl Conflict {
     /// 构造冲突。
-    pub(crate) fn new(kind: ConflictKind, combo: KeyCombo, actions: Vec<ActionId>) -> Self {
+    pub fn new(kind: ConflictKind, combo: KeyCombo, actions: Vec<ActionId>) -> Self {
         Self {
             kind,
             combo,

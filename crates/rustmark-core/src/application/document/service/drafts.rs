@@ -28,7 +28,11 @@ impl DocumentAppService {
     }
 
     /// 读取某文档的遗留草稿（不存在返回 `None`）。
-    pub fn load_draft(&self, drafts_dir: &Path, id: DocumentId) -> AppResult<Option<String>> {
+    pub(crate) fn load_draft(
+        &self,
+        drafts_dir: &Path,
+        id: DocumentId,
+    ) -> AppResult<Option<String>> {
         self.repository.load_draft(drafts_dir, id)
     }
 

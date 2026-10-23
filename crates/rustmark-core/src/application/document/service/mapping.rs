@@ -52,7 +52,7 @@ pub(super) fn shift_selection(
 ///
 /// 与 [`to_tab_summary`] 的区别：本函数做**全文预览**（会读整篇文本），
 /// 供详情类视图使用；标签页列表走后者，避免每帧快照全文。
-pub fn to_document_view(doc: &Document) -> DocumentView {
+pub(crate) fn to_document_view(doc: &Document) -> DocumentView {
     let text = doc.text();
     let preview: String = text.chars().take(120).collect();
     DocumentView {
@@ -72,7 +72,7 @@ pub fn to_document_view(doc: &Document) -> DocumentView {
 }
 
 /// 轻量摘要投影：**不做全文快照**（见 [`TabSummary`] 的文档）。
-pub fn to_tab_summary(doc: &Document) -> TabSummary {
+pub(crate) fn to_tab_summary(doc: &Document) -> TabSummary {
     TabSummary {
         id: doc.id(),
         title: doc.meta().title().to_string(),

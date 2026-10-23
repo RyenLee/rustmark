@@ -74,7 +74,7 @@ pub const RECENT_FILES_LIMIT: usize = 20;
 
 impl RecentFiles {
     /// 用默认上限（20）构造空列表。
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self::with_limit(RECENT_FILES_LIMIT)
     }
 

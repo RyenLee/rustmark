@@ -17,7 +17,7 @@ pub struct OutlineItem {
 
 impl OutlineItem {
     /// 构造大纲条目。
-    pub(crate) fn new(level: u8, text: impl Into<String>, line: usize, block_id: BlockId) -> Self {
+    pub fn new(level: u8, text: impl Into<String>, line: usize, block_id: BlockId) -> Self {
         Self {
             level,
             text: text.into(),

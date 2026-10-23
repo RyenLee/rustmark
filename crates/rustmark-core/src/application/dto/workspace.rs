@@ -95,13 +95,6 @@ pub struct ConflictView {
     pub actions: Vec<String>,
 }
 
-impl CloseDecisionView {
-    /// 是否允许直接关闭。
-    pub const fn can_close(self) -> bool {
-        matches!(self, Self::Closed)
-    }
-}
-
 /// 格式指令执行结果（S6-07）。
 ///
 /// 表现层拿不到 `EditPlan`（`check-arch` 禁止 presentation 依赖 domain），

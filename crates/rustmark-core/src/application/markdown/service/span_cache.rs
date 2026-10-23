@@ -113,23 +113,13 @@ impl HighlightCache {
     }
 
     /// 失效单个文档的缓存。
-    pub fn invalidate(&mut self, id: DocumentId) {
+    pub(crate) fn invalidate(&mut self, id: DocumentId) {
         self.entries.invalidate(&id);
     }
 
     /// 失效全部缓存。
-    pub fn invalidate_all(&mut self) {
+    pub(crate) fn invalidate_all(&mut self) {
         self.entries.invalidate_all();
-    }
-
-    /// 缓存条目数。
-    pub fn len(&self) -> usize {
-        self.entries.len()
-    }
-
-    /// 是否为空。
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
     }
 }
 
@@ -182,7 +172,7 @@ impl HighlightPace {
     /// - 首次见该文档 → `true`（立刻上色，见类型文档）；
     /// - 版本变了 → 记下新时刻并返回 `false`（本帧不上色）；
     /// - 版本未变 → 距上次变化是否已满 `interval_ms`。
-    pub fn settled(
+    pub(crate) fn settled(
         &mut self,
         id: DocumentId,
         revision: u64,
@@ -212,7 +202,7 @@ impl HighlightPace {
     ///
     /// 只统计 `pending` 的文档：已算完的文档窗口早已过去，把它们算进来会得到
     /// 一个过去的时刻，反而让应用每帧都被叫醒。
-    pub fn next_deadline(&self, interval_ms: u64) -> Option<u64> {
+    pub(crate) fn next_deadline(&self, interval_ms: u64) -> Option<u64> {
         self.seen
             .values()
             .filter(|entry| entry.pending)
@@ -243,21 +233,11 @@ impl HighlightPace {
         );
     }
 
-    /// 已登记的文档数（测试用）。
-    pub fn len(&self) -> usize {
-        self.seen.len()
-    }
-
-    /// 是否为空（测试用）。
-    pub fn is_empty(&self) -> bool {
-        self.seen.is_empty()
-    }
-
     /// 防抖状态快照（测试与调试用）：`(文档 ID, 上次见到的版本, 上次见到的时刻毫秒)`。
     ///
-    /// 与 `len` / `is_empty` 同类，回答「这一帧为什么不上色」：版本刚变（未静止）、
+    /// 回答「这一帧为什么不上色」：版本刚变（未静止）、
     /// 还是静止未满 `interval_ms`。缺了它，回归只能凭耗时间接推断。
-    pub fn snapshot(&self) -> Vec<(DocumentId, u64, u64)> {
+    pub(crate) fn snapshot(&self) -> Vec<(DocumentId, u64, u64)> {
         self.seen
             .iter()
             .map(|(id, entry)| (*id, entry.revision, entry.at.millis()))

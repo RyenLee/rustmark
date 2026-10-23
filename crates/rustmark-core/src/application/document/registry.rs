@@ -110,24 +110,19 @@ impl DocumentRegistry {
     }
 
     /// 取文档（只读）。
-    pub fn get(&self, id: DocumentId) -> Option<&Document> {
+    pub(crate) fn get(&self, id: DocumentId) -> Option<&Document> {
         self.docs.get(&id)
     }
 
     /// 取文档（可变）。
-    pub fn get_mut(&mut self, id: DocumentId) -> Option<&mut Document> {
+    pub(crate) fn get_mut(&mut self, id: DocumentId) -> Option<&mut Document> {
         self.docs.get_mut(&id)
     }
 
     /// 移除文档，返回被移除的文档。
-    pub fn remove(&mut self, id: DocumentId) -> Option<Document> {
+    pub(crate) fn remove(&mut self, id: DocumentId) -> Option<Document> {
         self.order.retain(|open| *open != id);
         self.docs.remove(&id)
-    }
-
-    /// 是否含有某文档。
-    pub fn contains(&self, id: DocumentId) -> bool {
-        self.docs.contains_key(&id)
     }
 
     /// 全部打开的文档 ID，**按打开顺序**。
@@ -135,17 +130,12 @@ impl DocumentRegistry {
     /// 顺序即 UI 标签条的显示顺序，也是 `Alt+N` 的下标依据。
     /// 过滤掉已不在 `docs` 里的 ID（理论上不会发生，`remove` 会同步维护，
     /// 但多一层防御比「信任内部不变量」便宜）。
-    pub fn ids(&self) -> Vec<DocumentId> {
+    pub(crate) fn ids(&self) -> Vec<DocumentId> {
         self.order
             .iter()
             .copied()
             .filter(|id| self.docs.contains_key(id))
             .collect()
-    }
-
-    /// 打开文档数。
-    pub fn len(&self) -> usize {
-        self.docs.len()
     }
 
     /// 只取文档版本号，**不做全文快照**（问题 043）。
@@ -155,11 +145,6 @@ impl DocumentRegistry {
     /// 计数器，读取 O(1)。
     pub fn revision_of(&self, id: DocumentId) -> Option<u64> {
         self.docs.get(&id).map(|doc| doc.revision())
-    }
-
-    /// 是否为空。
-    pub fn is_empty(&self) -> bool {
-        self.docs.is_empty()
     }
 }
 
@@ -212,11 +197,6 @@ impl RegistryProvider {
     /// 由共享注册表构造提供者。
     pub fn new(registry: Arc<RwLock<DocumentRegistry>>) -> Self {
         Self { registry }
-    }
-
-    /// 取出底层的共享注册表（供 `DocumentAppService` 复用同一份状态）。
-    pub fn registry(&self) -> Arc<RwLock<DocumentRegistry>> {
-        self.registry.clone()
     }
 }
 

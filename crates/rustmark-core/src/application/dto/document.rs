@@ -19,16 +19,6 @@ impl RangeView {
     pub const fn new(start: usize, end: usize) -> Self {
         Self { start, end }
     }
-
-    /// 区间长度（字节）。
-    pub const fn len(self) -> usize {
-        self.end.saturating_sub(self.start)
-    }
-
-    /// 是否为空区间。
-    pub const fn is_empty(self) -> bool {
-        self.len() == 0
-    }
 }
 
 /// 单个打开文档的视图。

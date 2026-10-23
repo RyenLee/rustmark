@@ -93,7 +93,7 @@ pub(crate) struct LintRuleSet {
 
 impl LintRuleSet {
     /// 由规则列表构造（自动去重）。
-    pub(crate) fn new(rules: impl IntoIterator<Item = LintRule>) -> Self {
+    pub fn new(rules: impl IntoIterator<Item = LintRule>) -> Self {
         Self {
             rules: rules.into_iter().collect(),
         }
@@ -140,12 +140,7 @@ pub(crate) struct LintIssue {
 
 impl LintIssue {
     /// 构造一处问题。
-    pub(crate) fn new(
-        rule: LintRule,
-        line: usize,
-        column: usize,
-        message: impl Into<String>,
-    ) -> Self {
+    pub fn new(rule: LintRule, line: usize, column: usize, message: impl Into<String>) -> Self {
         Self {
             rule,
             line,

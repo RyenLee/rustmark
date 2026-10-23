@@ -52,7 +52,7 @@ use super::commands::ClearCacheCommand;
 
 pub use render_cache::{DebouncePolicy, RenderCache};
 pub use span_cache::{HighlightCache, HighlightPace};
-pub use spell_cache::SpellCache;
+pub(crate) use spell_cache::SpellCache;
 
 /// 超过该字节数（500 KiB）的源文档标记为截断预览（FR-06 应用层判定）。
 pub const TRUNCATE_THRESHOLD_BYTES: usize = 500 * 1024;
@@ -148,16 +148,6 @@ impl MarkdownAppService {
     pub fn with_spell_checker(mut self, spell: Arc<dyn SpellChecker>) -> Self {
         self.spell = Some(spell);
         self
-    }
-
-    /// 拼写检查结果缓存（供测试失效用）。
-    pub fn spell_cache(&self) -> Arc<Mutex<SpellCache>> {
-        self.spell_cache.clone()
-    }
-
-    /// 取出渲染缓存（供事件订阅者失效）。
-    pub fn cache(&self) -> Arc<Mutex<RenderCache>> {
-        self.cache.clone()
     }
 
     /// 当前时间（由注入时钟读取）。

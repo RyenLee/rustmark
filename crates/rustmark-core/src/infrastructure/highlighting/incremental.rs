@@ -140,7 +140,7 @@ struct ParseOutcome {
 
 impl SyntectSession {
     /// 新建空会话。
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             syntaxes: default_syntax_set(),
             lang: None,

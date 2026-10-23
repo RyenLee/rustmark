@@ -42,7 +42,6 @@ use crate::shared::time::Clock;
 use super::DocumentContentProvider;
 use super::registry::{DocumentRegistry, RegistryProvider};
 
-pub use mapping::to_document_view;
 pub use stats::compute_stats;
 
 /// 文档用例服务：编排文档生命周期与编辑命令。
