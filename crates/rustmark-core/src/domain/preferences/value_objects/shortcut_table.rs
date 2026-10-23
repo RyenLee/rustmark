@@ -35,7 +35,7 @@ impl ShortcutBinding {
     }
 
     /// 组合键。
-    pub const fn combo(&self) -> KeyCombo {
+    pub(crate) const fn combo(&self) -> KeyCombo {
         self.combo
     }
 }
@@ -60,7 +60,7 @@ impl ConflictKind {
     }
 
     /// 说明文案（可直接呈现给用户）。
-    pub const fn description(&self) -> &'static str {
+    pub(crate) const fn description(&self) -> &'static str {
         match self {
             Self::Duplicate => "该快捷键被绑定到了多个动作，触发时行为不确定",
             Self::Reserved => "该快捷键被操作系统占用，可能无法生效",
@@ -80,7 +80,7 @@ pub struct Conflict {
 
 impl Conflict {
     /// 构造冲突。
-    pub fn new(kind: ConflictKind, combo: KeyCombo, actions: Vec<ActionId>) -> Self {
+    pub(crate) fn new(kind: ConflictKind, combo: KeyCombo, actions: Vec<ActionId>) -> Self {
         Self {
             kind,
             combo,
@@ -104,7 +104,7 @@ impl Conflict {
     }
 
     /// 人类可读描述（含组合与动作名）。
-    pub fn describe(&self) -> String {
+    pub(crate) fn describe(&self) -> String {
         let names: Vec<&str> = self.actions.iter().map(|a| a.label()).collect();
         format!(
             "{}：{}（{}）",
@@ -125,7 +125,7 @@ pub struct ShortcutTable {
 }
 
 /// 被操作系统占用的组合（跨平台保守取值）。
-pub const RESERVED_COMBOS: &[&str] = &["Meta+Q", "Meta+W", "Alt+F4", "Ctrl+Alt+Delete"];
+pub(crate) const RESERVED_COMBOS: &[&str] = &["Meta+Q", "Meta+W", "Alt+F4", "Ctrl+Alt+Delete"];
 
 impl ShortcutTable {
     /// 由绑定列表构造。

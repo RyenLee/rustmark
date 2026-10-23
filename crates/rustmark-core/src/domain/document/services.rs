@@ -93,7 +93,7 @@ pub struct EditingService;
 /// 缓冲区句柄别名（与聚合根内定义一致，重导出以集中引用）。
 ///
 /// 应用层据此持有「可替换的缓冲区实现」，不直接依赖 `ropey`。
-pub use super::aggregate::BufferHandle;
+pub(crate) use super::aggregate::BufferHandle;
 
 /// 缓冲区工厂：由基础设施层注入具体的 [`TextBuffer`] 实现（如 `RopeTextBuffer`）。
 ///

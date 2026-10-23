@@ -89,12 +89,12 @@ impl Snapshot {
     }
 
     /// 快照时刻的选区。
-    pub const fn selection(&self) -> Option<TextRange> {
+    pub(crate) const fn selection(&self) -> Option<TextRange> {
         self.selection
     }
 
     /// 快照时刻。
-    pub const fn at(&self) -> Timestamp {
+    pub(crate) const fn at(&self) -> Timestamp {
         self.at
     }
 }
@@ -165,14 +165,14 @@ impl UndoStack {
     ///
     /// 判据与 [`Self::push`] 完全同源（共用 [`Self::merges_with_last`]），
     /// 故「先判后建」与「先建后判」的结果逐例一致。
-    pub fn would_merge(&self, kind: ModificationKind, at: Timestamp) -> bool {
+    pub(crate) fn would_merge(&self, kind: ModificationKind, at: Timestamp) -> bool {
         self.merges_with_last(kind, at)
     }
 
     /// 合并命中：只把窗口起点推到 `at`，不入栈、不构造快照。
     ///
     /// 与 [`Self::push`] 的合并分支逐字段等价（那里写的就是 `last_at = at`）。
-    pub fn merge(&mut self, at: Timestamp) {
+    pub(crate) fn merge(&mut self, at: Timestamp) {
         self.last_at = Some(at);
     }
 
@@ -222,18 +222,13 @@ impl UndoStack {
     }
 
     /// 当前重做栈深度。
-    pub fn redo_depth(&self) -> usize {
+    pub(crate) fn redo_depth(&self) -> usize {
         self.redo.len()
     }
 
     /// 清空重做栈（例如文档被外部程序改写，历史不再可信）。
     pub fn clear_redo(&mut self) {
         self.redo.clear();
-    }
-
-    /// 当前策略。
-    pub const fn policy(&self) -> UndoPolicy {
-        self.policy
     }
 
     /// 重置合并窗口状态。

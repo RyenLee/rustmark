@@ -35,26 +35,6 @@ impl Modifiers {
         }
     }
 
-    /// 是否含 `Ctrl`。
-    pub const fn ctrl(&self) -> bool {
-        self.ctrl
-    }
-
-    /// 是否含 `Alt`。
-    pub const fn alt(&self) -> bool {
-        self.alt
-    }
-
-    /// 是否含 `Shift`。
-    pub const fn shift(&self) -> bool {
-        self.shift
-    }
-
-    /// 是否含 `Meta`（macOS `Cmd` / Windows `Win`）。
-    pub const fn meta(&self) -> bool {
-        self.meta
-    }
-
     /// 是否不含任何修饰键。
     pub const fn is_empty(&self) -> bool {
         !self.ctrl && !self.alt && !self.shift && !self.meta
@@ -141,7 +121,7 @@ pub enum NamedKey {
 
 impl NamedKey {
     /// 由常见别名解析（大小写不敏感）。
-    pub fn parse(raw: &str) -> Option<Self> {
+    pub(crate) fn parse(raw: &str) -> Option<Self> {
         match raw.to_ascii_lowercase().as_str() {
             "esc" | "escape" => Some(Self::Escape),
             "enter" | "return" | "cr" => Some(Self::Enter),
@@ -175,7 +155,7 @@ impl NamedKey {
     }
 
     /// 规范显示名。
-    pub const fn display(&self) -> &'static str {
+    pub(crate) const fn display(&self) -> &'static str {
         match self {
             Self::Escape => "Esc",
             Self::Enter => "Enter",
@@ -219,7 +199,7 @@ pub enum Key {
 
 impl Key {
     /// 由字符串解析；失败时返回 `None`。
-    pub fn parse(raw: &str) -> Option<Self> {
+    pub(crate) fn parse(raw: &str) -> Option<Self> {
         if let Some(named) = NamedKey::parse(raw) {
             return Some(Self::Named(named));
         }
@@ -237,7 +217,7 @@ impl Key {
     }
 
     /// 规范显示名。
-    pub fn display(&self) -> String {
+    pub(crate) fn display(&self) -> String {
         match self {
             Self::Char(c) => c.to_string(),
             Self::Named(named) => named.display().to_string(),
@@ -256,7 +236,7 @@ pub struct KeyCombo {
 
 impl KeyCombo {
     /// 构造组合。
-    pub const fn new(modifiers: Modifiers, key: Key) -> Self {
+    pub(crate) const fn new(modifiers: Modifiers, key: Key) -> Self {
         Self { modifiers, key }
     }
 
@@ -306,16 +286,6 @@ impl KeyCombo {
         }
     }
 
-    /// 修饰键。
-    pub const fn modifiers(&self) -> Modifiers {
-        self.modifiers
-    }
-
-    /// 主键。
-    pub const fn key(&self) -> Key {
-        self.key
-    }
-
     /// **唯一**的显示形式（菜单 / 命令面板 / 快捷键一览三处共用此函数）。
     ///
     /// 形如 `Ctrl+Shift+S`、`Esc`、`F5`。
@@ -327,7 +297,7 @@ impl KeyCombo {
     ///
     /// 注意：这是**提示**而非禁止——`Escape` / `F1`–`F12` 等无修饰键的功能键
     /// 不属于冲突（原型缺陷 A 的根治：匹配层不得拒绝纯单键）。
-    pub const fn clashes_with_text_input(&self) -> bool {
+    pub(crate) const fn clashes_with_text_input(&self) -> bool {
         self.modifiers.is_empty() && matches!(self.key, Key::Char(_))
     }
 }

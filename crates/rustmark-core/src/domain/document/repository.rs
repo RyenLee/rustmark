@@ -53,7 +53,7 @@ impl DocumentSnapshot {
     }
 
     /// 构造快照并带上识别到的编码（磁盘读取路径用）。
-    pub fn with_encoding(
+    pub(crate) fn with_encoding(
         id: DocumentId,
         path: FilePath,
         content: impl Into<String>,

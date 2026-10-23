@@ -108,7 +108,7 @@ impl Document {
     /// 与 [`Self::open`] 的差别只有撤销栈的策略：合并窗口是**编辑时**的行为，
     /// 打开的文件同样要被编辑，故设置对打开路径也必须生效——
     /// 否则「改了合并窗口，只有新建文档听他的」会是第二个静默无效的设置。
-    pub fn open_with_policy(
+    pub(crate) fn open_with_policy(
         id: DocumentId,
         path: FilePath,
         buffer: BufferHandle,
@@ -131,7 +131,7 @@ impl Document {
     ///
     /// 标题取自路径文件名（与 [`Self::open`] 同规则）：恢复出的文档
     /// 在标签条上显示原始文件名，而不是一律「未命名」。
-    pub fn recover(
+    pub(crate) fn recover(
         id: DocumentId,
         path: FilePath,
         buffer: BufferHandle,
@@ -144,7 +144,7 @@ impl Document {
     }
 
     /// 用自定义撤销策略新建空白文档（供偏好设置注入，S3-12 → S8）。
-    pub fn new_untitled_with_policy(
+    pub(crate) fn new_untitled_with_policy(
         buffer: BufferHandle,
         policy: UndoPolicy,
         now: Timestamp,
@@ -164,11 +164,6 @@ impl Document {
     /// 元数据。
     pub const fn meta(&self) -> &DocumentMeta {
         &self.meta
-    }
-
-    /// 修改状态。
-    pub const fn state(&self) -> ModificationState {
-        self.state
     }
 
     /// 光标与选区。
@@ -209,7 +204,7 @@ impl Document {
     }
 
     /// 取 `range` 区间的文本；越界返回错误（不 panic）。
-    pub fn slice(&self, range: TextRange) -> Result<String, DocumentError> {
+    pub(crate) fn slice(&self, range: TextRange) -> Result<String, DocumentError> {
         Ok(self.buffer.slice(range)?.into_owned())
     }
 
@@ -293,7 +288,7 @@ impl Document {
     /// [`UndoStack::would_merge`] 先判（只需 `(类型, 时刻)`，全是标量）：
     /// 命中走 [`UndoStack::merge`]（滚动时间窗，零分配），未命中才取快照。
     /// 两条分支的可见结果与旧实现逐例一致（判据同源，见 `undo.rs`）。
-    pub fn apply(&mut self, edit: Edit, now: Timestamp) -> Result<(), DocumentError> {
+    pub(crate) fn apply(&mut self, edit: Edit, now: Timestamp) -> Result<(), DocumentError> {
         if edit.is_noop() {
             return Ok(());
         }

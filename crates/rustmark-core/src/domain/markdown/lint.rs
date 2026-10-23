@@ -33,7 +33,7 @@ use std::collections::BTreeSet;
 
 /// 一条格式规则。
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
-pub enum LintRule {
+pub(crate) enum LintRule {
     /// 标题层级跳跃（如 `H1` 直接到 `H3`）。
     HeadingJump,
     /// 同一个列表里混用 `-` / `*` / `+`。
@@ -46,7 +46,7 @@ pub enum LintRule {
 
 impl LintRule {
     /// 全部规则（设置页开关列表与「全选」的来源）。
-    pub const ALL: [LintRule; 4] = [
+    pub(crate) const ALL: [LintRule; 4] = [
         LintRule::HeadingJump,
         LintRule::ListMarkerMixed,
         LintRule::TrailingWhitespace,
@@ -54,7 +54,7 @@ impl LintRule {
     ];
 
     /// 稳定标识（持久化与跨层传递用，不随文案变化）。
-    pub const fn id(self) -> &'static str {
+    pub(crate) const fn id(self) -> &'static str {
         match self {
             Self::HeadingJump => "heading_jump",
             Self::ListMarkerMixed => "list_marker_mixed",
@@ -64,7 +64,7 @@ impl LintRule {
     }
 
     /// 中文显示名（设置页开关与问题列表前缀）。
-    pub const fn label(self) -> &'static str {
+    pub(crate) const fn label(self) -> &'static str {
         match self {
             Self::HeadingJump => "标题层级跳跃",
             Self::ListMarkerMixed => "列表符号混用",
@@ -73,9 +73,12 @@ impl LintRule {
         }
     }
 
-    /// 由标识解析；未知标识返回 `None`（旧配置里的废弃规则名不应崩）。
-    pub fn parse(raw: &str) -> Option<Self> {
-        Self::ALL.iter().copied().find(|r| r.id() == raw)
+    /// 由稳定标识还原规则（持久化往返用）；未知标识返回 `None`。
+    ///
+    /// 仅单测使用（`rule_ids_round_trip`），生产路径只写不读。
+    #[cfg(test)]
+    pub(crate) fn parse(id: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|rule| rule.id() == id)
     }
 }
 
@@ -84,46 +87,48 @@ impl LintRule {
 /// 用 `BTreeSet` 而非 `Vec`：规则个数固定且需要「是否包含」的判断，
 /// 集合语义比线性查找更贴切，也顺带去重（重复登记同一条规则不该报两遍）。
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
-pub struct LintRuleSet {
+pub(crate) struct LintRuleSet {
     rules: BTreeSet<LintRule>,
 }
 
 impl LintRuleSet {
     /// 由规则列表构造（自动去重）。
-    pub fn new(rules: impl IntoIterator<Item = LintRule>) -> Self {
+    pub(crate) fn new(rules: impl IntoIterator<Item = LintRule>) -> Self {
         Self {
             rules: rules.into_iter().collect(),
         }
     }
 
-    /// 全部规则都启用。
-    pub fn all() -> Self {
-        Self::new(LintRule::ALL)
-    }
-
-    /// 一条都不启用（等价于关闭检查）。
-    pub fn none() -> Self {
-        Self::default()
-    }
-
     /// 该规则是否启用。
-    pub fn contains(&self, rule: LintRule) -> bool {
+    pub(crate) fn contains(&self, rule: LintRule) -> bool {
         self.rules.contains(&rule)
     }
 
     /// 启用中的规则（按 [`LintRule::ALL`] 的顺序，便于 UI 稳定排列）。
-    pub fn enabled(&self) -> Vec<LintRule> {
+    pub(crate) fn enabled(&self) -> Vec<LintRule> {
         LintRule::ALL
             .iter()
             .copied()
             .filter(|r| self.rules.contains(r))
             .collect()
     }
+
+    /// 全部规则都启用的规则集（测试基线，生产由偏好设置构造）。
+    #[cfg(test)]
+    pub(crate) fn all() -> Self {
+        Self::new(LintRule::ALL)
+    }
+
+    /// 空规则集（测试「全关」路径，生产由偏好设置构造）。
+    #[cfg(test)]
+    pub(crate) fn none() -> Self {
+        Self::new([])
+    }
 }
 
 /// 一处格式问题。
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub struct LintIssue {
+pub(crate) struct LintIssue {
     rule: LintRule,
     /// 行号（**0-based**，与大纲 / 搜索一致）。
     line: usize,
@@ -135,7 +140,12 @@ pub struct LintIssue {
 
 impl LintIssue {
     /// 构造一处问题。
-    pub fn new(rule: LintRule, line: usize, column: usize, message: impl Into<String>) -> Self {
+    pub(crate) fn new(
+        rule: LintRule,
+        line: usize,
+        column: usize,
+        message: impl Into<String>,
+    ) -> Self {
         Self {
             rule,
             line,
@@ -145,28 +155,28 @@ impl LintIssue {
     }
 
     /// 命中的规则。
-    pub const fn rule(&self) -> LintRule {
+    pub(crate) const fn rule(&self) -> LintRule {
         self.rule
     }
 
     /// 行号（0-based）。
-    pub const fn line(&self) -> usize {
+    pub(crate) const fn line(&self) -> usize {
         self.line
     }
 
     /// 列号（0-based 字符）。
-    pub const fn column(&self) -> usize {
+    pub(crate) const fn column(&self) -> usize {
         self.column
     }
 
     /// 说明文案。
-    pub fn message(&self) -> &str {
+    pub(crate) fn message(&self) -> &str {
         &self.message
     }
 }
 
 /// Markdown 格式检查器（**无状态纯函数**）。
-pub struct MarkdownLinter;
+pub(crate) struct MarkdownLinter;
 
 impl MarkdownLinter {
     /// 检查全文，返回全部问题（按行号、再按列号升序）。
@@ -176,7 +186,7 @@ impl MarkdownLinter {
     /// - 空文本 → 空集；
     /// - 规则集为空 → 空集（不逐个规则跑一遍，省掉无谓的扫描）；
     /// - 全部规则都跳过围栏代码块内部（见模块文档「误报防线」）。
-    pub fn lint(text: &str, rules: &LintRuleSet) -> Vec<LintIssue> {
+    pub(crate) fn lint(text: &str, rules: &LintRuleSet) -> Vec<LintIssue> {
         if text.is_empty() || rules.enabled().is_empty() {
             return Vec::new();
         }

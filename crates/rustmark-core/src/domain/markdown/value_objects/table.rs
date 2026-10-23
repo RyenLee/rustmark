@@ -78,19 +78,19 @@ impl ListItem {
     }
 
     /// 设置缩进层级。
-    pub fn with_depth(mut self, depth: u8) -> Self {
+    pub(crate) fn with_depth(mut self, depth: u8) -> Self {
         self.depth = depth;
         self
     }
 
     /// 设置有序列表序号。
-    pub fn with_ordinal(mut self, ordinal: u64) -> Self {
+    pub(crate) fn with_ordinal(mut self, ordinal: u64) -> Self {
         self.ordinal = Some(ordinal);
         self
     }
 
     /// 设置行内样式片段。
-    pub fn with_spans(mut self, spans: Vec<InlineSpan>) -> Self {
+    pub(crate) fn with_spans(mut self, spans: Vec<InlineSpan>) -> Self {
         self.spans = spans;
         self
     }
@@ -148,7 +148,7 @@ pub struct DefinitionBody {
 
 impl DefinitionBody {
     /// 构造定义正文。
-    pub fn new(text: impl Into<String>, spans: Vec<InlineSpan>) -> Self {
+    pub(crate) fn new(text: impl Into<String>, spans: Vec<InlineSpan>) -> Self {
         Self {
             text: text.into(),
             spans,
@@ -161,7 +161,7 @@ impl DefinitionBody {
     }
 
     /// 行内样式片段。
-    pub fn spans(&self) -> &[InlineSpan] {
+    pub(crate) fn spans(&self) -> &[InlineSpan] {
         &self.spans
     }
 }
@@ -179,7 +179,7 @@ pub struct DefinitionEntry {
 
 impl DefinitionEntry {
     /// 构造条目。
-    pub fn new(term: impl Into<String>, term_spans: Vec<InlineSpan>) -> Self {
+    pub(crate) fn new(term: impl Into<String>, term_spans: Vec<InlineSpan>) -> Self {
         Self {
             term: term.into(),
             term_spans,
@@ -188,7 +188,7 @@ impl DefinitionEntry {
     }
 
     /// 追加一条定义。
-    pub fn push_definition(&mut self, body: DefinitionBody) {
+    pub(crate) fn push_definition(&mut self, body: DefinitionBody) {
         self.definitions.push(body);
     }
 
@@ -198,18 +198,13 @@ impl DefinitionEntry {
     }
 
     /// 术语的行内样式片段。
-    pub fn term_spans(&self) -> &[InlineSpan] {
+    pub(crate) fn term_spans(&self) -> &[InlineSpan] {
         &self.term_spans
     }
 
     /// 该术语的全部定义。
     pub fn definitions(&self) -> &[DefinitionBody] {
         &self.definitions
-    }
-
-    /// 是否还没有任何定义（只有术语行时不该渲染成一个条目）。
-    pub fn is_empty(&self) -> bool {
-        self.term.is_empty() && self.definitions.is_empty()
     }
 }
 
@@ -252,7 +247,7 @@ impl TableData {
     }
 
     /// 附带单元格行内样式（构造链）。
-    pub fn with_cell_spans(
+    pub(crate) fn with_cell_spans(
         mut self,
         header_spans: Vec<Vec<InlineSpan>>,
         rows_spans: Vec<Vec<Vec<InlineSpan>>>,

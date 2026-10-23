@@ -73,11 +73,6 @@ impl Cursor {
         };
     }
 
-    /// 清除选区，光标停在 `position`。
-    pub fn clear_selection(&mut self) {
-        self.anchor = None;
-    }
-
     /// 是否存在非空选区。
     pub fn has_selection(self) -> bool {
         match self.anchor {
@@ -91,11 +86,6 @@ impl Cursor {
         self.anchor
             .filter(|_| self.has_selection())
             .map(|anchor| TextRange::new(anchor, self.position))
-    }
-
-    /// 返回移动到 `position` 后的新光标（原值不变）。
-    pub fn with_position(self, position: ByteOffset) -> Self {
-        Self::new(position)
     }
 }
 
@@ -116,7 +106,7 @@ impl ModificationKind {
     /// 是否可与另一次修改合并为同一个撤销点。
     ///
     /// 只有连续插入会合并——删除与替换各自独立成撤销点，避免一次撤销吃掉大段内容。
-    pub fn mergeable_with(self, other: Self) -> bool {
+    pub(crate) fn mergeable_with(self, other: Self) -> bool {
         matches!((self, other), (Self::Insert, Self::Insert))
     }
 }
@@ -134,7 +124,7 @@ pub struct DocumentMeta {
 
 impl DocumentMeta {
     /// 构造一个「未命名」文档的元数据。
-    pub fn new_untitled(created_at: Timestamp) -> Self {
+    pub(crate) fn new_untitled(created_at: Timestamp) -> Self {
         Self {
             title: "未命名".to_string(),
             created_at,
@@ -143,7 +133,7 @@ impl DocumentMeta {
     }
 
     /// 按文件路径构造元数据（标题取文件名去掉扩展名）。
-    pub fn from_path(path: &FilePath, created_at: Timestamp) -> Self {
+    pub(crate) fn from_path(path: &FilePath, created_at: Timestamp) -> Self {
         let name = path.file_name();
         let title = match name.rfind('.') {
             Some(dot) if dot > 0 => name[..dot].to_string(),
@@ -161,23 +151,13 @@ impl DocumentMeta {
         &self.title
     }
 
-    /// 重命名（不触发保存状态变化）。
-    pub fn rename(&mut self, title: impl Into<String>) {
-        self.title = title.into();
-    }
-
-    /// 创建时间。
-    pub const fn created_at(&self) -> Timestamp {
-        self.created_at
-    }
-
     /// 最近一次保存时间；从未保存过为 `None`。
     pub const fn last_saved_at(&self) -> Option<Timestamp> {
         self.last_saved_at
     }
 
     /// 标记为「已在 `at` 时刻保存」。
-    pub fn mark_saved(&mut self, at: Timestamp) {
+    pub(crate) fn mark_saved(&mut self, at: Timestamp) {
         self.last_saved_at = Some(at);
     }
 }
@@ -249,7 +229,7 @@ impl Edit {
     }
 
     /// 构造删除编辑。
-    pub fn deletion(range: TextRange) -> Self {
+    pub(crate) fn deletion(range: TextRange) -> Self {
         Self {
             range,
             replacement: String::new(),
@@ -257,24 +237,24 @@ impl Edit {
     }
 
     /// 被替换的区间。
-    pub const fn range(&self) -> TextRange {
+    pub(crate) const fn range(&self) -> TextRange {
         self.range
     }
 
     /// 替换内容。
-    pub fn replacement(&self) -> &str {
+    pub(crate) fn replacement(&self) -> &str {
         &self.replacement
     }
 
     /// 是否为无效果编辑（空区间且空替换）。
     ///
     /// 调用方可据此跳过「入撤销栈 / 发事件」，避免无意义的撤销点。
-    pub fn is_noop(&self) -> bool {
+    pub(crate) fn is_noop(&self) -> bool {
         self.range.is_empty() && self.replacement.is_empty()
     }
 
     /// 该编辑的类型（供撤销合并判定使用）。
-    pub fn kind(&self) -> ModificationKind {
+    pub(crate) fn kind(&self) -> ModificationKind {
         match (self.range.is_empty(), self.replacement.is_empty()) {
             (true, true) => ModificationKind::Insert,
             (true, false) => ModificationKind::Insert,
@@ -284,7 +264,7 @@ impl Edit {
     }
 
     /// 编辑完成后光标应处的位置（替换内容末尾）。
-    pub fn cursor_after(&self) -> ByteOffset {
+    pub(crate) fn cursor_after(&self) -> ByteOffset {
         ByteOffset::new(self.range.start().value() + self.replacement.len())
     }
 
@@ -342,7 +322,7 @@ impl EditPlan {
     }
 
     /// 只做编辑、不选区。
-    pub fn plain(edit: Edit) -> Self {
+    pub(crate) fn plain(edit: Edit) -> Self {
         Self {
             edit,
             selection: None,

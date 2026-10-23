@@ -210,7 +210,7 @@ impl ActionId {
     }
 
     /// 中文显示名（供菜单与命令面板共用）。
-    pub const fn label(&self) -> &'static str {
+    pub(crate) const fn label(&self) -> &'static str {
         match self {
             Self::NewDocument => "新建文档",
             Self::OpenDocument => "打开文档",

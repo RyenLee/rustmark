@@ -65,7 +65,7 @@ pub struct InlineSpan {
 
 impl InlineSpan {
     /// 构造行内片段（无链接目标）。
-    pub const fn new(start: usize, end: usize, style: InlineStyle) -> Self {
+    pub(crate) const fn new(start: usize, end: usize, style: InlineStyle) -> Self {
         Self {
             start,
             end,
@@ -75,7 +75,7 @@ impl InlineSpan {
     }
 
     /// 构造带链接目标的行内片段（`style` 应为 `Link`）。
-    pub fn new_link(start: usize, end: usize, style: InlineStyle, dest: String) -> Self {
+    pub(crate) fn new_link(start: usize, end: usize, style: InlineStyle, dest: String) -> Self {
         Self {
             start,
             end,
@@ -85,7 +85,7 @@ impl InlineSpan {
     }
 
     /// 链接目标（仅 `style == Link` 时有值）。
-    pub fn dest(&self) -> Option<&str> {
+    pub(crate) fn dest(&self) -> Option<&str> {
         self.dest.as_deref()
     }
 
@@ -102,16 +102,6 @@ impl InlineSpan {
     /// 样式。
     pub const fn style(&self) -> InlineStyle {
         self.style
-    }
-
-    /// 片段长度（字节）。
-    pub const fn len(&self) -> usize {
-        self.end.saturating_sub(self.start)
-    }
-
-    /// 是否为空片段。
-    pub const fn is_empty(&self) -> bool {
-        self.end <= self.start
     }
 }
 

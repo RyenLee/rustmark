@@ -25,11 +25,8 @@ mod shortcut_table;
 mod theme;
 
 pub use action::ActionId;
-pub use editor::{
-    EditorSettings, MAX_OPEN_DOCUMENTS_DEFAULT, MAX_OPEN_DOCUMENTS_MAX, TabSize, WritingGoal,
-};
+pub(crate) use editor::MAX_OPEN_DOCUMENTS_DEFAULT;
+pub use editor::{EditorSettings, MAX_OPEN_DOCUMENTS_MAX, TabSize, WritingGoal};
 pub use keys::{Key, KeyCombo, Modifiers, NamedKey};
-pub use shortcut_table::{Conflict, ConflictKind, RESERVED_COMBOS, ShortcutBinding, ShortcutTable};
-pub use theme::{
-    CustomThemePalette, FONT_SIZE_RANGE, LINE_HEIGHT_RANGE, LintSettings, Theme, ThemeKind,
-};
+pub use shortcut_table::{Conflict, ConflictKind, ShortcutBinding, ShortcutTable};
+pub use theme::{CustomThemePalette, LintSettings, Theme, ThemeKind};

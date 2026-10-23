@@ -16,8 +16,6 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::shared::ids::DocumentId;
-
 /// 导出格式（唯一真源见 [`crate::shared::export_format`]）。
 pub use crate::shared::export_format::ExportFormat;
 /// 页面尺寸（唯一真源见 [`crate::shared::export_format`]）。
@@ -67,23 +65,18 @@ impl ExportOptions {
         self.include_toc
     }
 
-    /// 是否把图片内联为 data URI。
-    pub const fn embed_images(&self) -> bool {
-        self.embed_images
-    }
-
     /// 主题名。
-    pub fn theme(&self) -> &str {
+    pub(crate) fn theme(&self) -> &str {
         &self.theme
     }
 
     /// 页面尺寸。
-    pub const fn page_size(&self) -> PageSize {
+    pub(crate) const fn page_size(&self) -> PageSize {
         self.page_size
     }
 
     /// 是否分页。
-    pub const fn paginate(&self) -> bool {
+    pub(crate) const fn paginate(&self) -> bool {
         self.paginate
     }
 }
@@ -168,29 +161,11 @@ impl ExportStatus {
     }
 }
 
-/// 导出任务的来源文档引用。
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct ExportSource {
-    document_id: DocumentId,
-}
-
-impl ExportSource {
-    /// 构造来源引用。
-    pub const fn new(document_id: DocumentId) -> Self {
-        Self { document_id }
-    }
-
-    /// 文档 ID。
-    pub const fn document_id(&self) -> DocumentId {
-        self.document_id
-    }
-}
-
 /// 需要 HTML 转义的字符集合（[`TocEntry::needs_escape`] 的判定依据）。
 ///
 /// 对外暴露，供 [`crate::domain::export::services::TocBuilder::verify`]
 /// 与基础设施层导出器共用**同一份**判定，避免两处漂移。
-pub const NEEDS_ESCAPE_CHARS: [char; 5] = ['<', '>', '&', '"', '\''];
+pub(crate) const NEEDS_ESCAPE_CHARS: [char; 5] = ['<', '>', '&', '"', '\''];
 
 /// 标题是否含有需要 HTML 转义的字符。
 fn needs_html_escape(title: &str) -> bool {

@@ -20,7 +20,7 @@ pub enum EntryKind {
 
 impl EntryKind {
     /// 是否为目录。
-    pub const fn is_directory(&self) -> bool {
+    pub(crate) const fn is_directory(&self) -> bool {
         matches!(self, Self::Directory)
     }
 }
@@ -74,12 +74,12 @@ pub const RECENT_FILES_LIMIT: usize = 20;
 
 impl RecentFiles {
     /// 用默认上限（20）构造空列表。
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::with_limit(RECENT_FILES_LIMIT)
     }
 
     /// 用指定上限构造空列表；`limit` 为 0 时按 1 处理。
-    pub fn with_limit(limit: usize) -> Self {
+    pub(crate) fn with_limit(limit: usize) -> Self {
         Self {
             items: Vec::new(),
             limit: limit.max(1),
@@ -89,7 +89,7 @@ impl RecentFiles {
     /// 由已持久化的记录重建列表（保留原始时间戳，不做时间重置）。
     ///
     /// 用于启动时从配置目录恢复「最近文件」；重建后会重新排序并裁剪到上限。
-    pub fn with_items(items: Vec<RecentFile>, limit: usize) -> Self {
+    pub(crate) fn with_items(items: Vec<RecentFile>, limit: usize) -> Self {
         let mut recent = Self {
             items,
             limit: limit.max(1),
@@ -99,7 +99,7 @@ impl RecentFiles {
     }
 
     /// 记录一次打开：已存在则**更新时间并移到最前**，否则插入最前。
-    pub fn touch(&mut self, path: FilePath, at: Timestamp) {
+    pub(crate) fn touch(&mut self, path: FilePath, at: Timestamp) {
         if let Some(existing) = self.items.iter_mut().find(|item| item.path == path) {
             existing.last_opened = at;
         } else {
@@ -109,13 +109,8 @@ impl RecentFiles {
     }
 
     /// 移除某路径（文件被删除或用户手动清除）。
-    pub fn remove(&mut self, path: &FilePath) {
+    pub(crate) fn remove(&mut self, path: &FilePath) {
         self.items.retain(|item| &item.path != path);
-    }
-
-    /// 清空。
-    pub fn clear(&mut self) {
-        self.items.clear();
     }
 
     /// 按最近使用降序返回全部条目。
@@ -131,11 +126,6 @@ impl RecentFiles {
     /// 是否为空。
     pub fn is_empty(&self) -> bool {
         self.items.is_empty()
-    }
-
-    /// 条数上限。
-    pub const fn limit(&self) -> usize {
-        self.limit
     }
 
     /// 排序（最近在前）并裁剪到上限。
@@ -173,7 +163,7 @@ impl RecentFile {
     }
 
     /// 最近打开时间。
-    pub const fn last_opened(&self) -> Timestamp {
+    pub(crate) const fn last_opened(&self) -> Timestamp {
         self.last_opened
     }
 }
@@ -204,12 +194,12 @@ pub struct Tab {
 
 impl Tab {
     /// 构造标签页。
-    pub const fn new(document_id: DocumentId) -> Self {
+    pub(crate) const fn new(document_id: DocumentId) -> Self {
         Self { document_id }
     }
 
     /// 文档 ID。
-    pub const fn document_id(&self) -> DocumentId {
+    pub(crate) const fn document_id(&self) -> DocumentId {
         self.document_id
     }
 }

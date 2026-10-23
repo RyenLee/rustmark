@@ -185,13 +185,13 @@ pub struct Theme {
 }
 
 /// 字号合法区间（含端点）。
-pub const FONT_SIZE_RANGE: std::ops::RangeInclusive<f32> = 8.0..=48.0;
+pub(crate) const FONT_SIZE_RANGE: std::ops::RangeInclusive<f32> = 8.0..=48.0;
 /// 行高合法区间（含端点）。
-pub const LINE_HEIGHT_RANGE: std::ops::RangeInclusive<f32> = 1.0..=3.0;
+pub(crate) const LINE_HEIGHT_RANGE: std::ops::RangeInclusive<f32> = 1.0..=3.0;
 
 impl Theme {
     /// 默认主题：跟随系统、14px、行高 1.6。
-    pub fn default_theme() -> Self {
+    pub(crate) fn default_theme() -> Self {
         Self {
             kind: ThemeKind::System,
             font_family: "system-ui".to_string(),
@@ -218,7 +218,7 @@ impl Theme {
     }
 
     /// 主题种类。
-    pub const fn kind(&self) -> ThemeKind {
+    pub(crate) const fn kind(&self) -> ThemeKind {
         self.kind
     }
 
@@ -233,17 +233,17 @@ impl Theme {
     }
 
     /// 行高倍数。
-    pub const fn line_height(&self) -> f32 {
+    pub(crate) const fn line_height(&self) -> f32 {
         self.line_height
     }
 
     /// 自定义调色板（仅 `Custom` 种类下有意义）。
-    pub fn palette(&self) -> Option<&CustomThemePalette> {
+    pub(crate) fn palette(&self) -> Option<&CustomThemePalette> {
         self.custom.as_ref()
     }
 
     /// 校验取值是否在合法区间内。
-    pub fn is_valid(&self) -> bool {
+    pub(crate) fn is_valid(&self) -> bool {
         !self.font_family.is_empty()
             && FONT_SIZE_RANGE.contains(&self.font_size)
             && LINE_HEIGHT_RANGE.contains(&self.line_height)

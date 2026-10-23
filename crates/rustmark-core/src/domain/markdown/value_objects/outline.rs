@@ -17,7 +17,7 @@ pub struct OutlineItem {
 
 impl OutlineItem {
     /// 构造大纲条目。
-    pub fn new(level: u8, text: impl Into<String>, line: usize, block_id: BlockId) -> Self {
+    pub(crate) fn new(level: u8, text: impl Into<String>, line: usize, block_id: BlockId) -> Self {
         Self {
             level,
             text: text.into(),
@@ -39,10 +39,5 @@ impl OutlineItem {
     /// 源码行号（0-based）。
     pub const fn line(&self) -> usize {
         self.line
-    }
-
-    /// 对应块 ID。
-    pub const fn block_id(&self) -> BlockId {
-        self.block_id
     }
 }

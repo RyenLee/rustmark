@@ -41,17 +41,17 @@ impl ExportJob {
     }
 
     /// 任务 ID。
-    pub const fn id(&self) -> JobId {
+    pub(crate) const fn id(&self) -> JobId {
         self.id
     }
 
     /// 源文档 ID。
-    pub const fn source(&self) -> DocumentId {
+    pub(crate) const fn source(&self) -> DocumentId {
         self.source
     }
 
     /// 目标文件路径。
-    pub const fn destination(&self) -> &FilePath {
+    pub(crate) const fn destination(&self) -> &FilePath {
         &self.destination
     }
 

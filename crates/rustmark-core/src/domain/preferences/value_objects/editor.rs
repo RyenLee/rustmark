@@ -23,7 +23,7 @@ pub enum TabSize {
 
 impl TabSize {
     /// 空格数量。
-    pub const fn spaces(&self) -> usize {
+    pub(crate) const fn spaces(&self) -> usize {
         match self {
             Self::Two => 2,
             Self::Four => 4,
@@ -148,7 +148,7 @@ where
 ///
 /// 取 12：低于常见「同时对照几份文档」的工作量会碍事；高于此值后标签条
 /// 本就靠横向滚动浏览，再大只是让「哪个是哪个」更难认。
-pub const MAX_OPEN_DOCUMENTS_DEFAULT: u32 = 12;
+pub(crate) const MAX_OPEN_DOCUMENTS_DEFAULT: u32 = 12;
 
 /// 打开文档数量的**可选上限**（设置页滑块量程，含端点）。
 ///
@@ -305,12 +305,12 @@ impl EditorSettings {
     }
 
     /// 缩进宽度。
-    pub const fn tab_size(&self) -> TabSize {
+    pub(crate) const fn tab_size(&self) -> TabSize {
         self.tab_size
     }
 
     /// 是否自动换行。
-    pub const fn word_wrap(&self) -> bool {
+    pub(crate) const fn word_wrap(&self) -> bool {
         self.word_wrap
     }
 
@@ -325,7 +325,7 @@ impl EditorSettings {
     }
 
     /// 是否显示行号栏。
-    pub const fn show_line_numbers(&self) -> bool {
+    pub(crate) const fn show_line_numbers(&self) -> bool {
         self.show_line_numbers
     }
 
@@ -396,34 +396,9 @@ impl EditorSettings {
         self.lint
     }
 
-    /// 设置写作目标，返回新的设置（值对象不可变）。
-    pub const fn with_writing_goal(self, goal: WritingGoal) -> Self {
-        Self {
-            writing_goal: goal,
-            ..self
-        }
-    }
-
-    /// 替换 lint 规则开关，返回新的设置（值对象不可变）。
-    pub const fn with_lint(self, lint: LintSettings) -> Self {
-        Self { lint, ..self }
-    }
-
     /// 打开文档数量上限（问题 038；恒 ≥ 1，构造时已把 0 收敛掉）。
     pub const fn max_open_documents(&self) -> u32 {
         self.max_open_documents
-    }
-
-    /// 设置打开文档数量上限，返回新的设置（值对象不可变）。
-    ///
-    /// 原样存入（0 由 [`Self::is_valid`] 拒绝）：收敛发生在两条外部入口
-    /// ——serde 反序列化与 DTO [`crate::application::preferences`] 的
-    /// `to_editor`，那里才是「不可信输入」进入领域的位置。
-    pub const fn with_max_open_documents(self, max: u32) -> Self {
-        Self {
-            max_open_documents: max,
-            ..self
-        }
     }
 
     /// 校验取值是否合法（自动保存间隔不得为 0——会导致忙循环；

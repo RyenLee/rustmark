@@ -18,7 +18,7 @@ impl BlockId {
     }
 
     /// 取出序号。
-    pub const fn as_u64(self) -> u64 {
+    pub(crate) const fn as_u64(self) -> u64 {
         self.0
     }
 }
@@ -105,11 +105,6 @@ impl InlineImage {
             url: url.into(),
             display,
         }
-    }
-
-    /// 在所属文本里的字节区间（区间内的文字就是 alt）。
-    pub const fn range(&self) -> TextRange {
-        self.range
     }
 
     /// 区间起点（字节）。
@@ -313,7 +308,7 @@ impl BlockKind {
     }
 
     /// 脚注标识（`kind` 为脚注时有值）。
-    pub fn footnote_label(&self) -> Option<&str> {
+    pub(crate) fn footnote_label(&self) -> Option<&str> {
         match self {
             Self::Footnote { label } => Some(label.as_str()),
             _ => None,

@@ -9,7 +9,7 @@ use super::errors::PreferencesError;
 use super::value_objects::{ActionId, Conflict, EditorSettings, KeyCombo, ShortcutTable, Theme};
 
 /// 配置文件 schema 版本（ADR-003）：随结构变更递增，用于读取时迁移。
-pub const PREFERENCES_SCHEMA_VERSION: u32 = 1;
+pub(crate) const PREFERENCES_SCHEMA_VERSION: u32 = 1;
 
 /// 偏好设置聚合根。
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
@@ -53,7 +53,7 @@ impl Preferences {
     }
 
     /// schema 版本。
-    pub const fn schema_version(&self) -> u32 {
+    pub(crate) const fn schema_version(&self) -> u32 {
         self.schema_version
     }
 
@@ -126,7 +126,7 @@ impl Preferences {
     }
 
     /// 当前全部快捷键冲突（供设置页展示）。
-    pub fn conflicts(&self) -> Vec<Conflict> {
+    pub(crate) fn conflicts(&self) -> Vec<Conflict> {
         self.shortcuts.conflicts()
     }
 
@@ -141,7 +141,7 @@ impl Preferences {
     /// 分区粒度在**领域层**而不是 UI 层切：UI 若自己「读出来再拼回去」，
     /// 就得知道每个字段属于哪个分区，那是把领域结构复制一份到表现层，
     /// 加字段时必然漏改（与 S6-07 `editor_ops` / `EditingService` 双份真相同源）。
-    pub fn reset_theme(&mut self) {
+    pub(crate) fn reset_theme(&mut self) {
         self.theme = Theme::default_theme();
     }
 
@@ -149,7 +149,7 @@ impl Preferences {
     ///
     /// 注意：主题与快捷键不在此列——原型把「自动换行 / 拼写检查」也算进
     /// 编辑器分区，故一并归它；而主题属外观、快捷键独立成分区。
-    pub fn reset_editor(&mut self) {
+    pub(crate) fn reset_editor(&mut self) {
         self.editor = EditorSettings::default_settings();
     }
 
@@ -158,7 +158,7 @@ impl Preferences {
     /// 失败（默认表本身解析不了，属不可能）时**保持原绑定不变**并返回 `Err`：
     /// 此时若顺手清空绑定，用户会发现「所有快捷键都没了」，
     /// 而那比保留旧绑定糟糕得多。
-    pub fn reset_shortcuts(&mut self) -> Result<(), PreferencesError> {
+    pub(crate) fn reset_shortcuts(&mut self) -> Result<(), PreferencesError> {
         let defaults = ShortcutTable::default_bindings()?;
         self.shortcuts = defaults;
         Ok(())
@@ -173,7 +173,7 @@ impl Preferences {
     }
 
     /// 撤销策略（由编辑器设置推导，供 `Document` 构造时注入）。
-    pub fn undo_policy(&self) -> crate::domain::document::undo::UndoPolicy {
+    pub(crate) fn undo_policy(&self) -> crate::domain::document::undo::UndoPolicy {
         crate::domain::document::undo::UndoPolicy::new(self.editor.undo_merge_window_ms(), 200)
     }
 }

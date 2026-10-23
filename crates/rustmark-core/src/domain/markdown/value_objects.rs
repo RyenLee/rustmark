@@ -28,7 +28,9 @@ mod render;
 mod table;
 
 pub use block::{BlockId, BlockKind, ImageAlign, ImageDisplay, InlineImage};
-pub use inline::{InlineSpan, InlineStyle, SpanStyle, SyntaxSpan};
-pub use outline::OutlineItem;
+pub(crate) use inline::InlineSpan;
+pub use inline::{InlineStyle, SpanStyle, SyntaxSpan};
+pub(crate) use outline::OutlineItem;
 pub use render::{Misspelling, RenderedBlock};
-pub use table::{CellAlignment, DefinitionBody, DefinitionEntry, ListItem, TableData};
+pub use table::{CellAlignment, ListItem, TableData};
+pub(crate) use table::{DefinitionBody, DefinitionEntry};

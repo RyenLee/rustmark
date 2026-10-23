@@ -41,19 +41,9 @@ impl RenderedDocument {
         self.source_revision
     }
 
-    /// 渲染块序列。
-    pub fn blocks(&self) -> &[RenderedBlock] {
-        &self.blocks
-    }
-
     /// 大纲。
     pub fn outline(&self) -> &[OutlineItem] {
         &self.outline
-    }
-
-    /// 解析所依据的源码。
-    pub fn source(&self) -> &str {
-        &self.source
     }
 
     /// 是否已过期（源文档版本号已推进）。
@@ -73,7 +63,7 @@ impl RenderedDocument {
         self.blocks.len()
     }
 
-    /// 是否为空（无块）。
+    /// 是否没有任何块（[`Self::len`] 的配套判空，clippy 约定）。
     pub fn is_empty(&self) -> bool {
         self.blocks.is_empty()
     }

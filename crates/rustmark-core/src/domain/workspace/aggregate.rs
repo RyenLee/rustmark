@@ -238,7 +238,7 @@ impl Workspace {
     }
 
     /// 用持久化的记录恢复「最近文件」（启动时调用，保留原始时间戳）。
-    pub fn restore_recent(&mut self, items: Vec<RecentFile>) {
+    pub(crate) fn restore_recent(&mut self, items: Vec<RecentFile>) {
         self.recent = RecentFiles::with_items(items, RECENT_FILES_LIMIT);
     }
 

@@ -36,7 +36,7 @@ impl EditingService {
     }
 
     /// `offset` 所在行的起始字节偏移（`offset` 恰为 `\n` 时属于该 `\n` 所在的行）。
-    pub fn line_start(text: &str, offset: usize) -> usize {
+    pub(crate) fn line_start(text: &str, offset: usize) -> usize {
         let offset = offset.min(text.len());
         match text.as_bytes()[..offset].iter().rposition(|b| *b == b'\n') {
             Some(idx) => idx + 1,
@@ -45,7 +45,7 @@ impl EditingService {
     }
 
     /// `offset` 所在行的结束字节偏移（**不含**换行符）。
-    pub fn line_end(text: &str, offset: usize) -> usize {
+    pub(crate) fn line_end(text: &str, offset: usize) -> usize {
         let offset = offset.min(text.len());
         match text.as_bytes()[offset..].iter().position(|b| *b == b'\n') {
             Some(idx) => offset + idx,
