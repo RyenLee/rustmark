@@ -13,7 +13,14 @@ all-features = true
 
 [advisories]
 version = 2
-ignore = []
+ignore = [
+    # RUSTSEC-2025-0141 · bincode 1.3.3 停止维护（经 syntect 5.3.0 传递引入）。
+    # 官方声明 1.3.3 为「完整版本、无需更新」，无补丁可升；替代 crate
+    # （wincode/postcard/bitcode/rkyv）均不兼容现有调用面。序列化仅用于
+    # 本地语法解析缓存，不接触网络与不受信输入，风险可接受。
+    # 处置：登记豁免；若 syntect 上游切换序列化后端则随升级移除本条。
+    { id = "RUSTSEC-2025-0141", reason = "bincode 官方认定 1.3.3 无更新需求且无补丁版本；仅经 syntect 用于本地缓存序列化" },
+]
 
 [licenses]
 version = 2
@@ -27,14 +34,27 @@ allow = [
     "ISC",
     "Zlib",
     "Unicode-3.0",
-    # egui 0.37 起 epaint_default_fonts 内嵌字体数据的许可证（SIL/Ubuntu 字体，
-    # 仅随二进制分发字体数据，均允许嵌入再分发）
-    "OFL-1.1",
-    "Ubuntu-font-1.0",
-    # ureq → webpki-roots 内置根证书数据（CDLA Permissive 2.0，数据类许可）
-    "CDLA-Permissive-2.0",
 ]
+# REL-03（2026-10-22）：`epaint_default_fonts`（OFL-1.1 / Ubuntu-font-1.0）与
+# `webpki-roots`（CDLA-Permissive-2.0）已不在依赖图中——前者随 `default_fonts` /
+# `monochrome_emoji_fonts` 关闭而移除，后者被平台信任库（`rustls-native-certs`）取代。
+# 三类经典字体许可（OFL-1.1 / Ubuntu-font-1.0）与数据许可（CDLA-Permissive-2.0）
+# 因此不再需要出现在白名单里；字体改为随包文件分发，其许可由
+# `assets/fonts/Fonts-LICENSE.txt` 与随附许可全文承载（见 THIRD-PARTY-LICENSES §4）。
 exceptions = []
+
+# 固化 self_cell 1.3.0 的许可选择（DEP-03）：
+# 该 crate 的表达式为 `Apache-2.0 OR GPL-2.0-only`（经 epaint → egui/eframe
+# 进入产物），本项目明确选用 **Apache-2.0** 分支，不触发 GPL copyleft。
+# 两级把关：① `allow` 名单不含 GPL-2.0-only——若上游改为 GPL-only，
+# `cargo deny check licenses` 直接红；② 本 clarify 条目在元数据检测失败时
+# 以包内 LICENSE-APACHE 文件为真源钉住表达式（检测正常时 cargo-deny 不启用它，
+# hash 值会在首次启用时由报错输出给出，届时更新）。
+# 若 self_cell 上游改为 GPL-only 许可，必须先发起依赖评审再升级。
+[[licenses.clarify]]
+crate = "self_cell"
+expression = "Apache-2.0 OR GPL-2.0-only"
+license-files = [{ path = "LICENSE-APACHE", hash = 0x0 }]
 
 [bans]
 multiple-versions = "allow"

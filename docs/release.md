@@ -12,6 +12,13 @@
 - [ ] `CHANGELOG.md` 已补本版本条目（状态、日期）
 - [ ] `Cargo.toml` 版本号已按语义化版本递增
 - [ ] **无私钥/证书入仓**：`git grep -iE '\.p12|\.pfx|\.cer|BEGIN.*PRIVATE'` 为空（CI 的 deny 步骤也会拦）
+- [ ] **依赖安全公告通过**：`cargo deny check licenses advisories bans sources` 全绿
+      （`advisories` 需拉取 RustSec 数据库，离线环境跑不了，必须在 CI 或有网环境确认）
+- [ ] **许可文件随包**：三平台产物内均含 `LICENSE-MIT` / `LICENSE-APACHE` / `NOTICE` /
+      `THIRD-PARTY-LICENSES.md`，字体包内含 `Fonts-LICENSE.txt` + `OFL-1.1.txt`
+      （Apache-2.0 §4 与 OFL-1.1 的再分发要求；当前打包脚本缺前四项，见差距报告 `LEG-01`）
+- [ ] **合规文档与现状一致**：`PRIVACY.md` / `SECURITY.md` / `NOTICE` / `THIRD-PARTY-LICENSES.md`
+      已随本次发布的实际行为与依赖重新核对（依赖变更后必须重跑 `cargo deny list` 并同步）
 - [ ] 用户文档状态抽查一致（README 功能清单 vs 代码现状，见 S9-07 验收）
 
 ## 2. 版本号语义化
@@ -36,6 +43,9 @@ push tag 即触发 `.github/workflows/release.yml`：
 1. **守卫**：tag 版本 vs `Cargo.toml` 一致性检查；
 2. **三平台并行打包**：Windows zip / macOS .app+.dmg / Linux AppImage+tar.gz
    （脚本见 `scripts/package-*`，内部含体积 ≤10MB 门禁与 ad-hoc 签名）；
+   CI 侧对 **release 二进制**的体积判定另有 `scripts/size_gate.sh`——
+   从 workflow 里抽出来的目的就是「CI 与本地同一份规则」，
+   可 `SIZE_LIMIT_BYTES=5242880 bash scripts/size_gate.sh` 验证门禁真会红；
 3. **汇总**：聚合 SHA256 为 `SHA256SUMS`，按 commit 的 `[S{阶段}-{编号}]`
    自动归组生成 Release Notes——逻辑在 `tools/gen_release_notes.py`
    （不再是内联 heredoc，便于离线演练与复用）；

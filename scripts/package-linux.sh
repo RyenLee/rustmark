@@ -42,11 +42,17 @@ cp "$exe" "$stage/rustmark"
 # 内置字体随包分发（体积红线：字体不进二进制，改为 exe 旁的 `fonts/` 目录）。
 mkdir -p "$stage/fonts"
 cp assets/fonts/* "$stage/fonts/"
+# 本项目与第三方依赖的许可文件随包（Apache-2.0 §4.1/§4.2、MIT 第 1 条的
+# 再分发要求，见 LEG-01）：与可执行文件同级。
+cp LICENSE-MIT LICENSE-APACHE NOTICE THIRD-PARTY-LICENSES.md "$stage/"
 cat > "$stage/README.txt" <<EOF
 rustmark v$version（Linux）
 
 运行 ./rustmark 即可。依赖：libvulkan1 / mesa（Vulkan 或 GL 渲染）。
 设置在 ~/.config/rustmark/，删除该目录即完全卸载。
+
+许可：本软件按 MIT OR Apache-2.0 双许可发布，随包附 LICENSE-MIT / LICENSE-APACHE /
+NOTICE（版权与声明）与 THIRD-PARTY-LICENSES.md（第三方依赖清单）；fonts/ 内含字体许可。
 EOF
 tar -czf "dist/rustmark-v$version-linux-x64.tar.gz" -C dist "$(basename "$stage")"
 rm -rf "$stage"
@@ -59,6 +65,10 @@ cp "$exe" "$appdir/usr/bin/rustmark"
 # 内置字体随包分发（exe 旁 `fonts/`；AppImage 挂载点在运行期经 `current_exe` 定位）。
 mkdir -p "$appdir/usr/bin/fonts"
 cp assets/fonts/* "$appdir/usr/bin/fonts/"
+# 许可文件随 AppImage 分发（Apache-2.0 §4.1/§4.2、MIT 第 1 条，见 LEG-01）：
+# 按 FHS 惯例放 usr/share/doc/rustmark/。
+mkdir -p "$appdir/usr/share/doc/rustmark"
+cp LICENSE-MIT LICENSE-APACHE NOTICE THIRD-PARTY-LICENSES.md "$appdir/usr/share/doc/rustmark/"
 
 cat > "$appdir/usr/share/applications/rustmark.desktop" <<DESKTOP
 [Desktop Entry]

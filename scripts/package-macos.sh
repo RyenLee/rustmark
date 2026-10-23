@@ -76,6 +76,11 @@ fi
 mkdir -p "$app/Contents/MacOS/fonts"
 cp assets/fonts/* "$app/Contents/MacOS/fonts/"
 
+# 本项目与第三方依赖的许可文件随包（Apache-2.0 §4.1/§4.2、MIT 第 1 条的
+# 再分发要求，见 LEG-01）：放 Contents/Resources/（不混入 MacOS/ 签名主体），
+# 须在 codesign 之前写入，使许可文件被签名覆盖。
+cp LICENSE-MIT LICENSE-APACHE NOTICE THIRD-PARTY-LICENSES.md "$app/Contents/Resources/"
+
 # —— 签名（hardened runtime；无证书时 ad-hoc）——
 identity="${CERT_IDENTITY:-}"
 if [ -n "$identity" ]; then

@@ -6,6 +6,229 @@ Release Notes 依此自动归组。
 
 ## [未发布]
 
+## [0.2.0] · 2026-10-22
+
+### 本次发布概要
+
+- **定位**：原生轻量级 Markdown 编辑器（Rust 2024 + egui/wgpu），单文件产物、零遥测、
+  GBK/GB18030 无损读写、分屏实时预览；目标平台 Windows / macOS / Linux。
+- **产物形态**：Windows `rustmark-v0.2.0-windows-x64.zip` / macOS `.app`+`.dmg` /
+  Linux `AppImage`+`tar.gz`，均随附 `LICENSE-MIT`、`LICENSE-APACHE`、`NOTICE`、
+  `THIRD-PARTY-LICENSES.md` 与 `fonts/`（含字体许可）；产物校验用逐文件 `.sha256`
+  （聚合 `SHA256SUMS` 待三平台产物齐备后生成）。
+- **与上一版的边界**：`0.1.0` 为阶段 01–08 开发期基线；本版收纳 2026-10-10 ～ 10-22
+  的全部工作——egui 0.37 升级、V11 架构改造收官、性能口径裁定、用户反馈批次修复、
+  CI/Release 工作流重构与发布合规文档补齐。
+- **合规与依赖**：许可 `MIT OR Apache-2.0`（双许可，条款要点见 README §9）；
+  第三方清单见 `THIRD-PARTY-LICENSES.md`（186 crate，无强 copyleft 进入产物）；
+  `cargo deny check licenses advisories bans sources` **全绿**（6 条 CVE 补丁升级 +
+  1 条停维豁免登记，见 `deny.toml`）；隐私与威胁模型见 `PRIVACY.md` / `SECURITY.md`。
+- **产物校验**：逐文件 `.sha256`；**未签名**，SmartScreen/Gatekeeper 绕过方式与
+  校验命令见 README §2。
+- **已知限制**：与 README §4 同源，保持一致。
+
+### 2026-10-22 · 体积合规 REL-03（11.37 MiB → 9.98 MiB，回到红线内）
+
+> 依「保持 10 MB 未压缩红线」的裁定执行 `docs/metrics.md` §2.4 方案 1 与等效方案 3，两步均零功能代价。
+
+- **字体外置**：关闭 `egui` / `eframe` 的 `default_fonts` 与 `monochrome_emoji_fonts`。
+  Ubuntu-Light / Hack / NotoEmoji / emoji-icon-font 四个字体（1,417,504 B）改为随发行包
+  以 `fonts/` 分发，运行期由 `infrastructure::fonts::install_egui_base_fonts` 装回
+  比例 / 等宽基础族——族顺序与 `FontTweak` 缩放逐项对齐，界面观感不变；
+  `egui-icons.ttf` 不随包（本项目对 `egui::special_emojis` 零引用）。字体许可全文随包补齐。
+- **根证书外置**：关闭 `ureq` 的 `rustls-webpki-roots`（约 400 KB 裸 DER），改用
+  `rustls-native-certs` 运行期读取平台信任库（Windows 注册表 / macOS Keychain /
+  Linux `/etc/ssl/certs`）；TLS 实现不变（rustls + ring），不链 libssl，Ubuntu 20.04 兼容性不受影响，
+  并顺带支持企业自建 CA。读不到信任库时返回空根集并记录 `warn`，https 图片降级失败、进程不退出。
+- **实测**：exe 11,924,480 B → **10,466,816 B（9.98 MiB）**，红线 10,485,760 B，余量 18,944 B；
+  同配置重建字节数一致。Windows 便携包复打为 7.14 MB（含 4 个新字体与许可全文）。
+- **测试适配**：无头测试上下文不再有内嵌字体，新增 `tests/support::ctx_with_app_fonts()`；
+  `presentation::widgets::text` 的左缘阈值由 1pt 放宽到 2pt 并注明「合成豆腐块侧边距」。
+- **文档口径同步**：`docs/metrics.md`（§1 / §2.4 / §2.6 + 新增 §2.7）、`docs/dependencies.md`、
+  `THIRD-PARTY-LICENSES.md`（186 crate、43 项复核表）、`deny.toml`（移除已退出依赖图的三项许可）、
+  `docs/manual-qa-*.md`、`.github/workflows/ci.yml`、`docs/release-compliance-gap-report.md`。
+
+### 2026-10-22 · 模块布局回归 CONSTR-03（移除 `mod.rs`）
+
+> `REQUIREMENTS.md` 的 `CONSTR-03` 与 `CONTRIBUTING.md` 均明令「禁止 `mod.rs`：一级模块用
+> `xxx.rs`，子模块放 `xxx/`」，但实测仍有 2 处残留（`src/infrastructure/fonts/`、`tests/support/`）。
+
+- **`src/infrastructure/fonts/mod.rs` → `src/infrastructure/fonts.rs`**：门面内容（模块文档、
+  `pub mod assembly` / `pub mod discovery`、`pub use` 重导出）原样搬移，子模块仍留在 `fonts/`；
+  模块路径与公开 API 零变化，调用点无需改动。
+- **`tests/support/mod.rs` → `tests/support.rs`**：7 个测试入口的
+  `#[path = "../support/mod.rs"]` 改为 `"../support.rs"`。注意 `#[path]` 加载的模块，
+  其子模块按「该文件所在目录 + 子模块名」查找（会落成 `tests/clock.rs`），
+  故 `support.rs` 内的 4 个子模块改用 `#[path = "support/clock.rs"]` 等显式指向 `tests/support/`。
+- **`Cargo.toml` 增 `autotests = false`**：测试目标本就全部以 `[[test]]` 显式声明，
+  否则 `tests/support.rs` 会被自动发现成一个零用例的 `support` 测试目标（重复编译）。
+- **`tools/arch_check.rs` 增布局校验（本条的防回退）**：`scan` / `scan_with_tests`
+  逐个文件判文件名，`src/` 与 `tests/` 任一侧出现 `mod.rs` 即报违规，且**不设
+  `arch-allow` 豁免**（与帧预约规则同一口径）。`tests/arch_violation_fixture.rs`
+  新增注入用例：`src/shared/mod.rs` 与 `tests/support/mod.rs` 各报一条，
+  `shared.rs` + `shared/gateway.rs` 必须放行。
+- 门禁：fmt ✓ / check-arch ✓ / clippy `-D warnings` ✓ / `cargo test --all-targets`
+  **2102 passed · 0 failed · 4 ignored**（基线 2101 + 新增布局用例 1）；`src` 与 `tests` 下已无 `mod.rs`。
+
+### 2026-10-22 · Python 工具清理（26 → 5）
+
+> `tools/` 下堆积了 20 个针对单个改造项的一次性「变异验证」脚本，锚点写死当时的源码片段；
+> 它们没有任何代码/CI 调用方，结论早已写进改造计划与 backlog。
+
+- **删除 21 个**：`mut_arch_*.py`（3）、`mut_r04/r05/r06/r12/r17/r20/r21.py`、`mut_r11_1/2/3_*.py`（6）、
+  `mut_opener_r03.py`、`mut_v11_55.py`，以及一次性性能基准 `bench_arch_r02.py`。
+  删除前已整目录备份到临时目录，逐文件清单与理由见 `docs/python-cleanup-report.md`。
+- **保留 5 个**：`coverage_gate.py`（CI 覆盖率门禁）、`release_dryrun.py`（CI 发布演练）、
+  `gen_release_notes.py`（`release.yml` 生成 Notes）、`gen_gb18030_ranges.py`（随包数据表唯一再生成路径）、
+  `assets/logo/build_logo.py`（Logo 几何唯一真源）。
+- **引用改写**：`docs/architecture-refactor-plan.md`（16 处）、`docs/v1.1-backlog.md`（7 处）、
+  `docs/shared-internal-cycle-review.md`（1 处）及 2 处源码/测试注释，改为
+  「`mut_xxx.py`（已清理）」并保留当时的验证结论；`.workbuddy/` / `.agent/` 历史日志不动。
+- 验证：`python -m py_compile` 5 个保留脚本通过、`python tools/release_dryrun.py` **13/13**、
+  `cargo run --bin check-arch` OK、`cargo test --all-targets` **2102 passed · 0 failed · 4 ignored**。
+
+### 2026-10-22 · 最终发布合规复查（安全公告闭环 + 版本裁定 0.2.0 + 发布文档补全）
+
+> 前几轮合规审查的收尾复查，逐项验证 `docs/release-compliance-gap-report.md`。
+
+- **DEP-02 闭环**：`cargo deny check advisories` 本轮跑通，命中 7 条 → 修复 6 条
+  （`rustls` 0.23.45→0.23.46、`rustls-webpki` 0.103.16、`webpki-roots` 1.0.9→1.0.10，
+  覆盖 RUSTSEC-2026-0346/0347/0348/0349/0381/0382）+ 登记 1 条
+  （RUSTSEC-2025-0141 bincode 停维，带理由豁免写入 `deny.toml`）。四项检查全绿。
+- **DOC-01 裁定**：版本升 **0.2.0**（`Cargo.toml` / README / PRIVACY / SECURITY 同步）；
+  `settings_view.rs` 硬编码版本号改为 `env!("CARGO_PKG_VERSION")`，清偿两处版本漂移之债。
+- **DEP-03**：`deny.toml` 增加 `self_cell` 的 clarify 条目与两级把关说明。
+- **发布文档补全**：README §9 增「授权要点」（LEG-08）、`CONTRIBUTING.md` 增贡献者
+  授权条款（LEG-02/DCO）、新增 `docs/config-reference.md` 配置与主题格式参考（DOC-03）、
+  更正 `Fonts-LICENSE.txt` 分发方式表述（DOC-07）、更正 `docs/dependencies.md` §3
+  工具状态（DEP-05）。
+- 门禁复核：fmt ✓ / check-arch ✓ / clippy ✓ / `cargo deny --offline check
+  licenses advisories bans sources` → **全绿**。
+
+### 2026-10-22 · 修复「打开文件夹后文件树为空 + 删除确认无效」（CI macOS job 5 条红）
+
+> 症状：`--test app` 报 `148 passed; 5 failed`，失败用例是
+> `delete_confirm_test::{confirming_a_delete_removes_the_file, deleting_a_directory_warns_about_its_contents}`
+> 与 `workspace_reveal_test::{opening_a_folder_from_welcome_reveals_workspace_view, opening_a_folder_respects_user_collapsed_decision, switching_workspace_clears_stale_expansions}`。
+> 本机（Windows）153 全绿——**只在临时路径含符号链接的平台出现**（macOS 的 `/var` → `/private/var`）。
+
+- **根因（单一，两处症状同源）**：`FsWorkspaceRepository::scan` 先把根 `canonicalize`，
+  再用**解析后的形态**拼子目录路径；而调用方（`EditorApp::workspace_root`、
+  `request_delete` 传进来的目标）持有的是**用户选定的原始形态**。两者字符串前缀对不上：
+  ① 树投影 `is_under_root` 逐条失配 → 文件树画成空列表（实测 `[]`）；
+  ② 领域聚合 `Workspace::remove_entry` 要求存在**路径相等**的条目，找不到就返回
+  `NotFound` → 删除在**碰磁盘之前**被拒（点了「是」文件还在）；删目录的确认文案
+  也因此拿不到「目录 + 内容条数」。
+- **修复**：产出路径的前缀**一律用调用方给定的根**（新增 `join_given_root`，
+  `collect` 改为「磁盘路径用于读、相对路径用于拼产出」）；canonicalize 只保留给
+  **访问磁盘**用。用户看到的路径应当是他选的那个——这不是测试问题，
+  macOS 上打开任何含符号链接的目录都会「树是空的」。
+- **回归 2 条**（`tests/infrastructure/workspace_repository_test.rs`）：前缀不变量 +
+  「canonical 形态不同的根」用例（符号链接优先，Windows 无开发者模式时退回大小写变体，
+  都造不出则跳过）。**变异验证 1/1**：把前缀改回 canonicalize 形态 → 该用例当场红，
+  其余 8 条不变（证明不变量用例在本平台是同义反复、真正有牙齿的是后者）。
+- 门禁四绿实测：fmt✓ / check-arch✓ / clippy 0 lint / **2101 passed · 0 failed · 4 ignored**（2099 + 2）。
+
+### 2026-10-22 · CI / Release 工作流重构（可定位、可复现、可缓存）
+
+> 只改编排与诊断，**不改产物形态与门禁语义**：job id 与矩阵显示名保持原样
+> （它们是分支保护的必需检查项），产物命名、tag 触发、校验和聚合、Release Notes 归组全部不动。
+
+- **修掉的环境问题**：① `ubuntu-20.04` 已被 GitHub 下线 → 改 `ubuntu-22.04`；
+  ② 全局 `RUSTFLAGS: -D warnings` 会作用于**所有**编译单元（含第三方依赖）且让缓存
+  指纹失效 → 移除，本仓库代码的严格判定仍由 `cargo clippy -- -D warnings` 承担；
+  ③ workflow 里硬编码 `toolchain: 1.99.0` 与 `rust-toolchain.toml` 重复 → 删掉，
+  唯一真源是该文件；④ `cargo install cargo-deny --locked || true` 会**吞掉安装失败** →
+  去掉 `|| true` 并固定版本 0.20.2（规则语义随版本变，装最新版会造成本机/CI 口径不一致）；
+  ⑤ `scripts/*.sh` 在 git 里是 `100644` → 改 `100755`。
+- **快速定位**：新增「环境快照」步骤（打印 `std::env::temp_dir()` 与它的真实形态——
+  二者不一致即该平台含符号链接，正是本次缺陷的触发条件）；测试用
+  `--no-fail-fast` 跑完全部目标，日志解析成「按目标统计」表格写进 Job Summary，
+  并把 FAILED 行逐条提升为 `::error::` 注解。
+- **结构**：体积门禁从内联 shell 抽到 `scripts/size_gate.sh`（CI 与本地同一份实现，
+  已验证绿/红/预警三条路径）；cargo 命令行工具装到 `.cargo-tools/` 并缓存
+  （**不**装进 `~/.cargo/bin`，那里是 rustup 的 cargo/rustc 代理）；
+  `deny` job 把「许可（离线可跑）」与「安全公告（需拉 RustSec 库）」拆成两步，
+  网络抖动不再连坐许可门禁；各 job 加 `timeout-minutes`、最小权限 `contents: read`。
+
+### 2026-10-22 · 发布合规文档补齐（隐私 / 安全 / 第三方许可）
+
+> 合规复查发现项，逐条要求见 `docs/release-compliance-gap-report.md`。
+
+- **新增 `PRIVACY.md`**：明确「无账号 / 无遥测 / 无自动更新 / 无崩溃自动上传」，
+  并首次把**仅有的三类联网行为**成文披露——① 文档含 `http(s)` 图片时预览会向该 URL
+  发起 GET（有超时 + 体积上限 + MIME 白名单，不放行 SVG）；② 导出 HTML 勾选 KaTeX /
+  Mermaid 注入后，打开导出件会向 `cdn.jsdelivr.net` 请求资源；③ 预览点击外链交给系统默认程序。
+  另记录 PDF 导出（本机 Edge / Chrome 无头）的进程间数据流向与三平台配置目录清理方式。
+- **新增 `SECURITY.md`**：漏洞走 GitHub 私有安全公告（不在公开 Issue 披露），
+  给出响应时限预期、当前已实施的安全措施清单、以及**明确排除的威胁模型**
+  （本机恶意文档触发的既定功能不在范围内）。
+- **新增 `THIRD-PARTY-LICENSES.md`**：246 个 crate 的许可分布 + 41 个含非 MIT/Apache-2.0
+  选项的依赖逐项列表 + 随包字体（OFL-1.1 / Bitstream-DejaVu）与 vendored 数据文件来源。
+  **重点记录 `self_cell` 的 `Apache-2.0 OR GPL-2.0-only`：本项目明确选 Apache-2.0 选项**，
+  故不触发 GPL 义务；若上游改 GPL-only 需先评审。
+- **`NOTICE` 补字体条目**：此前列了依赖与数据文件，漏了随包分发的 5 款字体
+  （OFL-1.1 要求随附版权声明与许可全文），现按逐字体版权补入，并指向完整清单。
+- **`docs/release.md` §1 前置检查**补三项：依赖安全公告须通过 / **许可文件须随包**
+  / 合规文档须随发布行为复核。README 新增「隐私与安全」章节并链接上述文档。
+
+### 2026-10-21 · 架构改造 V11-54a 收官（M6：R-17 / R-19 / R-20 / R-21）
+
+> 任务状态：`docs/v1.1-backlog.md` V11-54a；方案：`docs/architecture-refactor-plan.md`。
+> 至此 **21 条改造项（R-01~R-21）全部完成**。
+
+- **R-17 · widgets 收口**：搜索分组头限宽段的 `allocate_ui_with_layout(vec2(avail, 0.0))`
+  零高反模式改走 `widgets::text::elided_segment`（高度参数取已排控件 `Rect`，
+  类型层面杜绝「传 0 高」）；新增 `widgets::row::paint_row_background`，
+  收口「选中→`accent_soft` / 悬停→`bg_tertiary` 圆角 4pt」在 quick_open /
+  command_palette / 顶栏导航箭头 / close_all **4 处逐字重复**的配方
+  （独立封装而非给 `clickable_row` 加参数，避免与父级底色叠加两次）。测试 2093 → **2097**。
+- **R-19 · ADR 补齐**（纯文档）：补 `ADR-011`（动作路由与双意图：穷举 `action_route`
+  + `Unbound` 显式声明、无 `_` 兜底；跳转双意图 `RevealIntent`）与 `ADR-012`
+  （图标系统与资源布局：废止字形图标、规格即数据 16×16 栅格、草稿旁车
+  `<doc_id>.draft`+`.path`、字体外置随包分发）。**编号偏差**：方案原定的
+  「表现层状态所有权」主题已由 R-13 先行交付的 ADR-010 覆盖，故不重复造。
+  `docs/README.md` 索引补 011/012，与 `docs/adr/` 文件数一致。
+- **R-20 · `infrastructure/fonts.rs` 拆分**：1111 行拆为 `fonts/discovery.rs`（路径发现，
+  接受注入根目录）/ `fonts/assembly.rs`（纯装配）/ `fonts/mod.rs`（门面重导出，
+  `app/frame.rs` 调用点零改动）。**6 例依赖真实字体文件的用例改为缺失即 skip**
+  （干净克隆不再红），新增注入式单测。测试 → **2098**；release exe 11.37 MiB（体积差 ≈ 0）。
+- **R-21 · 低成本清理包**：两处 `highlight_cache.rs` 改名（`galley_cache.rs` /
+  `span_cache.rs`，`git mv` 保留历史）；打开管线归位 `workspace.rs`；状态栏方法并入
+  `frame/status_bar.rs`；`insert_at_cursor` 归位 `editor.rs`；`group_search_hits` 归位
+  `find.rs`；`thematic_break_is_parsed` 判据加强为「块数 3 + `BlockKind::Rule` + 源码区间」。
+  ★ 方案第 2/3 项（shared 归位与内部环）**经实测不成立**（相关模块确有表现层依赖），
+  另立 V11-55 处置。
+
+### 2026-10-21 · 表现层状态所有权收敛（R-11 / R-12）+ 切标签保留光标（R-06）
+
+- **R-11 · 46 处直写收敛**：`src/presentation/views` 对 app 状态字段的**真实赋值**
+  由 46 处降到 0（方案所称「59 处」含 13 处 `==` 比较误报）。按 state 结构体分五组推进、
+  每组一个 commit，收口到 `EditorApp` 的方法入口。★ 已知边界（文档已标注）：
+  `TextEdit::singleline(&mut app.x.y)` 与 `ui.checkbox(&mut app.x.y, …)` 因 egui 控件
+  必须拿 `&mut`，保留原样——改成「返回 `&mut` 的访问器」只是换名字，所有权并未收敛。
+- **R-12 · 上线机械规则**：`tools/arch_check.rs` 新增 token 级判定，表现层出现
+  `app.<字段> =` 赋值即构建失败（`==` / `!=` 与 `&mut` 借用由 token 区分自然放行，
+  **不设豁免**）。顺带收口 R-11 两层 grep 漏掉的**单层**直写
+  （`app.editor_text =` → `EditorApp::set_editor_text`）。测试 2086 → **2090**。
+- **R-06 · 切标签保留光标**：新增 `per_doc_cursor`，切走时 stash、切回时按新文本
+  `byte_to_char` 换算后经 `pending_cursor` 恢复。★ 两个踩坑：关的不是当前页时不能 restore
+  （快照陈旧会打回历史位置）；新打开的文件绝不 restore（恢复通道会把
+  `focus_at_end` 落定的光标强设回 0）。测试 → **2093**。
+
+### 2026-10-21 · 1MB 档性能口径裁定（V11-41，口径 A）与 shared 内部环破除（V11-55）
+
+- **V11-41（口径 A 裁定）**：1MB 档定位为「尽力而为，不自绘」——p50 **14.35ms 已达标**，
+  p95 贴 16ms 线（15.6~17.3ms）**未稳定达标**；继续下压需绕过 egui `TextEdit` 的 galley
+  契约（自绘只读视图 / 视口虚拟化），成本远超收益，本期不做。
+  ★ 其第②点「自绘 vs 修订口径」议题（T5）**已于 10-19 由排版层「原地补丁」先行闭环**
+  （排版层 4.57 → 0.241ms，1MB p50 17.62 → 14.35ms）。同步 README 已知限制第 9 条、
+  `docs/metrics.md` §1、`REQUIREMENTS.md` NFR-PERF-04/07。
+- **V11-55（破环）**：`file_filter()` + `FILTER_NAME` 从 `text_format.rs` 迁入 `dialog.rs`，
+  shared 内部依赖图由「唯一环 `text_format ↔ dialog`」变为**全单向无环**。
+  对拍用例锚定源头（`BUILTIN_TEXT_EXTENSIONS`）而非与 `file_filter` 结果比对——
+  后者是同义反复。测试 2098 → **2099**（`2099 passed · 0 failed · 4 ignored`）。
+
 ### 2026-10-19 · 大纲点击跳转精确定位到标题顶部（用户截图反馈）
 
 > 原始诉求与逐项记录：`docs/logs/问题记录1.txt` 066；任务状态：`docs/v1.1-backlog.md` V11-53。承接 065（大纲行垂直对齐）。
@@ -240,5 +463,6 @@ Release Notes 依此自动归组。
 - release 产物 ≤10MB 红线门禁（CI 强制）与性能冒烟基准。
 - 架构分层（DDD 四层）由 `check-arch` 在 build.rs 构建期强制。
 
-[未发布]: https://example.invalid/rustmark/compare/v0.1.0...HEAD
+[未发布]: https://example.invalid/rustmark/compare/v0.2.0...HEAD
+[0.2.0]: https://example.invalid/rustmark/releases/tag/v0.2.0
 [0.1.0]: https://example.invalid/rustmark/releases/tag/v0.1.0

@@ -10,11 +10,19 @@ name: Release
 # MACOS_CERTIFICATE / MACOS_CERTIFICATE_PWD，脚本自动切换正式签名；
 # Windows 暂无签名步骤（SmartScreen 提示必须在 Release Notes 说明）。
 # 私钥严禁入仓：只经 secrets 注入，`.gitignore` 已排除证书文件。
+#
+# 与 ci.yml 同源的三条约定：① 工具链由 `rust-toolchain.toml` 决定，不在
+# workflow 里重复版本号；② 最小权限（构建只读，发布 job 才声明 write）；
+# ③ 每步一条可复制到本地执行的命令。
 
 on:
   push:
     tags:
       - "v*"
+
+# 最小权限：打包只读代码；写权限只在 release job 单独声明。
+permissions:
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -23,6 +31,7 @@ jobs:
   build:
     name: package (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    # ubuntu-20.04 已被 GitHub 下线（runner 镜像退役），改用 22.04。
     strategy:
       fail-fast: false
       matrix:
@@ -33,16 +42,15 @@ jobs:
           - os: macos-latest
             script: bash scripts/package-macos.sh
             artifact_glob: "dist/rustmark-v*-macos*"
-          - os: ubuntu-20.04
+          - os: ubuntu-22.04
             script: bash scripts/package-linux.sh
             artifact_glob: "dist/rustmark-v*-linux-x64*"
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: 1.99.0
 
       - uses: Swatinem/rust-cache@v2
 
@@ -50,12 +58,18 @@ jobs:
       - name: Verify tag matches Cargo.toml version
         shell: bash
         run: |
+          set -euo pipefail
           TAG="${GITHUB_REF_NAME#v}"
           CARGO_VERSION="$(sed -n 's/^version[[:space:]]*=[[:space:]]*"\(.*\)"/\1/p' Cargo.toml | head -1)"
+          if [ -z "$CARGO_VERSION" ]; then
+            echo "::error::未能从 Cargo.toml 解析出 version（守卫无法判定）"
+            exit 1
+          fi
           if [ "$TAG" != "$CARGO_VERSION" ]; then
             echo "::error::tag v$TAG 与 Cargo.toml version $CARGO_VERSION 不一致"
             exit 1
           fi
+          echo "版本守卫通过：v$TAG"
 
       - name: Build & package
         shell: bash
@@ -63,6 +77,25 @@ jobs:
         env:
           # macOS 正式签名（可选）：secret 配置了才生效，否则脚本走 ad-hoc。
           CERT_IDENTITY: ${{ secrets.MACOS_CERT_IDENTITY }}
+
+      # 产物清单进 Job Summary：哪一档缺了直接看到，不必逐个点开 Artifacts。
+      - name: Inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=( ${{ matrix.artifact_glob }} )
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "::error::未找到产物：${{ matrix.artifact_glob }}"
+            exit 1
+          fi
+          {
+            echo "### 产物（${{ matrix.os }}）"
+            echo ""
+            for f in "${files[@]}"; do
+              echo "- \`$f\` — $(wc -c < "$f") 字节"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -76,6 +109,7 @@ jobs:
     name: create release
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: write
     steps:
@@ -89,6 +123,7 @@ jobs:
       - name: Aggregate checksums
         shell: bash
         run: |
+          set -euo pipefail
           mkdir -p dist
           find dist-all -type f \( -name 'rustmark-v*' -o -name '*.sha256' \) -exec mv {} dist/ \;
           # 汇总校验和：一行一文件，用户可 `sha256sum -c SHA256SUMS`。
@@ -103,12 +138,14 @@ jobs:
       - name: Generate release notes (grouped by phase tag)
         shell: bash
         run: |
+          set -euo pipefail
           python3 tools/gen_release_notes.py --tag "${GITHUB_REF_NAME}" > dist/RELEASE_NOTES.md
           cat dist/RELEASE_NOTES.md
 
       - name: Create release
         shell: bash
         run: |
+          set -euo pipefail
           gh release create "${GITHUB_REF_NAME}" \
             --title "rustmark ${GITHUB_REF_NAME}" \
             --notes-file dist/RELEASE_NOTES.md \

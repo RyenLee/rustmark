@@ -9,7 +9,7 @@
 
 | 类别 | crate | 锁定版本 | 仓库最新 | 用途 | 体积预算 | 备注 |
 |---|---|---|---|---|---|---|
-| UI | `egui` | **0.37.0** | 0.37.0 | 立即模式 GUI | 3–4 MB（含 eframe） | 2026-10-16 由 0.33.3 升级（评估报告见 `archive/stage-reports/egui-0.37-upgrade.md`）；**必须并开 `monochrome_emoji_fonts`**（0.37 起 emoji 字体从 `default_fonts` 拆出，否则符号面板 / 工具栏图标变豆腐块） |
+| UI | `egui` | **0.37.0** | 0.37.0 | 立即模式 GUI | 3–4 MB（含 eframe） | 2026-10-16 由 0.33.3 升级（评估报告见 `archive/stage-reports/egui-0.37-upgrade.md`）；REL-03 起 **`default_fonts` 与 `monochrome_emoji_fonts` 均关闭**：5 个内嵌字体（1,417,504 B）改为随发行包分发，运行期由 `infrastructure::fonts` 装配回比例 / 等宽基础族（见 metrics §2.7） |
 | UI | `eframe` | **0.37.0** | 0.37.0 | 应用框架与窗口 | 同上 | 随 egui 联动；渲染后端特性 `wgpu` → **`wgpu_no_default_features`**（见下方注） |
 | 解析 | `pulldown-cmark` | **0.13**（`0.13.4`） | 0.13.4 | Markdown 解析 | ≤ 0.5 MB | `default-features = false` + `["html","simd"]`；**GFM 为运行期 Options，非 feature** |
 | 高亮 | `syntect` | **5.3.0** | 5.3.0 | 代码语法高亮 | ≤ 1.5 MB | `default-fancy`（纯 Rust，无 onig）；语法集方案见 ADR-002 §2.1 |
@@ -19,7 +19,8 @@
 | 配置 | `toml` | **0.9.6** | 1.1.6 | 配置文件读写 | 计入 0.5 MB | 需求 §5.1 指定 0.9.6；若 0.9 线维护问题再评估升级 |
 | 错误 | `thiserror` | **2** | 2.0.21 | 领域/应用层错误枚举 | 极小 | 领域层专用 |
 | 错误 | `anyhow` | **1** | 1.x | 仅 `app.rs` / `main.rs` | 极小 | **禁止进入领域层**（`CONSTR-10`） |
-| 网络 | `ureq` | **3.4.2**（`default-features=false` + `["rustls"]`） | 3.4.2 | 远程图片下载（http/https，缺陷 025） | 见 metrics §2.4 实测 | rustls 纯 Rust TLS、无系统依赖；取代 S5-11 的手写 `TcpStream` 下载（该方案 https 全部失败） |
+| 网络 | `ureq` | **3.5.0**（`default-features=false` + `["rustls-no-provider","_ring"]`） | 3.5.0 | 远程图片下载（http/https，缺陷 025） | 见 metrics §2.7 | rustls 纯 Rust TLS、无系统依赖；取代 S5-11 的手写 `TcpStream` 下载（该方案 https 全部失败）。REL-03 起不启 `rustls-webpki-roots`（省 ~400 KB 裸 DER），根证书改由下一行的 `rustls-native-certs` 运行期读取 |
+| 网络 | `rustls-native-certs` | **0.8** | 0.8.5 | 读平台信任库的根证书（REL-03 配套） | ≈ 10 KB 代码 | 许可证 Apache-2.0 OR ISC OR MIT（均在 `deny.toml` 白名单）。纯 Rust：Windows 读注册表证书库、macOS 经 Security.framework、Linux 读 `/etc/ssl/certs`，**不链 libssl**（NFR-COMPAT-03 不受影响） |
 | 日志 | `log` | **0.4** | 0.4.x | 基础设施层越界告警 | 极小 | 未列入需求 §5.1，为 S5-01「不 panic、用 `log::warn!`」所必需，在此登记；后端见下一行 |
 | 日志 | `env_logger` | **0.11**（`default-features=false` + `["humantime"]`） | 0.11.x | `log` 的 stderr 后端（F-2 前无后端，12 个告警调用点全部静默丢弃） | 极小 | **不启 `regex`**：依赖树此前无 `regex`（仅 fancy-regex → regex-automata），模块级过滤不依赖正则；不启 `termcolor`：着色交给终端。默认级别 warn，`RUST_LOG` 可调 |
 | 缓存 | `ahash` | **0.8**（`default-features=false` + `["std","no-rng"]`） | 0.8.12 | 预览 / 高亮 / 拼写缓存 Map 的哈希器 | 极小 | 缓存键均为内部 `DocumentId`(u64)，关 `runtime-rng` 以免引入 `getrandom`；与 eframe / egui 对 ahash 的用法一致（§6） |
@@ -43,8 +44,14 @@
 > **2026-10-14 复查移除 `accesskit`**：accesskit 仅用于向屏幕阅读器暴露语义树，
 > 本应用代码零引用，键盘导航 / IME / 焦点链路全部走 egui 自身实现，禁用不影响任何交互；
 > 却可卸掉整条跨平台 accessibility 依赖（Windows 编译期 4 个 crate，跨平台锁文件 60 个包，
-> 详见 §6）。`default_fonts` 保留：UI 需要 egui 内嵌的比例字体（Ubuntu-Light）——本项目
-> 只自带等宽 / CJK / 数学字体，去掉默认字体会让按钮与标签失去可用字形。
+> 详见 §6）。**2026-10-22（REL-03，废止此前口径）**：`default_fonts` 与
+> `monochrome_emoji_fonts` **均改为关闭**——这两个特性此前把 Ubuntu-Light / Hack /
+> NotoEmoji / emoji-icon-font / egui-icons 五个字体（1,417,504 B）以 `include_bytes!`
+> 编进 exe，是 10 MB 未压缩红线（NFR-PERF-01）下最大的一块可省体积。现改为随发行包
+> 以 `fonts/` 目录分发（许可证见 `assets/fonts/Fonts-LICENSE.txt`），运行期由
+> `infrastructure::fonts::font_definitions` 装回比例 / 等宽基础族，族顺序与
+> tweak 缩放逐项对齐原先的内嵌实现，**界面观感不变**；`egui-icons.ttf`（3.4 KB）
+> 不随包——本项目对 `egui::special_emojis` 零引用。
 
 ## 2. 明确不引入
 
@@ -62,7 +69,7 @@
 
 | 工具 | 状态 | 用途 | 安装 |
 |---|---|---|---|
-| `cargo-deny` | **未安装**（安装被取消） | 许可证与漏洞门禁 | `cargo install cargo-deny --locked` |
+| `cargo-deny` | **已安装 0.20.2**（本机可用，CI `deny` job 常态执行；2026-10-22 复核） | 许可证与漏洞门禁 | `cargo install cargo-deny --version 0.20.2 --locked` |
 | `cargo-bloat` | **未安装**（安装被取消） | 体积分析（S8-01 起必需） | `cargo install cargo-bloat --locked` |
 | `cargo-nextest` | 未安装 | 测试提速（阶段 09 按需） | `cargo install cargo-nextest --locked` |
 | 覆盖率工具 | 未定 | `cargo-llvm-cov` 或 `cargo-tarpaulin` | 阶段 09（S9-02） |
@@ -108,9 +115,10 @@
 | `syntect` 的 `default-syntaxes` | **保留** | 高亮依赖内嵌语法集；替换为 curated 子集属 ADR-002 方案 B，非本次范围 |
 | `log` | **保留** | 真实使用（`application/document/registry.rs` 的 `log::warn!`），且已被 eframe / ureq 引入，无额外体积 |
 | `anyhow` | **保留** | 仅 `app.rs` / `main.rs`，符合 `CONSTR-10`；体积极小 |
-| `ureq` 的 `rustls` | **保留** | `ureq` 的 `rustls` = ring 提供者 + webpki 根，已是该库最小的合规 TLS 组合；换 `native-tls` 会在 Linux 引入 OpenSSL（即 metrics §2.4 方案 3，未采纳） |
+| `ureq` 的 `rustls-no-provider` + `_ring` | **保留** | 纯 Rust TLS（ring 提供者），三平台行为一致；换 `native-tls` 会在 Linux 引入 OpenSSL（即 metrics §2.4 方案 3，未采纳：22.04 构建会链 libssl3，Ubuntu 20.04 无法运行） |
 | `rfd` 默认特性、`eframe` 的 `x11` / `wayland` | **保留** | 均为 **Linux 目标专属**依赖（target-gated），对 Windows / macOS 产物零影响，去掉只会伤 Linux |
-| `eframe` / `egui` 的 `default_fonts` | **保留** | 项目自带字体只有等宽 + CJK + 数学，**无比例西文字体**；去掉默认字体后按钮 / 标签会缺字形 |
+| `ureq` 的 `rustls-webpki-roots` | **2026-10-22 改为不启（REL-03）** | 该特性内嵌 Mozilla 根证书包（`webpki-roots` ≈ 400 KB 裸 DER），是字体之后最大的一块可省数据；根证书改由 `rustls-native-certs` 运行期读取平台信任库（顺带覆盖企业自建 CA / TLS 代理） |
+| `eframe` / `egui` 的 `default_fonts`、`monochrome_emoji_fonts` | **2026-10-22 改为不启（REL-03）** | 此前口径「项目无比例西文字体，去掉会缺字形」仍成立，但解法改为**随包分发**：4 个字体文件放 `assets/fonts`，运行期装回基础族，界面观感不变（见 §1 注） |
 
 > 备注：`getrandom 0.3.4` 在 `Cargo.lock` 中可能残留一条**陈旧条目**（cargo 未即时回收），
 > 但 `cargo tree` 已确认它不在构建图中、不进产物，下次 cargo 自然重写锁文件时会被回收。

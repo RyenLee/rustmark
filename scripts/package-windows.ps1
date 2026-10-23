@@ -47,6 +47,9 @@ Copy-Item $exe "$staging/rustmark.exe"
 # 内置字体随包分发（体积红线 NFR-PERF-01：字体不进 exe，改为 `fonts/` 目录
 # 独立成文件，运行期由 exe 旁的 `fonts/` 读取）。连同许可证一并打包。
 Copy-Item -Path "assets/fonts" -Destination "$staging/fonts" -Recurse
+# 本项目与第三方依赖的许可文件随包（Apache-2.0 §4.1/§4.2、MIT 第 1 条的
+# 再分发要求，见 LEG-01）：与 exe 同级放置，README.txt 指向它们。
+Copy-Item "LICENSE-MIT", "LICENSE-APACHE", "NOTICE", "THIRD-PARTY-LICENSES.md" $staging
 @"
 rustmark v$Version（Windows 便携版）
 
@@ -55,6 +58,9 @@ rustmark v$Version（Windows 便携版）
 
 本包未做代码签名：首次运行如遇 SmartScreen 提示，请点「更多信息 → 仍要运行」，
 并核对 SHA256 与发布页 checksums 一致。
+
+许可：本软件按 MIT OR Apache-2.0 双许可发布，随包附 LICENSE-MIT / LICENSE-APACHE /
+NOTICE（版权与声明）与 THIRD-PARTY-LICENSES.md（第三方依赖清单）；fonts/ 内含字体许可。
 "@ | Set-Content -Path "$staging/README.txt" -Encoding UTF8
 
 # 压缩（Compress-Archive 用系统自带的 zip 实现，不引入外部依赖）。
