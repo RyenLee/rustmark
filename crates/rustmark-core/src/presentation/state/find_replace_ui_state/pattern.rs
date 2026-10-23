@@ -6,10 +6,10 @@
 //! 这里只保留依赖 [`FindOptions`] 的编译入口：`compile(pattern, options)`。
 
 use super::{FindOptions, PatternError};
-pub use crate::shared::pattern::{Pattern, Regex};
+pub(crate) use crate::shared::pattern::{Pattern, Regex};
 
 /// 编译模式（字面量或正则，取决于开关）。
-pub fn compile(pattern: &str, options: FindOptions) -> Result<Pattern, PatternError> {
+pub(crate) fn compile(pattern: &str, options: FindOptions) -> Result<Pattern, PatternError> {
     if pattern.is_empty() {
         return Err(PatternError::Empty);
     }

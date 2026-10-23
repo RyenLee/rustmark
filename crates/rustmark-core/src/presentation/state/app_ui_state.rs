@@ -47,19 +47,6 @@ impl SidebarTab {
             Self::Lint => "检查",
         }
     }
-
-    /// 由字符串解析（配置持久化用）。
-    ///
-    /// 未知值退回「文件」而不是报错：侧栏标签名可能随版本增删，
-    /// 旧配置里的废弃名不该让整个配置加载失败。
-    pub fn parse(raw: &str) -> Self {
-        match raw {
-            "outline" => Self::Outline,
-            "search" => Self::Search,
-            "lint" => Self::Lint,
-            _ => Self::Files,
-        }
-    }
 }
 
 /// 分割比例的合法区间。
@@ -86,7 +73,7 @@ pub const SIDEBAR_MAX: f32 = 560.0;
 /// 而 800pt 窗口下同样 560pt 只剩 236pt——编辑区被吃到几乎为零。
 /// 故渲染时再按主体区宽度夹一次：`sw ≤ 0.6 × body`，
 /// 即 `sw ≤ 0.6/(1+0.6) × (total − divider)`。
-pub const SIDEBAR_BODY_SHARE_MAX: f32 = 0.6;
+pub(crate) const SIDEBAR_BODY_SHARE_MAX: f32 = 0.6;
 
 /// 应用级 UI 状态。
 #[derive(Debug)]

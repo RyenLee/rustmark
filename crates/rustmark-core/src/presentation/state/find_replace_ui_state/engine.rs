@@ -13,13 +13,8 @@ pub struct Match {
 }
 
 impl Match {
-    /// 命中长度（字节）。
-    pub const fn len(self) -> usize {
-        self.end - self.start
-    }
-
     /// 是否为空命中（零宽匹配，如 `a*` 可匹配空串）。
-    pub const fn is_empty(self) -> bool {
+    pub(crate) const fn is_empty(self) -> bool {
         self.start == self.end
     }
 }
@@ -115,16 +110,6 @@ impl Finder {
                 .copied()
                 .or_else(|| self.matches.last().copied())
         }
-    }
-
-    /// 当前模式与选项（供 UI 回显）。
-    pub fn pattern(&self) -> &Pattern {
-        &self.pattern
-    }
-
-    /// 选项。
-    pub const fn options(&self) -> FindOptions {
-        self.options
     }
 
     /// 校验「全部替换」后的新内容。

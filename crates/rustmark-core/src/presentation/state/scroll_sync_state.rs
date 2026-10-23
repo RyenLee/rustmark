@@ -39,7 +39,7 @@ pub const SUPPRESS_MS: u64 = 100;
 ///
 /// 不能取 0：`ScrollArea` 会把偏移四舍五入到整像素，静止时也会在
 /// ±0.5 内抖动；取 0 会把静止帧误判为「用户在滚」。
-pub const MOVE_EPS: f32 = 0.5;
+pub(crate) const MOVE_EPS: f32 = 0.5;
 
 /// 滚动同步的两侧。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

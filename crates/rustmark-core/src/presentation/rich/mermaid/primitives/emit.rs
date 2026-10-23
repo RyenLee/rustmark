@@ -5,7 +5,7 @@ use super::super::model::{Edge, Graph, Head, LineStyle, NodeShape, Placed, Prim}
 use super::super::*;
 
 /// 发出图元：先把节点全部画出，再画边（箭头落在节点边界上，不会被节点盖住）。
-pub fn emit(g: &Graph, placed: &[Placed], size: f32, measure: Measure<'_>) -> Vec<Prim> {
+pub(crate) fn emit(g: &Graph, placed: &[Placed], size: f32, measure: Measure<'_>) -> Vec<Prim> {
     let mut prims: Vec<Prim> = Vec::new();
     for (i, p) in placed.iter().enumerate() {
         push_node(&mut prims, p, &g.nodes[i].0, size);

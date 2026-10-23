@@ -35,7 +35,6 @@ mod pattern;
 /// 同样要报它），此处重导出以保持原引用路径不变。
 pub use crate::shared::pattern::PatternError;
 pub use engine::{Finder, Match, ReplaceSummary};
-pub use pattern::{Pattern, Regex, compile};
 
 /// 查找选项。
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -136,31 +135,15 @@ impl FindReplaceUiState {
         }
     }
 
-    /// 打开面板。
-    pub fn open(&mut self) {
-        self.replace_open = false;
-    }
-
-    /// 打开面板并展开替换框（`Replace` 动作）。
-    pub fn open_with_replace(&mut self) {
-        self.replace_open = true;
-    }
-
     /// 打开面板（`with_replace` 决定是否展开替换框）。
     ///
-    /// 取代 [`Self::open`] / [`Self::open_with_replace`] 成对使用：
-    /// 两个几乎一样的公开方法很容易让调用方「挑一个顺手的用」，
-    /// 而 `Ctrl+F` 展开替换框并不是什么不可饶恕的错误——只是多占一行。
+    /// `Ctrl+F` 只开查找、`Ctrl+H` 一并展开替换框；两者共用同一入口，
+    /// 避免「成对的几乎一样的公开方法」让调用方随手挑一个。
     pub fn open_panel(&mut self, with_replace: bool) {
         self.replace_open = with_replace;
         // 打开即聚焦查找框：用户按 Ctrl+F 的意图是「马上打字」，
         // 焦点若留在编辑区，就得再点一次面板。
         self.find_focused = true;
-    }
-
-    /// 关闭面板并清空错误。
-    pub fn close(&mut self) {
-        self.error = None;
     }
 
     /// 对给定文档内容重扫，并更新命中计数 / 当前项 / 错误。
@@ -272,7 +255,7 @@ impl FindReplaceUiState {
     }
 
     /// 选项变更后必须清空当前命中（旧的 `current` 指向的是旧模式的第 N 项）。
-    pub fn set_options(&mut self, options: FindOptions) {
+    pub(crate) fn set_options(&mut self, options: FindOptions) {
         if self.options != options {
             self.options = options;
             self.current = None;

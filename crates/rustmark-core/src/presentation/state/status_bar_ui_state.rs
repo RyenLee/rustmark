@@ -20,7 +20,6 @@
 
 use crate::application::dto::GoalProgressView;
 use crate::shared::encoding::TextEncoding;
-use crate::shared::time::Clock;
 
 /// 状态栏消息的默认存活时长（毫秒）。
 ///
@@ -41,7 +40,7 @@ pub struct StatusMessage {
 
 impl StatusMessage {
     /// 构造一条会在 `ttl_ms` 后消失的消息。
-    pub fn new(text: impl Into<String>, is_error: bool, now_ms: u64, ttl_ms: u64) -> Self {
+    pub(crate) fn new(text: impl Into<String>, is_error: bool, now_ms: u64, ttl_ms: u64) -> Self {
         Self {
             text: text.into(),
             is_error,
@@ -50,7 +49,7 @@ impl StatusMessage {
     }
 
     /// 是否已过期。
-    pub fn is_expired(&self, now_ms: u64) -> bool {
+    pub(crate) fn is_expired(&self, now_ms: u64) -> bool {
         now_ms >= self.expires_at
     }
 }
@@ -247,11 +246,6 @@ fn thousands(n: usize) -> String {
         out.push(ch);
     }
     out
-}
-
-/// 以给定时钟展示一条错误（`EditorApp` 侧的便捷入口）。
-pub fn show_error(state: &mut StatusBarUiState, text: &str, clock: &dyn Clock) {
-    state.error(text, clock.now().millis());
 }
 
 #[cfg(test)]

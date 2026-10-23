@@ -147,32 +147,8 @@ pub enum DisplayRow {
 
 impl DisplayRow {
     /// 该行属于哪一侧有 / 两侧都有的哪一类（只关心「是不是新增」）。
-    pub const fn is_add(&self) -> bool {
+    #[cfg(test)]
+    pub(crate) const fn is_add(&self) -> bool {
         matches!(self, Self::Add { .. } | Self::Replace { .. })
-    }
-
-    /// 该行是否含删除内容。
-    pub const fn is_remove(&self) -> bool {
-        matches!(self, Self::Remove { .. } | Self::Replace { .. })
-    }
-
-    /// 左侧行号（若有）。
-    pub fn old_no(&self) -> Option<usize> {
-        match self {
-            Self::Equal { old_no, .. }
-            | Self::Remove { old_no, .. }
-            | Self::Replace { old_no, .. } => Some(*old_no),
-            Self::Add { .. } => None,
-        }
-    }
-
-    /// 右侧行号（若有）。
-    pub fn new_no(&self) -> Option<usize> {
-        match self {
-            Self::Equal { new_no, .. }
-            | Self::Add { new_no, .. }
-            | Self::Replace { new_no, .. } => Some(*new_no),
-            Self::Remove { .. } => None,
-        }
     }
 }

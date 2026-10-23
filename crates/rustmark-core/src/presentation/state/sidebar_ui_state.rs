@@ -139,12 +139,6 @@ impl SidebarUiState {
         !self.search_query.trim().is_empty()
     }
 
-    /// 文档切换后清空选中项。
-    pub fn reset_for_new_document(&mut self) {
-        self.selected_path = None;
-        self.outline_selected = None;
-    }
-
     // ---------- 右键菜单与重命名 ----------
 
     /// 打开某条目的右键菜单（`at` 是右键落点，菜单作为悬浮层钉在那里）。
@@ -187,7 +181,8 @@ impl SidebarUiState {
     }
 
     /// 是否正处于「输入新名字」状态（重命名或新建）。
-    pub fn is_editing_name(&self) -> bool {
+    #[cfg(test)]
+    pub(crate) fn is_editing_name(&self) -> bool {
         self.renaming_path.is_some() || self.creating.is_some()
     }
 

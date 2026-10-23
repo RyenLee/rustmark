@@ -100,7 +100,7 @@ pub enum NamedKey {
 
 impl NamedKey {
     /// 由别名解析（大小写不敏感），别名集与领域 `NamedKey::parse` 一致。
-    pub fn parse(raw: &str) -> Option<Self> {
+    pub(crate) fn parse(raw: &str) -> Option<Self> {
         Some(match raw.to_ascii_lowercase().as_str() {
             "esc" | "escape" => Self::Escape,
             "enter" | "return" | "cr" => Self::Enter,
@@ -122,7 +122,7 @@ impl NamedKey {
     }
 
     /// 规范显示名（与领域 `NamedKey::display` 逐字一致）。
-    pub const fn display(self) -> &'static str {
+    pub(crate) const fn display(self) -> &'static str {
         match self {
             Self::Escape => "Esc",
             Self::Enter => "Enter",
@@ -149,7 +149,7 @@ impl Key {
     /// **大小写不敏感**：调用方（[`crate::presentation::shortcuts::registry::normalize`]）已把片段转成小写，
     /// 若这里只认大写 `F`，`F8` 会静默解析失败 → 功能键永远绑不上
     /// （这正是原型 B-01「`F8` 永不触发」的同款缺陷）。
-    pub fn parse(raw: &str) -> Option<Self> {
+    pub(crate) fn parse(raw: &str) -> Option<Self> {
         let lower = raw.to_ascii_lowercase();
         if lower.len() >= 2
             && lower.starts_with('f')

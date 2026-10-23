@@ -86,7 +86,7 @@ pub enum BoundaryGuard {
 /// 抽成别名不是为了好看——`Option<&'a dyn Fn(&str, &str) -> String>`
 /// 这个形状在结构体字段与两个构造器里各写一遍，clippy 的 `type_complexity`
 /// 会在**每处**报一遍；别名让「改写器是什么」只有一个真源。
-pub type Rewrite<'a> = &'a dyn Fn(&str, &str) -> String;
+pub(crate) type Rewrite<'a> = &'a dyn Fn(&str, &str) -> String;
 
 /// 一次排版的**上下文**：样式怎么查、怎么切段、文本要不要改写。
 ///

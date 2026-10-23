@@ -67,7 +67,7 @@ impl PreviewCacheKey {
     }
 
     /// 外观是否变化（需要重建）。
-    pub fn appearance_changed(&self, other: &Self) -> bool {
+    pub(crate) fn appearance_changed(&self, other: &Self) -> bool {
         self.palette != other.palette || self.font_size_q != other.font_size_q
     }
 }
@@ -207,16 +207,11 @@ impl PreviewUiState {
     }
 
     /// 文档切换后重置（缓存键必失效）。
-    pub fn reset_for_new_document(&mut self) {
+    pub(crate) fn reset_for_new_document(&mut self) {
         self.last_key = None;
         self.scroll_y = 0.0;
         self.blocks.clear();
         self.rects.clear();
-    }
-
-    /// 主题切换后重置（强制下次重建）。
-    pub fn invalidate(&mut self) {
-        self.last_key = None;
     }
 
     /// 文档过大降级（FR-06：> 500KB 只渲染可视区）。

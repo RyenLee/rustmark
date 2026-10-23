@@ -96,7 +96,7 @@ pub fn sections(groups: Vec<(MenuGroup, Vec<ActionEntry>)>, query: &str) -> Vec<
 ///
 /// 匹配中文显示名与英文关键字两侧，理由同命令面板：
 /// 用户记得的往往是「加粗 bold」里的任一半。
-pub fn matches_query(label: &str, keywords: &str, query: &str) -> bool {
+pub(crate) fn matches_query(label: &str, keywords: &str, query: &str) -> bool {
     if query.trim().is_empty() {
         return true;
     }

@@ -142,11 +142,6 @@ impl EditorUiState {
         self.cursor = end;
     }
 
-    /// 清除选区。
-    pub fn clear_selection(&mut self) {
-        self.anchor = None;
-    }
-
     /// 文档内容变化后**夹紧**光标与选区。
     ///
     /// 必需：删光标之前的所有内容会让 `cursor` 超出新长度，

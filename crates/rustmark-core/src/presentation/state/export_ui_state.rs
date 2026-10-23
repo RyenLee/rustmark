@@ -73,7 +73,7 @@ impl Default for ExportUiState {
 
 impl ExportUiState {
     /// 以建议文件名与主题构造。
-    pub fn new(file_stem: impl Into<String>, theme: impl Into<String>) -> Self {
+    pub(crate) fn new(file_stem: impl Into<String>, theme: impl Into<String>) -> Self {
         let mut state = Self {
             format: ExportFormat::Html,
             include_toc: false,
@@ -141,7 +141,7 @@ impl ExportUiState {
     }
 
     /// 目标文件完整路径（目录 + 文件名 + 扩展名）。
-    pub fn target_path(&self) -> String {
+    pub(crate) fn target_path(&self) -> String {
         let stem = if self.file_stem.trim().is_empty() {
             "document"
         } else {

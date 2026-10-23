@@ -308,7 +308,7 @@ impl UiAction {
     }
 
     /// 命令面板模糊检索用的额外关键词（不参与显示）。
-    pub const fn keywords(self) -> &'static str {
+    pub(crate) const fn keywords(self) -> &'static str {
         match self {
             UiAction::NewDocument => "new create file",
             UiAction::OpenDocument => "open quick",
@@ -374,7 +374,7 @@ impl UiAction {
     ///
     /// 与领域 `ShortcutTable::default_bindings()` 保持一致；应用层一旦可用，
     /// 就以应用层为准（用户可能已改过键），本表只作兜底。
-    pub const fn default_combo(self) -> Option<&'static str> {
+    pub(crate) const fn default_combo(self) -> Option<&'static str> {
         Some(match self {
             UiAction::NewDocument => "Ctrl+N",
             UiAction::OpenDocument => "Ctrl+O",

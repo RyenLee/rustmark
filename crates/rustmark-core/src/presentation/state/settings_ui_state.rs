@@ -197,7 +197,8 @@ impl SettingsUiState {
     }
 
     /// 是否有未确认的修改（「取消」按钮据此禁用）。
-    pub fn has_pending_changes(&self) -> bool {
+    #[cfg(test)]
+    pub(crate) fn has_pending_changes(&self) -> bool {
         self.dirty
     }
 
@@ -248,7 +249,8 @@ impl SettingsUiState {
     }
 
     /// 是否需要回滚快捷键。
-    pub fn needs_shortcut_rollback(&self) -> bool {
+    #[cfg(test)]
+    pub(crate) fn needs_shortcut_rollback(&self) -> bool {
         !self.shortcut_rollback.is_empty()
     }
 

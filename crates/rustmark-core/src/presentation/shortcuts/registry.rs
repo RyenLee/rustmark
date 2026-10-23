@@ -51,7 +51,7 @@ mod palette;
 pub use action::{MenuGroup, UiAction};
 pub use combo::{KeyCombo, ParseComboError, normalize};
 pub use keys::{Key, Modifiers, NamedKey};
-pub use palette::{ActionEntry, ActionTable, ScoredAction};
+pub(crate) use palette::{ActionEntry, ActionTable};
 
 // ============================================================================
 // 注册表

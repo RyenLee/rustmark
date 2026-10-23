@@ -19,7 +19,7 @@
 use egui::Event;
 use egui::Key as EguiKey;
 
-use super::registry::{Key, KeyCombo, Modifiers, NamedKey, ShortcutRegistry, UiAction, normalize};
+use super::registry::{Key, KeyCombo, Modifiers, NamedKey, ShortcutRegistry, UiAction};
 
 /// 分发结果。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -31,21 +31,6 @@ pub enum Dispatch {
     NoMatch,
     /// 命中一个动作。
     Triggered(UiAction),
-}
-
-impl Dispatch {
-    /// 命中的动作（若有）。
-    pub const fn action(self) -> Option<UiAction> {
-        match self {
-            Self::NoMatch => None,
-            Self::Triggered(action) => Some(action),
-        }
-    }
-
-    /// 是否命中。
-    pub const fn is_triggered(self) -> bool {
-        matches!(self, Self::Triggered(_))
-    }
 }
 
 /// 快捷键分发器：把egui 事件翻译成 [`UiAction`]。
@@ -141,13 +126,6 @@ impl ShortcutDispatcher {
             return Dispatch::NoMatch;
         }
         Dispatch::Triggered(action)
-    }
-
-    /// 录制：从一段文本生成组合键（设置页「录制新键」用）。
-    ///
-    /// 返回 `None` 表示这段输入**不可绑定**，调用方应拒绝并提示。
-    pub fn record(raw: &str) -> Result<KeyCombo, super::registry::ParseComboError> {
-        normalize(raw)
     }
 }
 

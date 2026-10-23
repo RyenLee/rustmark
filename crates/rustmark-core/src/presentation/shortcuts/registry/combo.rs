@@ -11,7 +11,7 @@ pub struct KeyCombo {
 
 impl KeyCombo {
     /// 构造组合（**不做**归一化，请用 [`normalize`]）。
-    pub const fn new(modifiers: Modifiers, key: Key) -> Self {
+    pub(crate) const fn new(modifiers: Modifiers, key: Key) -> Self {
         Self { modifiers, key }
     }
 

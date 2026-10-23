@@ -80,7 +80,8 @@ impl SymbolUiState {
     }
 
     /// 搜索是否改过。
-    pub fn query_changed(&self) -> bool {
+    #[cfg(test)]
+    pub(crate) fn query_changed(&self) -> bool {
         self.opened_query.as_deref() != Some(self.query.as_str())
     }
 

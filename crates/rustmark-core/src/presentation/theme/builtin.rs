@@ -259,7 +259,7 @@ impl Theme {
     }
 
     /// 以某套内置主题为底，覆盖字体设置（设置页改动只影响字体，不影响配色）。
-    pub fn with_font_settings(
+    pub(crate) fn with_font_settings(
         base: ThemeKind,
         font_family: &str,
         font_size: f32,
@@ -292,7 +292,7 @@ impl Theme {
     ///
     /// `kind` 不固定为 `Dark`：依据主背景亮度决定，驱动 egui 的明暗模式，
     /// 这样用户选浅色背景时界面整体走浅色，不会被锁在深色视觉里。
-    pub fn from_custom_palette(
+    pub(crate) fn from_custom_palette(
         palette: &CustomThemePaletteView,
         font_family: &str,
         font_size: f32,
@@ -359,7 +359,7 @@ impl Theme {
 /// egui 内置字体是 ProggyClean（位图字体），对中文与等宽排版都不友好。
 /// 首版沿用内置字体以保证零额外体积（S5-03 的体积硬指标），
 /// 阶段 08 再评估嵌入 `Noto Sans Mono` 子集——**必须**评估体积后再定。
-pub const MONO_FAMILY: &str = "monospace";
+pub(crate) const MONO_FAMILY: &str = "monospace";
 
 /// 不透明色。
 fn rgb(r: u8, g: u8, b: u8) -> Color32 {
