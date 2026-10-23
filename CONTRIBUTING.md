@@ -9,11 +9,15 @@
 
 ```bash
 cargo fmt --check
-cargo clippy --all-targets --all-features -- -D warnings
-cargo check
-cargo test
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo check --workspace --all-targets
+cargo test --workspace
 cargo run --bin check-arch
 ```
+
+> `--workspace` **必带**（D-3 阶段 4a workspace 化后）：不带时只检查默认成员
+> （root 包），`crates/rustmark-core` 的检查与单测会静默缺席。详见
+> `docs/architecture-constraints.md` §6。
 
 任一命令失败即视为单元未完成。`cargo run --bin check-arch` 会在违规时打印 `文件:行号 —— 原因`。
 
@@ -21,7 +25,7 @@ cargo run --bin check-arch
 
 ```bash
 # 覆盖率门禁：整体 ≥70%、领域 ≥90%（2% 缓冲区内 WARN）
-cargo llvm-cov --all-targets --lcov --output-path lcov.info -- --skip large_full_text_find_is_bounded
+cargo llvm-cov --workspace --all-targets --lcov --output-path lcov.info -- --skip large_full_text_find_is_bounded
 python tools/coverage_gate.py lcov.info
 
 # 离线发布演练：版本守卫 / 校验和 / Notes 归组 / 无私钥入仓 / 回滚步骤
@@ -52,6 +56,19 @@ fix(editor): 撤销栈按文档隔离，修复跨文件污染 [S3-08]
 - 每任务单元**一个 commit**，便于回滚；
 - 类型前缀：`feat` / `fix` / `refactor` / `test` / `docs` / `chore` / `perf`；
 - 末尾方括号内必须是 `.agent/tasks/` 中存在的任务编号。
+
+### 2.1 贡献者授权（DCO）
+
+你提交的贡献以与本仓库**相同的 `MIT OR Apache-2.0` 双许可**授权（见 `LICENSE-MIT` /
+`LICENSE-APACHE`），并且你有权如此授权：
+
+- 提交即代表你确认：你是贡献内容的作者/有权授权人，内容不侵犯第三方权利；
+- 每个 commit 必须带签名行 `Signed-off-by: 姓名 <邮箱>`（用 `git commit -s` 自动生成），
+  表示你同意上述授权条款；
+- 该签名行是合入 PR 的前提；维护者会核对签名与提交者一致，缺失时请 rebase 补签
+  （`git rebase HEAD~n --exec 'git commit --amend --no-edit -s'`）。
+
+本项目不使用 CLA 机器人；DCO 签名即履行入站许可授权手续。
 
 ## 3. 分层规则速查
 

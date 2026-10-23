@@ -16,9 +16,38 @@ This product includes third-party software and data:
 * rfd (MIT OR Apache-2.0) — native file dialogs
 * serde / toml (MIT OR Apache-2.0) — configuration serialization
 * thiserror / anyhow (MIT OR Apache-2.0) — error handling
-* ropey's bundled crates and transitive dependencies are covered by their
-  respective permissive licenses; the full machine-readable inventory can be
-  audited with `cargo deny check licenses` (configuration in deny.toml).
+* ureq / rustls (MIT OR Apache-2.0 OR ISC) — HTTPS client for remote images
+* log / env_logger (MIT OR Apache-2.0) — logging facade and backend
+* ahash (MIT OR Apache-2.0) — cache hasher
+
+All transitive dependencies are covered by their respective permissive licenses.
+The full machine-readable inventory (246 crates) is in `THIRD-PARTY-LICENSES.md`
+and can be re-audited with `cargo deny check licenses` (configuration in `deny.toml`).
+
+Font files distributed with this product (see `assets/fonts/Fonts-LICENSE.txt`
+for per-font copyright and the full text of each license; OFL-1.1 full text in
+`assets/fonts/OFL-1.1.txt`):
+
+* JetBrainsMono-Regular.ttf — Copyright 2020 The JetBrains Mono Project
+  Authors — SIL Open Font License 1.1
+* FiraCode-Regular.ttf — Copyright 2012-2015 The Fira Code Project Authors
+  — SIL Open Font License 1.1
+* IBMPlexMono-Regular.ttf — Copyright 2017 IBM Corp. — SIL Open Font License 1.1
+* NotoSansSC-Subset.ttf (subset of Noto Sans SC, unmodified glyphs)
+  — Copyright 2014-2020 Adobe — SIL Open Font License 1.1
+* DejaVuMathTeXGyre.ttf — Bitstream Vera / DejaVu license (redistribution
+  permitted; full text in `assets/fonts/DejaVuMathTeXGyre-LICENSE.txt`)
+* Ubuntu-Light.ttf — Copyright 2011 Canonical Ltd. — Ubuntu Font Licence 1.0
+  (full text in `assets/fonts/UFL.txt`); default proportional UI font
+* Hack-Regular.ttf — Copyright (c) 2018 Source Foundry Authors — MIT
+  (full text in `assets/fonts/Hack-Regular.txt`); default monospace font
+* NotoEmoji-Regular.ttf — Copyright 2013 Google Inc. — SIL Open Font License 1.1
+  (full text in `assets/fonts/OFL.txt`); monochrome emoji fallback
+* emoji-icon-font.ttf — Copyright (c) 2014 John Slegers — MIT
+  (full text in `assets/fonts/emoji-icon-font-mit-license.txt`); emoji fallback
+
+The last four fonts above ship as plain files under `fonts/` and are loaded at
+runtime; they are not compiled into the executable (see `docs/metrics.md` §2.7).
 
 Data files vendored in this repository:
 

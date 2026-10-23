@@ -4,7 +4,7 @@ Rust 2024 + egui（wgpu 后端）的桌面 Markdown 编辑器：单文件产物�
 GBK/GB18030 无损读写、分屏实时预览。
 
 - 许可：MIT OR Apache-2.0（双许可，见 `LICENSE-MIT` / `LICENSE-APACHE`）
-- 当前版本：v0.1.0（v1.0 发布就绪中，见 `CHANGELOG.md`）
+- 当前版本：v0.2.0（见 `CHANGELOG.md`）
 - 平台：Windows / macOS / Linux
 
 ---
@@ -148,10 +148,11 @@ wgpu 通过系统图形栈渲染，无窗口管理器外的额外依赖。
 # 工具链：Rust 1.99.0（rust-toolchain.toml 已固定）
 cargo build --release --bin rustmark   # 产物 target/release/rustmark*
 
-# 全量验证链（贡献者必过）
+# 全量验证链（贡献者必过）——`--workspace` 必带：workspace 化（D-3 阶段 4a）后
+# 不带只跑默认成员（root 包），crates/rustmark-core 的检查与单测会静默缺席
 cargo fmt --check
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test  --all-targets
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test  --workspace --all-targets
 cargo run   --bin check-arch
 ```
 
@@ -163,7 +164,7 @@ cargo run   --bin check-arch
 可选的本地门禁（与 CI 同款，纯标准库 Python，无额外依赖）：
 
 ```bash
-cargo llvm-cov --all-targets --lcov --output-path lcov.info
+cargo llvm-cov --workspace --all-targets --lcov --output-path lcov.info
 python tools/coverage_gate.py lcov.info   # 覆盖率门禁：整体 ≥70%、领域 ≥90%
 python tools/release_dryrun.py            # 离线发布演练：版本守卫 / 校验和 / Notes 归组
 ```
@@ -177,9 +178,41 @@ python tools/release_dryrun.py            # 离线发布演练：版本守卫 / 
 - 下一阶段（v1.1）任务规划：[docs/v1.1-backlog.md](docs/v1.1-backlog.md)
 - 编码规范：`.agent/conventions.md`；架构与分层：`docs/adr/`
 - 测试体系与覆盖率门禁：[docs/testing.md](docs/testing.md)
+- 配置与主题格式参考（`preferences.toml` 全字段）：[docs/config-reference.md](docs/config-reference.md)
 - 需求基线：[REQUIREMENTS.md](REQUIREMENTS.md)
 - 贡献指南：[CONTRIBUTING.md](CONTRIBUTING.md)
 
-## 8. 许可
+## 8. 隐私与安全
 
-双许可：`MIT OR Apache-2.0`，可任选其一。第三方组件清单见 [NOTICE](NOTICE)。
+- 隐私说明（数据存哪里、什么情况下联网）：[PRIVACY.md](PRIVACY.md)
+- 安全政策与漏洞披露：[SECURITY.md](SECURITY.md)
+
+要点：**无账号、无遥测、无自动更新、无崩溃自动上传**；文档内容全程留在本机。
+唯一的联网行为是「文档含远程图片时下载该图片」与「导出 HTML 时注入的 CDN 资源」，
+详见 `PRIVACY.md` §2。
+
+## 9. 许可
+
+双许可：`MIT OR Apache-2.0`，可任选其一。
+
+**授权要点**（面向非开发者的可读摘要，不替代协议全文）：
+
+1. **可自由使用**：个人与商业用途均免费，可修改、可再分发，无需申请授权。
+2. **二选一**：MIT 与 Apache-2.0 任选其一即可，无需特别声明；未选择时两种许可同时成立。
+3. **再分发须留声明**：分发本软件（含修改版）时必须随附版权与许可声明——发行包已随附
+   `LICENSE-MIT` / `LICENSE-APACHE` / `NOTICE` / `THIRD-PARTY-LICENSES.md`，请勿删除。
+4. **不含商标授权**：许可条款授予代码版权许可，**不授予** `rustmark` 名称与 Logo 的
+   商标使用权（MIT 与 Apache-2.0 均明确保留商标权，Apache-2.0 §7）。
+5. **按原样提供、无担保**：软件不附带任何形式的担保，作者与贡献者不对任何损害负责
+   （落点：MIT 免责声明全文、Apache-2.0 §7 与 §8、MIT 第 5 条）。
+
+协议全文：[LICENSE-MIT](LICENSE-MIT) · [LICENSE-APACHE](LICENSE-APACHE)
+
+- 第三方组件摘要：[NOTICE](NOTICE)
+- 第三方许可完整清单（含 186 个依赖的许可分布与 `self_cell` 的 GPL 选项处置）：
+  [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md)
+- 随包字体许可：`assets/fonts/Fonts-LICENSE.txt`，以及同目录下的许可全文
+  `OFL-1.1.txt`（JetBrains Mono / Fira Code / IBM Plex Mono / Noto Sans SC / NotoEmoji）、
+  `UFL.txt`（Ubuntu-Light）、`OFL.txt`（NotoEmoji 上游副本）、
+  `Hack-Regular.txt`（Hack-Regular）、`emoji-icon-font-mit-license.txt`（emoji-icon-font）、
+  `DejaVuMathTeXGyre-LICENSE.txt`（数学符号兜底字体）
