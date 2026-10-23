@@ -21,7 +21,10 @@
 | [`v1.1-backlog.md`](./v1.1-backlog.md) | **v1.1 唯一任务入口**（V11-01~26 总览 + 逐项说明） | 维护者 | 领任务、查任务状态与完成记录 |
 | [`debug-guide.md`](./debug-guide.md) | 运行 / 调试命令手册 + **GUI 缺陷定位方法论**（§6） | 开发者 | 跑程序、写测试、**排障前** |
 | [`troubleshooting.md`](./troubleshooting.md) | 终端用户故障排查（配置目录 / 重置 / 草稿恢复 / 崩溃报告） | 用户 | 应用出问题、要提 issue |
+| [`config-reference.md`](./config-reference.md) | **配置面参考**：`preferences.toml` 全字段（类型 / 默认 / 约束）+ 自定义主题色板 + 快捷键语法与默认键位 | 用户 / 维护者 | 手改配置、写主题、查字段含义 |
 | [`metrics.md`](./metrics.md) | 七项硬指标口径与实测值（**唯一数字来源**） | 维护者 | 关心体积 / 启动 / 内存 / 性能数字时 |
+| [`search-tab-performance-report.md`](./search-tab-performance-report.md) | 侧栏「搜索」标签卡顿专项：全链路、根因、实测、修复与门禁 | 维护者 | 怀疑搜索标签卡顿、要改搜索性能时 |
+| [`search-tab-postmortem.md`](./search-tab-postmortem.md) | 「搜索」标签卡顿技术复盘：5-Why、修复方案、性能对比、经验教训 | 维护者 | 复盘该缺陷、评审同类「读盘 + UI 每帧重算」问题时 |
 | [`dependencies.md`](./dependencies.md) | 依赖清单、锁定版本、许可证、复查报告（§6） | 维护者 | 增删依赖、评审体积 |
 | [`testing.md`](./testing.md) | 测试金字塔 / 覆盖率门禁 / 当前测试状态 | 贡献者 | 写测试、跑 CI 等价命令 |
 | [`release.md`](./release.md) | 发布流程（tag 驱动、CI 全自动、回滚） | 维护者 | 发版前 |

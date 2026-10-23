@@ -70,7 +70,7 @@
 ### 4. 字体外置，随包分发而非内嵌
 
 字体资产放在 `assets/fonts/`，**运行时由 `discovery.rs` 邻近 `current_exe()`
-发现**（`fonts/mod.rs:148`），而不是用 `include_bytes!` 编译进二进制。三个来源
+发现**（`fonts.rs:148`），而不是用 `include_bytes!` 编译进二进制。三个来源
 共用**同一条发现路径**：内置（`assets/fonts/`）→ 项目 `fonts/` → 系统等宽候选
 （`system_mono_candidates` 三平台分支），`discover_font_sources` 接受注入根目录
 （R-20 拆分后），项目字体优先于系统候选。

@@ -7,6 +7,12 @@
   **不覆盖**性能优化主线（1MB p95 压进 16ms 属另一条线，见 `docs/metrics.md` §3.2.13）
   与 T7 平台真机回归（需外部机器）
 
+> **文档说明（2026-10-22）**：本文各处「变异验证」引用的 `tools/mut_*.py` 一次性脚本已在
+> Python 工具清理中删除（`tools/*.py` 26 → 5，其余为 CI 门禁与再生成脚本）。删除理由、
+> 逐文件清单与备份位置见 [`python-cleanup-report.md`](./python-cleanup-report.md)。
+> 正文保留当时的验证结论与轮次，只在脚本引用后标注「已清理」——它们是**当时的证据**，
+> 不是可再执行的工具（锚点写死当年的源码片段，复跑只会得到「锚点漂移」的失败）。
+
 ---
 
 ## 目录
@@ -453,7 +459,7 @@ UI 选格式 ──► ExportFormat（领域唯一枚举）
 | `crate_layer_paths_inside_strings_and_comments_are_not_violations_in_tests` | 字符串/注释里的路径不是依赖（fixture 自身 41 处字符串即试金石） |
 | `repaint_rule_still_applies_inside_tests` | 帧预约规则不因测试豁免 |
 
-**变异验证 6 轮，全部捕获**（脚本 `tools/mut_arch_r02.py`，从干净基准重新生成 +
+**变异验证 6 轮，全部捕获**（脚本 `mut_arch_r02.py`，已清理；从干净基准重新生成 +
 编译失败单独识别）：
 
 | 变异 | 结果 |
@@ -561,7 +567,7 @@ UI 选格式 ──► ExportFormat（领域唯一枚举）
   1. `Revert`（还原修改）：方案正文写「调用既有的撤销入口（undo）」，但实施前核对代码证据后**推翻**——UI 标签「还原修改」、图标 `revert discard`、`actions.rs` 的原地注释「需要应用层提供『从磁盘重新加载』用例」、`settings.rs` 注释「Revert 是纯 UI 动作、没有领域对应项」四处一致指向「丢弃未保存修改、从磁盘重新加载」，且 `UiAction::Undo` 早已接线（照方案做会出现两个重复动作）。→ 定为**从磁盘重新加载**：新增应用层 `RevertCommand` + `LifecycleService::revert`（读盘 → 整篇 `replace` → `mark_saved` 清脏），`app/frame` 新增 `pending_revert` + `request_revert`/`apply_revert_confirm`/`run_revert`（脏文档经 `DialogPort::Confirm` 二次确认，**未命名文档提示而非猜位置**），`actions.rs` 路由由 `Unbound` 改为 `Handler(route_revert)`。还原后**草稿必须清**（否则下次启动会把丢弃的修改又捡回来）。
   2. `InsertImage`（插入图片）：契约定为**选图对话框 → 复制到资源目录 → 插相对链接**（而非仅插链接）。`DialogPort` 新增 `pick_image`（带 `image_filters` 过滤器，唯一出处 `IMAGE_EXTENSIONS`，覆盖预览侧 `image` crate 实际解码的位图，**剔除 svg** 因 `image` 不解码）；`shared` 新增 `ImageAssetStore` 端口 + `infrastructure` `FsImageAssetStore`（复制到文档目录 `assets/`、重名去重 `-1/-2…`，覆盖 = 静默丢图）；`Services.images` + 装配链最深层 `assemble_with_images`（旧链转发、既有调用点零改动）；`app/frame/images.rs` 编排「选图 → 导入 → 算相对/绝对路径 → 光标处插 `![](path)`」；`dialog_runner` 新增 `PickImage` 分支；`rfd_adapter` 与测试 fake 补实现。
   3. `action_route` 的 `Unbound` 清单**清零**（两个动作各有归宿）；`Unbound` 变体因实例为零保留，加 `#[allow(dead_code)]`（机制预留，与 `tests/support/fake_dialog.rs` 同款理由）。
-- **涉及文件**：`src/app/frame/actions.rs`、`src/app/frame/files.rs`、`src/app/frame/dialog.rs`、`src/app/frame/images.rs`（新）、`src/application/document/commands.rs`、`src/application/document/service/lifecycle.rs`、`src/shared/dialog.rs`、`src/shared/image_asset.rs`（新）、`src/infrastructure/dialogs/rfd_adapter.rs`、`src/infrastructure/persistence.rs`、`src/infrastructure/persistence/image_store.rs`（新）、`src/app/bootstrap.rs`、`src/app/dialog_runner.rs`、`tests/app/revert_test.rs`（新，7 例）、`tests/app/insert_image_test.rs`（新，7 例）、`tests/support/fake_dialog.rs`、`tools/mut_r04.py`（新，11 轮变异）
+- **涉及文件**：`src/app/frame/actions.rs`、`src/app/frame/files.rs`、`src/app/frame/dialog.rs`、`src/app/frame/images.rs`（新）、`src/application/document/commands.rs`、`src/application/document/service/lifecycle.rs`、`src/shared/dialog.rs`、`src/shared/image_asset.rs`（新）、`src/infrastructure/dialogs/rfd_adapter.rs`、`src/infrastructure/persistence.rs`、`src/infrastructure/persistence/image_store.rs`（新）、`src/app/bootstrap.rs`、`src/app/dialog_runner.rs`、`tests/app/revert_test.rs`（新，7 例）、`tests/app/insert_image_test.rs`（新，7 例）、`tests/support/fake_dialog.rs`、`mut_r04.py`（新，11 轮变异；脚本已清理）
 - **影响范围**：2 个动作从「按下无反应」变为「可用」；`UiAction` 总数 57 不变；`action_route` 的 `Unbound` 分支清零；用户可见：工具栏/菜单/快捷键的「还原修改」「插入图片」真正生效。
 - **依赖关系**：无前置。
 - **风险点**：
@@ -571,12 +577,12 @@ UI 选格式 ──► ExportFormat（领域唯一枚举）
 - **验收判据**（**全部达成**）：
   - `action_route` 的 `Unbound` 清单清零；
   - 新增回归 `tests/app/revert_test.rs`（7 例：核心还原 / 干净文档免确认 / 脏文档先确认且答复前内容不变 / 确认文案报文档名 / 答复否保留 / 对话框不可用报错 / 还原可撤销 / 清草稿 / 未命名文档提示）+ `tests/app/insert_image_test.rs`（7 例：复制到 assets 并插相对链接 / 未命名文档插绝对路径 / 导入失败报错且不插 / 重名去重 / 取消不插 / 选图取消不插 / 绝对路径图片）；
-  - 变异验证 `tools/mut_r04.py` **11 轮全捕获**（route 空转 / 脏文档不确认 / 不清草稿 / 确认文案丢名 / 不 mark_saved / replace 传空串 / InsertImage 路由空转 / 导入失败静默 / 链接格式错 / 未命名文档绝对分支丢失 / 重名去重失效）。
+  - 变异验证 `mut_r04.py`（已清理） **11 轮全捕获**（route 空转 / 脏文档不确认 / 不清草稿 / 确认文案丢名 / 不 mark_saved / replace 传空串 / InsertImage 路由空转 / 导入失败静默 / 链接格式错 / 未命名文档绝对分支丢失 / 重名去重失效）。
 
 #### R-05 · 设置页补写作目标输入
 
 - **改造内容**：在设置页「编辑器」分区补一个目标词数输入框；`domain` 的 `writing_goal` / DTO 的 `EditorSettingsView::writing_goal` 早已有，**只缺 UI 入口**。输入框临时文本放 `settings_ui_state.writing_goal_text`（表现层视图状态，非业务副本），打开设置时从落盘值种入；改动**即时落盘**（`apply_editor_field`，与设置页其它项一致）。「0 归一为未设」逻辑抽成纯函数 `normalize_writing_goal`（表现层不得依赖 `domain`，故不引用 `WritingGoal::MAX`/常量，存 0 即由领域 `is_set` 判定未设），便于单测与变异钉住。`writing_goal` 同时纳入设置快照 `Snapshot`，**「取消」随之回滚**（与其它字段一致）。
-- **涉及文件**：`src/presentation/views/settings_view/editor_prefs.rs`（输入框）、`src/presentation/state/settings_ui_state.rs`（`writing_goal_text` + `Snapshot.writing_goal` + `normalize_writing_goal` + 单测）、`src/app/frame/settings.rs`（`open_settings` 种入缓冲、`cancel_settings` 从快照回滚）、`tests/app/writing_goal_test.rs`（新，3 例）、`tools/mut_r05.py`（新，2 轮变异）
+- **涉及文件**：`src/presentation/views/settings_view/editor_prefs.rs`（输入框）、`src/presentation/state/settings_ui_state.rs`（`writing_goal_text` + `Snapshot.writing_goal` + `normalize_writing_goal` + 单测）、`src/app/frame/settings.rs`（`open_settings` 种入缓冲、`cancel_settings` 从快照回滚）、`tests/app/writing_goal_test.rs`（新，3 例）、`mut_r05.py`（新，2 轮变异；脚本已清理）
 - **影响范围**：1 个 UI 控件；用户可见：写作目标**从不可设变为可设**；状态栏进度条随之生效（`app/frame/editor.rs` 的 `sync_goal` 已在读该值）。
 - **依赖关系**：无前置。
 - **风险点**：
@@ -585,7 +591,7 @@ UI 选格式 ──► ExportFormat（领域唯一枚举）
 - **回滚方案**：移除控件 + 恢复 `Snapshot.writing_goal` 的「从当前值取」逻辑。
 - **验收判据**（**全部达成**）：
   - 新增回归 `tests/app/writing_goal_test.rs`：设 1000 → 重启 → 读回 1000；设 0 → 读回「未设」（而非 0）；从未设过 → 读回未设；
-  - 变异验证 `tools/mut_r05.py` **2 轮全捕获**（显式 0 不再归一 / 空串不再归一 → `normalize_writing_goal_treats_zero_and_empty_as_unset` 红）。
+  - 变异验证 `mut_r05.py`（已清理） **2 轮全捕获**（显式 0 不再归一 / 空串不再归一 → `normalize_writing_goal_treats_zero_and_empty_as_unset` 红）。
 
 #### R-06 · 切标签保留光标（每文档独立光标/选区）
 
@@ -1059,7 +1065,7 @@ UI 选格式 ──► ExportFormat（领域唯一枚举）
   - `closing_export_clears_the_running_flag`：自设 `running = false` 再断言，
     `close()` 清不清 running 根本没测 → 删掉那行自设。
 - **新增 7 例**（一律走 `EditorApp` 方法入口，不走「给字段赋值再断言」的自指
-  判据）+ `tools/mut_r11_1.py` **变异 10 轮全捕获、0 无牙齿**。
+  判据）+ `mut_r11_1.py`（已清理） **变异 10 轮全捕获、0 无牙齿**。
 - **门禁**：fmt OK / check-arch OK / clippy 0 lint /
   test **2055 passed / 0 failed / 4 ignored**（基线 2048 → +7）。
 
@@ -1068,7 +1074,7 @@ UI 选格式 ──► ExportFormat（领域唯一枚举）
 1. **处数吻合**：`diff_view.rs:70/94/95` 实测 3 处直写，新建
    `src/app/frame/diff.rs` 提供 `open_diff_overlay` / `set_diff_error` /
    `clear_diff_selection` 三个写入口；`open_overlay` 的 diff 初始化同批下沉。
-2. **新增 0 例 + `tools/mut_r11_2.py` 变异 5 轮全捕获、0 无牙齿**（5 个方法/
+2. **新增 0 例 + `mut_r11_2.py`（已清理） 变异 5 轮全捕获、0 无牙齿**（5 个方法/
    分支入口各一轮）。
 3. **门禁**：fmt OK / check-arch OK / clippy 0 lint / test 全绿。
 
@@ -1089,19 +1095,19 @@ UI 选格式 ──► ExportFormat（领域唯一枚举）
   - **切换类保留取反语义**：`spell_check` / `word_wrap` 原 `x = !x`，方法化为
     `toggle_*`，**不**改为「调用方传布尔」（那会把切换语义挪到视图且调用点散落）。
     判据用「调用后 == !调用前」断言，不写死初始值（默认值由偏好播种）。
-  - `tools/mut_r11_3_editor.py` **变异 7 轮全捕获**。
+  - `mut_r11_3_editor.py`（已清理） **变异 7 轮全捕获**。
 - **`sidebar` 组（8 处，commit `de0bd68`）**：新建 `frame/sidebar.rs` 7 方法
   （`start_sidebar_rename` / `set_sidebar_selected` / `set_sidebar_outline_selected`
   / `set_sidebar_search_query` / `set_sidebar_search_scope` /
   `toggle_sidebar_search_option` / `restore_sidebar_draft`）。
-  - `tools/mut_r11_3_sidebar.py` **变异 7 轮全捕获**。
+  - `mut_r11_3_sidebar.py`（已清理） **变异 7 轮全捕获**。
 - **`preview` 组（5 处，commit `aa6c252`）**：新建 `frame/preview.rs` 3 方法
   （`store_preview_render` / `set_preview_blocks` / `set_preview_scroll_y`）；
   `store_preview_render` 把 `blocks` / `rects` / `scroll_y` **三字段作为同一语义
   单元一起落定**，防无声漏写（这正是第 4 轮部分实现变异要钉的）。
   - import 修正：`BlockRect` 来自 `scroll_sync_state` 而非 `preview_ui_state`
     （`BlockView` 来自 `application::dto`）。
-  - 新增 3 例 + `tools/mut_r11_3_preview.py` **变异 4 轮全捕获**（含「只写
+  - 新增 3 例 + `mut_r11_3_preview.py`（已清理） **变异 4 轮全捕获**（含「只写
     blocks、漏写 rects/scroll_y」的部分实现变异）。
   - **门禁**：fmt OK / check-arch OK / clippy 0 lint / test **2076 passed /
     0 failed / 4 ignored**（sidebar 后 2073 → +3）。
@@ -1115,7 +1121,7 @@ UI 选格式 ──► ExportFormat（领域唯一枚举）
     - `app.<state>.<field> == z` 是**判据里的相等比较**，靠 `EqEq` token 排除。
   - 故意**不**用 `arch-allow` 豁免：合法的状态变更都走 `EditorApp` 的方法入口（R-11 已收敛），不存在「必须直写」的合法场景；`&mut` 借用由 token 形态排除而非豁免。
   - **只允许对 `app` 的方法调用做状态变更**；`app` 的字段读取（`app.active_doc`、`app.ui.theme`）仍允许。
-- **涉及文件**：`tools/arch_check.rs`（新规则 + 词法器 `Assign`/`EqEq`）、`src/presentation/views/editor_view.rs`（R-11 两层 grep 口径漏掉的**单层**直写 `app.editor_text =` 收口到 `EditorApp::set_editor_text`）、`src/app/frame/editor.rs`（新增 `set_editor_text`）、`tests/arch_violation_fixture.rs`（4 个注入/边界用例）、`tools/mut_r12.py`（变异验证）
+- **涉及文件**：`tools/arch_check.rs`（新规则 + 词法器 `Assign`/`EqEq`）、`src/presentation/views/editor_view.rs`（R-11 两层 grep 口径漏掉的**单层**直写 `app.editor_text =` 收口到 `EditorApp::set_editor_text`）、`src/app/frame/editor.rs`（新增 `set_editor_text`）、`tests/arch_violation_fixture.rs`（4 个注入/边界用例）、`mut_r12.py`（变异验证；脚本已清理）
 - **影响范围**：构建期规则；命中数为 0 才可启用 → 启用即 0 命中（R-11 已将真实直写清零）。
 - **依赖关系**：**严格依赖 R-01（token 级匹配）+ R-11（直写清零）**。
 - **与方案原设计的偏差（实施偏差）**：
@@ -1125,7 +1131,7 @@ UI 选格式 ──► ExportFormat（领域唯一枚举）
   - 注入用例：`presentation/views/foo_view.rs` 写 `app.a.b = 1;` → `scan()` 必须报「不得直写 app 状态字段」；`app.x = z;`（单层，对应 `app.editor_text =` 残留形态）同样必报；
   - 边界用例：`&mut app.a.b` 借用、`app.a.b == 1` 比较 → 必须放行（0 命中）；
   - 全量 `cargo run --bin check-arch` → OK（0 命中）；
-  - 变异验证（`tools/mut_r12.py`）：把规则判定改成 `if false` → 两条注入用例当场变红（1/1 变异点全捕获）。
+  - 变异验证（`mut_r12.py`，脚本已清理）：把规则判定改成 `if false` → 两条注入用例当场变红（1/1 变异点全捕获）。
 
 #### R-13 · 表现层内部依赖规则（`views` ↔ `state`）
 
@@ -1178,7 +1184,7 @@ UI 选格式 ──► ExportFormat（领域唯一枚举）
 原先筛父层名 `presentation 层`，细粒度化后 `views/` 报告自己的层名
 `presentation/views 层`——**是用例的筛子过时，不是实现错**。
 
-**变异验证 8 轮全部捕获**（`tools/mut_arch_r13.py`）：state 的 views 禁令清空
+**变异验证 8 轮全部捕获**（`mut_arch_r13.py`，脚本已清理）：state 的 views 禁令清空
 （**方案点名**）/ views→state 反向也禁（过度收紧）/ rich 名单漏 theme /
 widgets 不清 / icons 不清 / views 丢窄豁免 / 窄豁免外溢到整个 `crate::app` /
 `layer_of` 丢掉根文件形态。其中 2 轮被 build.rs 架构校验先拦下
@@ -1296,7 +1302,7 @@ widgets 不清 / icons 不清 / views 丢窄豁免 / 窄豁免外溢到整个 `c
   2. **新增第 4 个 widgets 组件 `widgets::row::paint_row_background`**（而非给 `clickable_row` 加 `background` 参数）：收口 `quick_open_view` / `command_palette_view` / `toolbar_view` 导航箭头 / `toolbar_view`「全部关闭」共 4 处逐字重复的「选中→`accent_soft` / 悬停→`bg_tertiary` 圆角(4pt)底色」配方。独立封装的理由：4 处调用点中部分底色由父级先画、`clickable_row` 当前不画底色，加 `background` 参数会与父级底色**叠加两次**（视觉变深）——独立函数让「圆角半径 + 两种主题色」没有别的写法可选（ADR-008 判据）。
 - **★ 与方案偏差（命名）**：方案建议 `clickable_row_with_background` 或给 `clickable_row` 加参数；实际选独立 `paint_row_background`，理由见上。函数只收口「圆角半径 + 两种底色」两行易错重复，不分配矩形、不返回命中区（背景须在内容之下绘制，调用方负责顺序）。
 - **真帧判据**：`tests/presentation/search_alignment_test.rs::search_group_header_filename_and_count_share_one_baseline`（集成，1 例：分组头文件名段与命中数同线，带内 top 离散 ≤ 0.5pt）；`row.rs` 单测 3 例（`paint_row_background_selected_draws_accent_soft` / `_hovered_draws_bg_tertiary` / `_draws_nothing_when_neither`，用 `Theme::dark()` + `ctx.run_ui` 抓 `Shape::Rect` 的 `fill` 比对主题色）。
-- **变异验证 `tools/mut_r17.py`**：3/3 全捕获（elided_segment 高度归 0 → 对齐测试红；选中态底色改错 → 选中例红；悬停态底色改错 → 悬停例红）。
+- **变异验证 `mut_r17.py`（已清理）**：3/3 全捕获（elided_segment 高度归 0 → 对齐测试红；选中态底色改错 → 选中例红；悬停态底色改错 → 悬停例红）。
 - **门禁四绿实测（2026-10-21）**：fmt✓ / check-arch✓ / clippy 0 lint（仅 lock-file 删除告警）/ test **2097 passed·0 failed·4 ignored**（R-06 后 2093 → +4：搜索对齐集成 1 + paint_row_background 单测 3）。
 - **验收判据复核**：`grep -rn "allocate_ui_with_layout" src/presentation/views/` → 仅 `preview_view/table.rs:284`（表格单元格，非限宽段场景）；`search.rs:175` 的命中是**注释**说明旧反模式、非代码。与方案口径一致。
 
@@ -1399,10 +1405,10 @@ widgets 不清 / icons 不清 / views 丢窄豁免 / 窄豁免外溢到整个 `c
 - **三层拆分落地**：
   1. `fonts/discovery.rs`：路径与存在性发现。`discover_font_sources(roots: &[PathBuf])` 改为接受**注入的根目录列表**，真实 FS 只留薄适配 `default_roots()`；`scan_project_fonts_dir(roots)` / `candidate_font_paths(roots)` 跟随注入；`system_mono_candidates` / `candidate_paths` / `builtin_font_path` 等保留。
   2. `fonts/assembly.rs`：`extend_with_cjk` / `prepend_selected_to_monospace` / `extend_with_math_fallback` / `extend_with_builtin_cjk` / `load_cjk_font` 纯装配逻辑（CJK 追加到末尾、选中字体置顶进内置族等**顺序约束**不变）。
-  3. `fonts/mod.rs`：门面，`font_definitions` / `editor_font_choices` / `FontSetup` 组装两层；`pub use` 重导出，外部调用点（`app/frame.rs` 的 `crate::infrastructure::fonts::editor_font_choices()` / `font_definitions()`）**零改动**。
+  3. `fonts.rs`：门面，`font_definitions` / `editor_font_choices` / `FontSetup` 组装两层；`pub use` 重导出，外部调用点（`app/frame.rs` 的 `crate::infrastructure::fonts::editor_font_choices()` / `font_definitions()`）**零改动**。
 - **★ 与方案偏差（可接受）**：方案提到装配层改接受 `Arc<dyn FontBytesLoader>`；实际 `extend_with_cjk` 本就接受字节、各函数已纯函数化，且 `font_definitions` 门面已用占位字节可测，故**未引入额外 trait**，避免过度设计。`font_definitions` 留在门面（非 assembly）以表达「门面组装两层」的归属。
 - **真实资产测试 skip 化（关键）**：原 6 个依赖内置字体文件（`assets/fonts/`）的用例在干净克隆下会**失败**；新增 `builtin_font_assets_present()` 守卫，缺失时静默跳过而非 panic——满足「干净克隆仍全绿」验收。发现并修复两处漏加守卫（`math_fallback_sits_between_western_and_cjk` / `builtin_cjk_sits_after_system_cjk_in_both_families`，二者 `.expect("…应已挂载")` 在资产缺失时 panic）。
-- **可测性验证**：新增注入式单测 `discovery_prefers_project_fonts_dir_over_system_candidates`（临时目录注入根，断言项目字体被发现且优先于系统候选）；变异 `tools/mut_r20.py` 2/2 全捕获（选中字体置顶改追加 / CJK 追加改插到开头）。
+- **可测性验证**：新增注入式单测 `discovery_prefers_project_fonts_dir_over_system_candidates`（临时目录注入根，断言项目字体被发现且优先于系统候选）；变异 `mut_r20.py`（已清理） 2/2 全捕获（选中字体置顶改追加 / CJK 追加改插到开头）。
 - **门禁四绿实测（2026-10-21）**：fmt✓ / check-arch✓ / clippy 0 lint（-D warnings）/ test **2098 passed·0 failed·4 ignored**（2097 + 1 新单测）；`cargo build --release` 后 exe 11.37 MiB，纯文件拆分零逻辑/依赖变化，体积差 ≈ 0（< 0.05 MiB）。
 
 ### 4.4 P3 组：低成本清理包
@@ -1449,7 +1455,7 @@ widgets 不清 / icons 不清 / views 丢窄豁免 / 窄豁免外溢到整个 `c
   3. **状态栏方法归位**：`set_status_error` / `set_status_notice` 并入**既有** `frame/status_bar.rs`（R-11 建的「状态栏写入口」）。
   4. **编辑器操作归位**：`insert_at_cursor` 并入 `frame/editor.rs`（与 `move_line` / `run_format` 同簇）。
   5. **纯函数归位**：`group_search_hits` 从 `workspace.rs` 并入 `frame/find.rs`，`outline.rs` 导入改指 find。
-  6. **判据加强**：`thematic_break_is_parsed` 加强为「块数 == 3 + 中间块是 `BlockKind::Rule` + 源码区间恰好覆盖 `---`」；变异 `tools/mut_r21.py` **2/2 全捕获**。
+  6. **判据加强**：`thematic_break_is_parsed` 加强为「块数 == 3 + 中间块是 `BlockKind::Rule` + 源码区间恰好覆盖 `---`」；变异 `mut_r21.py`（已清理） **2/2 全捕获**。
 - **★ 与方案偏差（3 处，均已核实并记录）**：
   - **第 3 项目标文件**：方案写「移到 `src/app/frame/status.rs`」；实际 frame 已有 `status_bar.rs`（R-11 建、职责即「状态栏写入口」），并入它而非新建文件——状态栏写入口真正集中在一处。
   - **第 5 项前提**：方案称 `group_search_hits` 被 `presentation/views/outline.rs` 反向导入；实际 `outline.rs` 在 `src/app/frame/`，属 app 内部导入，搬移无跨层风险。
