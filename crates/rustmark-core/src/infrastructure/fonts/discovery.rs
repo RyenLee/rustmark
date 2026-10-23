@@ -18,15 +18,15 @@ use crate::shared::fonts::{DEFAULT_EDITOR_FONT_KEY, EditorFontChoice};
 pub(crate) struct FontSource {
     /// egui 字体数据键（`user:<字体名>` 或 `builtin:<字体名>`，
     /// 与 [`EditorFontChoice::key`] 同值）。
-    pub key: String,
+    pub(crate) key: String,
     /// 下拉显示名（字体文件名去扩展名 / 内置字体名）。
-    pub display_name: String,
+    pub(crate) display_name: String,
     /// 字体文件路径（内置 `fonts/`、项目 `fonts/` 目录或系统字体目录）。
     ///
     /// 内置字体不再 `include_bytes!` 进二进制（体积红线 NFR-PERF-01），
     /// 改为随发行包以文件形式分发（见 [`builtin_font_path`]），
     /// 故此处统一为磁盘路径、只做「存在性检查」。
-    pub path: PathBuf,
+    pub(crate) path: PathBuf,
 }
 
 impl FontSource {

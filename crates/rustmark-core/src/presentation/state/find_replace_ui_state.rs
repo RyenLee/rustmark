@@ -99,7 +99,7 @@ pub struct FindReplaceUiState {
     /// 查找框是否拥有焦点（查找期间编辑区仍可编辑，A-28）。
     pub find_focused: bool,
     /// 上次查找的文档 ID——跨文档切换时据此决定是否保留状态。
-    pub last_doc_id: Option<crate::shared::ids::DocumentId>,
+    pub(crate) last_doc_id: Option<crate::shared::ids::DocumentId>,
     /// 跨文档切换时是否保留查找状态。
     ///
     /// 定义（验收要求「明确定义并写进文档」）：**保留**查询与选项，

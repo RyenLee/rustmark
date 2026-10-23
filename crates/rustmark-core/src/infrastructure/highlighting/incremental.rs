@@ -72,13 +72,13 @@ struct Checkpoint {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct IncrementalStats {
     /// 是否走了增量路径。
-    pub incremental: bool,
+    pub(crate) incremental: bool,
     /// 本次实际 `parse_line` 的行数。
-    pub parsed_lines: usize,
+    pub(crate) parsed_lines: usize,
     /// 新文本总行数。
-    pub total_lines: usize,
+    pub(crate) total_lines: usize,
     /// 收敛点（新文本字节偏移）；`None` 表示解析到文末或走了全量。
-    pub converged_at: Option<usize>,
+    pub(crate) converged_at: Option<usize>,
 }
 
 impl IncrementalStats {

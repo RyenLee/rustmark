@@ -18,7 +18,7 @@ use crate::shared::time::Timestamp;
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct DocumentSnapshot {
     /// 文档 ID（由仓储在首次加载时分配并保持稳定）。
-    pub id: DocumentId,
+    pub(crate) id: DocumentId,
     /// 文件路径。
     pub path: FilePath,
     /// 全文内容。
@@ -32,7 +32,7 @@ pub struct DocumentSnapshot {
     ///
     /// 存的是**共享内核的纯标签**（`shared::encoding::TextEncoding`）而非
     /// 基础设施层的 `Encoding`：后者带解码实现，领域层不得依赖它。
-    pub encoding: Option<TextEncoding>,
+    pub(crate) encoding: Option<TextEncoding>,
 }
 
 impl DocumentSnapshot {

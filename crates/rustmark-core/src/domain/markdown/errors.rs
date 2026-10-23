@@ -12,7 +12,7 @@ use crate::shared::error::AppError;
 #[error("Markdown 解析失败：{message}")]
 pub struct ParseError {
     /// 可直接呈现给用户的原因描述。
-    pub message: String,
+    pub(crate) message: String,
 }
 
 impl ParseError {
@@ -35,7 +35,7 @@ impl From<ParseError> for AppError {
 #[error("语法高亮失败：{message}")]
 pub struct HighlightError {
     /// 可直接呈现给用户的原因描述。
-    pub message: String,
+    pub(crate) message: String,
 }
 
 impl HighlightError {
@@ -61,7 +61,7 @@ impl From<HighlightError> for AppError {
 #[error("拼写检查失败：{message}")]
 pub struct SpellCheckError {
     /// 可直接呈现给用户的原因描述。
-    pub message: String,
+    pub(crate) message: String,
 }
 
 impl SpellCheckError {

@@ -32,13 +32,13 @@ pub struct PreviewCacheKey {
     /// 推断，切 tab 时预览会**一直显示第一份文档**，
     /// 而真相是「版本号相同但根本不是同一篇文档」。
     /// 文档标识进键后，换文档必然判定为「需重建」。
-    pub doc_id: u64,
+    pub(crate) doc_id: u64,
     /// 源文档版本号（**每份文档各自计数**，不可跨文档比较）。
-    pub content_version: u64,
+    pub(crate) content_version: u64,
     /// 配色签名（由 `palette_signature` 产生）。
-    pub palette: [u8; 4],
+    pub(crate) palette: [u8; 4],
     /// 字号（整数化，避免浮点抖动导致每次都判定「变了」）。
-    pub font_size_q: u32,
+    pub(crate) font_size_q: u32,
 }
 
 impl PreviewCacheKey {
@@ -86,7 +86,7 @@ pub struct PreviewUiState {
     /// 「是否换文档」就会漏判，于是上一份文档的滚动偏移会被带进新文档。
     pub last_doc: Option<u64>,
     /// 上次编辑时刻（用于防抖）。
-    pub last_edit_at_ms: u64,
+    pub(crate) last_edit_at_ms: u64,
     /// 最近一次渲染出的块序列（S6-05：预览重排代价高，缓存到键失效为止）。
     ///
     /// 存的是 DTO 视图而非渲染产物（`Galley`）——egui 是立即模式，

@@ -127,7 +127,7 @@ pub struct MermaidLayout {
     pub(super) prims: Vec<Prim>,
     /// 可点击热点：`(矩形, URL)`。矩形与图元同一坐标系（左上角为原点），
     /// 预览层之后会据此生成 `ctx.open_url` 的交互区。
-    pub hotspots: Vec<(Rect, String)>,
+    pub(crate) hotspots: Vec<(Rect, String)>,
 }
 
 impl MermaidLayout {

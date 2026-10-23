@@ -33,7 +33,7 @@ use crate::shared::text_format::TextFormats;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileFilter {
     /// 显示名（如 `Markdown`）。
-    pub name: String,
+    pub(crate) name: String,
     /// 扩展名列表，**不含点号**（如 `["md", "markdown"]`）。
     pub extensions: Vec<String>,
 }

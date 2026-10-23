@@ -73,7 +73,7 @@ pub struct DocumentAppService {
     /// 统计缓存命中次数（调试 / 测试断言用）。
     pub stats_cache_hits: AtomicU64,
     /// 统计缓存未命中次数（缺陷 G6：原仅有命中计数，补未命中以算命中率）。
-    pub stats_cache_misses: AtomicU64,
+    pub(crate) stats_cache_misses: AtomicU64,
     /// 新建文档使用的撤销策略（由偏好设置的「撤销合并窗口」推导，F-1 接线）。
     ///
     /// 装配时从 [`crate::application::preferences::service::PreferencesAppService`]

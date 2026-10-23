@@ -93,27 +93,27 @@ pub(crate) type Rewrite<'a> = &'a dyn Fn(&str, &str) -> String;
 /// 三个实现各自提供一份 [`SpanPolicy`]，差异**全部**在这里显式表达。
 pub struct SpanPolicy<'a, F> {
     /// 切段策略。
-    pub segmentation: Segmentation,
+    pub(crate) segmentation: Segmentation,
     /// 字符边界防护策略。
-    pub boundary: BoundaryGuard,
+    pub(crate) boundary: BoundaryGuard,
     /// 基础样式（无 span 覆盖时的样式）。
-    pub base: TextFormat,
+    pub(crate) base: TextFormat,
     /// 折行宽度（≤ 0 = 不折行）。
-    pub wrap_width: f32,
+    pub(crate) wrap_width: f32,
     /// 由样式名求出该 span 的样式。
     ///
     /// 用**闭包**而非枚举：不同场景的样式表覆盖面不同
     /// （编辑区 26 种 / 预览行内 14 种），
     /// 硬编码成枚举反而要造一个「两者并集」的庞类型。
-    pub style_of: F,
+    pub(crate) style_of: F,
     /// 行内公式 / 脚注引用的**文本改写**（返回改写后的字符串）。
     ///
     /// `None` = 不改写（编辑区 / 代码块）。
-    pub rewrite: Option<Rewrite<'a>>,
+    pub(crate) rewrite: Option<Rewrite<'a>>,
     /// 查找命中背景区间 `(start, end, is_current)`。
     ///
     /// 仅 [`Segmentation::Union`] 用得上——顺序游标无法表达背景叠加。
-    pub find_marks: &'a [(usize, usize, bool)],
+    pub(crate) find_marks: &'a [(usize, usize, bool)],
 }
 
 impl<'a, F> SpanPolicy<'a, F>

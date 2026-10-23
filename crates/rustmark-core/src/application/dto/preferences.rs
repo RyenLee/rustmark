@@ -248,7 +248,7 @@ pub struct LintIssueView {
     /// 行号（**0-based**，展示时 +1）。
     pub line: usize,
     /// 列号（0-based 字符）。
-    pub column: usize,
+    pub(crate) column: usize,
     /// 说明文案。
     pub message: String,
 }

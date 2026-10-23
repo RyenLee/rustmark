@@ -222,3 +222,9 @@ path = "tests/startup_smoke.rs"
 [[test]]
 name = "arch_violation_fixture"
 path = "tests/arch_violation_fixture.rs"
+
+# core 字段级可见性白名单（D-3 阶段 4b-5，R-02 续）：pub 字段面钉死，
+# 新增 / 放宽必须先登记（集合相等双向断言）。
+[[test]]
+name = "field_visibility_guard"
+path = "tests/field_visibility_guard_test.rs"

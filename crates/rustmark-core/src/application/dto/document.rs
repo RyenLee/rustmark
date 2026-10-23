@@ -31,7 +31,7 @@ pub struct DocumentView {
     /// 保存路径；未保存过的新文档为 `None`。
     pub path: Option<FilePath>,
     /// 内容预览（前若干字符，用于标签页 tooltip / 欢迎页）。
-    pub content_preview: String,
+    pub(crate) content_preview: String,
     /// 是否存在未保存修改。
     pub is_dirty: bool,
     /// 光标字节偏移。
@@ -39,7 +39,7 @@ pub struct DocumentView {
     /// 选区（无选区为 `None`）。
     pub selection: Option<RangeView>,
     /// 行数。
-    pub line_count: usize,
+    pub(crate) line_count: usize,
     /// 字节长度。
     pub byte_len: usize,
 }
@@ -131,7 +131,7 @@ pub struct OutlineView(pub Vec<OutlineItemView>);
 #[derive(Clone, Debug, Serialize)]
 pub struct SearchHitView {
     /// 命中所在文档 ID（磁盘文件由路径派生稳定 ID）。
-    pub file_id: DocumentId,
+    pub(crate) file_id: DocumentId,
     /// 命中所在路径。
     pub path: FilePath,
     /// 命中所在行（0-based）。
@@ -141,5 +141,5 @@ pub struct SearchHitView {
     /// 命中上下文片段（含前后若干字符）。
     pub snippet: String,
     /// 命中区间（相对整篇内容的字节偏移）。
-    pub match_range: RangeView,
+    pub(crate) match_range: RangeView,
 }

@@ -66,7 +66,7 @@ pub struct SidebarUiState {
     /// 在本帧绘制**之前**就被改掉（快捷键、测试直接赋值、命令面板）。
     /// 拿本帧开头读到的值当「上一个」永远等于当前值，切换就永远检测不到。
     /// 故由视图在画完后回写。
-    pub drawn_tab: Option<crate::presentation::state::app_ui_state::SidebarTab>,
+    pub(crate) drawn_tab: Option<crate::presentation::state::app_ui_state::SidebarTab>,
 }
 
 impl SidebarUiState {

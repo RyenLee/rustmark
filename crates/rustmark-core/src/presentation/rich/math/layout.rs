@@ -43,7 +43,7 @@ pub struct MathLayout {
     /// 基线以上高度（点，正值）。
     pub ascent: f32,
     /// 基线以下深度（点，正值）。
-    pub descent: f32,
+    pub(crate) descent: f32,
     /// 绘制指令。
     pub(super) items: Vec<Item>,
 }

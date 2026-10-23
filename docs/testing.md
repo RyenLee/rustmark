@@ -20,8 +20,10 @@
 | `tests/presentation/` | 表现层（egui CPU 布局） | headless |
 | `tests/app/` | 组合根与调度（bootstrap / 崩溃日志 / 对话框） | fake 对话框 |
 
-顶层另有 `tests/startup_smoke.rs`（配置型启动缺陷守卫）与
-`tests/arch_violation_fixture.rs`（架构校验器自验）。
+顶层另有 `tests/startup_smoke.rs`（配置型启动缺陷守卫）、
+`tests/arch_violation_fixture.rs`（架构校验器自验）与
+`tests/field_visibility_guard_test.rs`（core 字段级 `pub` 白名单守卫，
+D-3 阶段 4b-5：集合相等双向断言钉死 core 的 pub 字段面）。
 
 ### 运行约定
 
@@ -36,6 +38,8 @@
 - 全量**测试执行**耗时约 37s（2026-10-14 实测，热构建；release 构建另计）；连续 3 次运行结果一致
   是 S9-01 的稳定性验收，见任务清单状态段。
 
+> **当前状态（2026-10-23 实测，D-3 阶段 4b-5 字段级收紧后）**：`cargo test --workspace --all-targets` 为 **2125 passed / 0 failed / 4 ignored**。新增测试目标 `field_visibility_guard`（`tests/field_visibility_guard_test.rs`，core 字段级 `pub` 白名单 + 3 条匹配逻辑注入用例）计 4 条 passed。
+>
 > **当前状态（2026-10-23 实测，D-3 阶段 4a workspace 化后）**：`cargo test --workspace --all-targets` 为 **2125 passed / 0 failed**。拆分后 `crates/rustmark-core` 是独立测试目标（core 单测 357 passed），**不带 `--workspace` 时会静默缺席**——这是下方 2026-10-22 及更早快照的口径差异来源（当时为单 crate，命令无 `--workspace`）。
 >
 > **当前状态（2026-10-22 实测）**：`cargo test --all-targets` 为 **2101 passed / 0 failed / 4 ignored**，全量回归约 75s（热构建）。相对 2026-10-21 基线 2099，净增 **+2**（`tests/infrastructure/workspace_repository_test.rs` 的路径形态两条：前缀不变量 + 「canonical 形态不同的根」回归，后者在能构造差异的平台上才有牙齿，构造不出则跳过）。

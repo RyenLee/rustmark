@@ -16,7 +16,7 @@ pub struct TreeRow {
     /// 是否为该层级的最后一项（决定树线的「└」还是「├」）。
     pub is_last: bool,
     /// 是否有后续兄弟（即不是该层最后一项）。
-    pub has_next_sibling: bool,
+    pub(crate) has_next_sibling: bool,
 }
 
 impl TreeRow {

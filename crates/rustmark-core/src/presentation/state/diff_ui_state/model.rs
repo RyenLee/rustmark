@@ -21,13 +21,13 @@ pub enum DiffOp {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct DiffRow {
     /// 差异类型。
-    pub op: DiffOp,
+    pub(crate) op: DiffOp,
     /// 行文本。
-    pub text: String,
+    pub(crate) text: String,
     /// 左侧行号（1-based；`Add` 行为 `None`）。
-    pub old_no: Option<usize>,
+    pub(crate) old_no: Option<usize>,
     /// 右侧行号（1-based；`Remove` 行为 `None`）。
-    pub new_no: Option<usize>,
+    pub(crate) new_no: Option<usize>,
 }
 
 impl DiffRow {

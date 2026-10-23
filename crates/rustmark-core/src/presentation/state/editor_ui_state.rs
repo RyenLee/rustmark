@@ -19,9 +19,7 @@ pub struct EditorUiState {
     /// 垂直滚动量（egui 的 `ScrollArea` 偏移）。
     pub scroll_y: f32,
     /// 水平滚动量。
-    pub scroll_x: f32,
-    /// 是否拥有键盘焦点（决定快捷键是否走编辑区上下文）。
-    pub focused: bool,
+    pub(crate) scroll_x: f32,
     /// IME 组字中的**预编辑文本**（拼音候选未上屏的那部分）。
     ///
     /// 存在理由（FR-05 最高风险项）：组字期间**不能**触发撤销快照——
@@ -60,9 +58,9 @@ pub struct SpellSuggestMenu {
     /// 候选建议（按贴近程度降序，已截断到上限）。
     pub suggestions: Vec<String>,
     /// 菜单左上角（**屏幕坐标**，来自 egui 的指针位置）。
-    pub screen_x: f32,
+    pub(crate) screen_x: f32,
     /// 菜单左上角纵坐标。
-    pub screen_y: f32,
+    pub(crate) screen_y: f32,
 }
 
 impl SpellSuggestMenu {

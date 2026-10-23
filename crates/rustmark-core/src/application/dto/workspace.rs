@@ -12,7 +12,7 @@ use super::document::{RangeView, SearchHitView};
 #[derive(Clone, Debug, Serialize)]
 pub struct ExportResultView {
     /// 导出任务 ID。
-    pub job_id: JobId,
+    pub(crate) job_id: JobId,
     /// 输出文件路径。
     pub output_path: FilePath,
     /// 输出字节数（**产出文件**的大小，不是源文长度）。
@@ -30,7 +30,7 @@ pub struct RecentFileView {
     /// 路径。
     pub path: FilePath,
     /// 最近打开时间（UNIX 毫秒）。
-    pub last_opened: u64,
+    pub(crate) last_opened: u64,
 }
 
 /// 文件树条目视图。
@@ -46,7 +46,7 @@ pub struct FileEntryView {
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize)]
 pub struct TabView {
     /// 文档 ID。
-    pub document_id: DocumentId,
+    pub(crate) document_id: DocumentId,
 }
 
 /// 跨文件搜索结果视图。
@@ -88,11 +88,11 @@ pub struct ExportRequestView {
 #[derive(Clone, Debug, Serialize)]
 pub struct ConflictView {
     /// 冲突类型说明（含组合与动作名）。
-    pub description: String,
+    pub(crate) description: String,
     /// 冲突的组合键规范显示文本。
     pub combo: String,
     /// 涉及的动作显示名。
-    pub actions: Vec<String>,
+    pub(crate) actions: Vec<String>,
 }
 
 /// 格式指令执行结果（S6-07）。

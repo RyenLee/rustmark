@@ -46,9 +46,9 @@ struct CachedRender {
 pub struct RenderCache {
     entries: LruMap<DocumentId, CachedRender>,
     /// 命中次数（调试 / 测试断言用）。
-    pub hits: u64,
+    pub(crate) hits: u64,
     /// 未命中次数。
-    pub misses: u64,
+    pub(crate) misses: u64,
 }
 
 impl RenderCache {

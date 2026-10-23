@@ -22,7 +22,7 @@ pub struct ActionEntry {
     /// 中文显示名。
     pub label: &'static str,
     /// 分组。
-    pub group: MenuGroup,
+    pub(crate) group: MenuGroup,
     /// 显示用键位（可能为空串）。
     pub combo: String,
 }
@@ -86,7 +86,7 @@ pub struct ScoredAction {
     /// 动作条目。
     pub entry: ActionEntry,
     /// 匹配得分（越高越靠前）。
-    pub score: i32,
+    pub(crate) score: i32,
     /// 命中字符在 `label` 中的**字符**下标（供 UI 高亮）。
     ///
     /// **空 = 未命中 `label`**：只命中英文关键词时也是空的。

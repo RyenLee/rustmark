@@ -159,7 +159,7 @@ pub struct Theme {
     /// 代码块背景。
     pub code_bg: Color32,
     /// 滚动条。
-    pub scrollbar: Color32,
+    pub(crate) scrollbar: Color32,
 
     /// 编辑区字体族。
     pub editor_font_family: String,
@@ -168,7 +168,7 @@ pub struct Theme {
     /// 编辑区行高倍数。
     pub editor_line_height: f32,
     /// 编辑区缩进空格数。
-    pub editor_tab_size: u8,
+    pub(crate) editor_tab_size: u8,
 }
 
 impl Theme {
