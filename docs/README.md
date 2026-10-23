@@ -36,6 +36,8 @@
 |---|---|---|---|
 | [`architecture-review.md`](./architecture-review.md) | 全库架构评估报告：模块职责边界、依赖关系、P0~P3 问题清单（18 项主问题 + 11 项清理） | 维护者 | 想知道「现状哪里有问题、为什么这么判」 |
 | [`architecture-refactor-plan.md`](./architecture-refactor-plan.md) | 上述评估的**可执行改造方案**：21 条改造项（R-01~R-21，各含七字段）+ M0~M6 里程碑 + 验收判据 | 维护者 | 领改造任务、查某一条怎么做与怎么算做完 |
+| [`architecture-review-2026-10-23.md`](./architecture-review-2026-10-23.md) | 八维度架构复审报告：前次问题修复核对 + D-1~D-11 新问题清单与状态 | 维护者 | 查最新问题清单与 D 系列处置状态 |
+| [`multi-crate-review-2026-10-23.md`](./multi-crate-review-2026-10-23.md) | **多 crate 拆分专项评估**（D-3 阶段 4a）：优缺点、DDD 边界/依赖/内聚/DX/构建评审、技术债定级与优化建议 | 维护者 | 评审 workspace 拆分、决策「是否再拆」、执行 4b 前 |
 
 > 两份文档构成一对：**review 回答「问题是什么」，plan 回答「怎么改、怎么验」**。
 > 任务状态仍只在 [`v1.1-backlog.md`](./v1.1-backlog.md) 的 V11-54 / V11-54a 登记。

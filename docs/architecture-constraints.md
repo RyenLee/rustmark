@@ -41,6 +41,21 @@ presentation ──► application ──► domain ◄── infrastructure
                                     └── trait 实现反向注入
 ```
 
+### 2.1 core 的可见性口径（D-3 阶段 4b，2026-10-23 收紧完成）
+
+依赖矩阵管「能不能 import」，可见性管「能不能碰」——两道防线缺一不可。
+4b 后 core（`crates/rustmark-core`）的规则：
+
+- **默认 `pub(crate)`**：core 内部协作项不对外暴露；模块级 `pub` 只留给
+  shell / root `tests` 有真实读点的接口（消费者视角判定，R-02）；
+- **字段级 `pub` 走白名单**：`tests/field_visibility_guard_test.rs` 登记
+  548 条已批准 `pub` 字段，**集合相等双向断言**——新增或把 `pub(crate)`
+  放宽回 `pub` 必先改清单（增长留痕）；字段收紧/删除后清单同步移除；
+- **收紧方向由编译器守门**：shell 读 core 私有项报 E0616 / E0451，无白名单
+  也过不了；**放宽方向由白名单守门**：`pub(crate)` → `pub` 编译器沉默，
+  靠清单报红。两个方向都有机械执行，不靠 review 把关；
+- 新增 core 接口先问：shell / root `tests` 谁读它？无人读则 `pub(crate)`。
+
 ## 3. 依赖矩阵（✓ 允许 / ✗ 禁止）
 
 | 从＼到 | shared | domain | application | infrastructure | presentation |
