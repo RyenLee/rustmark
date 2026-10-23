@@ -14,19 +14,19 @@ use crate::shared::fonts::DEFAULT_EDITOR_FONT_KEY;
 use super::discovery::builtin_font_path;
 
 /// CJK 字体在 `font_data` 中的键名。
-pub const CJK_KEY: &str = "cjk";
+pub(crate) const CJK_KEY: &str = "cjk";
 
 /// 内置数学兜底字体（TeX Gyre DJV Math，DejaVu 的数学扩展版）。
-pub const MATH_FALLBACK_FILE: &str = "DejaVuMathTeXGyre.ttf";
+pub(crate) const MATH_FALLBACK_FILE: &str = "DejaVuMathTeXGyre.ttf";
 
 /// 数学兜底字体在 `font_data` 中的键名。
-pub const MATH_FALLBACK_KEY: &str = "math-fallback";
+pub(crate) const MATH_FALLBACK_KEY: &str = "math-fallback";
 
 /// 内置 CJK 兜底字体（Noto Sans SC 的 GB2312 子集，1.5MB）。
-pub const BUILTIN_CJK_FILE: &str = "NotoSansSC-Subset.ttf";
+pub(crate) const BUILTIN_CJK_FILE: &str = "NotoSansSC-Subset.ttf";
 
 /// 内置 CJK 兜底在 `font_data` 中的键名。
-pub const BUILTIN_CJK_KEY: &str = "builtin-cjk";
+pub(crate) const BUILTIN_CJK_KEY: &str = "builtin-cjk";
 
 /// 把用户选中的字体**置顶**进内置 `Monospace` 族（纯函数，便于单测）。
 ///
@@ -49,7 +49,7 @@ pub const BUILTIN_CJK_KEY: &str = "builtin-cjk";
 /// 注意这与 [`extend_with_cjk`] 的「必须追加到末尾」不矛盾：那条管的是
 /// **默认**装配（中文兜底不能抢西文）；本条是用户**显式**选择后的覆写，
 /// 选中字体的拉丁字形优先正是用户意图。
-pub fn prepend_selected_to_monospace(
+pub(crate) fn prepend_selected_to_monospace(
     definitions: &mut FontDefinitions,
     selected_family: Option<&str>,
 ) {
@@ -77,7 +77,7 @@ pub fn prepend_selected_to_monospace(
 ///
 /// 逐个尝试候选路径，第一个能读通的即返回——**不做字体内容校验**：
 /// 候选清单里的都是常规轮廓字体，而校验需要额外解析（见 `fonts.rs` 模块文档的安全约束）。
-pub fn load_cjk_font() -> Option<(String, Vec<u8>)> {
+pub(crate) fn load_cjk_font() -> Option<(String, Vec<u8>)> {
     super::discovery::candidate_paths()
         .into_iter()
         .find_map(|path| {
@@ -114,7 +114,7 @@ pub fn load_cjk_font() -> Option<(String, Vec<u8>)> {
 /// 内置 CJK 子集必须**排在系统 CJK 之后**：系统字体（雅黑 / 苹方）观感更好
 /// 且字重齐全，内置子集只是「一台机器上什么中文字体都没有」时的保险。
 /// 顺序反了会让有中文字体的用户也被迫用子集（生僻字反而变方框）。
-pub fn extend_with_cjk(definitions: &mut FontDefinitions, bytes: Vec<u8>) {
+pub(crate) fn extend_with_cjk(definitions: &mut FontDefinitions, bytes: Vec<u8>) {
     definitions
         .font_data
         .insert(CJK_KEY.to_owned(), Arc::new(FontData::from_owned(bytes)));
@@ -134,7 +134,7 @@ pub fn extend_with_cjk(definitions: &mut FontDefinitions, bytes: Vec<u8>) {
 ///
 /// 字体随发行包以文件分发（体积红线）：找不到或读不通时**跳过**——数学符号
 /// 缺字形只影响公式观感，不阻断启动（`font_definitions` 的调用方不因此报错）。
-pub fn extend_with_math_fallback(definitions: &mut FontDefinitions) {
+pub(crate) fn extend_with_math_fallback(definitions: &mut FontDefinitions) {
     let Some(path) = builtin_font_path(MATH_FALLBACK_FILE) else {
         return;
     };
@@ -159,7 +159,7 @@ pub fn extend_with_math_fallback(definitions: &mut FontDefinitions) {
 /// 无条件挂载（文件可解析时）：它轻量、只服务「系统什么中文字体都没有」
 /// 的场景，有系统字体时永远排在后排，不抢渲染。字体随发行包以文件分发
 /// （体积红线），缺失时跳过——此时裸机中文回落到系统 CJK。
-pub fn extend_with_builtin_cjk(definitions: &mut FontDefinitions) {
+pub(crate) fn extend_with_builtin_cjk(definitions: &mut FontDefinitions) {
     let Some(path) = builtin_font_path(BUILTIN_CJK_FILE) else {
         return;
     };

@@ -66,16 +66,8 @@ impl LineEnding {
     /// 按当前平台推断新建文件应使用的换行。
     ///
     /// Windows 记事本等工具对纯 LF 支持不佳，故新建文件用 `CRLF` 更友好。
-    pub const fn platform_default() -> Self {
+    pub(crate) const fn platform_default() -> Self {
         if cfg!(windows) { Self::CrLf } else { Self::Lf }
-    }
-
-    /// 该风格的换行字符串。
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Lf => "\n",
-            Self::CrLf => "\r\n",
-        }
     }
 
     /// 由**原始字节**探测换行风格（出现 `\r\n` 即为 CRLF）。
@@ -84,7 +76,7 @@ impl LineEnding {
     /// 若拿解码结果来探测，CRLF 文件永远会被误判成 LF，
     /// 于是「读时归一 + 写时还原」里的还原步骤失效——用户的 Windows 文件
     /// 会在我们保存一次后被整体改成 LF（git diff 噪声）。
-    pub fn detect_bytes(bytes: &[u8]) -> Self {
+    pub(crate) fn detect_bytes(bytes: &[u8]) -> Self {
         if bytes.windows(2).any(|pair| pair == b"\r\n") {
             Self::CrLf
         } else {

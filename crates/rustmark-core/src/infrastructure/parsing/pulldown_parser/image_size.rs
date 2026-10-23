@@ -178,7 +178,7 @@ pub struct SourceOffsets {
 
 impl SourceOffsets {
     /// 把「预处理后文本」的偏移还原成「原文」偏移。
-    pub fn to_original(&self, offset: usize) -> usize {
+    pub(crate) fn to_original(&self, offset: usize) -> usize {
         offset
             + self
                 .removals
@@ -206,7 +206,7 @@ impl SourceOffsets {
 ///
 /// 输入示例：`https://x/y.png#pic_center =30x30` →
 /// `ImageDisplay { width: Some(30), height: Some(30), align: Center }`。
-pub fn parse_image_display(dest: &str) -> ImageDisplay {
+pub(crate) fn parse_image_display(dest: &str) -> ImageDisplay {
     let mut display = ImageDisplay::default();
     // 对齐：地址内任意位置的 `#pic_*` 令牌（脱糖同款 starts_with 识别）。
     for (token, align) in PIC_ALIGN_TOKENS {

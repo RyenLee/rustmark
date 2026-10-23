@@ -90,14 +90,6 @@ impl SystemPdfExporter {
         }
     }
 
-    /// 构造导出器并指定打印调度（V11-04：测试注入记录型实现，避免真的弹打印）。
-    pub fn with_dispatcher(dispatcher: Arc<dyn PrintDispatcher>) -> Self {
-        Self {
-            dispatcher,
-            probe: Arc::new(PathProbe),
-        }
-    }
-
     /// 构造导出器并同时指定探测与调度（测试用：让「后端可用」分支在
     /// **不装任何打印服务的 CI** 上也能被覆盖）。
     pub fn with_probe_and_dispatcher(
@@ -153,11 +145,6 @@ impl SystemPdfExporter {
                 )
             }
         }
-    }
-
-    /// 当前环境是否可用（便捷方法，使用真实 PATH 探测）。
-    pub fn is_available() -> bool {
-        Self::detect(&PathProbe).available
     }
 
     /// 生成打印就绪的 HTML（含内联样式，供打印使用）。

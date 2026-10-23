@@ -42,7 +42,7 @@ pub(super) fn gbk_reverse() -> &'static std::collections::HashMap<u32, (u8, u8)>
 /// GBK 目标下，双字节表覆盖不了的字符自动落 **GB18030 四字节**
 /// （GB18030 是 GBK 的超集，四字节空间线性覆盖全部 Unicode 码位），
 /// 因此对任何合法 `&str` 都能无损编码。UTF-16 目标按对应字节序写入并补 BOM。
-pub fn encode(text: &str, encoding: Encoding) -> Vec<u8> {
+pub(crate) fn encode(text: &str, encoding: Encoding) -> Vec<u8> {
     let mut out = Vec::with_capacity(text.len() + 4);
     match encoding {
         Encoding::Utf8 => out.extend_from_slice(text.as_bytes()),

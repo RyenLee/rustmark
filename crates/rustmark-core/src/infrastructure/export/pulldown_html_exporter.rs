@@ -238,7 +238,7 @@ window.addEventListener('DOMContentLoaded', function () {
 ///
 /// `extra_style` 是**打印专用**样式的追加位（目前用于把用户选的纸张尺寸
 /// 写成 `@page`）。导出 HTML 的读者是浏览器、纸张由浏览器决定，故那边不传。
-pub fn build_printable_document(title: &str, body: &str, extra_style: &str) -> String {
+pub(crate) fn build_printable_document(title: &str, body: &str, extra_style: &str) -> String {
     wrap_document(title, body, extra_style)
 }
 
@@ -271,7 +271,12 @@ impl PulldownHtmlExporter {
     /// 由 Markdown 源码构建完整 HTML 文档。
     ///
     /// 单独暴露以便单测直接断言中间产物，无需落盘。
-    pub fn build_document(&self, markdown: &str, job: &ExportJob, toc: &[TocEntry]) -> String {
+    pub(crate) fn build_document(
+        &self,
+        markdown: &str,
+        job: &ExportJob,
+        toc: &[TocEntry],
+    ) -> String {
         let title = job.destination().file_name().to_string();
         let body = render_fragment(markdown);
         let with_toc = if job.needs_toc() {

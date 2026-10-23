@@ -83,12 +83,12 @@ pub(crate) struct IncrementalStats {
 
 impl IncrementalStats {
     /// 复用的行数（未重新解析的行）。
-    pub fn reused_lines(&self) -> usize {
+    pub(crate) fn reused_lines(&self) -> usize {
         self.total_lines.saturating_sub(self.parsed_lines)
     }
 
     /// 重新解析的行占比（0.0 ~ 1.0）。
-    pub fn parsed_ratio(&self) -> f64 {
+    pub(crate) fn parsed_ratio(&self) -> f64 {
         if self.total_lines == 0 {
             return 0.0;
         }
@@ -140,7 +140,7 @@ struct ParseOutcome {
 
 impl SyntectSession {
     /// 新建空会话。
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             syntaxes: default_syntax_set(),
             lang: None,

@@ -18,8 +18,6 @@
 //! - `Image` → 明确 `Err`：图片是**视口截图**，像素来自 GPU 回读而非 `content`，
 //!   由组合根直接调 [`crate::infrastructure::export::viewport_capture`] 落盘。
 
-use std::sync::Arc;
-
 use crate::domain::export::aggregate::ExportJob;
 use crate::domain::export::errors::ExportError;
 use crate::domain::export::services::Exporter;
@@ -66,9 +64,4 @@ impl Exporter for RoutingExporter {
             )),
         }
     }
-}
-
-/// 便于在组合根里注入的 `Arc` 版本。
-pub fn routing_exporter() -> Arc<dyn Exporter> {
-    Arc::new(RoutingExporter::new())
 }

@@ -115,13 +115,8 @@ pub struct LoadedAsset {
 }
 
 impl LoadedAsset {
-    /// 是否为位图（恒为 true——非位图在加载阶段已被拒绝）。
-    pub const fn is_bitmap(&self) -> bool {
-        true
-    }
-
     /// 字节长度。
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.bytes.len()
     }
 

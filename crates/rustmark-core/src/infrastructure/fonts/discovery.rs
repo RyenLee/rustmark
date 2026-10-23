@@ -15,7 +15,7 @@ use egui::FontData;
 use crate::shared::fonts::{DEFAULT_EDITOR_FONT_KEY, EditorFontChoice};
 
 /// 一个已发现的、可供用户选择的编辑区字体源。
-pub struct FontSource {
+pub(crate) struct FontSource {
     /// egui 字体数据键（`user:<字体名>` 或 `builtin:<字体名>`，
     /// 与 [`EditorFontChoice::key`] 同值）。
     pub key: String,
@@ -31,7 +31,7 @@ pub struct FontSource {
 
 impl FontSource {
     /// 取出字体字节并包装成 egui 的 `FontData`；读不通返回 `None`。
-    pub fn font_data(&self) -> Option<Arc<FontData>> {
+    pub(crate) fn font_data(&self) -> Option<Arc<FontData>> {
         std::fs::read(&self.path)
             .ok()
             .map(|bytes| Arc::new(FontData::from_owned(bytes)))
@@ -48,7 +48,7 @@ impl FontSource {
 /// 内置字体随发行包分发，缺失时降级为「下拉里少一项 / 数学符号或裸机
 /// 中文回落到系统字体」，不阻断启动（`font_definitions` 的调用方只依据
 /// `cjk_source.is_none()` 记一条警告）。
-pub fn builtin_font_path(file: &str) -> Option<PathBuf> {
+pub(crate) fn builtin_font_path(file: &str) -> Option<PathBuf> {
     let mut dirs: Vec<PathBuf> = Vec::new();
     if let Ok(exe) = std::env::current_exe()
         && let Some(dir) = exe.parent()
@@ -92,7 +92,7 @@ pub fn builtin_font_path(file: &str) -> Option<PathBuf> {
 /// 体积红线（`NFR-PERF-01`）下，内置字体**不再 `include_bytes!` 进二进制**，
 /// 而是随发行包以文件分发（`metrics.md §2.4` 方案 1）。第三列是文件名，
 /// 运行期经 [`builtin_font_path`] 定位、按需读取。
-pub const BUILTIN_EDITOR_FONTS: &[(&str, &str, &str)] = &[
+pub(crate) const BUILTIN_EDITOR_FONTS: &[(&str, &str, &str)] = &[
     (
         "builtin:JetBrains Mono",
         "JetBrains Mono",
@@ -110,7 +110,7 @@ pub const BUILTIN_EDITOR_FONTS: &[(&str, &str, &str)] = &[
 ///
 /// 只收录**文件可解析**的项：发行包里缺了某个字体文件时，该字体
 /// 既不登记进 `font_data`，也不出现在下拉里（避免「选了却没生效」）。
-pub fn builtin_editor_fonts() -> Vec<FontSource> {
+pub(crate) fn builtin_editor_fonts() -> Vec<FontSource> {
     BUILTIN_EDITOR_FONTS
         .iter()
         .filter_map(|(key, name, file)| {
@@ -127,7 +127,7 @@ pub fn builtin_editor_fonts() -> Vec<FontSource> {
 ///
 /// 真实文件系统的薄适配：[`discover_font_sources`] 接受注入的根目录列表，
 /// 此处给出生产环境的默认根，使发现逻辑可在无真实资产时单测。
-pub fn default_roots() -> Vec<PathBuf> {
+pub(crate) fn default_roots() -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = Vec::new();
     if let Ok(exe) = std::env::current_exe()
         && let Some(dir) = exe.parent()
@@ -147,7 +147,7 @@ pub fn default_roots() -> Vec<PathBuf> {
 ///
 /// `roots` 为注入的项目字体根目录列表（生产环境传 [`default_roots`]）；
 /// 项目字体排在系统等宽候选之前——用户自置字体优先于「机器刚好装了什么」。
-pub fn discover_font_sources(roots: &[PathBuf]) -> Vec<FontSource> {
+pub(crate) fn discover_font_sources(roots: &[PathBuf]) -> Vec<FontSource> {
     let mut sources: Vec<FontSource> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     // 内置字体排最前：同名时内置赢——跨平台确定性优先于「用户机器上恰好装了什么」。
@@ -175,7 +175,7 @@ pub fn discover_font_sources(roots: &[PathBuf]) -> Vec<FontSource> {
 }
 
 /// 候选字体路径（注入根目录的项目 `fonts/` + 系统等宽），按优先级排序：项目优先于系统。
-pub fn candidate_font_paths(roots: &[PathBuf]) -> Vec<(PathBuf, String)> {
+pub(crate) fn candidate_font_paths(roots: &[PathBuf]) -> Vec<(PathBuf, String)> {
     let mut out = Vec::new();
     out.extend(scan_project_fonts_dir(roots));
     out.extend(system_mono_candidates());
@@ -189,7 +189,7 @@ pub fn candidate_font_paths(roots: &[PathBuf]) -> Vec<(PathBuf, String)> {
 /// 2. 当前工作目录的 `fonts/`（开发态：`cargo run` 的工作目录即项目根）。
 ///
 /// `roots` 由调用方注入（生产环境 [`default_roots`]），使发现可在临时目录单测。
-pub fn scan_project_fonts_dir(roots: &[PathBuf]) -> Vec<(PathBuf, String)> {
+pub(crate) fn scan_project_fonts_dir(roots: &[PathBuf]) -> Vec<(PathBuf, String)> {
     const EXTS: [&str; 3] = ["ttf", "otf", "ttc"];
     let mut out: Vec<(PathBuf, String)> = Vec::new();
     for dir in roots {
@@ -222,7 +222,7 @@ pub fn scan_project_fonts_dir(roots: &[PathBuf]) -> Vec<(PathBuf, String)> {
 
 /// 常见**等宽**字体候选（不收录彩色 emoji 字体，理由见 `fonts.rs` 模块文档的安全约束）。
 #[cfg(target_os = "windows")]
-pub fn system_mono_candidates() -> Vec<(PathBuf, String)> {
+pub(crate) fn system_mono_candidates() -> Vec<(PathBuf, String)> {
     let fonts = std::env::var_os("WINDIR")
         .map_or_else(|| PathBuf::from("C:\\Windows"), PathBuf::from)
         .join("Fonts");
@@ -244,7 +244,7 @@ pub fn system_mono_candidates() -> Vec<(PathBuf, String)> {
 
 /// macOS：Menlo 是终端与 Xcode 的默认等宽字体。
 #[cfg(target_os = "macos")]
-pub fn system_mono_candidates() -> Vec<(PathBuf, String)> {
+pub(crate) fn system_mono_candidates() -> Vec<(PathBuf, String)> {
     [
         ("/System/Library/Fonts/Menlo.ttc", "Menlo"),
         (
@@ -259,7 +259,7 @@ pub fn system_mono_candidates() -> Vec<(PathBuf, String)> {
 
 /// Linux：发行版差异大，列最常见的等宽字体安装路径。
 #[cfg(all(unix, not(target_os = "macos")))]
-pub fn system_mono_candidates() -> Vec<(PathBuf, String)> {
+pub(crate) fn system_mono_candidates() -> Vec<(PathBuf, String)> {
     [
         (
             "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
@@ -285,7 +285,7 @@ pub fn system_mono_candidates() -> Vec<(PathBuf, String)> {
 
 /// 候选字体路径，按「字形覆盖 + 观感」排序，靠前者优先（CJK 发现用，与装配解耦）。
 #[cfg(target_os = "windows")]
-pub fn candidate_paths() -> Vec<PathBuf> {
+pub(crate) fn candidate_paths() -> Vec<PathBuf> {
     // 用 `%WINDIR%` 而非写死 `C:\Windows`：Windows 可装在非 C 盘。
     let fonts = std::env::var_os("WINDIR")
         .map_or_else(|| PathBuf::from("C:\\Windows"), PathBuf::from)
@@ -298,7 +298,7 @@ pub fn candidate_paths() -> Vec<PathBuf> {
 
 /// macOS：苹方为系统默认中文界面字体。
 #[cfg(target_os = "macos")]
-pub fn candidate_paths() -> Vec<PathBuf> {
+pub(crate) fn candidate_paths() -> Vec<PathBuf> {
     [
         "/System/Library/Fonts/PingFang.ttc",
         "/System/Library/Fonts/STHeiti Light.ttc",
@@ -311,7 +311,7 @@ pub fn candidate_paths() -> Vec<PathBuf> {
 
 /// Linux：发行版差异大，按常见安装路径依次尝试。
 #[cfg(all(unix, not(target_os = "macos")))]
-pub fn candidate_paths() -> Vec<PathBuf> {
+pub(crate) fn candidate_paths() -> Vec<PathBuf> {
     [
         "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
         "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf",
@@ -325,7 +325,7 @@ pub fn candidate_paths() -> Vec<PathBuf> {
 }
 
 /// 把发现的字体源映射为设置页下拉项（始终以「系统等宽（默认）」打头）。
-pub fn to_choices(sources: &[FontSource]) -> Vec<EditorFontChoice> {
+pub(crate) fn to_choices(sources: &[FontSource]) -> Vec<EditorFontChoice> {
     let mut choices = vec![EditorFontChoice {
         key: DEFAULT_EDITOR_FONT_KEY.to_string(),
         display_name: "系统等宽（默认）".to_string(),

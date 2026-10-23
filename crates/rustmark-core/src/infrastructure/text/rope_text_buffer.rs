@@ -45,24 +45,11 @@ pub struct RopeTextBuffer {
 }
 
 impl RopeTextBuffer {
-    /// 构造空缓冲区。
-    pub fn new() -> Self {
-        Self { rope: Rope::new() }
-    }
-
     /// 由文本构造。
     pub fn new_with_text(text: &str) -> Self {
         Self {
             rope: Rope::from_str(text),
         }
-    }
-
-    /// 取出底层 `Rope` 的只读视图。
-    ///
-    /// 仅供基础设施层内部与阶段 08 的性能优化使用；**应用层与表现层不得依赖**，
-    /// 否则会重新引入「上层绑定具体缓冲实现」的问题。
-    pub fn rope(&self) -> &Rope {
-        &self.rope
     }
 
     /// `offset` 是否为缓冲区内的 UTF-8 字符边界。

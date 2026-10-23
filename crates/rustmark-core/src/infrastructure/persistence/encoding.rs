@@ -52,7 +52,7 @@ mod writer;
 use gbk::decode_gbk;
 use utf16::decode_utf16;
 
-pub use writer::encode;
+pub(crate) use writer::encode;
 
 // 仅 facade 内联单测需要直接访问底层查表函数。
 
@@ -72,22 +72,12 @@ pub enum Encoding {
 }
 
 impl Encoding {
-    /// 状态栏等处展示用的名称。
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Utf8 => "UTF-8",
-            Self::Utf8Bom => "UTF-8 BOM",
-            Self::Utf16Le => "UTF-16 LE",
-            Self::Utf16Be => "UTF-16 BE",
-            Self::Gbk => "GBK",
-        }
-    }
-
     /// 保存时是否应写回 BOM。
     ///
     /// 只有原本带 BOM 的 UTF-8 才补回——凭空加 BOM 会干扰
     /// 依赖文本首字节的工具（如 shell 脚本的 shebang）。
-    pub const fn keeps_bom(self) -> bool {
+    #[cfg(test)]
+    pub(crate) const fn keeps_bom(self) -> bool {
         matches!(self, Self::Utf8Bom)
     }
 }
@@ -109,7 +99,7 @@ impl From<Encoding> for crate::shared::encoding::TextEncoding {
 }
 
 /// UTF-8 BOM。
-pub const UTF8_BOM: [u8; 3] = [0xEF, 0xBB, 0xBF];
+pub(crate) const UTF8_BOM: [u8; 3] = [0xEF, 0xBB, 0xBF];
 
 /// 解码字节流，并报告识别出的编码。
 pub fn decode(bytes: &[u8]) -> (String, Encoding) {

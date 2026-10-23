@@ -39,12 +39,12 @@ pub fn is_available() -> bool {
 }
 
 /// 遍历全部词表词（构建近邻索引用）。
-pub fn iter_words() -> impl Iterator<Item = &'static str> {
+pub(crate) fn iter_words() -> impl Iterator<Item = &'static str> {
     words().iter().copied()
 }
 
 /// 单词是否在词表中（大小写不敏感）。
-pub fn contains(word: &str) -> bool {
+pub(crate) fn contains(word: &str) -> bool {
     words().contains(word)
 }
 

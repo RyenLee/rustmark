@@ -74,7 +74,7 @@ pub use image_size::{SourceOffsets, desugar_image_sizes, image_display_at_source
 ///
 /// 导出器（`pulldown_html_exporter`）直接复用本函数，**这是唯一的选项来源**：
 /// 早先两边各写一份，结果预览支持上下标而导出不支持（用户看到「预览有、导出没有」）。
-pub fn parser_options() -> Options {
+pub(crate) fn parser_options() -> Options {
     Options::ENABLE_TABLES
         | Options::ENABLE_FOOTNOTES
         | Options::ENABLE_TASKLISTS
@@ -116,7 +116,7 @@ impl PulldownMarkdownParser {
     ///
     /// 注意：调用方若关心**源码区间**，应先把文本交给 [`desugar_image_sizes`]
     /// 预处理再传进来（`parse` 就是这么做的）。
-    pub fn raw_parser(text: &str) -> OffsetIter<'_, DefaultBrokenLinkCallback> {
+    pub(crate) fn raw_parser(text: &str) -> OffsetIter<'_, DefaultBrokenLinkCallback> {
         Parser::new_ext(text, parser_options()).into_offset_iter()
     }
 }

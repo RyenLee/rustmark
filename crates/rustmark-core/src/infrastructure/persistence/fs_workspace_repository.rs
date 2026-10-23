@@ -64,13 +64,13 @@ impl Default for TraversalRules {
 
 impl TraversalRules {
     /// 该目录名是否应被忽略。
-    pub fn is_ignored_dir(&self, name: &str) -> bool {
+    pub(crate) fn is_ignored_dir(&self, name: &str) -> bool {
         let lower = name.to_lowercase();
         self.ignored_dirs.iter().any(|d| d.to_lowercase() == lower)
     }
 
     /// 该文件名是否应被忽略（隐藏文件规则）。
-    pub fn is_hidden(&self, name: &str) -> bool {
+    pub(crate) fn is_hidden(&self, name: &str) -> bool {
         self.skip_hidden && name.starts_with('.')
     }
 }

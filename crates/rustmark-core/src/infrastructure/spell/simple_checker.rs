@@ -170,7 +170,7 @@ pub fn suggest_candidates(word: &str, limit: usize) -> Vec<String> {
 ///
 /// 只处理**相邻**易位：非相邻交换（`abcd → badc`）在真实打字里几乎不出现，
 /// 为它付出复杂度不划算。
-pub fn typo_distance(a: &str, b: &str) -> usize {
+pub(crate) fn typo_distance(a: &str, b: &str) -> usize {
     if is_adjacent_transposition(a, b) {
         return 1;
     }

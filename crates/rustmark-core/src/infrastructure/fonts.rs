@@ -44,22 +44,25 @@
 //! - `assembly`：字节 → `FontDefinitions` 的纯装配逻辑；
 //! - 本门面：组装两层并产出 [`FontSetup`]。
 
-pub mod assembly;
-pub mod discovery;
+pub(crate) mod assembly;
+pub(crate) mod discovery;
 
 use egui::FontDefinitions;
 
 use crate::shared::fonts::EditorFontChoice;
 
-pub use assembly::{
-    BUILTIN_CJK_KEY, CJK_KEY, MATH_FALLBACK_KEY, extend_with_builtin_cjk, extend_with_cjk,
-    extend_with_math_fallback, load_cjk_font, prepend_selected_to_monospace,
+pub(crate) use assembly::{
+    extend_with_builtin_cjk, extend_with_cjk, extend_with_math_fallback, load_cjk_font,
+    prepend_selected_to_monospace,
 };
-pub use discovery::{
-    BUILTIN_EDITOR_FONTS, FontSource, builtin_editor_fonts, builtin_font_path,
-    candidate_font_paths, candidate_paths, default_roots, discover_font_sources,
-    scan_project_fonts_dir, system_mono_candidates, to_choices,
-};
+pub(crate) use discovery::{builtin_font_path, default_roots, discover_font_sources, to_choices};
+
+// 以下名称仅 `#[cfg(test)] mod tests` 使用：非测试编译里保持不可见，
+// 避免 dead_code 警告；测试编译经 `use super::*` 照常拿到。
+#[cfg(test)]
+use assembly::{BUILTIN_CJK_KEY, CJK_KEY, MATH_FALLBACK_KEY};
+#[cfg(test)]
+use discovery::{BUILTIN_EDITOR_FONTS, candidate_paths, system_mono_candidates};
 
 /// 字体装配结果。
 pub struct FontSetup {
