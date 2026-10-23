@@ -80,8 +80,8 @@ const TAB_SIZES: &[u8] = &[2, 4, 8];
 /// 单独持有，两端各自有用例钉住。
 const MAX_OPEN_DOCUMENTS_RANGE: std::ops::RangeInclusive<u32> = 1..=30;
 
-/// 应用版本号（「关于」分区显示）。
-const VERSION: &str = "0.1.0";
+/// 应用版本号（「关于」分区显示，编译期取自 `Cargo.toml`，杜绝第二份真相）。
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// 字体族输入框的固定 `Id`。
 ///

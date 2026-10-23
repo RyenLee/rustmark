@@ -74,6 +74,10 @@ fn sync_goal(app: &mut EditorApp, stats: Option<&StatsView>) {
     app.status_bar.note_goal(progress, doc, now_ms);
 }
 
+/// 绘制状态栏：编码、写作目标进度、字数与瞬态消息（在底部 `Panel` 内）。
+///
+/// 绘制前先结算统计防抖、目标进度与消息 TTL（见函数体注释），
+/// 故它不只是「画」，也是状态栏相关瞬态状态的每帧推进点。
 pub fn show(app: &mut EditorApp, ui: &mut Ui) {
     sync_encoding(app);
     // 状态栏统计防抖（建议一 / 问题 039）：每帧只算一次，供「写作目标进度」

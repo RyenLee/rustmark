@@ -25,7 +25,9 @@
 
 ### 运行约定
 
-- 全量：`cargo test --all-targets`
+- 全量：`cargo test --workspace --all-targets`
+  （`--workspace` **必带**：workspace 化（D-3 阶段 4a，2026-10-23）后，不带时
+  `crates/rustmark-core` 的测试目标会静默缺席）
   （V11-13 已裁定：`large_file_test.rs` 里的**有界性能断言**只在 release 生效，
   debug 下这些用例仅打印 `[metrics]` 指标、不做门禁，因此常规回归无需
   `--skip`，也不会因 debug 吞吐偏低而误判。release 门禁由 CI 的 `perf` job
@@ -34,6 +36,10 @@
 - 全量**测试执行**耗时约 37s（2026-10-14 实测，热构建；release 构建另计）；连续 3 次运行结果一致
   是 S9-01 的稳定性验收，见任务清单状态段。
 
+> **当前状态（2026-10-23 实测，D-3 阶段 4a workspace 化后）**：`cargo test --workspace --all-targets` 为 **2125 passed / 0 failed**。拆分后 `crates/rustmark-core` 是独立测试目标（core 单测 357 passed），**不带 `--workspace` 时会静默缺席**——这是下方 2026-10-22 及更早快照的口径差异来源（当时为单 crate，命令无 `--workspace`）。
+>
+> **当前状态（2026-10-22 实测）**：`cargo test --all-targets` 为 **2101 passed / 0 failed / 4 ignored**，全量回归约 75s（热构建）。相对 2026-10-21 基线 2099，净增 **+2**（`tests/infrastructure/workspace_repository_test.rs` 的路径形态两条：前缀不变量 + 「canonical 形态不同的根」回归，后者在能构造差异的平台上才有牙齿，构造不出则跳过）。
+>
 > **当前状态（2026-10-21 实测）**：`cargo test --all-targets` 为 **2099 passed / 0 failed / 4 ignored**，全量回归约 44s（热构建）。相对 2026-10-21 上午基线 2090，净增 **+9**，其中 R-06「切标签保留光标」+3（`tests/app/tab_cursor_test.rs` 三层判据：应用层 per_doc_cursor 表记/取、pending_cursor 排入并被渲染帧消费、真帧读 egui `TextEditState` 脱字符落在恢复位置）、R-17「widgets 收口」+4（`tests/presentation/search_alignment_test.rs` 搜索分组头对齐集成 1 + `widgets/row.rs` 的 `paint_row_background` 单测 3）、R-20「fonts.rs 拆分」+1（`src/infrastructure/fonts/mod.rs` 的 `discovery_prefers_project_fonts_dir_over_system_candidates` 注入式单测）、V11-55「shared 内部环破除」+1（`src/shared/dialog.rs` 的 `default_filters_derives_from_the_whitelist` 对拍用例）。**R-11 整体完成 + R-12 机械规则上线 + R-06 切标签保留光标 + R-17 widgets 收口落地 + R-20 fonts 可测拆分落地 + V11-55 shared 环破除**。
 > 4 个 `ignored` 分布于 4 个测试目标，均为**有意忽略**：2 个性能基准（`#[ignore = "…需 release 下显式运行"]`）、1 个生成型 golden（`"生成型用例：需要时用 --ignored 手动跑"`）、1 个需外网（`"需外网"`）。
 > 2026-10-10 深夜曾实测 1519 passed / 7 failed，7 项分三类：① `presentation` 的 4 条 `top_menu_test`——工具栏「格式」组已**平铺为按钮**，测试仍按「分组下拉标题」定位，属**期望滞后于代码**；② `integration` 的 2 条语料快照——解析器新增 `header_spans`/`rows_spans`/`depth`/`ordinal`/`spans` 字段后 `{:?}` 快照文本已变，`tests/data/golden/*.expected` 未重生成，属**期望滞后**；③ `infrastructure` 的 `real_export_writes_a_real_pdf_to_the_chosen_path`——无头 Edge 在沙箱环境不产出 PDF，属**环境限制**。
@@ -51,7 +57,7 @@ tarpaulin 仅 Linux 且对 wgpu 依赖树支持差，故不选）。
 # 本地生成报告
 rustup component add llvm-tools-preview
 cargo install cargo-llvm-cov --locked
-cargo llvm-cov --all-targets --lcov --output-path lcov.info --
+cargo llvm-cov --workspace --all-targets --lcov --output-path lcov.info --
 
 # 门禁判定（CI 同款）
 python tools/coverage_gate.py lcov.info            # 整体 ≥70%，领域 ≥90%

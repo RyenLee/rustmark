@@ -94,9 +94,12 @@ fn draw(app: &mut EditorApp, ui: &mut Ui) {
 /// 第一行：查找框 + 三个开关 + 计数。
 fn draw_find_row(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
     ui.horizontal(|ui| {
+        // D-3 阶段 3：clone → 就地编辑 → 变化才值写回（写回在重扫之前，
+        // `sync_find` 读到的必须是新查询）。
+        let mut find_text = app.find.find_text.clone();
         let response = ui
             .add(
-                egui::TextEdit::singleline(&mut app.find.find_text)
+                egui::TextEdit::singleline(&mut find_text)
                     .id(egui::Id::unique(FIND_INPUT_ID))
                     .hint_text("查找")
                     .desired_width(f32::INFINITY),
@@ -111,6 +114,8 @@ fn draw_find_row(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
             app.set_find_focused(true);
         }
         if response.changed() {
+            // D-3 阶段 3：值写回先行（字段的可变引用不出 state）。
+            app.find.set_find_text(find_text);
             // 改了查询必须重扫：面板显示的 `n/m` 与「下一个」跳转目标
             // 都来自 `finder`，不重扫就会「计数说 12 条、点下去跳到旧位置」。
             app.sync_find();
@@ -205,14 +210,19 @@ fn draw_replace_row(app: &mut EditorApp, ui: &mut Ui) {
     let has_current = app.find.current_match().is_some();
     let has_any = app.find.match_count() > 0;
     ui.horizontal(|ui| {
+        // D-3 阶段 3：clone → 就地编辑 → 变化才值写回。
+        let mut replace_text = app.find.replace_text.clone();
         let response = ui
             .add(
-                egui::TextEdit::singleline(&mut app.find.replace_text)
+                egui::TextEdit::singleline(&mut replace_text)
                     .id(egui::Id::unique(REPLACE_INPUT_ID))
                     .hint_text("替换")
                     .desired_width(f32::INFINITY),
             )
             .on_hover_text("留空即删除命中内容");
+        if response.changed() {
+            app.find.set_replace_text(replace_text);
+        }
         if response.has_focus() {
             // 替换框吃掉焦点时必须**放弃**抢焦点，否则用户在替换框里
             // 每敲一个字符都会被拽回查找框，一个字也打不进去。

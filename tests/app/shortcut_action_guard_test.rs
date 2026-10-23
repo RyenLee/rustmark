@@ -277,8 +277,19 @@ fn collect_rs_files(dir: &Path) -> Vec<PathBuf> {
     out
 }
 
-fn src_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src")
+/// 两根扫描（D-3 阶段 4a workspace 化）：四层与非视图子模块在
+/// `crates/rustmark-core/src`，组合根与视图在 `src`；两根都扫才等价于
+/// 拆分前对单一 `src` 的全量覆盖（各根内按层相对路径记键）。
+fn src_roots() -> Vec<PathBuf> {
+    let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    vec![base.join("src"), base.join("crates/rustmark-core/src")]
+}
+
+/// 按层相对路径在两根中读文件（以第一个存在的为准）。
+fn read_from_roots(rel: &str) -> Option<String> {
+    src_roots()
+        .iter()
+        .find_map(|root| std::fs::read_to_string(root.join(rel)).ok())
 }
 /// 现状守卫：`persisted_key` **没有兜底分支**。
 ///
@@ -286,7 +297,10 @@ fn src_root() -> PathBuf {
 /// 而「新动作默认不可持久化」这一语义漂移**没有任何报错**。
 #[test]
 fn persisted_key_has_no_fallback_branch() {
-    let hits = scan_persisted_key_fallback(&src_root());
+    let mut hits = Vec::new();
+    for root in src_roots() {
+        hits.extend(scan_persisted_key_fallback(&root));
+    }
     assert!(
         hits.is_empty(),
         "`UiAction::persisted_key` 必须穷举全部变体，不许有 `_ =>` 兜底分支——\
@@ -359,10 +373,8 @@ fn comments_mentioning_fallback_are_not_flagged() {
 /// ——**零报错**。这条把两边的变体名**逐项比对**。
 #[test]
 fn the_presentation_action_list_matches_the_enum() {
-    let root = src_root();
-    let enum_text = std::fs::read_to_string(root.join(UI_ACTION_ENUM_FILE)).expect("枚举应可读");
-    let impls_text =
-        std::fs::read_to_string(root.join(UI_ACTION_IMPLS_FILE)).expect("impls 应可读");
+    let enum_text = read_from_roots(UI_ACTION_ENUM_FILE).expect("枚举应可读");
+    let impls_text = read_from_roots(UI_ACTION_IMPLS_FILE).expect("impls 应可读");
 
     let variants = extract_enum_variants(&enum_text, "UiAction");
     let entries = extract_all_list_entries(&impls_text);
@@ -463,8 +475,7 @@ fn an_action_absent_from_the_enum_is_detected() {
 /// 「该动作不出现在命令面板、且不可改键」——同样**零报错**。
 #[test]
 fn the_domain_action_list_matches_the_enum() {
-    let root = src_root();
-    let text = std::fs::read_to_string(root.join(DOMAIN_ACTION_FILE)).expect("领域动作应可读");
+    let text = read_from_roots(DOMAIN_ACTION_FILE).expect("领域动作应可读");
 
     let variants = extract_enum_variants(&text, "ActionId");
     let entries = extract_fn_all_list_entries(&text);

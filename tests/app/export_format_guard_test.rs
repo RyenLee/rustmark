@@ -130,8 +130,12 @@ fn collect_rs_files(dir: &Path) -> Vec<PathBuf> {
     out
 }
 
-fn src_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src")
+/// 两根扫描（D-3 阶段 4a workspace 化）：`shared` 等四层在
+/// `crates/rustmark-core/src`，组合根与视图在 `src`；两根都扫才等价于
+/// 拆分前对单一 `src` 的全量覆盖（各根内按层相对路径记键）。
+fn src_roots() -> Vec<PathBuf> {
+    let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    vec![base.join("src"), base.join("crates/rustmark-core/src")]
 }
 
 /// 现状守卫：真实工程里导出格式**只有一处**定义。
@@ -141,7 +145,10 @@ fn src_root() -> PathBuf {
 /// 它立刻变红。
 #[test]
 fn export_format_has_exactly_one_definition() {
-    let hits = scan_duplicate_format_enums(&src_root());
+    let mut hits = Vec::new();
+    for root in src_roots() {
+        hits.extend(scan_duplicate_format_enums(&root));
+    }
     assert!(
         hits.is_empty(),
         "导出格式/页面尺寸只能有一处定义（`{SOURCE_OF_TRUTH}`）。\
@@ -159,11 +166,13 @@ fn export_format_has_exactly_one_definition() {
 /// 那比没有守卫更危险。
 #[test]
 fn the_single_source_of_truth_exists() {
-    let path = src_root().join(SOURCE_OF_TRUTH);
-    assert!(
-        path.exists(),
-        "真源文件 {SOURCE_OF_TRUTH} 必须存在，否则导出格式无处安放"
-    );
+    let path = src_roots()
+        .iter()
+        .map(|root| root.join(SOURCE_OF_TRUTH))
+        .find(|p| p.exists());
+    let Some(path) = path else {
+        panic!("真源文件 {SOURCE_OF_TRUTH} 必须存在于 src 或 core src，否则导出格式无处安放");
+    };
     let text = std::fs::read_to_string(&path).expect("真源应可读");
     assert!(
         text.contains("pub enum ExportFormat"),

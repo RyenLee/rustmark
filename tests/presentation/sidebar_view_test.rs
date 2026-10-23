@@ -27,7 +27,9 @@ use rustmark::app::frame::EditorApp;
 use rustmark::application::workspace::commands::MoveEntryCommand;
 use rustmark::presentation::shortcuts::registry::UiAction;
 use rustmark::presentation::state::app_ui_state::SidebarTab;
-use rustmark::presentation::state::sidebar_ui_state::{NameEdit, SearchScope, tree_rows};
+use rustmark::presentation::state::sidebar_ui_state::{
+    NameEdit, SearchOptions, SearchScope, tree_rows,
+};
 use rustmark::presentation::views::main_view;
 use rustmark::presentation::views::sidebar_view::SEARCH_INPUT_ID;
 use rustmark::shared::path::FilePath;
@@ -787,6 +789,89 @@ fn search_options_actually_change_the_results() {
     }
 }
 
+/// 侧栏的正则开关必须一路通到检索内核（「正则死开关」的接线回归）。
+///
+/// 应用层语义由 `workspace_service_test` 钉住；这里测的是**表现层到应用层
+/// 的传线**：`search_workspace` 若漏传 `regex` 字段，开关点与不点结果
+/// 完全相同，而底层测试依旧全绿。
+#[test]
+fn regex_toggle_reaches_the_search_pipeline() {
+    let ws = workspace();
+    let root = ws.path().to_path_buf();
+    let (_cfg, mut app) = app_with_workspace(&root);
+    app.open_workspace_file(&joined(&root, "docs/guide.md"))
+        .unwrap();
+    app.open_workspace_file(&joined(&root, "readme.md"))
+        .unwrap();
+    app.sidebar.search_scope = SearchScope::OpenDocuments;
+    app.sidebar.search_query = "needl.".into();
+
+    // 字面量 `needl.` 在语料里不存在：关着正则必须零命中。
+    app.sidebar.search_options.regex = false;
+    assert_eq!(
+        app.search_workspace().unwrap().total(),
+        0,
+        "正则关闭时 `needl.` 应按字面量搜，不得命中 needle"
+    );
+
+    // 打开正则：`.` 各吃掉一个字符，两份文档里的 needle 都该命中。
+    app.sidebar.search_options.regex = true;
+    assert!(
+        app.search_workspace().unwrap().total() > 0,
+        "正则打开后 `needl.` 应命中 needle（开关没传到内核）"
+    );
+
+    // 无效正则：错误原样上抛给视图（而非静默空结果）。
+    app.sidebar.search_query = "(未闭合".into();
+    let err = app
+        .search_workspace()
+        .expect_err("无效正则必须以 Err 上抛，让视图显示原因");
+    assert!(
+        err.to_string().contains("正则表达式无效"),
+        "上抛的文案应可直接呈现用户，实际：{err}"
+    );
+}
+
+/// 搜索标签的「重置」按钮必须真的关掉三个开关。
+///
+/// 缺陷截图「重置失效」：按钮画得出来、也能点，但视图没接 `clicked()`，
+/// 三个开关原地不动。这里走**真实 UI 点击**而不是直接调状态方法——只测
+/// `reset()` 的话，「视图漏接线」这条缺陷照样测不出来。
+#[test]
+fn clicking_the_search_reset_button_clears_every_option() {
+    let ws = workspace();
+    let root = ws.path().to_path_buf();
+    let (_cfg, mut app) = app_with_workspace(&root);
+    app.ui.sidebar_tab = SidebarTab::Search;
+    app.ui.sidebar_visible = true;
+    // 默认范围「当前文档」在没有活动文档时只渲染空状态，开关行根本不出现。
+    app.sidebar.search_scope = SearchScope::OpenDocuments;
+    app.sidebar.search_query = "needle".to_string();
+    app.sidebar.search_options = SearchOptions {
+        case_sensitive: true,
+        whole_word: true,
+        regex: false,
+    };
+
+    let ctx = egui::Context::default();
+    let mut shapes = Vec::new();
+    for _ in 0..2 {
+        let out = crate::support::run_ui(&ctx, frame_input(), |ui| {
+            rustmark::presentation::theme::mapper::apply(ui.ctx(), &app.ui.theme);
+            main_view::show(&mut app, ui);
+        });
+        shapes = out.shapes;
+    }
+    let reset = text_center(&shapes, "重置").expect("开关行应渲染出「重置」按钮");
+
+    click_at(&ctx, &mut app, reset);
+
+    assert!(
+        app.sidebar.search_options.is_plain(),
+        "点「重置」应关闭全部搜索选项（视图必须接上 clicked()）"
+    );
+}
+
 /// 空查询不发起搜索（否则每帧全盘扫描）。
 #[test]
 fn empty_query_does_not_trigger_a_search() {
@@ -1131,6 +1216,48 @@ fn the_context_menu_closes_on_left_clicks_elsewhere() {
         app.sidebar.context_menu_path.is_none(),
         "左键点树外（编辑区）应关闭菜单，实际 {:?}",
         app.sidebar.context_menu_path
+    );
+}
+
+/// 右键菜单是**前景浮层**：打开它不得改变文件树其它行的位置。
+///
+/// 行内拼接的旧实现把菜单 Frame 插进树流里，下方的行会被顶下去；
+/// 浮层（`Area` + `Order::Foreground`）不参与布局，行坐标必须原样不动。
+#[test]
+fn the_context_menu_floats_without_moving_tree_rows() {
+    let ws = workspace();
+    let root = ws.path().to_path_buf();
+    let (_cfg, mut app) = app_with_workspace(&root);
+    let ctx = egui::Context::default();
+    app.ui.sidebar_tab = SidebarTab::Files;
+    app.ui.sidebar_visible = true;
+
+    let mut shapes = Vec::new();
+    for _ in 0..2 {
+        let out = crate::support::run_ui(&ctx, frame_input(), |ui| {
+            rustmark::presentation::theme::mapper::apply(ui.ctx(), &app.ui.theme);
+            main_view::show(&mut app, ui);
+        });
+        shapes = out.shapes;
+    }
+    let target = sidebar_text_center(&shapes, "readme.md").expect("应渲染出 readme.md 行");
+    let docs_before = sidebar_text_center(&shapes, "docs").expect("应渲染出 docs 行");
+
+    right_click_at(&ctx, &mut app, target);
+    assert!(app.sidebar.context_menu_path.is_some(), "右键行应打开菜单");
+
+    let out = crate::support::run_ui(&ctx, frame_input(), |ui| {
+        rustmark::presentation::theme::mapper::apply(ui.ctx(), &app.ui.theme);
+        main_view::show(&mut app, ui);
+    });
+    let docs_after = sidebar_text_center(&out.shapes, "docs").expect("应渲染出 docs 行");
+    assert_eq!(
+        docs_before, docs_after,
+        "浮层不得挤动文件树其它行（旧实现会把下方行顶下去）"
+    );
+    assert!(
+        text_center(&out.shapes, "新建文件").is_some(),
+        "菜单应作为浮层真实渲染出来"
     );
 }
 
@@ -1789,7 +1916,8 @@ fn restoring_a_draft_keeps_the_error_and_the_menu() {
     let (_cfg, mut app) = app_with_workspace(&root);
 
     app.sidebar.fail("目标目录只读".to_string());
-    app.sidebar.open_context_menu("/w/readme.md");
+    app.sidebar
+        .open_context_menu("/w/readme.md", egui::pos2(10.0, 10.0));
 
     app.restore_rename_draft("/w/readme.md".to_string(), "readme.md".to_string());
 

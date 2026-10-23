@@ -3,6 +3,7 @@
 //! 覆盖：扫描文件树、最近文件（去重 / 上限 20）、标签页（脏文档不关闭）、
 //! 跨文件搜索（覆盖草稿、单文件上限 50、总上限 300）。
 
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, RwLock};
 
 use rustmark::application::dto::{CloseDecisionView, FileEntryView};
@@ -454,4 +455,219 @@ fn search_can_be_limited_to_one_document() {
     let gone = f.service.search(query(Some(DocumentId::new()))).unwrap();
     assert!(gone.hits.is_empty(), "限定到不存在的文档应无命中");
     assert!(!gone.truncated);
+}
+
+/// 正则开关必须真的走正则匹配（修复「正则死开关」）。
+///
+/// 旧实现里 `SearchQuery::regex` 被忽略，`true` 时退化为字面量子串——
+/// UI 上的 `.*` 开关点与不点结果完全相同。这里用**只有正则才可能命中**
+/// 的模式（`n.d` 匹配 "nod"，字面量 `n.d` 在语料里不存在）钉住语义。
+#[test]
+fn search_regex_pattern_actually_matches_as_regex() {
+    let f = build();
+    seed_files(&f, &["/d/a.md"], "the node module and the nod answer");
+
+    let result = f
+        .service
+        .search(SearchQuery {
+            pattern: "n.d".to_string(),
+            regex: true,
+            case_sensitive: false,
+            whole_word: false,
+            only_document: None,
+            only_open_documents: false,
+        })
+        .unwrap();
+    assert_eq!(
+        result.hits.len(),
+        2,
+        "`n.d` 应以正则命中 node 与 nod：{:?}",
+        result.hits
+    );
+
+    // 同一模式按字面量搜：语料里没有 `n.d` 字面文本，必须零命中——
+    // 两条对照都过，才说明 `regex` 开关真的在分岔。
+    let literal = f
+        .service
+        .search(SearchQuery {
+            pattern: "n.d".to_string(),
+            regex: false,
+            case_sensitive: false,
+            whole_word: false,
+            only_document: None,
+            only_open_documents: false,
+        })
+        .unwrap();
+    assert!(literal.hits.is_empty(), "字面量模式不应命中 node/nod");
+}
+
+/// 无效正则必须整次失败并透出**用户可读**的文案（而非静默零命中）。
+///
+/// 吞掉错误的话，用户输入了括号没闭合的模式，界面只显示「没有找到匹配」，
+/// 会以为这个词真的不存在，永远不知道是自己写错了。
+#[test]
+fn search_invalid_regex_returns_user_facing_error() {
+    let f = build();
+    seed_files(&f, &["/d/a.md"], "anything on disk");
+
+    let err = f
+        .service
+        .search(SearchQuery {
+            pattern: "(未闭合".to_string(),
+            regex: true,
+            case_sensitive: false,
+            whole_word: false,
+            only_document: None,
+            only_open_documents: false,
+        })
+        .expect_err("未闭合括号的正则必须报错而非返回空结果");
+    let message = err.to_string();
+    assert!(
+        message.contains("正则表达式无效"),
+        "错误文案应可直接呈现给用户，实际：{message:?}"
+    );
+}
+
+/// 限定单文档的查询模板（缓存用例共用；该范围**不读盘**，进缓存）。
+fn current_doc_query(id: DocumentId) -> SearchQuery {
+    SearchQuery {
+        pattern: "needle".to_string(),
+        regex: false,
+        case_sensitive: false,
+        whole_word: false,
+        only_document: Some(id),
+        only_open_documents: false,
+    }
+}
+
+/// 缓存命中：同一查询 + revision 快照不变 → 第二次调用走短路，
+/// 计数器递增且结果与首算逐字一致。
+///
+/// 结果视图无 `PartialEq`，用 `Debug` 全文比对（命中少，足够分辨）。
+#[test]
+fn search_cache_second_identical_call_hits_and_returns_same_result() {
+    let f = build();
+    let id = DocumentId::new();
+    f.provider
+        .insert(id, "needle in the draft", 1, Some(fp("/d/a.md")));
+
+    let first = f.service.search(current_doc_query(id)).unwrap();
+    assert_eq!(
+        f.service.search_cache_misses.load(Ordering::Relaxed),
+        1,
+        "首算必须记为 miss"
+    );
+    assert_eq!(f.service.search_cache_hits.load(Ordering::Relaxed), 0);
+
+    let second = f.service.search(current_doc_query(id)).unwrap();
+    assert_eq!(
+        f.service.search_cache_hits.load(Ordering::Relaxed),
+        1,
+        "指纹与 revision 都没变，第二次必须命中"
+    );
+    assert_eq!(
+        f.service.search_cache_misses.load(Ordering::Relaxed),
+        1,
+        "命中路径不得再记 miss"
+    );
+    assert_eq!(
+        format!("{first:?}"),
+        format!("{second:?}"),
+        "缓存返回的结果必须与首算一致"
+    );
+}
+
+/// 缓存失效（revision 层）：内容版本一变，键不等 → 重新计算并刷新结果。
+///
+/// 钉的是「打字后不能看到旧命中」——缓存若比对不上版本号，
+/// 用户改完文档搜索结果还是改前的，且不报任何错。
+#[test]
+fn search_cache_reflects_content_change_after_revision_bump() {
+    let f = build();
+    let id = DocumentId::new();
+    f.provider
+        .insert(id, "nothing relevant here", 1, Some(fp("/d/a.md")));
+
+    let before = f.service.search(current_doc_query(id)).unwrap();
+    assert!(before.hits.is_empty(), "前置条件：修订 1 的内容不含 needle");
+    assert_eq!(f.service.search_cache_misses.load(Ordering::Relaxed), 1);
+
+    // 同一文档，revision 1 → 2，内容换成含 needle 的新文本。
+    f.provider
+        .insert(id, "a needle appears now", 2, Some(fp("/d/a.md")));
+
+    let after = f.service.search(current_doc_query(id)).unwrap();
+    assert_eq!(
+        f.service.search_cache_hits.load(Ordering::Relaxed),
+        0,
+        "revision 变了不允许命中旧缓存"
+    );
+    assert_eq!(f.service.search_cache_misses.load(Ordering::Relaxed), 2);
+    assert_eq!(
+        after.hits.len(),
+        1,
+        "结果必须反映修订 2 的新内容：{:?}",
+        after.hits
+    );
+}
+
+/// 缓存失效（手动层）：`invalidate_search_cache()` 后即使指纹与 revision
+/// 都没变也强制重算——「状态已变但没有 revision 信号」场景的手动出口。
+#[test]
+fn invalidate_search_cache_forces_recompute() {
+    let f = build();
+    let id = DocumentId::new();
+    f.provider
+        .insert(id, "needle in the draft", 1, Some(fp("/d/a.md")));
+
+    f.service.search(current_doc_query(id)).unwrap();
+    f.service.search(current_doc_query(id)).unwrap();
+    assert_eq!(f.service.search_cache_hits.load(Ordering::Relaxed), 1);
+
+    f.service.invalidate_search_cache();
+    f.service.search(current_doc_query(id)).unwrap();
+    assert_eq!(
+        f.service.search_cache_hits.load(Ordering::Relaxed),
+        1,
+        "失效后不得命中"
+    );
+    assert_eq!(
+        f.service.search_cache_misses.load(Ordering::Relaxed),
+        2,
+        "失效后必须重算"
+    );
+}
+
+/// 读盘范围（全工作区）不进缓存：计数器纹丝不动，每次现读。
+///
+/// 磁盘内容没有廉价变更信号，缓存它会让外部编辑迟迟不生效；
+/// 这条用例把「include_disk 路径绕过缓存」钉死。
+#[test]
+fn search_disk_scope_bypasses_cache_entirely() {
+    let f = build();
+    seed_files(&f, &["/d/a.md"], "needle on disk");
+
+    let disk_query = || SearchQuery {
+        pattern: "needle".to_string(),
+        regex: false,
+        case_sensitive: false,
+        whole_word: false,
+        only_document: None,
+        only_open_documents: false,
+    };
+
+    let first = f.service.search(disk_query()).unwrap();
+    let second = f.service.search(disk_query()).unwrap();
+    assert_eq!(first.hits.len(), 1);
+    assert_eq!(second.hits.len(), 1, "每次都应真算出相同结果");
+    assert_eq!(
+        f.service.search_cache_hits.load(Ordering::Relaxed),
+        0,
+        "读盘路径不得记命中"
+    );
+    assert_eq!(
+        f.service.search_cache_misses.load(Ordering::Relaxed),
+        0,
+        "读盘路径不写缓存，不得记 miss"
+    );
 }

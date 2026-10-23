@@ -4,7 +4,7 @@
 //! **不依赖 egui 的渲染上下文**，因此可以像普通单元测试一样跑。
 //! 真正需要 `egui::Context` 的用例放到阶段 07 的集成测试里。
 
-#[path = "../support/mod.rs"]
+#[path = "../support.rs"]
 mod support;
 
 mod breadcrumb_test;
@@ -30,6 +30,7 @@ mod s6_11f_test;
 mod s6_12_test;
 mod scroll_sync_test;
 mod search_alignment_test;
+mod search_perf_test;
 mod settings_view_test;
 mod shortcut_registry_test;
 mod sidebar_boundary_test;
@@ -37,6 +38,8 @@ mod sidebar_toggle_test;
 mod sidebar_view_test;
 mod spell_menu_test;
 mod spell_squiggle_test;
+// D-3 阶段 2：字段级可变借用白名单（R-12 的隐性穿透显式化）。
+mod state_borrow_guard_test;
 // R-10 对拍：统一构造器 vs 三套旧实现。
 mod span_job_parity_test;
 mod status_bar_view_test;

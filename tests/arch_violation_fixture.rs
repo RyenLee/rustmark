@@ -34,6 +34,16 @@ fn write_fixture(root: &Path, rel: &str, content: &str) {
 /// 否则「随手写个豁免注释就能放行」等于没有豁免机制。
 fn write_registry(root: &Path, rows: &[(&str, &str)]) {
     let manifest = root.parent().unwrap();
+    write_registry_at(manifest, rows)
+}
+
+/// 写入 **manifest 级**豁免登记表。
+///
+/// D-3 阶段 4a 起登记表按 manifest 加载一次、三个根共用（core 根的
+/// parent 是 `crates/rustmark-core`，那里没有 `docs/`），故需要一个
+/// 直接以 manifest 为基准的写入口；`write_registry` 保持旧口径
+/// （传 src 根，parent 即 manifest），既有用例不动。
+fn write_registry_at(manifest: &Path, rows: &[(&str, &str)]) {
     let path = manifest.join("docs").join("architecture-constraints.md");
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     let mut text = String::from("# 架构约束\n\n<!-- arch-allow:registry -->\n");
@@ -57,8 +67,9 @@ fn described(vs: &[arch_check::Violation]) -> Vec<String> {
 
 #[test]
 fn current_project_has_no_violations() {
-    let src_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
-    let violations = arch_check::scan(&src_root);
+    // D-3 阶段 4a 起口径为整个 workspace：shell src + core src + tests。
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let violations = arch_check::scan_project(&manifest);
     assert!(
         violations.is_empty(),
         "当前工程不应存在分层违规，实际：{:?}",
@@ -72,10 +83,12 @@ fn current_project_has_no_violations() {
 /// **任何**层的任何违规而红，这条红了能立刻指认是 `state/` 的问题。
 #[test]
 fn ui_state_modules_import_no_domain_document() {
-    let src_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
-    let state_violations: Vec<_> = arch_check::scan(&src_root)
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    // 阶段 4a 后 `state/` 在 core 根下（报告带 crates/rustmark-core/src/ 前缀），
+    // 故按**包含**匹配层内路径，而不是前缀匹配。
+    let state_violations: Vec<_> = arch_check::scan_project(&manifest)
         .into_iter()
-        .filter(|v| v.file.starts_with("presentation/state/"))
+        .filter(|v| v.file.contains("presentation/state/"))
         .collect();
     assert!(
         state_violations.is_empty(),
@@ -92,13 +105,17 @@ fn ui_state_modules_import_no_domain_document() {
 ///
 /// # 为什么单独一条
 ///
-/// `current_project_has_no_violations` 只扫 `src/`。R-02 把 `tests/` 纳进
-/// 扫描范围后，**存量是否干净必须单独守**——否则将来有人在 `tests/` 写下
-/// 库内部视角的引用，没有任何一条用例会红。
+/// `current_project_has_no_violations` 自 D-3 阶段 4a 起扫整个 workspace，
+/// 但**全工程零违规**的断言红了还得自己找是谁的问题。这条把报告过滤到
+/// `tests/` 前缀：将来有人在 `tests/` 写下库内部视角的引用，
+/// 这条用例红了直接指认测试侧。
 #[test]
 fn tests_directory_has_no_violations() {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let violations = arch_check::scan_with_tests(&manifest.join("src"), &manifest.join("tests"));
+    let violations: Vec<_> = arch_check::scan_project(&manifest)
+        .into_iter()
+        .filter(|v| v.file.starts_with("tests/"))
+        .collect();
     assert!(
         violations.is_empty(),
         "连 tests/ 一起扫也不应有违规，实际：{:?}",
@@ -221,6 +238,63 @@ fn every_library_layer_name_is_forbidden_in_tests() {
     for (prefix, v) in banned.iter().zip(&violations) {
         assert!(v.detail.contains(prefix), "应报 {prefix}，实际报的是 {v:?}");
     }
+}
+
+/// 注入 `src/**/mod.rs` 与 `tests/**/mod.rs` 必须各报一条；`xxx.rs + xxx/` 放行。
+///
+/// # 为什么这条要单独钉
+///
+/// `mod.rs` 与「`xxx.rs` + `xxx/`」在 Rust 里**语义等价**，编译器对两者
+/// 一视同仁——写错布局既不报错、也不影响测试。规则若只写在约束文档里，
+/// 下一次重构就会悄悄回退（2026-10-22 复核时 `fonts/` 与 `tests/support/`
+/// 两处存量正是这样活下来的）。
+#[test]
+fn mod_rs_is_rejected_in_src_and_tests() {
+    let dir = tempfile::tempdir().unwrap();
+    let src_root = dir.path().join("src");
+    let tests_root = dir.path().join("tests");
+    write_fixture(&src_root, "lib.rs", "//! x\n");
+    // 合法形态：层根文件 `shared.rs` + 同名目录里的子模块。
+    write_fixture(&src_root, "shared.rs", "//! x\npub mod gateway;\n");
+    write_fixture(&src_root, "shared/gateway.rs", "//! x\n");
+    // 违规形态：src 与 tests 各一处。
+    write_fixture(&src_root, "shared/mod.rs", "//! x\n");
+    write_fixture(&tests_root, "support/mod.rs", "//! x\n");
+
+    let violations = arch_check::scan_with_tests(&src_root, &tests_root);
+    let mod_hits: Vec<_> = violations
+        .iter()
+        .filter(|v| v.file.ends_with("mod.rs"))
+        .collect();
+    assert_eq!(
+        mod_hits.len(),
+        2,
+        "src 与 tests 下的 mod.rs 应各报一条，实际：{:?}",
+        described(&violations)
+    );
+    assert!(
+        mod_hits.iter().any(|v| v.file == "shared/mod.rs"),
+        "src 侧应报 shared/mod.rs：{mod_hits:?}"
+    );
+    assert!(
+        mod_hits.iter().any(|v| v.file == "tests/support/mod.rs"),
+        "tests 侧应带 tests/ 前缀：{mod_hits:?}"
+    );
+    for v in &mod_hits {
+        assert_eq!(v.line, 1, "文件布局违规报首行：{v:?}");
+        assert!(
+            v.detail.contains("CONSTR-03") && v.detail.contains("mod.rs"),
+            "文案应点名规则与禁用文件名：{v:?}"
+        );
+    }
+    // 「`xxx.rs` + `xxx/`」是合法布局，不得误报。
+    assert!(
+        !violations
+            .iter()
+            .any(|v| v.file == "shared.rs" || v.file == "shared/gateway.rs"),
+        "合法布局不应报错，实际：{:?}",
+        described(&violations)
+    );
 }
 
 /// 表现层的「更窄豁免前缀」**不**适用于 `tests/` 侧。
@@ -2203,5 +2277,171 @@ fn the_repaint_rule_has_no_exemption() {
         stale.detail.contains("不设豁免"),
         "文案应指明这条规则没有豁免，而不是说「该行没有违规」：{}",
         stale.detail
+    );
+}
+
+// ============================================================================
+// 十五、workspace 拆分（D-3 阶段 4a）：三根扫描与 rustmark_core 前缀归一
+// ============================================================================
+
+/// `scan_project` 三个根都扫到，且各根报告路径正确：
+/// shell 侧不带前缀、core 侧带 `crates/rustmark-core/src/`、测试侧带 `tests/`。
+///
+/// # 为什么这条必须钉
+///
+/// 拆分后最危险的两种失覆盖都是**静默**的：只扫 shell `src/` → 整个 core
+/// 逃过全部禁令且构建照绿；core 违规不补前缀 → CI 日志指不到文件；
+/// 层判定误吃了显示前缀 → 首段 `crates` 把整个 core 判成「未知层」全量误报。
+/// 三种形态一次钉死（core 侧特意放 `application/`——若被误判成未知层，
+/// 会多出一条「未知层」违规，`len == 3` 当场红）。
+#[test]
+fn scan_project_covers_both_src_roots_and_tests() {
+    let dir = tempfile::tempdir().unwrap();
+    let manifest = dir.path();
+    write_fixture(&manifest.join("src"), "lib.rs", "//! x\n");
+    write_fixture(
+        &manifest.join("src"),
+        "domain/x.rs",
+        "//! x\nuse std::fs;\n",
+    );
+    write_fixture(
+        &manifest.join("crates/rustmark-core/src"),
+        "application/y.rs",
+        "//! x\nuse crate::presentation::z;\n",
+    );
+    write_fixture(
+        &manifest.join("tests"),
+        "domain/main.rs",
+        "//! x\nuse crate::domain::x::Y;\n",
+    );
+
+    let violations = arch_check::scan_project(manifest);
+    assert_eq!(
+        violations.len(),
+        3,
+        "三个根各注入一条，应恰好报 3 条（core 被误判未知层会多报）：{:?}",
+        described(&violations)
+    );
+    assert!(
+        violations.iter().any(|v| v.file == "domain/x.rs"),
+        "shell 侧报告不带前缀：{:?}",
+        described(&violations)
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.file == "crates/rustmark-core/src/application/y.rs"),
+        "core 侧报告须带 crates/rustmark-core/src/ 前缀：{:?}",
+        described(&violations)
+    );
+    assert!(
+        violations.iter().any(|v| v.file == "tests/domain/main.rs"),
+        "tests 侧报告带 tests/ 前缀：{:?}",
+        described(&violations)
+    );
+}
+
+/// `rustmark_core::X` 与 `crate::X` 是同一条边的两种拼写——归一后匹配
+/// **同一张**禁令表，改写前缀绕不过去。
+///
+/// # 为什么归一是必须的
+///
+/// root 靠 re-export 把 core 拼回 `crate::`，词法只认字面路径、认不出两种
+/// 拼写等价。若禁令表只认 `crate::`，把违规写成 `rustmark_core::domain::…`
+/// 即可绕过全部层禁令——且这类写法**能编译**（root 依赖 core），
+/// 编译器不会兜底。报告须同时点名**表词条**（`crate::domain`，
+/// 读者要知道撞的是哪条规则）与**源码原拼写**（读者要对上自己那一行）。
+#[test]
+fn rustmark_core_prefix_does_not_bypass_layer_bans() {
+    let dir = tempfile::tempdir().unwrap();
+    let manifest = dir.path();
+    write_fixture(&manifest.join("src"), "lib.rs", "//! x\n");
+    write_fixture(
+        &manifest.join("crates/rustmark-core/src"),
+        "presentation/state/x.rs",
+        "//! x\nuse rustmark_core::domain::workspace::repository::Repo;\n",
+    );
+
+    let violations = arch_check::scan_project(manifest);
+    assert_eq!(
+        violations.len(),
+        1,
+        "rustmark_core:: 前缀写法必须按 crate:: 同等报出：{:?}",
+        described(&violations)
+    );
+    let v = &violations[0];
+    assert_eq!(
+        v.file, "crates/rustmark-core/src/presentation/state/x.rs",
+        "报告路径须带 core 前缀（层判定仍按根内相对路径）：{v:?}"
+    );
+    assert_eq!(v.line, 2, "行号须指向违规行：{v:?}");
+    assert!(
+        v.detail.contains("crate::domain"),
+        "文案须点名禁令表词条：{v:?}"
+    );
+    assert!(
+        v.detail.contains("rustmark_core::domain"),
+        "文案须保留源码原拼写（读者要对上自己写的那一行）：{v:?}"
+    );
+}
+
+/// root 的两个 re-export 拼接点**不产生**违规——归一化后天然落在禁令之外，
+/// 无需给它们加豁免锚点。
+///
+/// 拼接点是 4a 的结构前提：`lib.rs`（Free 层，无禁令）与
+/// `presentation.rs`（Presentation 层，禁令是 app / domain / infrastructure，
+/// 归一后的 `crate::presentation::…` 不在其中）。这条钉住「无需豁免」这个
+/// 结论——哪天有人往拼接点**追加** `rustmark_core::{domain,…}` 之外的
+/// 形状、或禁令表被改宽，这条会红，逼人重新审视而不是静默放行。
+#[test]
+fn shell_reexport_splice_points_are_not_violations() {
+    let dir = tempfile::tempdir().unwrap();
+    let manifest = dir.path();
+    write_fixture(
+        &manifest.join("src"),
+        "lib.rs",
+        "//! x\npub use rustmark_core::{application, domain, infrastructure, shared};\n",
+    );
+    write_fixture(
+        &manifest.join("src"),
+        "presentation.rs",
+        "//! x\npub mod views;\npub use rustmark_core::presentation::{icons, rich, shortcuts, state, theme, widgets};\n",
+    );
+
+    let violations = arch_check::scan_project(manifest);
+    assert!(
+        violations.is_empty(),
+        "两个拼接点是约定结构，不设豁免也不该报：{:?}",
+        described(&violations)
+    );
+}
+
+/// core 侧的 `arch-allow` 从 **manifest 级**登记表命中（登记表按 manifest
+/// 加载一次、三个根共用）。
+///
+/// # 为什么单独钉
+///
+/// 登记表原按「扫描根的 parent」推断路径。core 根的 parent 是
+/// `crates/rustmark-core`——那里没有 `docs/`，推断会加载**空表**，
+/// 于是 core 侧所有合规豁免都被报成「豁免未登记」。当前 core 存量里
+/// 尚无 `arch-allow`，这条用例是该修复的**唯一**守卫：若哪天有人把
+/// `load_registry_at(manifest)` 改回逐根推断，这里立刻红。
+#[test]
+fn core_exemptions_resolve_from_the_manifest_registry() {
+    let dir = tempfile::tempdir().unwrap();
+    let manifest = dir.path();
+    write_fixture(&manifest.join("src"), "lib.rs", "//! x\n");
+    write_fixture(
+        &manifest.join("crates/rustmark-core/src"),
+        "domain/x.rs",
+        "//! x\nuse egui; // arch-allow: egui\n",
+    );
+    write_registry_at(manifest, &[("domain/x.rs", "egui")]);
+
+    let violations = arch_check::scan_project(manifest);
+    assert!(
+        violations.is_empty(),
+        "core 侧豁免应从 manifest 级登记表命中（键为层相对路径）：{:?}",
+        described(&violations)
     );
 }

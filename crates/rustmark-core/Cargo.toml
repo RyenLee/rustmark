@@ -1,0 +1,71 @@
+[package]
+name = "rustmark-core"
+# 独立 crate 版本号不随应用发版（publish = false，仅参与本地 workspace 构建）。
+version = "0.2.0"
+edition = "2024"
+rust-version = "1.99"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[dependencies]
+# 依赖切分原则（D-3 阶段 4a）：四层 + 表现层非视图子模块编译所需的全部外部库
+# 下沉到 core；eframe / env_logger / anyhow 等「只被组合根与视图使用」的留在 root。
+# 每项的选型理由与 root Cargo.toml 同源（原先同一份清单），此处保留核心约束注释。
+
+# --- UI 绘制原语（ADR-001：egui 原生）---
+# core 只画 egui（TextFormat / LayoutJob / Galley 等），不接触渲染后端；
+# eframe 与 wgpu 属组合根，留在 root。
+egui = { version = "0.37.0", default-features = false }
+
+# --- 解析与高亮（ADR-002）---
+pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
+# syntect 只保留「解析 + 语法集」：不启 default-themes / yaml-load / plist-load，
+# 保留 regex-fancy（纯 Rust，避开 onig）。
+syntect = { version = "5.3.0", default-features = false, features = [
+    "parsing",
+    "default-syntaxes",
+    "dump-load",
+    "regex-fancy",
+] }
+
+# --- 图片解码（S6-05 预览区显示图片）---
+# 与 root 同规格声明（预览区解码在 views、落盘与缩放在 infrastructure），
+# 只启用白名单位图格式，不启 svg、关 default。
+image = { version = "0.25", default-features = false, features = [
+    "png",
+    "jpeg",
+    "gif",
+    "webp",
+    "bmp",
+] }
+
+# --- 文本缓冲 ---
+ropey = "1.6.1"
+
+# --- 对话框（infrastructure/dialogs/rfd_adapter）---
+rfd = "0.17.2"
+
+# --- 配置与序列化 ---
+serde = { version = "1", features = ["derive"] }
+toml = "1.1.8"
+
+# --- 错误处理（领域/应用层错误用 thiserror；anyhow 只允许在组合根入口）---
+thiserror = "2"
+
+# --- 远程图片下载（缺陷 025：https 图片此前因「未内置 TLS」全部失败）---
+# 纯 Rust TLS（rustls + ring）；REL-03 体积缓解：不启 rustls-webpki-roots，
+# 根证书运行期从平台信任库读取（见 asset_loader.rs 的 platform_root_certs）。
+ureq = { version = "3.5.0", default-features = false, features = [
+    "rustls-no-provider",
+    "_ring",
+] }
+rustls-native-certs = "0.8"
+
+# --- 日志（基础设施层越界告警用）---
+log = "0.4"
+
+# --- 缓存哈希器（预览/高亮/拼写缓存的 u64 键；no-rng 免 getrandom）---
+ahash = { version = "0.8", default-features = false, features = ["std", "no-rng"] }
+
+[dev-dependencies]
+tempfile = "3"

@@ -31,7 +31,7 @@ use rustmark::shared::path::FilePath;
 #[path = "../common/golden_fixture.rs"]
 mod golden_fixture;
 
-#[path = "../support/mod.rs"]
+#[path = "../support.rs"]
 mod support;
 
 // 应用层测试替身（S8-05 编辑区高亮帧测量需要注入 provider / clock）。

@@ -1404,7 +1404,7 @@ fn inline_math_is_typeset_instead_of_shown_as_source() {
 fn inline_math_sits_on_the_text_baseline() {
     let doc = "前文 $\\alpha$ 后文。\n";
     let (_dir, mut app) = app_with(doc);
-    let ctx = egui::Context::default();
+    let ctx = crate::support::ctx_with_app_fonts();
     render(&mut app, &ctx, 2);
     let shapes = painted_text_shapes(&mut app, &ctx);
 

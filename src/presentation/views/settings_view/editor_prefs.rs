@@ -74,17 +74,16 @@ pub(super) fn editor(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
     // 不必额外搬一份「未设」标记（表现层也不得依赖 `domain` 去读那个常量）。
     field(ui, theme, "写作目标（字数）", |ui| {
         let current = app.settings().editor.writing_goal;
-        // 先让 `TextEdit` 把编辑写回缓冲，块结束即释放对 `app` 的可变借，
-        // 后面才能再调用 `apply_editor_field`。
-        let changed = {
-            let text = &mut app.settings_ui.writing_goal_text;
-            ui.text_edit_singleline(text).changed()
-        };
+        // D-3 阶段 3：clone → 就地编辑 → 变化才值写回。局部缓冲不持
+        // `app` 的借用，写回后 `apply_editor_field` 可直接接管。
+        let mut writing_goal_text = app.settings_ui.writing_goal_text.clone();
+        let changed = ui.text_edit_singleline(&mut writing_goal_text).changed();
         if changed {
             let next = crate::presentation::state::settings_ui_state::normalize_writing_goal(
-                &app.settings_ui.writing_goal_text,
+                &writing_goal_text,
                 current,
             );
+            app.settings_ui.set_writing_goal_text(writing_goal_text);
             if next != current {
                 app.apply_editor_field(|e| e.writing_goal = next);
             }

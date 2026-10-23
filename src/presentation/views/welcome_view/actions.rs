@@ -11,8 +11,11 @@ use super::*;
 /// 欢迎页的主操作。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PrimaryAction {
+    /// 新建一份空白文档（等价 [`UiAction::NewDocument`]）。
     NewFile,
+    /// 打开本机已有的 Markdown 文件（等价 [`UiAction::OpenDocument`]）。
     OpenFile,
+    /// 打开目录为工作区并在侧边栏显示文件树（等价 [`UiAction::OpenFolder`]）。
     OpenFolder,
 }
 

@@ -147,6 +147,10 @@ impl Default for StatsPace {
 /// 在 1MB 上 ≈ 9.5ms，与其每击键付一次，不如等静止后付一次。
 pub(crate) const STATS_DEBOUNCE_MS: u64 = 150;
 
+/// 编辑器主应用：`eframe::App` 的实现载体，持有用例服务与全部 UI 子状态。
+///
+/// 一切视图（[`crate::presentation::views`]）都通过 `&mut EditorApp` 读写
+/// 各自的子状态与服务，自身不持有业务数据。
 pub struct EditorApp {
     /// 用例服务（组合根装配产物）。
     pub services: Services,

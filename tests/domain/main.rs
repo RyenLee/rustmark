@@ -1,6 +1,6 @@
 //! 领域层单元测试入口（阶段 03，S3-01 ~ S3-13）。
 
-#[path = "../support/mod.rs"]
+#[path = "../support.rs"]
 mod support;
 
 mod document_test;

@@ -234,8 +234,12 @@ fn collect_rs_files(dir: &Path) -> Vec<PathBuf> {
     out
 }
 
-fn src_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src")
+/// 两根扫描（D-3 阶段 4a workspace 化）：四层与非视图子模块在
+/// `crates/rustmark-core/src`，组合根与视图在 `src`。两根都扫，
+/// 才等价于拆分前对单一 `src` 的全量覆盖；各根内均按层相对路径记键。
+fn src_roots() -> Vec<PathBuf> {
+    let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    vec![base.join("src"), base.join("crates/rustmark-core/src")]
 }
 
 /// 现状守卫：主题种类**只有一处**定义。
@@ -245,7 +249,10 @@ fn src_root() -> PathBuf {
 /// 它立刻变红。
 #[test]
 fn theme_kind_has_exactly_one_definition() {
-    let hits = scan_duplicate_theme_enums(&src_root());
+    let mut hits = Vec::new();
+    for root in src_roots() {
+        hits.extend(scan_duplicate_theme_enums(&root));
+    }
     assert!(
         hits.is_empty(),
         "主题种类只能有一处定义（`{SOURCE_OF_TRUTH}`）。\
@@ -260,11 +267,13 @@ fn theme_kind_has_exactly_one_definition() {
 /// 真源确实存在（否则上一条会因为「扫不到任何定义」而空过）。
 #[test]
 fn the_single_source_of_truth_exists() {
-    let path = src_root().join(SOURCE_OF_TRUTH);
-    assert!(
-        path.exists(),
-        "真源文件 {SOURCE_OF_TRUTH} 必须存在，否则主题种类无处安放"
-    );
+    let path = src_roots()
+        .iter()
+        .map(|root| root.join(SOURCE_OF_TRUTH))
+        .find(|p| p.exists());
+    let Some(path) = path else {
+        panic!("真源文件 {SOURCE_OF_TRUTH} 必须存在于 src 或 core src，否则主题种类无处安放");
+    };
     let text = std::fs::read_to_string(&path).expect("真源应可读");
     assert!(
         text.contains("pub enum ThemeKind"),
@@ -329,7 +338,10 @@ fn the_source_of_truth_is_not_flagged() {
 /// 只是界面上那个选项点了没反应。
 #[test]
 fn theme_contract_strings_are_not_hardcoded_elsewhere() {
-    let hits = scan_hardcoded_theme_strings(&src_root());
+    let mut hits = Vec::new();
+    for root in src_roots() {
+        hits.extend(scan_hardcoded_theme_strings(&root));
+    }
     assert!(
         hits.is_empty(),
         "主题的持久化契约值（light/dark/system/custom）必须走 \

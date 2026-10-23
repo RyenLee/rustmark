@@ -991,3 +991,257 @@ fn changing_a_syntax_color_invalidates_the_signature() {
         "语法色变化必须让配色签名改变"
     );
 }
+
+// ============================================================================
+// 样式表合并对拍 · 预览区侧（R-10 第 3 条 / D-1 对拍用例）
+//
+// D-3 阶段 4a（拆 rustmark-core）后从 core 的 `presentation::theme::mapper::tests`
+// 迁来：这三条对拍横跨两侧——编辑区 StyleMapper（core）与预览区
+// `views::preview_view::test_only::span_format`（root），属跨 crate 契约，
+// 只有能同时看见两侧的集成测试才能承载。oracle 抄录与断言迁移前逐字一致。
+// ============================================================================
+
+/// 旧 `inline::span_format` 的**原文抄录**（合并前的第二张样式表）。
+///
+/// 抄进来当 oracle：合并把「样式名 → 语义」的派发收敛到
+/// [`StyleSemantics::of`]，本函数是「合并前预览区行内长什么样」的**唯一**记录。
+/// 若哪天共享派发出 bug，本函数与新实现的差异会当场暴露。
+///
+/// 与 `inline.rs` 的现行实现逐字符对应——**故意不改**，它就是历史快照。
+fn legacy_inline_span_format(
+    theme: &Theme,
+    style: &str,
+    size: f32,
+    line_height: f32,
+) -> egui::TextFormat {
+    use egui::{FontId, Stroke};
+    let base = egui::TextFormat {
+        color: theme.text_primary,
+        font_id: FontId::proportional(size),
+        line_height: Some(line_height),
+        ..Default::default()
+    };
+    match style {
+        "heading" => egui::TextFormat {
+            color: theme.syn_heading,
+            ..base
+        },
+        "quote" => egui::TextFormat {
+            color: theme.syn_quote,
+            italics: true,
+            ..base
+        },
+        "strong" => egui::TextFormat {
+            color: theme.syn_bold,
+            ..base
+        },
+        "emphasis" => egui::TextFormat {
+            color: theme.syn_italic,
+            italics: true,
+            ..base
+        },
+        "strikethrough" => egui::TextFormat {
+            color: theme.text_secondary,
+            strikethrough: Stroke::new(1.0_f32, theme.text_secondary),
+            ..base
+        },
+        "code" => egui::TextFormat {
+            color: theme.syn_code,
+            background: theme.code_bg,
+            font_id: FontId::monospace(size),
+            ..base
+        },
+        "link" => egui::TextFormat {
+            color: theme.syn_link,
+            underline: Stroke::new(1.0_f32, theme.syn_link),
+            ..base
+        },
+        "math" => egui::TextFormat {
+            color: theme.syn_code,
+            italics: true,
+            ..base
+        },
+        "keycap" => egui::TextFormat {
+            color: theme.syn_code,
+            background: theme.code_bg,
+            font_id: FontId::monospace(size * 0.92),
+            ..base
+        },
+        "mark" => egui::TextFormat {
+            color: theme.text_primary,
+            background: theme.find_bg,
+            ..base
+        },
+        "task_done" => egui::TextFormat {
+            color: theme.text_secondary,
+            strikethrough: Stroke::new(1.0_f32, theme.text_secondary),
+            ..base
+        },
+        "sub" | "sup" => egui::TextFormat {
+            color: theme.text_secondary,
+            font_id: FontId::proportional(size * 0.78),
+            ..base
+        },
+        "footnote_ref" => egui::TextFormat {
+            color: theme.syn_link,
+            font_id: FontId::proportional(size * 0.78),
+            ..base
+        },
+        _ => base,
+    }
+}
+
+/// `TextFormat` 的可比指纹：颜色 / 背景 / 字体族 / 字号 / 行高 / 装饰。
+///
+/// 与 core 侧 `theme::mapper::tests` 的同名函数逐字一致（那份是 core 私有的
+/// 测试符号，跨 crate 够不着，故在此留一份拷贝）——两处若需调整须同步。
+fn fmt_fingerprint(f: &egui::TextFormat) -> String {
+    format!(
+        "color={:?} bg={:?} font={:?} size={} line_height={:?} ital={} strike=({},{:?}) ul=({},{:?})",
+        f.color,
+        f.background,
+        f.font_id.family,
+        f.font_id.size,
+        f.line_height,
+        f.italics,
+        f.strikethrough.width,
+        f.strikethrough.color,
+        f.underline.width,
+        f.underline.color,
+    )
+}
+
+/// 合并后，**预览区行内侧**的样式必须与合并前**逐项相同**。
+///
+/// 判据形态与上一条对称：抄录的 oracle 是「合并前的第二张样式表」。
+#[test]
+fn merged_style_table_keeps_preview_inline_behavior() {
+    let theme = Theme::dark();
+    let size = theme.metrics.preview_font_size;
+    let line_height = size * theme.metrics.preview_line_height;
+    // 预览区行内侧的样式名（= `InlineStyle` 的 14 个变体 + 基准样式）。
+    let inline_styles = [
+        "plain",
+        "",
+        "heading",
+        "quote",
+        "strong",
+        "emphasis",
+        "strikethrough",
+        "code",
+        "link",
+        "math",
+        "keycap",
+        "mark",
+        "task_done",
+        "sub",
+        "sup",
+        "footnote_ref",
+        // 未知样式：退回正文色。
+        "unknown_xyz",
+    ];
+    for s in inline_styles {
+        let new = rustmark::presentation::views::preview_view::test_only::span_format(
+            &theme,
+            s,
+            size,
+            line_height,
+        );
+        assert_eq!(
+            fmt_fingerprint(&new),
+            fmt_fingerprint(&legacy_inline_span_format(&theme, s, size, line_height)),
+            "预览区行内样式 [{s}] 与合并前不等价"
+        );
+    }
+}
+
+/// 两表**共同**的样式，颜色必须**逐项相同**。
+///
+/// 这是方案文档 R-10 第 3 条「改一处颜色两处同步」的**核心判据**：
+/// 合并前两张表各写一遍 `match`，改一处颜色语义要改两处；
+/// 合并后派发只有一份 → 颜色**必然**同步。
+///
+/// 本用例从**两个方向**钉住：
+/// - 共同样式：颜色相同（这是「同步」的含义）；
+/// - 各自特有样式：颜色**不同**（否则「同步」就成了「一律相同」，
+///   反而丢掉了区分——比如编辑区的 `keyword` 与预览区的 `math` 不该同色）。
+#[test]
+fn shared_styles_have_identical_colors_in_both_tables() {
+    // 两个明暗主题各自钉一遍：syn_* 在 light/dark 下取值不同，
+    // 只测 dark 会让「light 主题下有人在单侧加颜色覆盖」漏网。
+    for theme in [Theme::dark(), Theme::light()] {
+        let theme_name = if theme.is_dark() { "dark" } else { "light" };
+        let mapper = StyleMapper::new(&theme);
+        let size = theme.metrics.preview_font_size;
+        let line_height = size * theme.metrics.preview_line_height;
+
+        let common = [
+            "heading",
+            "quote",
+            "strong",
+            "emphasis",
+            "strikethrough",
+            "code",
+            "link",
+        ];
+        for s in common {
+            let editor = mapper.format(s);
+            let preview = rustmark::presentation::views::preview_view::test_only::span_format(
+                &theme,
+                s,
+                size,
+                line_height,
+            );
+            assert_eq!(
+                editor.color, preview.color,
+                "共同样式 [{s}] 的颜色必须两表相同（{theme_name} 主题）"
+            );
+        }
+    }
+}
+
+/// 反方向：**各自特有**的样式不该同色。
+///
+/// 上一条只钉「共同样式相同」，单独存在时有个漏洞：把 `span_format`
+/// 改成无脑转发 `format`（退化成「一律相同」）它照样绿——而那恰恰
+/// 丢掉了两区的区分。本用例与上一条合起来才是注释里说的**两个方向**。
+///
+/// 代表对取自 [`crate::presentation::theme::mapper::span_job`] 模块头
+/// 登记的「覆盖面几乎不重叠」清单：
+/// - `keyword`（编辑区语法色）vs `math`（预览行内特有）
+/// - `comment`（编辑区语法色）vs `footnote_ref`（预览行内特有）
+/// - `list_marker`（编辑区特有）vs `keycap`（预览行内特有）
+///
+/// # 例外纪律
+///
+/// 若将来某对在某主题下**刻意**同色，把该对从清单移出并在此登记
+/// 理由——与共同样式清单的例外纪律一致，不允许无声放宽。
+#[test]
+fn exclusive_styles_stay_distinct_between_tables() {
+    let pairs = [
+        ("keyword", "math"),
+        ("comment", "footnote_ref"),
+        ("list_marker", "keycap"),
+    ];
+    for theme in [Theme::dark(), Theme::light()] {
+        let theme_name = if theme.is_dark() { "dark" } else { "light" };
+        let mapper = StyleMapper::new(&theme);
+        let size = theme.metrics.preview_font_size;
+        let line_height = size * theme.metrics.preview_line_height;
+        for (editor_only, preview_only) in pairs {
+            let editor = mapper.format(editor_only).color;
+            let preview = rustmark::presentation::views::preview_view::test_only::span_format(
+                &theme,
+                preview_only,
+                size,
+                line_height,
+            )
+            .color;
+            assert_ne!(
+                editor, preview,
+                "特有样式 [{editor_only}]（编辑区）与 [{preview_only}]（预览区）\
+                 在 {theme_name} 主题同色——两表区分丢失，或该对已刻意同色（须登记）"
+            );
+        }
+    }
+}

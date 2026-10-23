@@ -34,7 +34,7 @@ use rustmark::shared::ids::DocumentId;
 use rustmark::shared::path::FilePath;
 use rustmark::shared::time::{Clock, Timestamp};
 
-#[path = "../support/mod.rs"]
+#[path = "../support.rs"]
 mod support;
 
 use support::text_buffer::StringTextBuffer;

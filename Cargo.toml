@@ -1,11 +1,26 @@
+# D-3 阶段 4a：workspace 化。core（四层 + presentation 非视图子模块）是独立
+# crate，依赖方向被 cargo 锁死（core 无法反向依赖 root）；root 经 re-export 拼接
+# 全部 `crate::` 路径，存量源码零改动。
+# **命令面必须带 `--workspace`**（clippy/check/test/llvm-cov），否则 core 的
+# 单测会静默退出测试集（测试数下降即事故信号）。
+[workspace]
+members = ["crates/rustmark-core"]
+resolver = "3"
+
 [package]
 name = "rustmark"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.99"
 license = "MIT OR Apache-2.0"
 description = "原生轻量级 Markdown 编辑器（Rust 2024 + egui + wgpu）"
 publish = false
+
+# 关闭测试目标自动发现：全部测试目标已在文件末尾显式 `[[test]]` 声明。
+# 原因：无 `mod.rs` 布局下共享工具是 `tests/support.rs`（与 `tests/support/`
+# 子模块配对），若保留自动发现，Cargo 会把它也编译成一个名为 `support`
+# 的测试目标（零用例，且与 `#[path]` 引入的那份重复编译）。
+autotests = false
 
 # 项目有两个二进制目标（rustmark 编辑器 / check-arch 架构校验器），
 # 不设 default-run 时 `cargo run` 会报「无法确定要运行哪个二进制」。
@@ -42,35 +57,34 @@ path = "src/bin/check-arch.rs"
 # accesskit / accesskit_winit / accesskit_windows / accesskit_consumer 四个 crate，
 # 以及仅被它们引用的重复版本 hashbrown 0.15 / foldhash 0.1。代价是放弃
 # 屏幕阅读器可达性——对单人本地 Markdown 编辑器是已知且可接受的取舍。
-# egui 0.37 起把 emoji 字体从 `default_fonts` 拆到 `monochrome_emoji_fonts`：
-# 只开 `default_fonts` 会缺 ✅❌⚠💡🔗☑ 等码位的字形（界面上显示为豆腐块）。
-# 本项目符号面板 / 工具栏图标依赖它们，故必须同时开启。
-egui = { version = "0.37.0", default-features = false, features = [
-    "default_fonts",
-    "monochrome_emoji_fonts",
-] }
+# REL-03 体积缓解（docs/metrics.md §2.4 方案①）：**两个字体 feature 都不启用**。
+# `default_fonts` + `monochrome_emoji_fonts` 会把 epaint_default_fonts 的 5 个字体
+# （Ubuntu-Light / Hack / NotoEmoji / emoji-icon-font / egui-icons，合计 1,417,504 B）
+# 以 `include_bytes!` 编进 exe——这是 10 MB 未压缩红线（NFR-PERF-01）下
+# 最大的一块可省体积，实测占越线缺口的 98.5%。
+# 五个字体文件改为随发行包分发（assets/fonts → 打包后的 fonts/，
+# 许可证见该目录 Fonts-LICENSE.txt：UFL / MIT / OFL / MIT），运行期由
+# `infrastructure::fonts::font_definitions` 装配进 Proportional / Monospace
+# 基础族——字节、字形、兜底顺序与内嵌时代逐项一致，界面观感不变。
+# egui-icons.ttf（3.4 KB，仅支撑 `egui::special_emojis` 的少数图标）未随包：
+# 本项目对 special_emojis 零引用（grep 全库可证），egui 自身绘制也不用它。
+egui = { version = "0.37.0", default-features = false }
 eframe = { version = "0.37.0", default-features = false, features = [
-    "default_fonts",
     "wgpu_no_default_features",
     "x11",
     "wayland",
 ] }
 
+# --- 本地 crate（D-3 阶段 4a：核心库）---
+# domain / application / infrastructure / shared 与 presentation 的
+# state / theme / rich / widgets / icons / shortcuts 都在 core；
+# root 只留组合根 app 与 presentation::views。
+rustmark-core = { path = "crates/rustmark-core" }
+
 # --- 解析与高亮（ADR-002）---
-# GFM 表格/任务列表/脚注为运行期 Options，非 feature；html 为 HTML 导出（S5-09）所必需。
-# simd 待三平台验证后再决定是否启用。
-pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
-# syntect 只保留「解析 + 语法集」两项能力：
-# - 不启用 `default-themes`：领域层 SpanStyle 是自有枚举，配色由表现层决定，
-#   主题包（数百 KB）对本项目毫无用处，却会被静态链入产物（S5-03 体积硬指标）。
-# - 不启用 `yaml-load` / `plist-load`：运行期只读内嵌 packdump，从不解析语法源文件。
-# - 保留 `regex-fancy`：纯 Rust 实现，避免 onig（需 C 库与 C 编译器）。
-syntect = { version = "5.3.0", default-features = false, features = [
-    "parsing",
-    "default-syntaxes",
-    "dump-load",
-    "regex-fancy",
-] }
+# pulldown-cmark / syntect 已下沉 core（infrastructure::parsing / highlighting）；
+# syntect 另见文末 dev-dependencies（集成测试直接引用语法集）。
+
 
 # --- 图片解码（S6-05 预览区显示图片）---
 # `image` 已由 eframe（经 arboard）引入依赖图，直接依赖不额外增大产物体积。
@@ -84,26 +98,13 @@ image = { version = "0.25", default-features = false, features = [
     "bmp",
 ] }
 
-# --- 文本缓冲 ---
-ropey = "1.6.1"
-
-# --- 对话框 ---
-rfd = "0.17.2"
-
-# --- 配置与序列化 ---
-serde = { version = "1", features = ["derive"] }
-toml = "1.1.8"
-
 # --- 错误处理 ---
-thiserror = "2"
+# thiserror 已下沉 core（domain/application 的错误类型）；
+# anyhow 只允许出现在组合根入口（app.rs / main.rs），留 root。
 anyhow = "1"
 
-# --- 远程图片下载（缺陷 025：https 图片此前因「未内置 TLS」全部失败）---
-# 只开 `rustls`：纯 Rust TLS 实现，三平台行为一致、无系统依赖（native-tls 在
-# Linux 要 OpenSSL，交叉编译困难）。首版手写 `TcpStream` + 裸 HTTP/1.0 的
-# 「零客户端 crate」方案就此退役——它省下的体积换不来 https 图片全挂。
-# 体积代价见 docs/metrics.md §2.4 的登记。
-ureq = { version = "3.4.2", default-features = false, features = ["rustls"] }
+# --- 远程图片下载 ---
+# ureq / rustls-native-certs 已下沉 core（infrastructure::persistence::asset_loader）。
 
 # --- 日志（基础设施层越界告警用；未列入需求 §5.1，已在 docs/dependencies.md 登记）---
 log = "0.4"
@@ -115,16 +116,7 @@ log = "0.4"
 env_logger = { version = "0.11", default-features = false, features = ["humantime"] }
 
 # --- 缓存哈希器 ---
-# 预览/高亮/拼写缓存的键都是 u64 新类型（DocumentId），ahash 的 AHasher
-# 对 8 字节输入比 DefaultHasher 快 ~3×（非加密，完全适合缓存键）。
-#
-# **关闭 default 特性**：ahash 默认的 `runtime-rng` 只为「给种子加随机化」而
-# 链入 getrandom（本项目依赖树中 0.2/0.3/0.4 三份并存里的一份，且仅由本处引入）。
-# 三处缓存的键全是**内部单调 u64**（`DocumentId`，非攻击者可控），不需要
-# HashDoS 防护。改用 `no-rng`——与 eframe / egui 对 ahash 的用法完全一致：
-# 种子仍由 ASLR + 实例计数器派生（ahash 文档所述「最弱但可用」档），对缓存
-# 语义无影响，同时去掉 getrandom 依赖。`std` 仍保留以导出 `HashMap`/`HashMapExt`。
-ahash = { version = "0.8", default-features = false, features = ["std", "no-rng"] }
+# ahash 已下沉 core（span / galley / 高亮缓存都在 core 侧）。
 
 # --- wgpu 后端（DEF-03：必须显式声明，否则应用启动即 panic）---
 #
@@ -158,6 +150,14 @@ wgpu = { version = "30.0.1", default-features = false, features = [
 
 [dev-dependencies]
 tempfile = "3"
+# 集成测试直接引用语法集（tests/infrastructure/highlighter_test.rs），
+# 规格与 core 侧完全一致以保证 feature 统一后行为同源。
+syntect = { version = "5.3.0", default-features = false, features = [
+    "parsing",
+    "default-syntaxes",
+    "dump-load",
+    "regex-fancy",
+] }
 
 # 需求文档 §8.1 体积优化配置
 [profile.release]

@@ -3,7 +3,7 @@
 //! 各适配器的用例统一在此装配。共享测试替身位于 `tests/support/`，
 //! 由本入口以 `#[path]` 引入，不进入 `release` 产物。
 
-#[path = "../support/mod.rs"]
+#[path = "../support.rs"]
 mod support;
 
 mod asset_loader_test;

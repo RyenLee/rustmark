@@ -94,47 +94,49 @@ impl EditorApp {
 
     /// 在工作区里搜索。
     ///
-    /// 每次调用都**真的**走一遍磁盘（`WorkspaceAppService::search`），
-    /// 绝不在 UI 状态里缓存结果：那会让「文件改了但搜索结果还是旧的」。
+    /// 结果**不**在 UI 状态里缓存：那会让「文件改了但搜索结果还是旧的」。
+    /// 代价是每帧可能要重算，故视图只在「搜索标签可见」时调用，且一帧
+    /// 只调一次（计数与列表共用同一份结果）。
     ///
-    /// 代价是每帧可能全盘扫描，故视图只在「搜索标签可见」时调用。
-    /// 真要优化应加在应用层（那里才知道文件有多大），而不是让表现层
-    /// 偷偷少搜几次——那会让「搜到了」与「搜全了」不再等价。
+    /// # 范围切换器决定读不读盘
     ///
-    /// # 范围切换器
+    /// 「当前文档」只搜活动文档，「打开的文档」只搜标签栏里的文档——两者
+    /// 的内容都已在内存里，**不读磁盘**。磁盘只在未限定范围时参与
+    /// （`WorkspaceAppService::search` 里 `include_disk` 的那条分支），
+    /// 本方法的两条 UI 路径都不会落到那里：按目录全盘检索会把用户没打开的
+    /// 文件成百上千个都读一遍，一次搜索实测能到百毫秒级（真正卡顿的来源），
+    /// 而且也不是用户要的。要找未打开的文件应走「快速打开」浮层。
     ///
-    /// 「当前文档」只搜活动文档；此时若**没有**活动文档，返回空结果而
-    /// **不是**退化成跨文档搜索——那会让界面声明的「当前文档」范围
-    /// 静默变成别的范围，结果与用户看到的范围标签互相矛盾。
+    /// 「当前文档」范围下若**没有**活动文档，返回空结果而**不是**退化成
+    /// 跨文档搜索——那会让界面声明的「当前文档」范围静默变成别的范围。
     /// （空状态的文案由视图负责，这里只保证「没有就没有」。）
     ///
-    /// 「打开的文档」只搜**标签栏里已打开的文档**：既与用户的工作上下文
-    /// 一致，也避免一次搜索读遍整个工作区目录（未打开的文件成百上千时，
-    /// 全盘读盘会让界面卡住；要找未打开的文件应走「快速打开」浮层）。
-    pub fn search_workspace(&self) -> Option<WorkspaceSearch> {
+    /// # 错误原样上抛
+    ///
+    /// 检索失败（如正则模式下模式无效）返回 `Err` 而不是 `None`：
+    /// [`AppError::Domain`] 的 `Display` 就是可直接呈现给用户的文案
+    /// （「正则表达式无效：括号未闭合」），视图原样显示即可。吞成
+    /// `None` 会让用户只看到「搜索失败」，无从得知自己输错了什么。
+    pub fn search_workspace(&self) -> AppResult<WorkspaceSearch> {
         if !self.sidebar.should_search() {
-            return Some(WorkspaceSearch::default());
+            return Ok(WorkspaceSearch::default());
         }
         let only_document = match self.sidebar.search_scope {
             SearchScope::CurrentDocument => match self.active_doc {
-                None => return Some(WorkspaceSearch::default()),
+                None => return Ok(WorkspaceSearch::default()),
                 Some(id) => Some(id),
             },
             SearchScope::OpenDocuments => None,
         };
-        let result = self
-            .services
-            .workspace
-            .search(SearchQuery {
-                pattern: self.sidebar.search_query.clone(),
-                regex: self.sidebar.search_options.regex,
-                case_sensitive: self.sidebar.search_options.case_sensitive,
-                whole_word: self.sidebar.search_options.whole_word,
-                only_document,
-                only_open_documents: self.sidebar.search_scope == SearchScope::OpenDocuments,
-            })
-            .ok()?;
-        Some(WorkspaceSearch {
+        let result = self.services.workspace.search(SearchQuery {
+            pattern: self.sidebar.search_query.clone(),
+            regex: self.sidebar.search_options.regex,
+            case_sensitive: self.sidebar.search_options.case_sensitive,
+            whole_word: self.sidebar.search_options.whole_word,
+            only_document,
+            only_open_documents: self.sidebar.search_scope == SearchScope::OpenDocuments,
+        })?;
+        Ok(WorkspaceSearch {
             groups: group_search_hits(
                 &result,
                 &self.sidebar.search_query,

@@ -72,7 +72,7 @@ fn app_with(content: &str) -> (tempfile::TempDir, EditorApp) {
 fn sidebar_texts(app: &mut EditorApp, tab: SidebarTab) -> Vec<(String, egui::Rect)> {
     app.ui.sidebar_tab = tab;
     app.ui.sidebar_visible = true;
-    let ctx = egui::Context::default();
+    let ctx = crate::support::ctx_with_app_fonts();
     let input = egui::RawInput {
         screen_rect: Some(egui::Rect::from_min_size(
             egui::pos2(0.0, 0.0),

@@ -529,7 +529,9 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
             }
         })
         .collect();
-    let blocks = std::mem::take(&mut app.preview.blocks);
+    // D-3 阶段 3：取走/放回经 `take_blocks` / `store_preview_render` 对称走
+    // state 方法，字段的可变引用不出 state（语义与原先的 `mem::take` 相同）。
+    let blocks = app.preview.take_blocks();
 
     // 目录条目：由**当前块序列**现场收集（标题会随编辑增删，存一份副本必然过期）。
     // 含 `toc` 块自身之外的标题，顺序与文档一致。

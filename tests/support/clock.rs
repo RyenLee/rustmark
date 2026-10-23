@@ -19,10 +19,10 @@
 //! 不存在的状态影响被测逻辑（如滚动同步的抑制窗口、撤销合并窗口等都以
 //! 绝对毫秒做差）。
 
-// `dead_code` 豁免：本模块与 `mod.rs` 一起被**每个**测试目标用 `#[path]` 引入，
+// `dead_code` 豁免：本模块与 `support.rs` 一起被**每个**测试目标用 `#[path]` 引入，
 // 但只有 presentation 目标会真正构造 `TestClock`（时间窗用例），其余目标
 // （domain / application / infrastructure / e2e …）用不到它。逐目标判断会误报，
-// 理由与 `mod.rs` 里 `run_ui` / `settle` 的豁免相同。
+// 理由与 `support.rs` 里 `run_ui` / `settle` 的豁免相同。
 #![allow(dead_code)]
 
 use rustmark::shared::time::{Clock, Timestamp};

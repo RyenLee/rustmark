@@ -3,7 +3,7 @@
 use egui::epaint::text::{LayoutJob, TextFormat};
 use egui::{Color32, Layout, RichText, ScrollArea, Ui};
 
-use crate::app::frame::EditorApp;
+use crate::app::frame::{EditorApp, WorkspaceSearch};
 use crate::presentation::state::sidebar_ui_state::{
     SEARCH_SCOPES, SEARCH_TOGGLES, SearchGroup, SearchScope,
 };
@@ -29,7 +29,11 @@ pub(super) fn search_tab(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
     // 范围切换器紧贴输入框：它是比下面那排选项更高一级的决定
     // （决定「搜谁」先于「怎么搜」），位置上也要读得出这个次序。
     scope_row(app, ui, theme);
-    toggle_row(app, ui, theme);
+    // 开关行顺带把**本帧唯一一次**搜索取回来：右侧计数与下方结果列表
+    // 必须同源。此前计数自己搜一次、列表再搜一次，同一帧跑两遍全量检索
+    // （「当前文档」范围下每遍还要白读整个工作区，见 `search_workspace`）。
+    // 位置在这里而不是更早：开关的点击在上面已处理完，计数因此当帧就新。
+    let result = toggle_row(app, ui, theme);
     ui.separator();
 
     // 「当前文档」范围 + 没有活动文档：说清为什么空，并指出去路。
@@ -42,9 +46,14 @@ pub(super) fn search_tab(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
         ui.weak("打开一个 .md 后，这里会列出它的命中；也可切换到「打开的文档」跨文档查找。");
         return;
     }
-    let Some(result) = app.search_workspace() else {
-        ui.colored_label(theme.error, "搜索失败，请检查工作区目录");
-        return;
+    let result = match result {
+        Ok(result) => result,
+        Err(error) => {
+            // 错误文案由应用层透出（如「正则表达式无效：括号未闭合」），
+            // 原样展示——换成笼统的「搜索失败」会让用户无从修正输入。
+            ui.colored_label(theme.error, error.to_string());
+            return;
+        }
     };
     if !app.sidebar.should_search() {
         // 与输入框占位提示同源：默认范围已是「当前文档」，这里若还写
@@ -126,7 +135,15 @@ fn scope_row(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
 ///
 /// 选中态配色与 [`scope_row`] 同源：强调色文字可能撞上用户自选的
 /// `selection_bg`（同色即不可见），故选中文案一律用正文色。
-fn toggle_row(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
+///
+/// 返回值是**本帧唯一一次**搜索的结果，供下方的结果列表复用：
+/// 右侧计数与列表必须来自同一次检索，否则同一帧要跑两遍全量搜索。
+/// 检索失败时计数显示 0，错误详情由 [`search_tab`] 统一呈现。
+fn toggle_row(
+    app: &mut EditorApp,
+    ui: &mut Ui,
+    theme: &Theme,
+) -> Result<WorkspaceSearch, crate::shared::error::AppError> {
     let options = app.sidebar.search_options;
     ui.horizontal(|ui| {
         for toggle in SEARCH_TOGGLES {
@@ -147,20 +164,27 @@ fn toggle_row(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             // 一键重置：三个开关全部关闭。已全关时置灰（点了没反应会让人
             // 以为按钮坏了，置灰则明示「已是默认状态」）。
-            ui.add_enabled(!options.is_plain(), egui::Button::new("重置").small())
-                .on_hover_text("关闭全部搜索选项（区分大小写 / 全字匹配 / 正则）");
-            ui.weak(format!("{} 条结果", count_hits(app)));
-        });
-    });
-}
-
-/// 命中总数（开关行右侧的计数）。
-///
-/// 复用 `search_workspace` 的结果而不是再查一次：每次点击开关都重扫全盘
-/// 会让界面在点「Aa」时卡一下。代价是这一帧的计数用的是**当前查询**的结果——
-/// 而这正是用户要看到的数字。
-fn count_hits(app: &mut EditorApp) -> usize {
-    app.search_workspace().map(|r| r.total()).unwrap_or(0)
+            //
+            // 必须接 `clicked()`：这行曾经只把按钮画出来、没有写入口，
+            // 按钮看着能点、按下毫无反应（缺陷截图「重置失效」）。
+            if ui
+                .add_enabled(!options.is_plain(), egui::Button::new("重置").small())
+                .on_hover_text("关闭全部搜索选项（区分大小写 / 全字匹配 / 正则）")
+                .clicked()
+            {
+                app.reset_search_options();
+            }
+            // 放在开关处理之后：本帧点了开关 / 重置，数字当帧就是新的。
+            let result = app.search_workspace();
+            ui.weak(format!(
+                "{} 条结果",
+                result.as_ref().map(|r| r.total()).unwrap_or(0)
+            ));
+            result
+        })
+        .inner
+    })
+    .inner
 }
 
 /// 分组头（文件名 + 命中数）。

@@ -157,12 +157,18 @@ fn format_row(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
 fn path_rows(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
     ui.horizontal(|ui| {
         ui.label("输出路径");
+        // D-3 阶段 3：clone → 就地编辑 → 变化才值写回（同帧完成，闭包外的
+        // 目录检查读到的已是新值；路径级字符串每帧一次 clone 可忽略）。
+        let mut output_dir = app.export_ui.output_dir.clone();
         ui.add(
-            egui::TextEdit::singleline(&mut app.export_ui.output_dir)
+            egui::TextEdit::singleline(&mut output_dir)
                 .id(egui::Id::unique(OUTPUT_DIR_INPUT_ID))
                 .hint_text("导出到（留空则用当前目录）")
                 .desired_width(280.0),
         );
+        if output_dir != app.export_ui.output_dir {
+            app.export_ui.set_output_dir(output_dir);
+        }
         // 「选择文件夹」：输出目录很可能是用户不记得的绝对路径，
         // 纯手填容易填错。按钮走原生目录选择对话框（后台线程执行，
         // 见 `dialog_runner`），结果由 `apply_dialog_outcome` 回填到
@@ -181,11 +187,14 @@ fn path_rows(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
             format!("输出目录不存在：{dir}（导出时会自动创建）"),
         );
     }
+    // D-3 阶段 3：clone → 就地编辑 → 变化才值写回；写回在 refresh 之前，
+    // 重算的路径用的是新文件名。
+    let mut file_stem = app.export_ui.file_stem.clone();
     let stem_changed = ui
         .horizontal(|ui| {
             ui.label("文件名");
             ui.add(
-                egui::TextEdit::singleline(&mut app.export_ui.file_stem)
+                egui::TextEdit::singleline(&mut file_stem)
                     .id(egui::Id::unique(FILE_STEM_INPUT_ID))
                     .desired_width(320.0)
                     .hint_text("文档名"),
@@ -194,6 +203,7 @@ fn path_rows(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
         .inner
         .changed();
     if stem_changed {
+        app.export_ui.set_file_stem(file_stem);
         app.export_ui.refresh_resolved_path();
     }
     if let Some(reason) = unavailable_reason(app.export_ui.format) {

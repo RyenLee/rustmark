@@ -110,10 +110,18 @@ rich / widgets / icons ──► （不得回指 views / state / theme / widgets
    `fn f(d: crate::domain::x::Y)` 也是跨层依赖。
 4. **匹配**：与禁止清单做**路径段**前缀匹配——`crate::domain` 命中
    `crate::domain::x::Y`，但**不**命中 `crate::domainfoo`。
+   `rustmark_core::X` 先**归一为** `crate::X` 再匹配同一张禁令表
+   （D-3 阶段 4a：二者是同一条边的两种拼写，root 靠 re-export 拼接；
+   不归一的话把违规改写成 `rustmark_core::` 前缀即可绕过全部禁令）。
+   报告文案保留源码原拼写，`banned` 仍是表词条。
 5. **层判定**：先剥掉末段 `.rs` 再取首段——`src/domain.rs` 属于 domain 层，
    `src/presentation/state.rs` 属于 `presentation/state` 子层。自由位置是
    **白名单**（`src/main.rs` / `src/lib.rs` / `src/bin/**`）；其它顶层名字
    报「未知层」——默认放行等于新目录静默逃过全部层禁令。
+   层判定按**扫描根内的相对路径**进行：workspace 化（阶段 4a）后
+   `scan_project` 扫 shell `src/` + `crates/rustmark-core/src/` + `tests/`
+   三个根，core 侧只在**报告**时补 `crates/rustmark-core/src/` 前缀
+   （层判定若吃这个前缀，首段 `crates` 会把整个 core 误判成「未知层」）。
 6. **子层叠加**：`presentation/state` 同时受父层与子层两组禁令约束（不是替换）。
 7. **`presentation` 内部细粒度**（R-13）：第二段为 `state` / `views` / `rich` /
    `widgets` / `icons` 时判对应子层；目录与层根文件（`presentation/state.rs`）
@@ -198,13 +206,19 @@ rich / widgets / icons ──► （不得回指 views / state / theme / widgets
 
 ```bash
 cargo fmt --check
-cargo clippy --all-targets -- -D warnings
-cargo check
-cargo test
+cargo clippy --workspace --all-targets -- -D warnings
+cargo check --workspace --all-targets
+cargo test --workspace
 cargo run --bin check-arch
 ```
 
-违规注入自检：在 `src/domain/**` 临时加入 `use egui;` → `check-arch` 必须退出码非 0 并打印文件行号。
+`--workspace` **必带**（D-3 阶段 4a workspace 化后）：不带时 cargo 只跑默认成员
+（root 包），`crates/rustmark-core` 的检查与单测会**静默缺席**——CI 同口径
+（`ci.yml` 的 clippy / check / test / llvm-cov 四处均已加）。
+
+违规注入自检：在 `crates/rustmark-core/src/domain/**` 临时加入 `use egui;`
+→ `check-arch` 必须退出码非 0 并打印带 `crates/rustmark-core/src/` 前缀的
+文件行号（shell 侧注入同理，路径不带前缀）。
 
 注：`cargo run --bin check-arch` 会先编译，而 `build.rs` 在编译期就做同一遍校验
 并在违规时 `panic!`——违规时你看到的往往是 build.rs 的 panic。两处共用同一份
@@ -216,20 +230,41 @@ cargo run --bin check-arch
 
 ## 7. 模块文件树（需求文档 §7.1，禁 `mod.rs`）
 
+D-3 阶段 4a（2026-10-23）起为 workspace 双 crate：**core 装四层与非视图
+子模块，shell（root）只留组合根、视图与两个 re-export 拼接点**；
+`core → shell` 的反向依赖被 cargo 锁死，`rustmark_core::X` 与 `crate::X`
+在校验器里按同一张禁令表判定（§4.1）。
+
 ```
-src/
-├─ main.rs / app.rs / app/{bootstrap.rs,frame.rs}
+src/                                    # shell（root crate `rustmark`）
+├─ main.rs / lib.rs                     # lib.rs 拼接点：pub use rustmark_core::{application, domain, infrastructure, shared}
+├─ app.rs / app/{bootstrap.rs,frame.rs,crash_log.rs,…}
+│                                       # 组合根；帧预约唯一出口 app/frame/scheduler.rs
+├─ presentation.rs                      # 拼接点：pub mod views + pub use rustmark_core::presentation::{icons, rich, shortcuts, state, theme, widgets}
+├─ presentation/views/                  # 视图（唯一留在 shell 的 presentation 子层）
+└─ bin/check-arch.rs                    # 工具二进制
+
+crates/rustmark-core/src/               # core（crate `rustmark-core`）
+├─ lib.rs / {shared,domain,application,infrastructure,presentation}.rs
 ├─ shared/{error.rs,result.rs,event.rs,ids.rs,geometry.rs}
 ├─ domain/{document,markdown,workspace,preferences,export}/
 │    └─ 各含 {aggregate.rs,value_objects.rs,events.rs,services.rs,repository.rs,errors.rs}
-├─ application/{document,markdown,workspace,preferences,export}/ + dto.rs
-├─ infrastructure/{persistence,text,parsing,highlighting,export,events,dialogs}/
-└─ presentation/{state,views,widgets,theme,shortcuts}/
+├─ application/{document,markdown,workspace,preferences,export}/ + dto/
+├─ infrastructure/{persistence,text,parsing,highlighting,export,events,dialogs,…}/
+└─ presentation/{state,widgets,theme,shortcuts,rich}/ + icons.rs   # 无 views
 ```
 
-白名单外的顶层位置（如 `src/foo.rs` / `src/utils/`）会被校验器报「未知层」：
-新目录要么归入既有层，要么先改本文档与校验器再放代码。`src/bin/` 是工具二进制
-（`check-arch`），与 `main.rs` / `lib.rs` 一样不受层级限制。
+白名单外的顶层位置（shell `src/foo.rs`、core `src/utils/` 等）会被校验器报
+「未知层」：新目录要么归入既有层，要么先改本文档与校验器再放代码。
+shell `src/bin/` 是工具二进制（`check-arch`），与 `main.rs` / `lib.rs` 一样
+不受层级限制。
+
+**禁 `mod.rs` 已机械校验**（`CONSTR-03`，2026-10-22 起）：`scan_project`
+在 shell `src/`、`crates/rustmark-core/src/` 与 `tests/` 三侧逐个文件判
+文件名，出现 `mod.rs` 即报违规，且**不设 `arch-allow` 豁免**。正确形状是
+「`foo.rs` 与 `foo/bar.rs` 共存」——两者对编译器语义等价，但对人是
+「模块树 = 文件树」与「模块树藏在 `mod.rs` 里」的区别，
+而这恰恰是评审最容易漏、编译器又从不报错的一类偏差。
 
 ## 8. 体积与性能预算（改动前自查）
 
@@ -247,7 +282,7 @@ src/
 
 ## 9. 集成测试的库内部视角禁令（R-02）
 
-`tests/` 下的全部 `.rs` 文件纳入扫描（`scan_with_tests`），判 `tests` 层。
+`tests/` 下的全部 `.rs` 文件纳入扫描（`scan_project` 的 tests 根），判 `tests` 层。
 
 测试是**消费者**，不是层：它可以引用任何层的公开 API
 （`rustmark::domain::…`、`rustmark::presentation::…`），`tests/app/` 下的

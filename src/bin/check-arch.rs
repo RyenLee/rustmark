@@ -7,8 +7,9 @@
 //! 与 `build.rs` 共用 `tools/arch_check.rs` 的扫描逻辑（避免两份实现漂移）——
 //! 报告文本也走同一份 `format_report`，两处各写一遍格式必然漂移。
 //!
-//! 扫描范围自 R-02 起含 `tests/`（`scan_with_tests`）：测试可引用任何层的
-//! 公开 API，但禁止 `crate::<层名>::…` 的库内部视角。
+//! 扫描范围自 R-02 起含 `tests/`；自 D-3 阶段 4a 起为整个 workspace
+//! （shell `src/` + `crates/rustmark-core/src/` + `tests/`，`scan_project`）：
+//! 测试可引用任何层的公开 API，但禁止 `crate::<层名>::…` 的库内部视角。
 //!
 //! # 注意：先看 `build.rs`
 //!
@@ -28,9 +29,7 @@ mod arch_check {
 
 fn main() -> ExitCode {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src_root = manifest.join("src");
-    let tests_root = manifest.join("tests");
-    let violations = arch_check::scan_with_tests(&src_root, &tests_root);
+    let violations = arch_check::scan_project(&manifest);
 
     if violations.is_empty() {
         println!("check-arch: OK（未发现分层依赖违规）");

@@ -244,6 +244,147 @@ fn scan_missing_root_returns_io_error() {
 }
 
 // ---------------------------------------------------------------------------
+// 路径形态：产出路径的前缀必须等于调用方给定的根
+// ---------------------------------------------------------------------------
+
+/// 扫描产出的每条路径都必须以**调用方给定的根**为前缀。
+///
+/// 这是文件树与删除链路的共同前提：
+///
+/// - 树投影 `is_under_root` 用字符串前缀判断「条目是否属于当前根」；
+/// - 删除链路 `Workspace::remove_entry` 要求聚合里存在**路径相等**的条目，
+///   否则返回 `NotFound`，删除在碰磁盘之前就被拒。
+///
+/// 二者都建立在「条目路径与根同形态」之上。一旦前缀对不上，症状是
+/// 「打开文件夹后文件树是空的」+「点了确认也删不掉」——正是 CI 上
+/// macOS job 那 5 条红用例的表现。
+#[test]
+fn scan_paths_are_prefixed_with_the_given_root() {
+    let dir = TempDir::new("scan-prefix");
+    dir.write("readme.md", "r");
+    dir.write("docs/guide.md", "g");
+
+    let root = fp(dir.path());
+    let repo = repo_in(&dir);
+    let entries = repo.scan(&root, 3).expect("扫描应成功");
+
+    assert!(!entries.is_empty(), "前提：应先扫出条目");
+    let prefix = format!("{}/", root.as_str());
+    for entry in &entries {
+        assert!(
+            entry.path().as_str().starts_with(&prefix),
+            "条目路径必须以调用方给定的根为前缀，否则树投影与删除校验会失配：\
+             根={}，实际={}",
+            root.as_str(),
+            entry.path().as_str()
+        );
+    }
+}
+
+/// 根的真实路径（canonicalize）与给定形态不同时，产出**仍然**用给定形态。
+///
+/// 这是上面那条不变量的**有效形态**：普通临时目录在多数平台上
+/// canonicalize 前后同形，上面那条断言会是同义反复（不红也说明不了什么）。
+/// 本用例刻意造出「两者不同」的根，让失配在**任何**能构造出差异的平台上
+/// 都当场变红（Linux / macOS 用符号链接；Windows 未开开发者模式时退回
+/// 大小写变体；都造不出来才跳过——此时该平台本就不会触发这个缺陷）。
+///
+/// 变异验证（本地）：把产出前缀改回 canonicalize 之后的形态，本用例在
+/// 能构造差异的平台上立即变红。
+#[test]
+fn scan_keeps_the_given_root_spelling_when_canonical_form_differs() {
+    let Some((dir, given)) = divergent_root("scan-divergent") else {
+        // 本环境造不出「canonical 形态不同的路径」，该缺陷在此平台不会触发。
+        eprintln!("跳过：本环境无法构造 canonical 形态不同的工作区根");
+        return;
+    };
+
+    let root = fp(&given);
+    let entries = repo_in(&dir).scan(&root, 3).expect("扫描应成功");
+
+    assert!(
+        !entries.is_empty(),
+        "符号链接 / 大小写变体根下应照样扫出条目，实际为空——\
+         说明产出路径用的是 canonicalize 之后的形态，与调用方持有的根对不上"
+    );
+    let prefix = format!("{}/", root.as_str());
+    for entry in &entries {
+        assert!(
+            entry.path().as_str().starts_with(&prefix),
+            "条目路径必须沿用调用方给定的根（{}），实际：{}",
+            root.as_str(),
+            entry.path().as_str()
+        );
+    }
+    remove_link(&given);
+}
+
+/// 造一个「磁盘真实路径 ≠ 给定路径字符串」的工作区根。
+///
+/// ① 符号链接（Linux / macOS / 开了开发者模式的 Windows）；
+/// ② 大小写变体（Windows、macOS 默认大小写不敏感）；
+/// 都不行则返回 `None`（调用方跳过）。
+fn divergent_root(tag: &str) -> Option<(TempDir, PathBuf)> {
+    let dir = TempDir::new(tag);
+    dir.write("readme.md", "r");
+    dir.write("docs/guide.md", "g");
+
+    let link = std::env::temp_dir().join(format!(
+        "rustmark-ws-link-{tag}-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or_default()
+    ));
+    remove_link(&link);
+
+    #[cfg(windows)]
+    let linked = std::os::windows::fs::symlink_dir(dir.path(), &link).is_ok();
+    #[cfg(not(windows))]
+    let linked = std::os::unix::fs::symlink(dir.path(), &link).is_ok();
+
+    if linked {
+        if divergent(&link) {
+            return Some((dir, link));
+        }
+        remove_link(&link);
+    }
+
+    // 退路：大小写变体（仅对大小写不敏感的文件系统有效）。
+    let text = dir.path().to_string_lossy().to_string();
+    let flipped: String = text
+        .chars()
+        .map(|c| {
+            if c.is_ascii_lowercase() {
+                c.to_ascii_uppercase()
+            } else {
+                c.to_ascii_lowercase()
+            }
+        })
+        .collect();
+    let variant = PathBuf::from(flipped);
+    if variant.is_dir() && divergent(&variant) {
+        return Some((dir, variant));
+    }
+    None
+}
+
+/// 该路径的 canonicalize 形态是否与它自身不同（不同才说明本用例有牙齿）。
+fn divergent(path: &Path) -> bool {
+    match path.canonicalize() {
+        Ok(canonical) => canonical != path,
+        Err(_) => false,
+    }
+}
+
+/// 删除符号链接本身（**不**跟进去删真实目录）。
+fn remove_link(path: &Path) {
+    let _ = fs::remove_file(path);
+    let _ = fs::remove_dir(path);
+}
+
+// ---------------------------------------------------------------------------
 // 内容读取（搜索用）
 // ---------------------------------------------------------------------------
 

@@ -5,7 +5,7 @@
 //! 但恰恰因此更必须测：装配顺序错、provider 拿错、
 //! 配置路径写错这类问题，只有在这里才看得见。
 
-#[path = "../support/mod.rs"]
+#[path = "../support.rs"]
 mod support;
 
 mod bootstrap_test;

@@ -161,8 +161,12 @@ fn collect_rs_files(dir: &Path) -> Vec<PathBuf> {
     out
 }
 
-fn src_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src")
+/// 两根扫描（D-3 阶段 4a workspace 化）：白名单真源 `shared/text_format.rs`
+/// 等四层在 `crates/rustmark-core/src`，组合根与视图在 `src`；两根都扫
+/// 才等价于拆分前对单一 `src` 的全量覆盖（豁免按层相对路径匹配，两根通用）。
+fn src_roots() -> Vec<PathBuf> {
+    let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    vec![base.join("src"), base.join("crates/rustmark-core/src")]
 }
 
 /// 现状守卫：真实工程里**零**处硬编码默认扩展名。
@@ -171,7 +175,10 @@ fn src_root() -> PathBuf {
 /// 把它排到最前），任何退回硬编码的改动都会在这里立刻变红。
 #[test]
 fn no_source_file_hardcodes_the_default_extension() {
-    let hits = scan_hardcoded_default_extension(&src_root());
+    let mut hits = Vec::new();
+    for root in src_roots() {
+        hits.extend(scan_hardcoded_default_extension(&root));
+    }
     assert!(
         hits.is_empty(),
         "默认扩展名必须走 `shared::text_format::default_extension()`，\

@@ -7,7 +7,7 @@
 //! 仅收「可脱离真实窗口驱动 `EditorApp` 逻辑」的用例；
 //! 必须看屏幕 / IME / 像素 / 跨平台的进 `docs/manual-qa-*.md`（S7-05）。
 
-#[path = "../support/mod.rs"]
+#[path = "../support.rs"]
 mod support;
 
 use crate::support::fake_dialog::FakeDialog;

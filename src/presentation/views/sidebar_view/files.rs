@@ -22,7 +22,6 @@ pub(super) fn files_tab(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
     if !app.workspace_entries.is_loaded() {
         return;
     }
-    dismiss_menu_on_outside_click(app, ui);
     let root = app.workspace_root();
     let expanded: Vec<String> = app.sidebar.expanded_dirs.clone();
     let rows = tree_rows(&app.workspace_entries.items, &root, &|path| {
@@ -54,18 +53,10 @@ pub(super) fn files_tab(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
                 }
                 file_row(ui, app, theme, row, &selected, &mut intent);
             }
-            // 空白处左键 = 关闭菜单 / 结束编辑（原型 `window click → closeMenu`）。
-            let blank = ui.available_size_before_wrap();
-            let response = ui.interact(
-                egui::Rect::from_min_size(ui.cursor().min, blank),
-                egui::Id::unique("rustmark.sidebar.blank"),
-                egui::Sense::click(),
-            );
-            if response.clicked() {
-                app.sidebar.close_context_menu();
-            }
         });
-    run_file_intent(app, intent);
+    let opened_menu = run_file_intent(app, intent);
+    // 菜单画在 `ScrollArea` 之外的前景浮层里：独立层级、不占树布局。
+    show_context_menu(app, ui, theme, opened_menu);
 }
 
 /// 文件树里一次点击的**意图**（先收集，最后统一执行）。
@@ -81,7 +72,8 @@ struct FileIntent {
     /// 但要把原因报到状态栏。
     denied: Option<String>,
     select: Option<String>,
-    menu: Option<String>,
+    /// 右键了某一行：`(路径, 屏幕落点)`——落点即浮层锚点。
+    menu: Option<(String, egui::Pos2)>,
 }
 
 impl FileIntent {
@@ -224,10 +216,11 @@ fn file_row(
         }
     }
     if response.secondary_clicked() {
-        intent.menu = Some(row.path.clone());
-    }
-    if menu_open {
-        context_menu(ui, app, theme, row);
+        // 浮层钉在右键落点上；拿不到落点（理论上不会）就退回行中心。
+        let at = response
+            .interact_pointer_pos()
+            .unwrap_or_else(|| response.rect.center());
+        intent.menu = Some((row.path.clone(), at));
     }
 }
 
@@ -350,34 +343,71 @@ fn paint_row_icon(
     }
 }
 
-/// 右键菜单（新建 / 新建文件夹 / 重命名 / 删除）。
-fn context_menu(ui: &mut Ui, app: &mut EditorApp, theme: &Theme, row: &TreeRow) {
+/// 右键菜单悬浮层（新建 / 新建文件夹 / 重命名 / 删除）。
+///
+/// 用 `egui::Area` + [`egui::Order::Foreground`] 画成**独立层级**的浮层：
+/// 钉在右键落点、不参与文件树布局（打开菜单不会把下方行顶下去），
+/// 点击浮层矩形之外的任何位置或按 `Esc` 关闭——与系统右键菜单一致。
+///
+/// `opened_this_frame` 豁免「刚刚打开菜单的那一次右键」：落点本来就贴着
+/// 锚点，窗口边缘触发 `constrain` 平移后落点可能落到矩形之外，不豁免会
+/// 出现「一右键就闪一下」。
+fn show_context_menu(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, opened_this_frame: bool) {
+    let Some(path) = app.sidebar.context_menu_path.clone() else {
+        return;
+    };
+    // 程序化打开（测试）没有落点：退回文件树左上角，至少不会画到屏幕外。
+    let anchor = app
+        .sidebar
+        .context_menu_pos
+        .unwrap_or_else(|| ui.max_rect().left_top());
+
     let mut intent = MenuIntent::default();
-    egui::Frame::new()
-        .fill(theme.bg_tertiary)
-        .stroke(egui::Stroke::new(1.0_f32, theme.border))
-        .corner_radius(theme.metrics.radius_card)
-        .inner_margin(egui::Margin::same(4))
-        .show(ui, |ui| {
-            ui.set_min_width(140.0);
-            if ui.button("新建文件").clicked() {
-                intent.create_file = Some(row.path.clone());
-            }
-            if ui.button("新建文件夹").clicked() {
-                intent.create_folder = Some(row.path.clone());
-            }
-            ui.separator();
-            if ui.button("重命名").clicked() {
-                intent.rename = Some(row.path.clone());
-            }
-            if ui
-                .button(RichText::new("删除").color(theme.error))
-                .clicked()
-            {
-                intent.delete = Some(row.path.clone());
-            }
+    let area = egui::Area::new(egui::Id::unique("rustmark.sidebar.context_menu"))
+        .fixed_pos(anchor)
+        .order(egui::Order::Foreground)
+        .constrain(true)
+        .movable(false)
+        .interactable(true)
+        .show(ui.ctx(), |ui| {
+            egui::Frame::new()
+                .fill(theme.bg_tertiary)
+                .stroke(egui::Stroke::new(1.0_f32, theme.border))
+                .corner_radius(theme.metrics.radius_card)
+                .inner_margin(egui::Margin::same(4))
+                .show(ui, |ui| {
+                    ui.set_min_width(140.0);
+                    if ui.button("新建文件").clicked() {
+                        intent.create_file = Some(path.clone());
+                    }
+                    if ui.button("新建文件夹").clicked() {
+                        intent.create_folder = Some(path.clone());
+                    }
+                    ui.separator();
+                    if ui.button("重命名").clicked() {
+                        intent.rename = Some(path.clone());
+                    }
+                    if ui
+                        .button(RichText::new("删除").color(theme.error))
+                        .clicked()
+                    {
+                        intent.delete = Some(path.clone());
+                    }
+                });
         });
-    run_menu_intent(app, row, intent);
+    run_menu_intent(app, &path, intent);
+
+    // 标准浮层交互：点击落在菜单矩形之外 / Esc → 关闭。
+    let (outside_click, escaped) = ui.input(|i| {
+        let outside = i.pointer.any_click()
+            && i.pointer
+                .interact_pos()
+                .is_some_and(|pos| !area.response.rect.contains(pos));
+        (outside, i.key_pressed(egui::Key::Escape))
+    });
+    if escaped || (outside_click && !opened_this_frame) {
+        app.sidebar.close_context_menu();
+    }
 }
 
 /// 右键菜单的一次点击意图。
@@ -390,15 +420,15 @@ struct MenuIntent {
 }
 
 /// 执行右键菜单意图。
-fn run_menu_intent(app: &mut EditorApp, row: &TreeRow, intent: MenuIntent) {
+fn run_menu_intent(app: &mut EditorApp, path: &str, intent: MenuIntent) {
     if let Some(parent) = intent.create_file {
         app.sidebar.start_create(Some(&parent), false);
     } else if let Some(parent) = intent.create_folder {
         app.sidebar.start_create(Some(&parent), true);
     } else if intent.rename.is_some() {
-        app.sidebar.start_rename(&row.path, &row.name);
-    } else if let Some(path) = intent.delete {
-        delete_with_feedback(app, &path);
+        app.sidebar.start_rename(path, &display_name(path));
+    } else if let Some(target) = intent.delete {
+        delete_with_feedback(app, &target);
     } else {
         return;
     }
@@ -503,7 +533,9 @@ pub(super) fn display_name(path: &str) -> String {
 }
 
 /// 执行文件树的点击意图（在渲染结束后统一做，见 `FileIntent`）。
-fn run_file_intent(app: &mut EditorApp, intent: FileIntent) {
+///
+/// 返回本帧是否**新打开了**右键菜单（浮层据此豁免同一帧的关闭判定）。
+fn run_file_intent(app: &mut EditorApp, intent: FileIntent) -> bool {
     let clicked = intent.select.is_some()
         || intent.toggle.is_some()
         || intent.open.is_some()
@@ -516,12 +548,14 @@ fn run_file_intent(app: &mut EditorApp, intent: FileIntent) {
     if let Some(path) = intent.toggle {
         app.sidebar.toggle_expanded(&path);
     }
-    if let Some(path) = intent.menu {
-        app.sidebar.open_context_menu(&path);
+    let mut opened_menu = false;
+    if let Some((path, at)) = intent.menu {
+        app.sidebar.open_context_menu(&path, at);
+        opened_menu = true;
     } else if clicked {
         // 左键点到**别的行**也要关菜单（原型 `window click → closeMenu` 的
         // 行内一半）：只靠底部空白区的判定，点行时菜单会赖着不走（问题 040）。
-        // 树外那一半在 [`dismiss_menu_on_outside_click`]。
+        // 树外那一半在 [`show_context_menu`] 的「点击浮层之外」判定里。
         app.sidebar.close_context_menu();
     }
     // 白名单外的格式：不进打开管线，只把原因报到状态栏（问题 045）。
@@ -535,21 +569,5 @@ fn run_file_intent(app: &mut EditorApp, intent: FileIntent) {
         app.sidebar
             .fail(format!("无法打开 {}：{e}", display_name(&path)));
     }
-}
-
-/// 右键菜单开着的帧里，点击落点在文件树**之外**（编辑区 / 预览区 / 侧栏
-/// 头部……）就直接关掉它（原型 `window click → closeMenu` 的树外一半）。
-///
-/// 树内的点击（行 / 空白 / 菜单按钮）由各自的处理路径负责关闭，这里只兜
-/// 「点在文件树裁剪矩形之外」的情况——菜单是行内自绘的，树外没有谁能
-/// 替它收尾，不兜的话点完编辑区菜单还挂着（问题 040 截图实证）。
-fn dismiss_menu_on_outside_click(app: &mut EditorApp, ui: &mut Ui) {
-    if app.sidebar.context_menu_path.is_none() {
-        return;
-    }
-    let (clicked, pos) = ui.input(|i| (i.pointer.primary_clicked(), i.pointer.interact_pos()));
-    let inside_tree = pos.is_some_and(|p| ui.clip_rect().contains(p));
-    if clicked && !inside_tree {
-        app.sidebar.close_context_menu();
-    }
+    opened_menu
 }

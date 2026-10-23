@@ -79,7 +79,11 @@ fn body(app: &mut EditorApp, ui: &mut Ui) {
         ui.add_space(theme.metrics.space_xs);
     }
     ui.horizontal(|ui| {
-        ui.checkbox(&mut app.diff_ui.only_changes, "只看差异行");
+        // D-3 阶段 3：读出 → 就地切换 → 变化才值写回（字段的可变引用不出 state）。
+        let mut only_changes = app.diff_ui.only_changes;
+        if ui.checkbox(&mut only_changes, "只看差异行").changed() {
+            app.diff_ui.set_only_changes(only_changes);
+        }
         ui.label(
             RichText::new(format!(
                 "+{}  −{}",

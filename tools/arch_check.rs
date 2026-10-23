@@ -15,6 +15,9 @@
 // 5. **层判定**：先剥掉末段 `.rs` 再取首段。自由位置是**白名单**
 //    （`main.rs` / `lib.rs` / `bin/**`）；其它顶层名字判「未知层」并报错——
 //    默认放行等于新目录静默逃过全部层禁令。
+// 6. **模块布局**：扫描范围内出现 `mod.rs` 一律报错（`CONSTR-03`：一级模块
+//    用 `xxx.rs`，子模块放 `xxx/`）。这条不看源码内容、只看文件名，故在
+//    `scan_impl` 里逐个文件判，不进 `check_file`——它没有词法可言。
 //
 // # 豁免（`arch-allow`）
 //
@@ -210,6 +213,20 @@ const TESTS_FORBIDDEN: &[&str] = &[
 /// 「漏预约」的坑就会以完全相同的形式回来，而它不产生编译错误、单测也未必覆盖。
 const REPAINT_RESERVATION: &str = "request_repaint_after";
 const REPAINT_RESERVATION_HOME: &str = "app/frame/scheduler.rs";
+
+/// 模块布局禁令（`CONSTR-03`）：禁止 `mod.rs`。
+///
+/// # 为什么必须机械化
+///
+/// `REQUIREMENTS.md` 的 `CONSTR-03` 与 `CONTRIBUTING.md` 都写明「一级模块用
+/// `xxx.rs`，子模块放 `xxx/`」，但这条约定**没有任何编译期后果**：写成
+/// `foo/mod.rs` 时 `cargo check` / `clippy` / 全部单测照过，只有人眼评审能发现。
+/// 2026-10-22 复核时 `src/infrastructure/fonts/` 与 `tests/support/` 两处
+/// `mod.rs` 就是这么活下来的——规则在文档里，却不在门禁里。
+///
+/// 与帧预约那条相同：**不设豁免**。文件布局没有「个别情况确实需要」的例外，
+/// 一旦开了口子，下一个 `mod.rs` 就会以「这个模块比较特殊」的理由出现。
+const FORBIDDEN_MOD_FILE: &str = "mod.rs";
 
 /// 领域层禁止的「直接打印」宏家族。
 ///
@@ -470,6 +487,15 @@ enum TokKind {
     Bang,
     /// `.`（与 `Other` 分开：字段访问的 `x.y` 不该被当成路径起始）。
     Dot,
+    /// `&`（与 `Other` 分开）。
+    ///
+    /// `Other` 的 `text` 恒为空，无法区分 `&` 与 `<` / `+` 等单字符——
+    /// 而 `tests/presentation/state_borrow_guard_test.rs`（D-3 阶段 2 的
+    /// 字段级可变借用清单）要在 token 流里认出 `&mut app.x.y`，
+    /// 必须有一个可辨识的取引用 token。它不参与路径判定（那几处
+    /// match 只认 `Ident` / `PathSep` / `Dot` / `Assign`），故加它
+    /// 不改变任何既有判定结果。
+    Amp,
     /// `=`（赋值；与 `==` 区分开，R-12 直写守卫用）。
     Assign,
     /// `==`（相等比较；R-12 不得误伤判据里的 `==`）。
@@ -626,10 +652,11 @@ impl<'a> Lexer<'a> {
                         continue;
                     }
                     // `.` 单独标记：字段访问的 `x.y` 与路径起始要能区分开。
-                    let kind = if c == '.' {
-                        TokKind::Dot
-                    } else {
-                        TokKind::Other
+                    // `&` 单独标记：给借用清单测试留可辨识的取引用 token（见 TokKind::Amp）。
+                    let kind = match c {
+                        '.' => TokKind::Dot,
+                        '&' => TokKind::Amp,
+                        _ => TokKind::Other,
                     };
                     self.push(&mut tokens, kind, String::new());
                     self.bump_char();
@@ -1079,6 +1106,18 @@ impl Registry {
 /// 读取豁免登记表。登记表路径约定为 `<manifest>/docs/architecture-constraints.md`。
 fn load_registry(src_root: &Path) -> Registry {
     let manifest = src_root.parent().unwrap_or(src_root);
+    load_registry_at(manifest)
+}
+
+/// 按 **manifest** 加载豁免登记表。
+///
+/// # 为什么必须按 manifest 而不是按扫描根
+///
+/// D-3 阶段 4a workspace 化后，core 根的 parent 是 `crates/rustmark-core`——
+/// 那里没有 `docs/`，逐根加载会让 core 侧全部豁免变成「未登记」。
+/// 登记表描述的是**整个工程**的豁免，与根无关，故按 manifest 载入一次、
+/// 所有根共用（[`scan_project`] 的做法）。
+fn load_registry_at(manifest: &Path) -> Registry {
     let path = manifest.join("docs").join("architecture-constraints.md");
     let Ok(text) = fs::read_to_string(&path) else {
         return Registry::default();
@@ -1165,8 +1204,123 @@ pub fn scan(src_root: &Path) -> Vec<Violation> {
 ///   `tests/domain/main.rs` 会被套上领域层禁令——那是**误判**。
 ///
 /// `tests/` 侧的文件在报告里带 `tests/` 前缀，与 `src/` 侧的可区分。
+///
+/// `#[allow(dead_code)]` 理由与 [`scan`] 相同：真实工程入口（`build.rs` /
+/// `check-arch`）自 D-3 阶段 4a 起改用 [`scan_project`]，本函数只剩
+/// fixture 的合成目录用例在用——那些 include 点没用到时不该以
+/// dead_code 告警（`-D warnings` 会把它升成编译失败）。
+#[allow(dead_code)]
 pub fn scan_with_tests(src_root: &Path, tests_root: &Path) -> Vec<Violation> {
     scan_impl(src_root, Some(tests_root))
+}
+
+/// 扫描**整个 workspace**（D-3 阶段 4a 拆分后的口径）：
+/// shell `src/` + `crates/rustmark-core/src/` + `tests/`。
+///
+/// # 三个根、两种记键
+///
+/// - 两个 src 根**按各自根的层相对路径**判层、查豁免表
+///   （core 的 `domain/x.rs` 与拆分前同键，登记表与既有禁令表零改动）；
+/// - core 侧违规只在**报告**时补 `crates/rustmark-core/src/` 前缀——
+///   层判定绝不能看该前缀，否则首段 `crates` 会把整个 core 判成
+///   「未知层」而全量误报；
+/// - `tests/` 侧与 [`scan_with_tests`] 完全一致（全判 [`Layer::Tests`]、
+///   rel 带 `tests/` 前缀）。
+///
+/// # 登记表按 manifest 加载一次、三个根共用
+///
+/// core 根的 parent 是 `crates/rustmark-core`，那里没有 `docs/`——
+/// 沿用 [`load_registry`] 的「parent 即 manifest」推断会让 core 侧豁免
+/// 全部变成「未登记」，故显式 [`load_registry_at`]（manifest）。
+///
+/// [`scan`] / [`scan_with_tests`] 的签名与口径**保持不变**：fixture 的
+/// 合成目录用例靠它们表达「只扫一个根」的范围差异；真实工程的入口
+/// （`build.rs` / `check-arch` / fixture 的零违规守卫）一律用本函数。
+pub fn scan_project(manifest: &Path) -> Vec<Violation> {
+    let registry = load_registry_at(manifest);
+    let mut violations = Vec::new();
+
+    // 两个 src 根：层判定用**根内相对路径**，报告字段补显示前缀。
+    for (root, display_prefix) in [
+        (manifest.join("src"), ""),
+        (
+            manifest.join("crates").join("rustmark-core").join("src"),
+            "crates/rustmark-core/src/",
+        ),
+    ] {
+        let mut files = Vec::new();
+        collect_rs_files(&root, &mut files);
+        files.sort();
+        for path in &files {
+            let rel = path
+                .strip_prefix(&root)
+                .unwrap_or(path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            let display = format!("{display_prefix}{rel}");
+            if let Some(v) = check_mod_rs(path, &display) {
+                violations.push(v);
+            }
+            let layer = layer_of(&rel);
+            let Ok(content) = fs::read_to_string(path) else {
+                continue;
+            };
+            let lexed = Lexer::new(&content).run();
+            for mut v in check_file(&rel, layer, &lexed, &registry) {
+                // 层判定与豁免键已按层相对路径算完，最后才补显示前缀。
+                v.file = display.clone();
+                violations.push(v);
+            }
+        }
+    }
+
+    // tests 根：与 scan_with_tests 同口径（前缀进 rel、全判 Tests 层）。
+    let tests_root = manifest.join("tests");
+    let mut test_files = Vec::new();
+    collect_rs_files(&tests_root, &mut test_files);
+    test_files.sort();
+    for path in &test_files {
+        let rel = path
+            .strip_prefix(&tests_root)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        let rel = format!("tests/{rel}");
+        if let Some(v) = check_mod_rs(path, &rel) {
+            violations.push(v);
+        }
+        let Ok(content) = fs::read_to_string(path) else {
+            continue;
+        };
+        let lexed = Lexer::new(&content).run();
+        violations.extend(check_file(&rel, Layer::Tests, &lexed, &registry));
+    }
+
+    violations
+}
+
+/// 模块布局（`CONSTR-03`）：`mod.rs` 一律不许出现。
+///
+/// 判据只有文件名，与源码内容无关——所以它在 `scan_impl` 里按路径判，
+/// 而不是在 [`check_file`] 里扫描 token。`src/` 与 `tests/` 两侧同样适用
+/// （`tests/support/mod.rs` 与 `src/infrastructure/fonts/mod.rs` 都是本轮
+/// 实际整改掉的存量）。
+///
+/// `rel` 是报告用相对路径（`tests/` 侧已带前缀），故文案与其它违规一致。
+fn check_mod_rs(path: &Path, rel: &str) -> Option<Violation> {
+    let name = path.file_name()?.to_str()?;
+    if name != FORBIDDEN_MOD_FILE {
+        return None;
+    }
+    Some(Violation {
+        file: rel.to_string(),
+        line: 1,
+        detail: format!(
+            "禁止 {FORBIDDEN_MOD_FILE}（CONSTR-03）：一级模块用 `xxx.rs`、子模块放 `xxx/`\
+             （如 `fonts.rs` 与 `fonts/assembly.rs` 共存）；`mod.rs` 会让模块树与文件树脱节，\
+             且编译器不会因此报错，只能由本规则守住"
+        ),
+    })
 }
 
 fn scan_impl(src_root: &Path, tests_root: Option<&Path>) -> Vec<Violation> {
@@ -1183,6 +1337,9 @@ fn scan_impl(src_root: &Path, tests_root: Option<&Path>) -> Vec<Violation> {
             .unwrap_or(path)
             .to_string_lossy()
             .replace('\\', "/");
+        if let Some(v) = check_mod_rs(path, &rel) {
+            violations.push(v);
+        }
         let layer = layer_of(&rel);
         let Ok(content) = fs::read_to_string(path) else {
             continue;
@@ -1204,6 +1361,9 @@ fn scan_impl(src_root: &Path, tests_root: Option<&Path>) -> Vec<Violation> {
             // 带 `tests/` 前缀：报告里一眼能看出违规在测试侧，
             // 且不会与 `src/presentation/…` 之类的同名路径混淆。
             let rel = format!("tests/{rel}");
+            if let Some(v) = check_mod_rs(path, &rel) {
+                violations.push(v);
+            }
             let Ok(content) = fs::read_to_string(path) else {
                 continue;
             };
@@ -1532,12 +1692,30 @@ fn push_candidates(
     forbidden: &[&'static str],
     allowed: &[&'static str],
 ) {
+    // D-3 阶段 4a（workspace 化）：`rustmark_core::X` 与 `crate::X` 是
+    // 同一条边的两种拼写——root 靠 re-export 把 core 拼回 `crate::`，
+    // 二者指向同一个模块。故把 `rustmark_core::` 归一为 `crate::` 后匹配
+    // **同一张**禁令表：否则把违规改写成 `rustmark_core::` 前缀即可绕过
+    // 全部禁令（词法只认字面路径，认不出这两种拼写等价）。
+    //
+    // 两处合法拼接点天然不触发、无需豁免：
+    // - `lib.rs` 是 Free 层（无禁令，候选收集直接跳过）；
+    // - `presentation.rs` 的 `rustmark_core::presentation::{…}` 归一为
+    //   `crate::presentation::{…}`，不在表现层禁令（app / domain /
+    //   infrastructure）之内。
+    //
+    // 报告里 `path` 保留**源码原拼写**（读者要能对上自己写的那一行），
+    // `banned` 仍是禁令表里的原词条（豁免匹配与文案都按表词条走）。
+    let normalized = path
+        .strip_prefix("rustmark_core::")
+        .map(|rest| format!("crate::{rest}"));
+    let effective = normalized.as_deref().unwrap_or(path);
     for &banned in forbidden {
-        if !matches_ban(path, banned) {
+        if !matches_ban(effective, banned) {
             continue;
         }
         // 命中了更窄的允许前缀 → 放行（如表现层的 `crate::app::frame`）。
-        if allowed.iter().any(|a| matches_ban(path, a)) {
+        if allowed.iter().any(|a| matches_ban(effective, a)) {
             continue;
         }
         out.push(Candidate {

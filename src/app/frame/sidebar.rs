@@ -63,4 +63,13 @@ impl EditorApp {
     pub fn toggle_search_option(&mut self, which: SearchToggle) {
         self.sidebar.search_options = self.sidebar.search_options.toggled(which);
     }
+
+    /// 关闭全部搜索选项（搜索标签的「重置」按钮）。
+    ///
+    /// 不能复用 `toggle_search_option`：三个开关可能只开了一两个，逐个翻转
+    /// 会把原本关着的打开——那不是重置。重置是「回到默认」，读的是
+    /// [`SearchOptions::reset`](crate::presentation::state::sidebar_ui_state::SearchOptions::reset)。
+    pub fn reset_search_options(&mut self) {
+        self.sidebar.search_options.reset();
+    }
 }

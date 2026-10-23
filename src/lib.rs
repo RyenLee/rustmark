@@ -25,10 +25,17 @@
 // 测试代码允许 `unwrap()`（规范 §七-20），故 test 配置下整体豁免。
 #![warn(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
+// DOC-03（API 文档）：所有公开项必须有 rustdoc 注释。
+//
+// 本地 `cargo check` 只告警，CI 的 `-D warnings` 会把它升级为失败——
+// 新增公开项漏写文档与漏写 `unwrap` 同样过不了门禁。
+// 确属不可文档化的项（生成代码等）用 `#[allow(missing_docs)]` + 理由注释逐处裁决。
+#![warn(missing_docs)]
 
 pub mod app;
-pub mod application;
-pub mod domain;
-pub mod infrastructure;
 pub mod presentation;
-pub mod shared;
+
+// D-3 阶段 4a：四层住在 `rustmark-core`，此处 re-export 拼回原 `crate::<层>` 路径，
+// 存量源码与测试的 `crate::domain::…` 等引用零改动（反向依赖由 cargo 锁死：
+// core 无法引用 root 的 `crate::app`，根 crate 的私有项也无法渗入 core）。
+pub use rustmark_core::{application, domain, infrastructure, shared};

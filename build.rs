@@ -1,7 +1,8 @@
 //! 构建期架构边界校验（S2-07）。
 //!
-//! 构建脚本每次运行都**无条件全量扫描** `src/` 与 `tests/` 的 `use` 语句，
-//! 违反分层依赖即 `panic!` 使构建失败。
+//! 构建脚本每次运行都**无条件全量扫描**整个 workspace 的源码——
+//! shell `src/`、`crates/rustmark-core/src/`（D-3 阶段 4a 拆分）与 `tests/`
+//! 的 `use` 语句，违反分层依赖即 `panic!` 使构建失败。
 //!
 //! `tests/` 自 R-02 起纳入扫描：测试是**消费者**不是层，可以引用任何层的
 //! 公开 API（`rustmark::…`），但禁止以 `crate::<层名>::…` 的库内部视角书写
@@ -23,6 +24,7 @@ mod arch_check {
 
 fn main() {
     println!("cargo:rerun-if-changed=src");
+    println!("cargo:rerun-if-changed=crates/rustmark-core/src");
     println!("cargo:rerun-if-changed=tests");
 
     if std::env::var("SKIP_ARCH_CHECK").is_ok() {
@@ -30,9 +32,7 @@ fn main() {
     }
 
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let src_root = manifest.join("src");
-    let tests_root = manifest.join("tests");
-    let violations = arch_check::scan_with_tests(&src_root, &tests_root);
+    let violations = arch_check::scan_project(&manifest);
 
     if !violations.is_empty() {
         // 报告文本与 `check-arch` bin 共用 `format_report`——两处各写一遍必然漂移。
