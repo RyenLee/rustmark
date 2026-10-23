@@ -27,3 +27,6 @@ Thumbs.db
 
 # 发布构建产物（由 release workflow 重新生成，非源码）
 /dist/
+
+# CI 安装的 cargo 命令行工具（cargo-deny / llvm-cov / bloat），带缓存
+/.cargo-tools/

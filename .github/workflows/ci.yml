@@ -1,5 +1,35 @@
 name: CI
 
+# ——————————————————————————————————————————————————————————————
+# 结构约定（重构后）
+#
+# 1. **一个 job 一个职责**，失败时从 job 名就能判断是哪一类问题：
+#      check          → 编译与测试（三平台矩阵）
+#      perf           → 性能冒烟（仅 Linux，release）
+#      coverage       → 覆盖率门禁（仅 Linux）
+#      release-dryrun → 离线发布演练
+#      deny           → 依赖许可 / 安全公告
+#    每个 job 内部的 step 也都是「一条可复制到本地执行」的命令，
+#    便于在本机复现而不是只能看 CI 日志。
+#
+# 2. **job id 与矩阵显示名保持原样**：它们是分支保护里的必需检查项，
+#    改名会让必需检查「永远等不到」。职责拆分只在 step 层做。
+#
+# 3. **工具链版本唯一真源是 `rust-toolchain.toml`**：这里不再硬编码
+#    `1.99.0`（曾与该文件重复，升级时两处漂移）。
+#
+# 4. **不再全局设置 `RUSTFLAGS: -D warnings`**：RUSTFLAGS 会作用于
+#    **所有**编译单元（含第三方依赖），任何上游新告警都会让整个 CI 变红，
+#    且它会改变编译指纹、让缓存基本失效。对本仓库代码的严格判定由
+#    `cargo clippy --all-targets -- -D warnings` 承担（与本地验证链同源）。
+#
+# 5. **失败定位**：测试日志落盘 → 解析成「按目标统计」的表格写进
+#    Job Summary，并把 FAILED 行逐条提升为 `::error::` 注解；
+#    环境快照步骤打印 `std::env::temp_dir()` 的真实形态，
+#    用来识别「只在某个平台出现」的用例（历史教训：macOS 的 `/var`
+#    是符号链接，canonicalize 成 `/private/var`，导致路径前缀失配）。
+# ——————————————————————————————————————————————————————————————
+
 on:
   push:
     branches: [main]
@@ -13,96 +43,136 @@ on:
         required: false
         default: "10485760"
 
+# 最小权限：CI 只读代码。需要写权限的 job（release）单独声明。
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: "-D warnings"
+  # 断言失败时打印回溯，省掉「复现一次只为拿 backtrace」的往返。
+  RUST_BACKTRACE: "1"
   # 体积门禁：红线 10 MB（`§1.2` 硬指标），预警线 8 MB（需求 §8.1）。
+  # 2026-10-22（REL-03）：字体外置 + 关 `rustls-webpki-roots`（改用平台信任库）
+  # 后，Windows 产物实测 10,466,816 B（9.98 MiB），已回到红线内——
+  # 详见 docs/metrics.md §2.7。macOS / Linux 产物仍待真机复测。
+  # 断言失败时可直接用 workflow_dispatch 的 size_limit_bytes 覆盖阈值，以验证门禁本身有效。
   SIZE_LIMIT_BYTES: ${{ github.event.inputs.size_limit_bytes || '10485760' }}
   SIZE_WARN_BYTES: '8388608'
+  # cargo 命令行工具（cargo-deny / cargo-llvm-cov / cargo-bloat）统一装到
+  # 这个根目录，便于缓存；不能装进 ~/.cargo/bin——那里放着 rustup 的
+  # cargo/rustc 代理，缓存回写会覆盖它们。
+  CARGO_TOOLS_ROOT: ${{ github.workspace }}/.cargo-tools
 
 jobs:
   check:
     name: ${{ matrix.os }} / check + test
     runs-on: ${{ matrix.os }}
+    # ubuntu-20.04 已被 GitHub 下线（runner 镜像退役），改用 22.04。
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest, ubuntu-20.04]
+        os: [windows-latest, macos-latest, ubuntu-22.04]
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
+      # 不指定 `toolchain`：由仓库根 `rust-toolchain.toml` 决定（唯一真源）。
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: 1.99.0
-          components: rustfmt, clippy
 
       - uses: Swatinem/rust-cache@v2
+
+      # 环境快照：这类信息在「只有某个平台红」时值千金。
+      - name: Environment snapshot
+        shell: bash
+        run: |
+          {
+            echo "### 环境快照（${{ matrix.os }}）"
+            echo ""
+            echo "| 项 | 值 |"
+            echo "|---|---|"
+            echo "| rustc | $(rustc --version) |"
+            echo "| cargo | $(cargo --version) |"
+            echo "| OS | ${{ runner.os }} |"
+            echo "| 临时目录（Rust 视角） | $(python3 -c "import os,tempfile;print(tempfile.gettempdir())" 2>/dev/null || echo "$TEMP") |"
+            echo "| 临时目录（真实形态） | $(python3 -c "import os,tempfile;print(os.path.realpath(tempfile.gettempdir()))" 2>/dev/null || echo "$TEMP") |"
+            echo ""
+            echo "> 两行临时目录不一致说明该平台临时路径含符号链接——"
+            echo "> 任何依赖「路径字符串前缀」的逻辑都要按此复核。"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: cargo fmt --check
         run: cargo fmt --check
 
       - name: cargo clippy
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: cargo check
-        run: cargo check --all-targets
-
-      - name: cargo test
-        run: cargo test --all-targets
+        run: cargo check --workspace --all-targets
 
       - name: Architecture boundary check
         run: cargo run --bin check-arch
+
+      # `--workspace`（D-3 阶段 4a）：不加时 root 包是默认成员，
+      # core 的单测会**静默消失**——测试数掉一大截而 CI 照绿。
+      # `--no-fail-fast`：一个测试目标红也继续跑完其余目标，
+      # 一次拿到全部失败面（否则修完一个、推一次、再看到下一个）。
+      - name: cargo test (all targets)
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --workspace --all-targets --no-fail-fast 2>&1 | tee test-output.log
+          {
+            echo "### 测试结果（${{ matrix.os }}）"
+            echo ""
+            echo "| 目标 | 结论 | 明细 |"
+            echo "|---|---|---|"
+            awk '
+              /^     Running / {
+                t = $2
+                gsub(/\\/, "/", t)
+                sub(/\.rs$/, "", t)
+                if (t ~ /^src\//) { t = "lib" }
+                else { sub(/^tests\//, "", t); sub(/\/main$/, "", t) }
+                next
+              }
+              /^test result:/ {
+                verdict = ($3 == "ok.") ? "ok" : "FAILED"
+                printf "| `%s` | %s | %s |\n", t, verdict, $0
+              }
+            ' test-output.log
+          } >> "$GITHUB_STEP_SUMMARY"
+          # 失败用例逐条提升为注解：Job Summary 之外，PR 的 Files 视图也能看到。
+          grep -E "^test .* FAILED" test-output.log | sed 's/^/::error::/' || true
+          grep -E "^error: test failed" test-output.log | sed 's/^/::error::/' || true
 
       - name: cargo build --release
         run: cargo build --release
 
       # S8-07 ①：体积门禁。
       #
-      # 与上一版（只打印不判定）的差别：**超红线即 fail**，预警线只告警。
-      # 阈值可由 `workflow_dispatch` 的 `size_limit_bytes` 覆盖，
-      # 以便人为验证门禁真的会红。
+      # 判定逻辑抽到 scripts/size_gate.sh：CI 与本地同一份实现，
+      # 避免「CI 上的规则和本地跑的不是同一条」。
       - name: Binary size gate
         shell: bash
-        run: |
-          # 产物路径随是否指定 --target 而不同：显式 target 时为
-          # target/<triple>/release/，否则为 target/release/。此处两者都找。
-          BIN=$(find target -type f \( -name 'rustmark' -o -name 'rustmark.exe' \) \
-                -path '*release*' -not -path '*/deps/*' | head -1)
-          if [ -z "$BIN" ]; then
-            echo "::error::未找到 release 产物，体积门禁无法判定"
-            exit 1
-          fi
-          SIZE=$(wc -c < "$BIN")
-          MB=$(awk "BEGIN{printf \"%.3f\", $SIZE/1048576}")
-          LIMIT_MB=$(awk "BEGIN{printf \"%.3f\", $SIZE_LIMIT_BYTES/1048576}")
-          WARN_MB=$(awk "BEGIN{printf \"%.3f\", $SIZE_WARN_BYTES/1048576}")
-          echo "release 产物：$BIN"
-          echo "字节数：$SIZE（${MB} MB）｜预警线 ${WARN_MB} MB，红线 ${LIMIT_MB} MB"
-          {
-            echo "### 体积（${{ matrix.os }}）"
-            echo ""
-            echo "- 产物：$BIN"
-            echo "- 字节数：**$SIZE**（${MB} MB）"
-            echo "- 预警线 ${WARN_MB} MB / 红线 ${LIMIT_MB} MB"
-          } >> "$GITHUB_STEP_SUMMARY"
-          if [ "$SIZE" -gt "$SIZE_LIMIT_BYTES" ]; then
-            echo "::error::release 产物 ${MB} MB 超过红线 ${LIMIT_MB} MB（$SIZE > $SIZE_LIMIT_BYTES 字节）"
-            exit 1
-          fi
-          if [ "$SIZE" -gt "$SIZE_WARN_BYTES" ]; then
-            echo "::warning::release 产物 ${MB} MB 已超过预警线 ${WARN_MB} MB，距红线仅剩 $((SIZE_LIMIT_BYTES - SIZE)) 字节"
-          fi
+        run: bash scripts/size_gate.sh
 
       # S8-07 ③：`cargo bloat` 逐 crate 归因作为构建摘要。
       #
       # 装在 CI 上要现编译，失败或超时都不该让整个 CI 变红（它只是诊断信息），
       # 故 `continue-on-error`。
+      - name: Restore cargo tools cache
+        uses: actions/cache@v4
+        with:
+          path: .cargo-tools
+          key: cargo-tools-${{ runner.os }}-bloat-v1
+
       - name: cargo bloat summary
         shell: bash
         continue-on-error: true
         run: |
-          cargo install cargo-bloat --locked
+          export PATH="$CARGO_TOOLS_ROOT/bin:$PATH"
+          command -v cargo-bloat >/dev/null || cargo install --root "$CARGO_TOOLS_ROOT" --locked cargo-bloat
           {
             echo "### 逐 crate 体积归因（cargo bloat --crates 15）"
             echo ""
@@ -123,13 +193,12 @@ jobs:
   perf:
     name: perf smoke (linux)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: 1.99.0
 
       - uses: Swatinem/rust-cache@v2
 
@@ -160,29 +229,41 @@ jobs:
   coverage:
     name: coverage gate (linux)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.99.0
           components: llvm-tools-preview
 
       - uses: Swatinem/rust-cache@v2
 
+      - name: Restore cargo tools cache
+        uses: actions/cache@v4
+        with:
+          path: .cargo-tools
+          key: cargo-tools-${{ runner.os }}-llvm-cov-v1
+
       - name: Install cargo-llvm-cov
-        run: cargo install cargo-llvm-cov --locked
+        run: |
+          export PATH="$CARGO_TOOLS_ROOT/bin:$PATH"
+          command -v cargo-llvm-cov >/dev/null || cargo install --root "$CARGO_TOOLS_ROOT" --locked cargo-llvm-cov
 
       - name: Generate coverage report
         run: |
+          export PATH="$CARGO_TOOLS_ROOT/bin:$PATH"
           # V11-13：全文查找性能用例的耗时门禁已改为只在 release 生效，
           # debug（含覆盖率插桩）下仅打印指标，不再需要 --skip 掩去。
-          cargo llvm-cov --all-targets --lcov --output-path lcov.info --
+          # `--workspace`：core（crates/rustmark-core）一并插桩，
+          # 否则拆分后覆盖率只算 shell 一侧，整体 ≥70% 的分母是错的。
+          cargo llvm-cov --workspace --all-targets --lcov --output-path lcov.info --
 
       - name: Coverage gate
         shell: bash
         run: |
+          set -o pipefail
           python3 tools/coverage_gate.py lcov.info | tee coverage-summary.txt
           {
             echo "### 覆盖率门禁"
@@ -202,6 +283,7 @@ jobs:
   release-dryrun:
     name: release dry-run (linux)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
@@ -221,12 +303,43 @@ jobs:
   deny:
     name: licenses / advisories
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@master
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Restore cargo tools cache
+        uses: actions/cache@v4
         with:
-          toolchain: 1.99.0
+          path: .cargo-tools
+          key: cargo-tools-${{ runner.os }}-deny-0.20.2
+
+      # 固定版本：cargo-deny 的规则语义随版本变化，装最新版会让
+      # 「本机通过 / CI 失败」变成口径不一致而非代码问题。
+      # 此前这里是 `|| true`——安装失败会被吞掉，随后的 `cargo deny`
+      # 命令不存在才红，根因完全被掩盖。
       - name: Install cargo-deny
-        run: cargo install cargo-deny --locked || true
-      - name: cargo deny check
-        run: cargo deny check licenses advisories bans sources
+        run: |
+          export PATH="$CARGO_TOOLS_ROOT/bin:$PATH"
+          command -v cargo-deny >/dev/null || cargo install --root "$CARGO_TOOLS_ROOT" --version 0.20.2 --locked cargo-deny
+          cargo deny --version
+
+      # 许可检查：只依赖 Cargo.lock 与本地元数据，离线可跑，必须绿。
+      - name: License / ban / source policy
+        run: |
+          export PATH="$CARGO_TOOLS_ROOT/bin:$PATH"
+          cargo deny check licenses bans sources
+
+      # 安全公告：需要拉取 RustSec 数据库（网络依赖），与上一步分开，
+      # 网络抖动时不会连坐许可门禁；命中 CVE 时 `::error` 给出处置指引。
+      - name: Security advisories
+        run: |
+          export PATH="$CARGO_TOOLS_ROOT/bin:$PATH"
+          cargo deny check advisories || {
+            echo "::error::存在依赖安全公告未处置：在 deny.toml 的 [advisories].ignore 登记并说明理由，或升级依赖"
+            exit 1
+          }
