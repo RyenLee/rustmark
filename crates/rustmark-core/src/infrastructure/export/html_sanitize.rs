@@ -59,7 +59,7 @@ use writer::{filter_attributes, render_attributes};
 /// # 示例
 ///
 /// ```
-/// use rustmark::infrastructure::export::html_sanitize::sanitize_html;
+/// use rustmark_core::infrastructure::export::html_sanitize::sanitize_html;
 ///
 /// // 事件属性被剥除。
 /// assert_eq!(sanitize_html("<img src=x onerror=alert(1)>"), "<img>");
