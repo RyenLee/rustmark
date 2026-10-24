@@ -22,15 +22,18 @@
 // 本地 `cargo clippy` 只告警，`cargo clippy --all-targets -- -D warnings`（与 CI 同款）
 // 会直接红。确有不变式保障的位置用 `#[allow]` + 注释说明理由，逐处裁决。
 //
-// 测试代码允许 `unwrap()`（规范 §七-20），故 test 配置下整体豁免。
-#![warn(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+// V11-65：lint 声明已收敛至 root `Cargo.toml` 的 `[workspace.lints]` 单点真源
+// （本 crate 经 `[lints] workspace = true` 继承），不再于此处重复声明。
+// 测试代码允许 `unwrap()`（规范 §七-20），故 test 配置下整体豁免——
+// 豁免是 cfg 形态，无法进 workspace.lints 表，保留在本行。
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 // DOC-03（API 文档）：所有公开项必须有 rustdoc 注释。
 //
 // 本地 `cargo check` 只告警，CI 的 `-D warnings` 会把它升级为失败——
 // 新增公开项漏写文档与漏写 `unwrap` 同样过不了门禁。
 // 确属不可文档化的项（生成代码等）用 `#[allow(missing_docs)]` + 理由注释逐处裁决。
-#![warn(missing_docs)]
+//
+// V11-65：同 unwrap 系列，声明已收敛至 `[workspace.lints.rust]`。
 
 pub mod app;
 pub mod presentation;

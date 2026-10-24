@@ -15,6 +15,11 @@
 //! 2. **注入必报**：每种逃逸形状都必须被检出；
 //! 3. **注入不报**：每种「看起来像违规但其实不是」的情形必须放过。
 
+// V11-65：workspace lints 为包级声明，覆盖本测试 crate（原先仅 lib 目标
+// 受 lib.rs attribute 管辖）。规范 §七-20 允许测试代码 unwrap/expect/
+// panic，同 lib.rs 的 `cfg_attr(test, allow)` 惯例在此豁免。
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
+
 use std::path::{Path, PathBuf};
 
 mod arch_check {

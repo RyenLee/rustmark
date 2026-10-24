@@ -16,6 +16,13 @@
 //! 逃生口：`SKIP_ARCH_CHECK=1` 可跳过（**CI 不得设置**）。
 //! 人工执行：`cargo run --bin check-arch`（打印文件与行号）。
 
+// V11-65：`[lints] workspace = true` 是包级声明，覆盖全部目标（含本 build script），
+// 而原先 lib.rs 顶部的 attribute 只作用于 lib 目标。本文件的 `panic!` 是 S2-07
+// 架构守卫的**失败机制本身**（发现分层违规即使构建失败），属「确有不变式保障
+// 的位置」，按规范 §四-15 的逐处裁决惯例在此豁免；`unwrap`/`expect` 本文件零使用，
+// 不一并放宽。
+#![allow(clippy::panic)]
+
 use std::path::PathBuf;
 
 mod arch_check {

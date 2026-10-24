@@ -7,6 +7,11 @@
 //! 仅收「可脱离真实窗口驱动 `EditorApp` 逻辑」的用例；
 //! 必须看屏幕 / IME / 像素 / 跨平台的进 `docs/manual-qa-*.md`（S7-05）。
 
+// V11-65：workspace lints 为包级声明，覆盖本测试 crate（原先仅 lib 目标
+// 受 lib.rs attribute 管辖）。规范 §七-20 允许测试代码 unwrap/expect/
+// panic，同 lib.rs 的 `cfg_attr(test, allow)` 惯例在此豁免。
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
+
 #[path = "../support.rs"]
 mod support;
 

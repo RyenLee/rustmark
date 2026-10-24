@@ -17,10 +17,12 @@
 //! - [`presentation`]：表现层的 state / theme / rich / widgets / icons / shortcuts
 //!   （egui 视图与组合根在 root crate 的 `presentation::views` / `app`）
 
-// 与 root lib.rs 同款门禁（规范 §四-15 / DOC-03），两处必须保持一致。
-#![warn(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+// V11-65：unwrap 系列与 missing_docs 的 lint 声明已收敛至 root `Cargo.toml`
+// 的 `[workspace.lints]` 单点真源（本 crate 经 `[lints] workspace = true` 继承）。
+// 规范 §四-15 / DOC-03 的规则内容不变（详见 root `Cargo.toml` 该段注释）；
+// 测试代码允许 `unwrap()` 的豁免是 cfg 形态，无法进 workspace.lints 表，
+// 保留在本行，与 root lib.rs 同款。
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
-#![warn(missing_docs)]
 
 pub mod application;
 pub mod domain;

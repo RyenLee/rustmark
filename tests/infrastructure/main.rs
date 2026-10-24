@@ -3,6 +3,11 @@
 //! 各适配器的用例统一在此装配。共享测试替身位于 `tests/support/`，
 //! 由本入口以 `#[path]` 引入，不进入 `release` 产物。
 
+// V11-65：workspace lints 为包级声明，覆盖本测试 crate（原先仅 lib 目标
+// 受 lib.rs attribute 管辖）。规范 §七-20 允许测试代码 unwrap/expect/
+// panic，同 lib.rs 的 `cfg_attr(test, allow)` 惯例在此豁免。
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
+
 #[path = "../support.rs"]
 mod support;
 

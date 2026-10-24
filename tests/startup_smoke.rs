@@ -25,6 +25,11 @@
 //! 它不能直接证明「应用能起来」，但能挡住 DEF-03 这一类**必然**导致起不来的配置错误；
 //! 真正的「启动一次」冒烟见 `scripts/smoke_startup.ps1`（需 GUI 会话，Windows 手工/CI）。
 
+// V11-65：workspace lints 为包级声明，覆盖本测试 crate（原先仅 lib 目标
+// 受 lib.rs attribute 管辖）。规范 §七-20 允许测试代码 unwrap/expect/
+// panic，同 lib.rs 的 `cfg_attr(test, allow)` 惯例在此豁免。
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
+
 #[test]
 fn wgpu_has_at_least_one_backend_enabled() {
     let backends = wgpu::Instance::enabled_backend_features();

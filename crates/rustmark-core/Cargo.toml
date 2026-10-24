@@ -15,29 +15,21 @@ publish = false
 # --- UI 绘制原语（ADR-001：egui 原生）---
 # core 只画 egui（TextFormat / LayoutJob / Galley 等），不接触渲染后端；
 # eframe 与 wgpu 属组合根，留在 root。
-egui = { version = "0.37.0", default-features = false }
+# V11-65：版本/规格继承 root [workspace.dependencies]（单点真源）。
+egui = { workspace = true }
 
 # --- 解析与高亮（ADR-002）---
 pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
 # syntect 只保留「解析 + 语法集」：不启 default-themes / yaml-load / plist-load，
 # 保留 regex-fancy（纯 Rust，避开 onig）。
-syntect = { version = "5.3.0", default-features = false, features = [
-    "parsing",
-    "default-syntaxes",
-    "dump-load",
-    "regex-fancy",
-] }
+# V11-65：版本/规格继承 root [workspace.dependencies]（与 root 集成测试同源）。
+syntect = { workspace = true }
 
 # --- 图片解码（S6-05 预览区显示图片）---
 # 与 root 同规格声明（预览区解码在 views、落盘与缩放在 infrastructure），
 # 只启用白名单位图格式，不启 svg、关 default。
-image = { version = "0.25", default-features = false, features = [
-    "png",
-    "jpeg",
-    "gif",
-    "webp",
-    "bmp",
-] }
+# V11-65：版本/规格继承 root [workspace.dependencies]。
+image = { workspace = true }
 
 # --- 文本缓冲 ---
 ropey = "1.6.1"
@@ -62,10 +54,16 @@ ureq = { version = "3.5.0", default-features = false, features = [
 rustls-native-certs = "0.8"
 
 # --- 日志（基础设施层越界告警用）---
-log = "0.4"
+# V11-65：版本继承 root [workspace.dependencies]。
+log = { workspace = true }
 
 # --- 缓存哈希器（预览/高亮/拼写缓存的 u64 键；no-rng 免 getrandom）---
 ahash = { version = "0.8", default-features = false, features = ["std", "no-rng"] }
 
 [dev-dependencies]
-tempfile = "3"
+# V11-65：版本继承 root [workspace.dependencies]（两侧 dev-dependencies 同规格）。
+tempfile = { workspace = true }
+
+# V11-65：lint 经 [workspace.lints] 单点继承（原为 src/lib.rs 顶部的 attribute）。
+[lints]
+workspace = true

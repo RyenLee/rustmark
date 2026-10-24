@@ -32,6 +32,11 @@
 //!   是 `pub` + 关键字 + 名字 + `:`，比字段多出一个关键字（注入用例钉死
 //!   这个区分）。
 
+// V11-65：workspace lints 为包级声明，覆盖本测试 crate（原先仅 lib 目标
+// 受 lib.rs attribute 管辖）。规范 §七-20 允许测试代码 unwrap/expect/
+// panic，同 lib.rs 的 `cfg_attr(test, allow)` 惯例在此豁免。
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
+
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 

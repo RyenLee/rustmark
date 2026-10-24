@@ -7,6 +7,57 @@
 members = ["crates/rustmark-core"]
 resolver = "3"
 
+# V11-65：版本单点真源。root 与 core 两份 manifest 原先逐字重复声明同规格依赖
+# （egui / image / syntect / log / tempfile），新增一条依赖要写两遍、改一处漏一处
+# 即静默分叉——收敛到本表，成员侧 `{ workspace = true }` 继承。
+# 各依赖的选型理由注释保留在使用处（版本进真源，理由留上下文）。
+[workspace.dependencies]
+# --- UI 绘制原语（ADR-001：egui 原生）---
+# core 只画 egui（TextFormat / LayoutJob / Galley 等），不接触渲染后端；
+# eframe 与 wgpu 属组合根，留在 root、不入本表。
+egui = { version = "0.37.0", default-features = false }
+
+# --- 图片解码（S6-05 预览区显示图片）---
+# core（infrastructure 落盘与缩放）与 root（views 解码）同规格声明；
+# 只启用白名单位图格式，不启 svg、关 default。
+image = { version = "0.25", default-features = false, features = [
+    "png",
+    "jpeg",
+    "gif",
+    "webp",
+    "bmp",
+] }
+
+# --- 解析与高亮（ADR-002）---
+# syntect 只保留「解析 + 语法集」：不启 default-themes / yaml-load / plist-load，
+# 保留 regex-fancy（纯 Rust，避开 onig）。core 的 parsing/highlighting 适配与
+# root 集成测试（tests/infrastructure/highlighter_test.rs）直接引用语法集，
+# 两处规格必须一致（feature 统一后行为同源）。
+syntect = { version = "5.3.0", default-features = false, features = [
+    "parsing",
+    "default-syntaxes",
+    "dump-load",
+    "regex-fancy",
+] }
+
+# --- 日志（基础设施层越界告警用）---
+log = "0.4"
+
+# --- 测试临时目录（两侧 dev-dependencies 同规格）---
+tempfile = "3"
+
+# V11-65：lint 单点真源（原为 root 与 core 两个 lib.rs 各一份 attribute，
+# 规范 §四-15 / DOC-03 要求「两处必须保持一致」——手动同步本身就是债）。
+# 本地 `cargo clippy` 只告警；CI 的 `-D warnings` 升级为失败（V11-12 设计不变）。
+# 测试代码豁免（unwrap 允许）是 cfg 形态，无法进本表，保留在各 lib.rs。
+[workspace.lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+
+[workspace.lints.rust]
+missing_docs = "warn"
+
 [package]
 name = "rustmark"
 version = "0.2.0"
@@ -41,6 +92,10 @@ path = "src/main.rs"
 name = "check-arch"
 path = "src/bin/check-arch.rs"
 
+# V11-65：lint 经 [workspace.lints] 单点继承（原为 src/lib.rs 顶部的 attribute）。
+[lints]
+workspace = true
+
 [dependencies]
 # --- UI（ADR-001：egui 原生，wgpu 后端）---
 # 注意：eframe 的 default 渲染后端是 glow(OpenGL)，需求 §5.1 要求 wgpu，
@@ -68,7 +123,7 @@ path = "src/bin/check-arch.rs"
 # 基础族——字节、字形、兜底顺序与内嵌时代逐项一致，界面观感不变。
 # egui-icons.ttf（3.4 KB，仅支撑 `egui::special_emojis` 的少数图标）未随包：
 # 本项目对 special_emojis 零引用（grep 全库可证），egui 自身绘制也不用它。
-egui = { version = "0.37.0", default-features = false }
+egui = { workspace = true }
 eframe = { version = "0.37.0", default-features = false, features = [
     "wgpu_no_default_features",
     "x11",
@@ -90,13 +145,7 @@ rustmark-core = { path = "crates/rustmark-core" }
 # `image` 已由 eframe（经 arboard）引入依赖图，直接依赖不额外增大产物体积。
 # 只启用资源加载器白名单里的位图格式；**不启 svg**（SVG 可携带 <script>，
 # 见 asset_loader.rs 的安全说明），且关闭 default 以避开无关编码器。
-image = { version = "0.25", default-features = false, features = [
-    "png",
-    "jpeg",
-    "gif",
-    "webp",
-    "bmp",
-] }
+image = { workspace = true }
 
 # --- 错误处理 ---
 # thiserror 已下沉 core（domain/application 的错误类型）；
@@ -107,7 +156,7 @@ anyhow = "1"
 # ureq / rustls-native-certs 已下沉 core（infrastructure::persistence::asset_loader）。
 
 # --- 日志（基础设施层越界告警用；未列入需求 §5.1，已在 docs/dependencies.md 登记）---
-log = "0.4"
+log = { workspace = true }
 # 日志后端（F-2：此前 log 的 12 个告警调用点无后端接收，全部静默丢弃）。
 # 只开 `humantime`：默认特性的 `regex` 会链入整个 `regex` crate
 # （依赖树里此前只有 fancy-regex → regex-automata，没有 regex；体积红线
@@ -149,15 +198,10 @@ wgpu = { version = "30.0.1", default-features = false, features = [
 ] }
 
 [dev-dependencies]
-tempfile = "3"
+tempfile = { workspace = true }
 # 集成测试直接引用语法集（tests/infrastructure/highlighter_test.rs），
 # 规格与 core 侧完全一致以保证 feature 统一后行为同源。
-syntect = { version = "5.3.0", default-features = false, features = [
-    "parsing",
-    "default-syntaxes",
-    "dump-load",
-    "regex-fancy",
-] }
+syntect = { workspace = true }
 
 # 需求文档 §8.1 体积优化配置
 [profile.release]

@@ -5,6 +5,11 @@
 //! 但恰恰因此更必须测：装配顺序错、provider 拿错、
 //! 配置路径写错这类问题，只有在这里才看得见。
 
+// V11-65：workspace lints 为包级声明，覆盖本测试 crate（原先仅 lib 目标
+// 受 lib.rs attribute 管辖）。规范 §七-20 允许测试代码 unwrap/expect/
+// panic，同 lib.rs 的 `cfg_attr(test, allow)` 惯例在此豁免。
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
+
 #[path = "../support.rs"]
 mod support;
 

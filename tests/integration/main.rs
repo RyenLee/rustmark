@@ -14,6 +14,11 @@
 //! 并在 PR 描述里写明变更原因（见 `CONTRIBUTING.md`）。
 //! 绝不能习惯性 `--accept` 后不看内容。
 
+// V11-65：workspace lints 为包级声明，覆盖本测试 crate（原先仅 lib 目标
+// 受 lib.rs attribute 管辖）。规范 §七-20 允许测试代码 unwrap/expect/
+// panic，同 lib.rs 的 `cfg_attr(test, allow)` 惯例在此豁免。
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
+
 use std::path::PathBuf;
 use std::time::Instant;
 
