@@ -148,7 +148,7 @@ V11-59 ─────────────────────┼──�
 - **验收标准**：`cargo tree -p rustmark-actions` 零依赖；`git diff --stat` 中 25 个 UiAction 使用文件零改动；四门禁 + 2131 基线；check-arch OK 且 `tests/arch_violation_fixture.rs` 补一例「actions crate 内引用 core」必报（若 checker 覆盖新根）。
 - **回退**：revert 单 commit（新 crate 删除、registry.rs 还原）。
 
-> **完成注记（2026-10-24）**：已落地，门禁 2139/0/4。与方案的偏差及处置：
+> **完成注记（2026-10-24，`a38ac43`）**：已落地，门禁 2139/0/4。与方案的偏差及处置：
 > 1. **守卫方案经用户裁定取「方案 b」**（另两案：a 专用 `Layer::Actions` / a+ 联动 V11-56 文档）：`arch_check.rs` 对 actions 根**强制 Free 层**（`layer_of` 按根内相对路径判定、不感知 crate，不强制会把 `action.rs` 首段报「未知层」——变异 A 实测真实工程 3 条 panic），反向依赖由 **Cargo 循环依赖**结构性挡死，零依赖由 `workspace_topology_test` 的 `actions_crate_declares_no_dependencies` 断言兜底。
 > 2. **验收标准中「fixture：actions 内引用 core 必报」按条件豁免**：Free 层下「actions→core」是合法自由引用，层规则管不到（这正是 Cargo 环兜底的原因），原字面 fixture 与方案 b 互斥。实补两例替代：`actions_root_is_judged_free_without_false_unknown_layer`（防「未知层」误报）+ `layer_independent_rules_still_apply_in_actions_root`（帧预约等层无关规则在新根仍生效，变异 B 整根跳过→该例红、零违规用例 vacuous 通过，实证「零违规守卫证明不了牙齿」）。
 > 3. **动作 2 的 lib.rs attribute 要求已过时**：V11-65 起 `[workspace.lints]` 单点真源，新 crate 不写顶部 attribute。
