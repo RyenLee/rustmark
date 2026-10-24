@@ -174,7 +174,7 @@ V11-59 ─────────────────────┼──�
 - **验收标准**：`cargo tree -p rustmark-icons` 依赖 = egui + rustmark-actions；`rustmark::presentation::icons::IconOp` 等公开路径可引用（既有测试覆盖即证）；4 个规格单测通过；工具栏/侧栏图标真帧视觉用例全绿；四门禁 + 2131 + size_gate（exe ≤ 10,485,760 B）。
 - **回退**：revert 单 commit。
 
-> **完成注记（2026-10-24）**：已落地，门禁 2140/0/4。与方案的偏差及处置：
+> **完成注记（2026-10-24，`69c8bcc`）**：已落地，门禁 2140/0/4。与方案的偏差及处置：
 > 1. **文件布局取 `lib.rs` 单文件**（非「icons.rs + pub use」）：`layer_of` 对 crate 入口白名单自然判 Free，arch_check 第四根**无需** `forced_layer`（actions 根那种强制只在其文件名不在任何层名时才需要）；将来 icons 长出第二个文件，「未知层」警报会逼着定层——缺口要响。
 > 2. **field_visibility_guard 范围随扩**（任务清单未点名、但不扩即静默丢覆盖）：白名单 2 条 `presentation/icons.rs::IconColors::*` 改键为 `icons/lib.rs::IconColors::*`（crate 短名前缀防 `lib.rs` 同键碰撞），扫描函数泛化为「core 裸路径 + 叶子 crate 前缀路径」两根；总数仍 548。
 > 3. **`PRESENTATION_ICONS_FORBIDDEN` 规则与 fixture 保留防回归**（任务清单「清理或留防回归」取留）：icons 搬出 core 后该子层在 core 内休眠，`leaf_layers_may_not_depend_on_views` 合成用例继续钉住规则本身；约束文档 §4.0 表格行标注「V11-58 起休眠」。
