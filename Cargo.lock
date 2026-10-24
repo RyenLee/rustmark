@@ -2416,6 +2416,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustmark-actions"
+version = "0.2.0"
+
+[[package]]
 name = "rustmark-core"
 version = "0.2.0"
 dependencies = [
@@ -2427,6 +2431,7 @@ dependencies = [
  "rfd",
  "ropey",
  "rustls-native-certs",
+ "rustmark-actions",
  "serde",
  "syntect",
  "tempfile",

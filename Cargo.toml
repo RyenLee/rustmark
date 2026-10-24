@@ -1,10 +1,12 @@
 # D-3 阶段 4a：workspace 化。core（四层 + presentation 非视图子模块）是独立
 # crate，依赖方向被 cargo 锁死（core 无法反向依赖 root）；root 经 re-export 拼接
 # 全部 `crate::` 路径，存量源码零改动。
+# V11-57：rustmark-actions（UiAction 词汇表）是第二个成员——零依赖契约 crate，
+# core 依赖它、root 不直接依赖（UiAction 经 core 的 registry re-export 访问）。
 # **命令面必须带 `--workspace`**（clippy/check/test/llvm-cov），否则 core 的
 # 单测会静默退出测试集（测试数下降即事故信号）。
 [workspace]
-members = ["crates/rustmark-core"]
+members = ["crates/rustmark-actions", "crates/rustmark-core"]
 resolver = "3"
 
 # V11-65：版本单点真源。root 与 core 两份 manifest 原先逐字重复声明同规格依赖
@@ -134,6 +136,9 @@ eframe = { version = "0.37.0", default-features = false, features = [
 # domain / application / infrastructure / shared 与 presentation 的
 # state / theme / rich / widgets / icons / shortcuts 都在 core；
 # root 只留组合根 app 与 presentation::views。
+# V11-57：rustmark-actions（UiAction 词汇表）是 workspace 成员，但 root **不
+# 直接依赖**它——UiAction 经 core 的 registry re-export 访问（root→actions
+# 直连会让「词汇表只服务 core 契约」的边界多出一条边）。
 rustmark-core = { path = "crates/rustmark-core" }
 
 # --- 解析与高亮（ADR-002）---
@@ -272,3 +277,9 @@ path = "tests/arch_violation_fixture.rs"
 [[test]]
 name = "field_visibility_guard"
 path = "tests/field_visibility_guard_test.rs"
+
+# workspace 结构守卫（V11-57）：契约 crate 的依赖面断言（零依赖 / 期望依赖集），
+# 与 CI 的拓扑 diff（docs/workspace-topology.expected.txt）互为本地门禁与远端兜底。
+[[test]]
+name = "workspace_topology"
+path = "tests/workspace_topology_test.rs"

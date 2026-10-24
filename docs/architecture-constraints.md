@@ -312,6 +312,9 @@ crates/rustmark-core/src/               # core（crate `rustmark-core`）
 ├─ application/{document,markdown,workspace,preferences,export}/ + dto/
 ├─ infrastructure/{persistence,text,parsing,highlighting,export,events,dialogs,…}/
 └─ presentation/{state,widgets,theme,shortcuts,rich}/ + icons.rs   # 无 views
+
+crates/rustmark-actions/src/            # actions（crate `rustmark-actions`，V11-57）
+└─ lib.rs / action.rs / action/{impls.rs,menu_group.rs}   # 零依赖词汇表，整根判 Free
 ```
 
 白名单外的顶层位置（shell `src/foo.rs`、core `src/utils/` 等）会被校验器报
@@ -319,10 +322,18 @@ crates/rustmark-core/src/               # core（crate `rustmark-core`）
 shell `src/bin/` 是工具二进制（`check-arch`），与 `main.rs` / `lib.rs` 一样
 不受层级限制。
 
+`crates/rustmark-actions/src/`（V11-57）整个根判 Free：零依赖词汇契约
+crate 没有层内边界可言。「不得引用 core / 任何 crate」由 Cargo 循环依赖
+（core 已依赖它，反向加普通依赖即解析期报错）与 workspace 拓扑断言
+（`docs/workspace-topology.expected.txt`，任何新依赖边都红）兜底——两者
+都比词法规则强，且覆盖「获得任意依赖」而不只「引用 core」一种形状。
+层禁令不适用于该根，但禁 `mod.rs`、帧预约唯一出口等**与层无关**的规则
+照旧生效（fixture 第十六节钉住）。
+
 **禁 `mod.rs` 已机械校验**（`CONSTR-03`，2026-10-22 起）：`scan_project`
-在 shell `src/`、`crates/rustmark-core/src/` 与 `tests/` 三侧逐个文件判
-文件名，出现 `mod.rs` 即报违规，且**不设 `arch-allow` 豁免**。正确形状是
-「`foo.rs` 与 `foo/bar.rs` 共存」——两者对编译器语义等价，但对人是
+在 shell `src/`、`crates/rustmark-core/src/`、`crates/rustmark-actions/src/`
+与 `tests/` 四侧逐个文件判文件名，出现 `mod.rs` 即报违规，且**不设
+`arch-allow` 豁免**。正确形状是「`foo.rs` 与 `foo/bar.rs` 共存」——两者对编译器语义等价，但对人是
 「模块树 = 文件树」与「模块树藏在 `mod.rs` 里」的区别，
 而这恰恰是评审最容易漏、编译器又从不报错的一类偏差。
 

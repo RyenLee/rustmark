@@ -33,7 +33,8 @@
 //!
 //! # 模块结构
 //!
-//! - `action`：[`UiAction`] 动作枚举与 [`MenuGroup`] 菜单分组。
+//! - `action`：[`UiAction`] 动作枚举与 [`MenuGroup`] 菜单分组（V11-57 起住在
+//!   零依赖契约 crate `rustmark-actions`，本文件 re-export 拼回原路径）。
 //! - `keys`：[`Modifiers`] / [`Key`] / [`NamedKey`] 表现层自有按键模型（刻意复刻领域）。
 //! - `combo`：[`KeyCombo`]、[`ParseComboError`] 与 [`normalize`] 归一化。
 //! - `palette`：[`ActionTable`] / [`ActionEntry`] / [`ScoredAction`] 与模糊检索。
@@ -43,15 +44,18 @@ use std::collections::HashMap;
 
 use crate::application::dto::ShortcutView;
 
-mod action;
 mod combo;
 mod keys;
 mod palette;
 
-pub use action::{MenuGroup, UiAction};
 pub use combo::{KeyCombo, ParseComboError, normalize};
 pub use keys::{Key, Modifiers, NamedKey};
 pub(crate) use palette::{ActionEntry, ActionTable};
+// V11-57：动作词汇表抽成零依赖契约 crate `rustmark-actions`。连带 re-export
+// `action` **模块本身**——`registry::action::…` 深层路径保持解析（存量零使用，
+// 但「搬走就让路径 404」不该是抽取的代价）。`keywords` / `default_combo`
+// 随之在该 crate 里升 `pub`：core 的命令面板与 `build` 都要跨 crate 读。
+pub use rustmark_actions::{MenuGroup, UiAction, action};
 
 // ============================================================================
 // 注册表

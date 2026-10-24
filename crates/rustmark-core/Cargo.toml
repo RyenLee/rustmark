@@ -12,6 +12,13 @@ publish = false
 # 下沉到 core；eframe / env_logger / anyhow 等「只被组合根与视图使用」的留在 root。
 # 每项的选型理由与 root Cargo.toml 同源（原先同一份清单），此处保留核心约束注释。
 
+# --- 本地 crate（V11-57：UI 动作词汇表契约 crate）---
+# UiAction / MenuGroup 是菜单 / 工具栏 / 命令面板 / 快捷键共用的词汇表，
+# 抽成零依赖叶子：icons（V11-58 待拆）也只要这一份，不必反向依赖整个 core。
+# 「不得反向引用 core」由 Cargo 循环依赖 + workspace 拓扑断言兜底
+# （docs/workspace-topology.expected.txt）——零依赖是本 crate 的设计约束。
+rustmark-actions = { path = "../rustmark-actions" }
+
 # --- UI 绘制原语（ADR-001：egui 原生）---
 # core 只画 egui（TextFormat / LayoutJob / Galley 等），不接触渲染后端；
 # eframe 与 wgpu 属组合根，留在 root。

@@ -24,7 +24,8 @@
 //!
 //! # 判据
 //!
-//! 扫 `src/`：
+//! 扫全部源码根（`src` / `crates/rustmark-core/src` /
+//! `crates/rustmark-actions/src`，见 `src_roots`）：
 //!
 //! - **`persisted_key` 必须穷举**：其函数体内不得出现 `_ =>` 兜底分支
 //!   （任何形态：`_ => return None` / `_ => None` / `_ => …`）。
@@ -35,10 +36,19 @@
 use std::path::{Path, PathBuf};
 
 /// 表现层动作枚举的定义处。
-const UI_ACTION_ENUM_FILE: &str = "presentation/shortcuts/registry/action.rs";
+///
+/// V11-57：`UiAction` 词汇表随零依赖契约 crate `rustmark-actions` 抽出，
+/// 从 `presentation/shortcuts/registry/action.rs` 迁到
+/// `crates/rustmark-actions/src/action.rs`。路径锚点必须跟着搬——
+/// 否则本守卫的「非空断言」会以 `.expect` panic 的形式报出来，
+/// 而 `persisted_key` 兜底扫描也会**静默丢失**这一文件的覆盖。
+const UI_ACTION_ENUM_FILE: &str = "action.rs";
 
 /// 表现层 `ALL` 清单与 `persisted_key` 的定义处。
-const UI_ACTION_IMPLS_FILE: &str = "presentation/shortcuts/registry/action/impls.rs";
+///
+/// V11-57：随词汇表一起迁入 `crates/rustmark-actions/src/action/impls.rs`
+/// （原 `presentation/shortcuts/registry/action/impls.rs`）。
+const UI_ACTION_IMPLS_FILE: &str = "action/impls.rs";
 
 /// 领域动作枚举的定义处。
 const DOMAIN_ACTION_FILE: &str = "domain/preferences/value_objects/action.rs";
@@ -277,12 +287,17 @@ fn collect_rs_files(dir: &Path) -> Vec<PathBuf> {
     out
 }
 
-/// 两根扫描（D-3 阶段 4a workspace 化）：四层与非视图子模块在
-/// `crates/rustmark-core/src`，组合根与视图在 `src`；两根都扫才等价于
-/// 拆分前对单一 `src` 的全量覆盖（各根内按层相对路径记键）。
+/// 三根扫描（D-3 阶段 4a workspace 化 + V11-57 抽 actions crate）：
+/// 四层与非视图子模块在 `crates/rustmark-core/src`，组合根与视图在
+/// `src`，UiAction 词汇表在 `crates/rustmark-actions/src`；三根都扫才
+/// 等价于拆分前对单一 `src` 的全量覆盖（各根内按层相对路径记键）。
 fn src_roots() -> Vec<PathBuf> {
     let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    vec![base.join("src"), base.join("crates/rustmark-core/src")]
+    vec![
+        base.join("src"),
+        base.join("crates/rustmark-core/src"),
+        base.join("crates/rustmark-actions/src"),
+    ]
 }
 
 /// 按层相对路径在两根中读文件（以第一个存在的为准）。

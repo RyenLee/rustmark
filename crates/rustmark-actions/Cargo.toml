@@ -1,0 +1,30 @@
+# V11-57：UiAction 词汇表契约 crate。
+#
+# 为什么抽出来：这份动作表原是 core 表现层的一部分，却是菜单 / 工具栏 /
+# 命令面板 / 快捷键与 icons（V11-58 待拆）共用的契约——不抽出它，icons
+# 独立 crate 只能反向依赖整个 core。抽成零依赖叶子后依赖方向回归单向：
+#
+#     root ──► rustmark-core ──► rustmark-actions ◄── rustmark-icons（V11-58）
+#
+# **零依赖是设计约束，不是洁癖**：本 crate 只许用 std（词汇表 + 常量 +
+# 穷举 match，没有任何外部类型）。「不得引用 core / root / 任何 crate」不由
+# 词法规则守，而由两层更强的兜底守：
+# 1. Cargo 循环依赖——core 已依赖本 crate，反向加普通依赖即解析期报错；
+# 2. workspace 拓扑断言——docs/workspace-topology.expected.txt，任何新依赖边
+#    都让 CI 的 cargo tree diff 变红，「加一条依赖」是显式评审事件。
+# arch_check 侧本根整体判 Free 层（零依赖纯词汇，无层内边界可言），该判定的
+# 理由与失覆盖形状见 tests/arch_violation_fixture.rs 第十六节。
+[package]
+name = "rustmark-actions"
+# 独立 crate 版本号不随应用发版（publish = false，仅参与本地 workspace 构建）。
+version = "0.2.0"
+edition = "2024"
+rust-version = "1.99"
+license = "MIT OR Apache-2.0"
+description = "rustmark 的 UI 动作词汇表（UiAction / MenuGroup）：零依赖契约 crate"
+publish = false
+
+# V11-65：lint 经 [workspace.lints] 单点继承（unwrap/expect/panic + missing_docs）。
+# 新 crate 不需要在 lib.rs 顶部重复 attribute——那是 V11-65 之前的形态。
+[lints]
+workspace = true

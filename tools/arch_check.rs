@@ -1285,19 +1285,22 @@ pub fn scan_with_tests(src_root: &Path, tests_root: &Path) -> Vec<Violation> {
 }
 
 /// 扫描**整个 workspace**（D-3 阶段 4a 拆分后的口径）：
-/// shell `src/` + `crates/rustmark-core/src/` + `tests/`。
+/// shell `src/` + `crates/rustmark-core/src/` +
+/// `crates/rustmark-actions/src/`（V11-57）+ `tests/`。
 ///
-/// # 三个根、两种记键
+/// # 四个根、两种记键
 ///
-/// - 两个 src 根**按各自根的层相对路径**判层、查豁免表
+/// - src 根**按各自根的层相对路径**判层、查豁免表
 ///   （core 的 `domain/x.rs` 与拆分前同键，登记表与既有禁令表零改动）；
+///   actions 根例外：整个根判 [`Layer::Free`]（零依赖词汇契约 crate，
+///   文件名不在任何层名里，不覆盖会误报「未知层」）；
 /// - core 侧违规只在**报告**时补 `crates/rustmark-core/src/` 前缀——
 ///   层判定绝不能看该前缀，否则首段 `crates` 会把整个 core 判成
 ///   「未知层」而全量误报；
 /// - `tests/` 侧与 [`scan_with_tests`] 完全一致（全判 [`Layer::Tests`]、
 ///   rel 带 `tests/` 前缀）。
 ///
-/// # 登记表按 manifest 加载一次、三个根共用
+/// # 登记表按 manifest 加载一次、四个根共用
 ///
 /// core 根的 parent 是 `crates/rustmark-core`，那里没有 `docs/`——
 /// 沿用 [`load_registry`] 的「parent 即 manifest」推断会让 core 侧豁免
@@ -1317,12 +1320,32 @@ pub fn scan_project(manifest: &Path) -> Vec<Violation> {
     let shared_registry = load_shared_registry_at(manifest);
     let mut violations = Vec::new();
 
-    // 两个 src 根：层判定用**根内相对路径**，报告字段补显示前缀。
-    for (root, display_prefix) in [
-        (manifest.join("src"), ""),
+    // src 根们：层判定用**根内相对路径**，报告字段补显示前缀。
+    //
+    // 第三根（V11-57）：`rustmark-actions` 是零依赖词汇契约 crate，整个根
+    // 判 Free（`forced_layer`）——它的文件名（`action.rs` / `action/`）不在
+    // 任何层名里，不覆盖会落 Unknown 层误报（「未知层」是覆盖缺口的警报，
+    // 对已登记的自由 crate 只是噪音）。Free 只豁免**层禁令**；与层无关的
+    // 规则（禁 `mod.rs` / 帧预约唯一出口 / 豁免体检）在第三根照旧生效，
+    // 由 fixture 第十六节钉住。
+    //
+    // 「actions 不得引用 core / 任何 crate」刻意**不**做成词法禁令：core
+    // 已依赖 actions，反向加普通依赖即 Cargo 循环依赖（解析期报错，比词法
+    // 规则更强）；「获得任意依赖」由 workspace 拓扑断言兜底
+    // （docs/workspace-topology.expected.txt）。词法规则只多挡
+    // dev-dependency 一种形状，不值得为之新增层类别——校验器教条是
+    // 「确需新的层类别，先改约束文档与校验器」。
+    for (root, display_prefix, forced_layer) in [
+        (manifest.join("src"), "", None),
         (
             manifest.join("crates").join("rustmark-core").join("src"),
             "crates/rustmark-core/src/",
+            None,
+        ),
+        (
+            manifest.join("crates").join("rustmark-actions").join("src"),
+            "crates/rustmark-actions/src/",
+            Some(Layer::Free),
         ),
     ] {
         let mut files = Vec::new();
@@ -1338,7 +1361,7 @@ pub fn scan_project(manifest: &Path) -> Vec<Violation> {
             if let Some(v) = check_mod_rs(path, &display) {
                 violations.push(v);
             }
-            let layer = layer_of(&rel);
+            let layer = forced_layer.unwrap_or_else(|| layer_of(&rel));
             // shared 准入登记（§4.5 三问 / D-6）：只挂在**真实工程**口径上。
             // `scan` / `scan_with_tests` 的合成目录用例没有登记表语境，
             // 边界由 fixture 的「合成扫描不套用登记制」用例钉住。

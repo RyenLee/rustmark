@@ -2560,3 +2560,104 @@ fn synthetic_scan_does_not_require_shared_registration() {
         described(&violations)
     );
 }
+
+// ============================================================================
+// 十六、V11-57：rustmark-actions 契约 crate（第三扫描根判 Free）
+// ============================================================================
+
+/// actions crate 的合成布局零违规：第三根整根判 Free，不误报「未知层」。
+///
+/// # 为什么这条必须钉
+///
+/// `layer_of` 按**根内相对路径**判层且不感知 crate：actions 根里的
+/// `action.rs` / `action/impls.rs` / `action/menu_group.rs` 首段是
+/// `action`，不在任何层名里 → 判 Unknown → 「未知层」误报。
+/// 扫描根加了**层覆盖**没加（或覆盖被删）时，这条当场红。合成布局逐字
+/// 复刻真实 crate 的文件名与 `use super::*;` 形状——复刻文件名是因为
+/// 判层的正是文件名，改一个名字就可能改判结果。
+///
+/// # 为什么判 Free 而不是给 actions 配一张禁令表
+///
+/// 零依赖词汇 crate 没有层内边界可言；「不得引用 core / 任何 crate」由
+/// Cargo 循环依赖（core 已依赖 actions，反向加普通依赖即解析期报错）与
+/// workspace 拓扑断言（`docs/workspace-topology.expected.txt`）兜底——
+/// 两者都比词法规则强，且覆盖「获得任意依赖」而不只「引用 core」一种
+/// 形状。配套的依赖面规格断言在 `tests/workspace_topology_test.rs`。
+#[test]
+fn actions_root_is_judged_free_without_false_unknown_layer() {
+    let dir = tempfile::tempdir().unwrap();
+    let manifest = dir.path();
+    let actions = manifest.join("crates/rustmark-actions/src");
+    write_fixture(&actions, "lib.rs", "//! x\npub mod action;\n");
+    write_fixture(
+        &actions,
+        "action.rs",
+        "//! x\nmod impls;\nmod menu_group;\npub enum UiAction { NewDocument }\npub enum MenuGroup { File }\n",
+    );
+    write_fixture(
+        &actions,
+        "action/impls.rs",
+        "use super::*;\nimpl UiAction { pub const ALL: &'static [UiAction] = &[UiAction::NewDocument]; }\n",
+    );
+    write_fixture(
+        &actions,
+        "action/menu_group.rs",
+        "use super::*;\nimpl MenuGroup { pub const ALL: &'static [MenuGroup] = &[MenuGroup::File]; }\n",
+    );
+
+    let violations = arch_check::scan_project(manifest);
+    assert!(
+        violations.is_empty(),
+        "actions 根应整体判 Free、零违规（漏了层覆盖会误报 3 条未知层）：{:?}",
+        described(&violations)
+    );
+}
+
+/// 层无关规则在新根照旧：禁 `mod.rs` 与帧预约唯一出口都报。
+///
+/// # 为什么这条必须钉
+///
+/// Free 只豁免**层禁令**；与层无关的规则（`CONSTR-03` 禁 `mod.rs` /
+/// `request_repaint_after` 唯一出口）对全部文件生效。这条钉住「新根不是
+/// checker 盲区」：若有人给第三根加 `continue` 式跳过（「零依赖 crate
+/// 不用查」），或把 `forced_layer` 误用成「连 `check_file` 都不跑」，
+/// 这里立刻红——失覆盖永远是静默的，只能靠注入形状逼它现形。
+#[test]
+fn layer_independent_rules_still_apply_in_actions_root() {
+    let dir = tempfile::tempdir().unwrap();
+    let manifest = dir.path();
+    let actions = manifest.join("crates/rustmark-actions/src");
+    write_fixture(&actions, "lib.rs", "//! x\npub mod action;\n");
+    write_fixture(&actions, "action/mod.rs", "//! x\n");
+    write_fixture(
+        &actions,
+        "action/impls.rs",
+        "//! x\nfn f() { request_repaint_after(); }\n",
+    );
+
+    let violations = arch_check::scan_project(manifest);
+    assert_eq!(
+        violations.len(),
+        2,
+        "层无关规则在新根照旧：mod.rs 与帧预约各一条，实际：{:?}",
+        described(&violations)
+    );
+    let mod_rs = violations
+        .iter()
+        .find(|v| v.file == "crates/rustmark-actions/src/action/mod.rs")
+        .expect("mod.rs 必报（CONSTR-03 不设豁免）");
+    assert!(
+        mod_rs.detail.contains("CONSTR-03"),
+        "文案须点名 CONSTR-03：{}",
+        mod_rs.detail
+    );
+    let repaint = violations
+        .iter()
+        .find(|v| v.file == "crates/rustmark-actions/src/action/impls.rs")
+        .expect("帧预约越权必报");
+    assert!(
+        repaint.detail.contains("request_repaint_after"),
+        "文案须点名帧预约唯一出口：{}",
+        repaint.detail
+    );
+}
