@@ -146,6 +146,12 @@ jobs:
           grep -E "^test .* FAILED" test-output.log | sed 's/^/::error::/' || true
           grep -E "^error: test failed" test-output.log | sed 's/^/::error::/' || true
 
+      # doctest 不在 `--all-targets` 圈内（它不是编译目标，而是从文档示例
+      # 另起的测试目标）——教训：html_sanitize 4a 迁移后的 E0433 在这个盲区
+      # 里躺了数日，本地与 CI 全绿。单独一步补上，与本地验证链同源。
+      - name: cargo test (doctests)
+        run: cargo test --workspace --doc
+
       - name: cargo build --release
         run: cargo build --release
 

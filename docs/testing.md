@@ -35,6 +35,10 @@ D-3 阶段 4b-5：集合相等双向断言钉死 core 的 pub 字段面）。
   `--skip`，也不会因 debug 吞吐偏低而误判。release 门禁由 CI 的 `perf` job
   以 `cargo test --release --test integration large` 常态化执行）。
 - 单层：`cargo test --test <层名>`，如 `cargo test --test domain`。
+- 文档示例测试：`cargo test --workspace --doc`（CI `check` job 同款，2026-10-24 起
+  常态化）。**`--all-targets` 不含 doctest**——它不是编译目标，而是从文档示例
+  另起的测试目标；漏跑会让示例代码静默腐化（教训：html_sanitize 4a 迁移后的
+  E0433 在此盲区数日，本地与 CI 全绿）。
 - 全量**测试执行**耗时约 37s（2026-10-14 实测，热构建；release 构建另计）；连续 3 次运行结果一致
   是 S9-01 的稳定性验收，见任务清单状态段。
 
