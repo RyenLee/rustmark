@@ -226,6 +226,14 @@ V11-59 ─────────────────────┼──�
 - **验收标准**：`cargo tree --workspace --depth 1` = root→{core,ui,(actions),(icons)} + ui→core（与期望文件一致）；「views 写 ui 私有字段编译失败」抽验 1 例（或 R-12 词法规则 + guard 测试双绿）；2131 基线（逐行求和）；size_gate；release 构建通过；core 目录行数 ≤ 27.6k。
 - **回退**：revert 单 commit（搬迁是可逆的机械操作）。
 
+> **触发条件核验（2026-10-24 实测，动作 1 已完成）**。条件为「任一满足即启动评估」：
+> - ① UI 并行开发 ≥2 人：**待维护者提供**（git 不可测）。
+> - ② core 增量编译 >10s：**不满足**（5.92s，metrics.md §7.3）。
+> - ③ ≥80 提交**且**摩擦在 ≥3 个功能复现：**满足**。提交数按 `git log` 去重、新旧路径合并——表现层整体 **88**、含 `tests/presentation` **93**、仅待搬迁的非视图部分 **51**（阈值 80：整体口径过线、待搬迁部分未过线，两种口径如实并存，不替评审裁定）。模块口径另记 views 69 / tests/presentation 47 / state 31 / theme 20（metrics.md §7.2，模块提交数不可去重相加）。
+> - **摩擦取证**（先定义后测量，避免事后解释）：F-a = 为跨 crate 读写而必须 `pub` 的 state setter；F-b = 为跨 crate 可见性而登记的 `pub` 字段白名单条目；F-c = views 经桥接访问 state 的面。实测：**F-b 169 条 / 548 条白名单是 state 字段**（settings 25、app 16、sidebar 28、find_replace 19、export 14、editor 12、scroll_sync 8、diff 8、preview 7、status_bar 6、shortcut_overview 6、quick_open 5…）；**F-a 22 个 `pub fn set_/with_`** 分布在 12 个 state 模块；**F-c** 桥接 6 行（`src/presentation.rs`）+ 21 个 view 文件经 `state::` 访问。三个形态在 **8 个功能**复现：设置、侧栏（含搜索/文件树）、查找替换、导出、编辑器（含滚动同步）、预览、diff、命令面板·快速打开·符号。
+> - **一项必须直说的结论**：该摩擦是「保住 R-11/R-12 编译保证」的代价，**V11-62 不会消除它**——views 留 root，state 搬到 ui crate 后边界依旧存在，169 条白名单与 22 个 setter 只是换 crate（对应动作 5：field_visibility_guard 范围须扩到 ui crate）。V11-62 的真实收益仍是 core 名实相符（45.3k → 27.6k）、UI 单 crate 迭代、以及 headless 复用的前置条件。
+> - **判定**：触发成立（③），可进入动作 2；是否开工由维护者拍板——本项量级 2–3 人日、涉及 622 条用例拆分与 arch_check 改双 roots。
+
 ### V11-63 · infrastructure 去 egui 化 ｜ 优先级：低（触发式）｜ 2–3 人日 ｜ 并行组 D
 
 - **涉及**：`infrastructure/fonts.rs` + `fonts/discovery.rs` + `fonts/assembly.rs`（产 `egui::FontDefinitions`）、`infrastructure/export/viewport_capture.rs` + `viewport_capture/image.rs`（`egui::ViewportCommand::Screenshot` / `ColorImage`）；`shared/`（新端口）；`src/app/frame.rs` 组合根（装配点）。
