@@ -78,6 +78,7 @@
 | [ADR-010](./adr/ADR-010-presentation-internal-direction.md) | `presentation` 内部依赖方向单向化 + `tests/` 禁库内部视角（R-02 / R-13） |
 | [ADR-011](./adr/ADR-011-action-routing-and-dual-intent.md) | 动作路由：穷举路由表 + `Unbound` 显式声明（无 `_` 兜底）；跳转双意图 `RevealIntent` |
 | [ADR-012](./adr/ADR-012-icon-system-and-resource-layout.md) | 图标系统：向量手绘废止字形 + 规格即数据（16×16 栅格）；草稿旁车协议；字体外置随包分发 |
+| [ADR-013](./adr/ADR-013-core-adapter-residency-and-leaf-extraction.md) | core 适配层驻留与叶层外移策略：模块归属四问判据 + 外移触发条件量化表（constraints §10）；presentation 外移取「views 留 root 的中间 crate」形态（保 R-11/R-12 编译保证）；actions/icons 首拆已落地 |
 
 ## 流水与素材（logs/ 与 pic/）
 
