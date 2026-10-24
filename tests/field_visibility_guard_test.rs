@@ -20,9 +20,12 @@
 //!
 //! # 判定口径（对照阶段 2）
 //!
-//! - **范围 = `crates/rustmark-core/src`**：4b 收的是 core 的面（review §4.2
-//!   「core 的 693+ pub 面收缩到真实接口面」）；shell 的 `src/` 是应用根，
-//!   其 pub 面不属本批次出口；
+//! - **范围 = `crates/rustmark-core/src` + 从 core 抽出的叶子 crate**
+//!   （当前 `crates/rustmark-icons/src`，V11-58）：4b 收的是 core 的面
+//!   （review §4.2「core 的 693+ pub 面收缩到真实接口面」）；shell 的 `src/`
+//!   是应用根，其 pub 面不属本批次出口。抽出的叶子 crate 的 pub 面同样跨
+//!   crate 边界，不纳入就等于**静默放弃覆盖**（V11-57 的 shortcut guard
+//!   刚因「搬迁丢锚点」栽过一次——缺口要响，不要静）；
 //! - **只收全可见性 `pub`**：`pub(crate)` / `pub(super)` / `pub(in …)` 是
 //!   收紧方向的产物，其「core 内部」语义已由编译器保证，无需登记；
 //! - **词法真源 = `arch_check::lex_dump`**（与阶段 2 同口径）：注释与字符串
@@ -51,15 +54,26 @@ mod arch_check {
     include!("../tools/arch_check.rs");
 }
 
-/// 已批准保持 `pub` 的 core 字段：
-/// `<相对 crates/rustmark-core/src 的路径>::<结构体>::<字段>`。
+/// 已批准保持 `pub` 的 core 与抽出叶子 crate 的字段。
+///
+/// 键格式（V11-58 起两种前缀）：
+///
+/// - core 条目（历史口径，548 条不动）：`<相对 crates/rustmark-core/src
+///   的路径>::<结构体>::<字段>`；
+/// - 抽出的叶子 crate 条目：`<crate 短名>/<相对该 crate src 的路径>::
+///   <结构体>::<字段>`（当前仅 icons：`icons/lib.rs::…`）。前缀是**防碰撞**
+///   的键命名空间——core 与叶子 crate 各有一个 `lib.rs`，裸路径会把两边的
+///   条目合并成同键，白名单 quietly 少算。
 ///
 /// 每一条都是 4b-5 对照外部读点（E0616 读 / E0451 构造）逐字段核对后的
 /// 结论：该字段在 core 外有合法读点，或外部需要直接构造（VO 的元组字段）。
+/// icons 的两条是 V11-58 随搬迁**改键**（原 `presentation/icons.rs::…`），
+/// 结论本身不变（root 视图 `icons::IconColors { accent, primary }` 构造点
+/// 即证据）。
 ///
 /// 增删规则：
 ///
-/// - **新增条目** = core 接口面增长：先证明「谁在 core 外读它/构造它」
+/// - **新增条目** = 接口面增长：先证明「谁在 crate 外读它/构造它」
 ///   （编译器报点即证据），再登记——登记本身让增长在评审里可见；
 /// - **删除条目** = 字段已收紧 / 已删：编译器保证外部没有读点，清单
 ///   同步移除，双向断言会把忘了删的情况报红。
@@ -329,6 +343,10 @@ const APPROVED_PUB_FIELDS: &[&str] = &[
     "domain/preferences/value_objects/theme.rs::LintSettings::trailing_whitespace",
     "domain/preferences/value_objects/theme.rs::LintSettings::unclosed_fence",
     "domain/preferences/value_objects/theme.rs::Theme::custom",
+    // V11-58：icons 抽去独立 crate `rustmark-icons`（单文件 lib.rs），
+    // 条目带 crate 短名前缀——见下方键格式说明。
+    "icons/lib.rs::IconColors::accent",
+    "icons/lib.rs::IconColors::primary",
     "infrastructure/export/system_pdf_exporter/backend.rs::PdfBackend::available",
     "infrastructure/export/system_pdf_exporter/backend.rs::PdfBackend::command",
     "infrastructure/export/system_pdf_exporter/backend.rs::PdfBackend::reason",
@@ -344,8 +362,6 @@ const APPROVED_PUB_FIELDS: &[&str] = &[
     "infrastructure/persistence/fs_workspace_repository.rs::TraversalRules::ignored_dirs",
     "infrastructure/persistence/fs_workspace_repository.rs::TraversalRules::max_entries",
     "infrastructure/persistence/fs_workspace_repository.rs::TraversalRules::skip_hidden",
-    "presentation/icons.rs::IconColors::accent",
-    "presentation/icons.rs::IconColors::primary",
     "presentation/rich/math/layout.rs::MathLayout::ascent",
     "presentation/rich/math/layout.rs::MathLayout::width",
     "presentation/rich/mermaid/model.rs::MermaidLayout::height",
@@ -764,34 +780,44 @@ fn pub_fields_in(source: &str) -> Vec<String> {
     out
 }
 
-/// 扫描 core 的全部 `.rs`，返回 `<相对路径>::<结构体>::<字段>` 集合与
-/// 未能归属到任何结构体体的命中（正常应为空，非空 = 匹配逻辑有洞）。
-fn scan_core_pub_fields() -> (BTreeSet<String>, Vec<String>) {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("crates")
-        .join("rustmark-core")
-        .join("src");
-    let mut files = Vec::new();
-    collect_rs(&root, &mut files);
-    files.sort();
-    assert!(!files.is_empty(), "core src 下未找到任何 .rs 文件");
+/// 扫描 core 与抽出的叶子 crate 的全部 `.rs`，返回 `<键>::<结构体>::<字段>`
+/// 集合与未能归属到任何结构体体的命中（正常应为空，非空 = 匹配逻辑有洞）。
+///
+/// 键前缀见 [`APPROVED_PUB_FIELDS`]：core 为 `""`（历史口径，548 条不动），
+/// 叶子 crate 为 crate 短名 + `/`（防 `lib.rs` 同键碰撞）。
+fn scan_pub_fields() -> (BTreeSet<String>, Vec<String>) {
+    let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let roots: [(&str, PathBuf); 2] = [
+        ("", base.join("crates").join("rustmark-core").join("src")),
+        (
+            "icons/",
+            base.join("crates").join("rustmark-icons").join("src"),
+        ),
+    ];
 
     let mut actual: BTreeSet<String> = BTreeSet::new();
     let mut unattributed = Vec::new();
-    for path in &files {
-        let rel = path
-            .strip_prefix(&root)
-            .unwrap_or(path)
-            .to_string_lossy()
-            .replace('\\', "/");
-        let Ok(source) = std::fs::read_to_string(path) else {
-            continue;
-        };
-        for entry in pub_fields_in(&source) {
-            match entry.strip_prefix("<unattributed>::") {
-                Some(field) => unattributed.push(format!("{rel}::{field}")),
-                None => {
-                    actual.insert(format!("{rel}::{entry}"));
+    for (prefix, root) in &roots {
+        let mut files = Vec::new();
+        collect_rs(root, &mut files);
+        files.sort();
+        assert!(!files.is_empty(), "{root:?} 下未找到任何 .rs 文件");
+
+        for path in &files {
+            let rel = path
+                .strip_prefix(root)
+                .unwrap_or(path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            let Ok(source) = std::fs::read_to_string(path) else {
+                continue;
+            };
+            for entry in pub_fields_in(&source) {
+                match entry.strip_prefix("<unattributed>::") {
+                    Some(field) => unattributed.push(format!("{prefix}{rel}::{field}")),
+                    None => {
+                        actual.insert(format!("{prefix}{rel}::{entry}"));
+                    }
                 }
             }
         }
@@ -800,8 +826,8 @@ fn scan_core_pub_fields() -> (BTreeSet<String>, Vec<String>) {
 }
 
 #[test]
-fn core_pub_fields_match_the_whitelist() {
-    let (actual, unattributed) = scan_core_pub_fields();
+fn pub_fields_match_the_whitelist() {
+    let (actual, unattributed) = scan_pub_fields();
     assert!(
         unattributed.is_empty(),
         "有 `pub` 字段未能归属到任何结构体体——匹配逻辑出现新形状，\
@@ -813,10 +839,10 @@ fn core_pub_fields_match_the_whitelist() {
     let stale: Vec<_> = expected.difference(&actual).collect();
     assert!(
         missing.is_empty() && stale.is_empty(),
-        "core 字段级 pub 白名单与实际不一致（双向断言：现实与清单强制同步）。\n\
+        "core 与抽出叶子 crate 的字段级 pub 白名单与实际不一致（双向断言：现实与清单强制同步）。\n\
          \n\
          未登记的 `pub` 字段（接口面增长或 pub(crate) 被放宽回 pub）：\
-         若确属 core 外有合法读点/构造点，先拿编译器报点作证据，再登记到 \
+         若确属 crate 外有合法读点/构造点，先拿编译器报点作证据，再登记到 \
          APPROVED_PUB_FIELDS（改本清单 = 评审必经）：{missing:?}\n\
          \n\
          清单中的过期项（字段已收紧为 pub(crate) 或已删除，清单须同步移除）：{stale:?}\n\

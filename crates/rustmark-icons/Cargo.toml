@@ -1,0 +1,26 @@
+[package]
+# 独立 crate 版本号不随应用发版（publish = false，仅参与本地 workspace 构建）。
+name = "rustmark-icons"
+version = "0.2.0"
+edition = "2024"
+rust-version = "1.99"
+license = "MIT OR Apache-2.0"
+description = "rustmark 的向量图标资源（16×16 设计栅格规格数据 + Painter 渲染器）"
+publish = false
+
+[dependencies]
+# --- UI 绘制原语（ADR-001：egui 原生）---
+# 图标全部是 egui `Painter` 向量绘制，不接触渲染后端（eframe / wgpu 属 root）。
+# V11-65：版本/规格继承 root [workspace.dependencies]（单点真源）。
+egui = { workspace = true }
+
+# --- 本地 crate（V11-57 抽出的动作词汇表）---
+# `Icon::Action(UiAction)` 把动作映射到图标规格，只需词汇表本身——
+# 不必反向依赖整个 core（core 也不依赖本 crate：root → icons → actions
+# 与 root → core → actions 两条链在 actions 汇合，无环）。
+# 依赖面由 tests/workspace_topology_test.rs 断言（= egui + rustmark-actions）。
+rustmark-actions = { path = "../rustmark-actions" }
+
+# V11-65：lint 经 [workspace.lints] 单点继承（原为 src/lib.rs 顶部的 attribute）。
+[lints]
+workspace = true

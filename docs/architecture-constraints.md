@@ -92,8 +92,8 @@ presentation ──► application ──► domain ◄── infrastructure
 ```
 views ──► state ──► (domain DTO，经 application)
   │
-  └──► theme / widgets / icons / rich
-rich / widgets / icons ──► （不得回指 views / state / theme / widgets）
+  └──► theme / widgets / rich
+rich / widgets ──► （不得回指 views / state / theme / widgets）
 ```
 
 | 子层 | 额外禁止 |
@@ -101,7 +101,7 @@ rich / widgets / icons ──► （不得回指 views / state / theme / widgets
 | `presentation/state/` | `crate::presentation::views` |
 | `presentation/rich/` | `crate::presentation::views` / `state` / `theme` / `widgets` |
 | `presentation/widgets/` | `crate::presentation::views` |
-| `presentation/icons.rs` | `crate::presentation::views` |
+| `presentation/icons.rs` | `crate::presentation::views`（**V11-58 起休眠**：icons 已抽去独立 crate `rustmark-icons`，core 内暂无文件落此子层。规则与 fixture（`leaf_layers_may_not_depend_on_views`）保留防回归——icons 若搬回 core 即自动生效） |
 
 `views/` 可读 `state/`（那是它存在的理由），故不列在禁止清单里。
 四个子层全部**叠加**父层 `presentation` 的禁令（`crate::domain` /
@@ -134,8 +134,10 @@ rich / widgets / icons ──► （不得回指 views / state / theme / widgets
    **白名单**（`src/main.rs` / `src/lib.rs` / `src/bin/**`）；其它顶层名字
    报「未知层」——默认放行等于新目录静默逃过全部层禁令。
    层判定按**扫描根内的相对路径**进行：workspace 化（阶段 4a）后
-   `scan_project` 扫 shell `src/` + `crates/rustmark-core/src/` + `tests/`
-   三个根，core 侧只在**报告**时补 `crates/rustmark-core/src/` 前缀
+   `scan_project` 扫 shell `src/` + `crates/rustmark-core/src/` +
+   `crates/rustmark-actions/src/`（V11-57，整根 Free）+
+   `crates/rustmark-icons/src/`（V11-58，`lib.rs` 自然判 Free）+
+   `tests/` 五个根，core 侧只在**报告**时补 `crates/rustmark-core/src/` 前缀
    （层判定若吃这个前缀，首段 `crates` 会把整个 core 误判成「未知层」）。
 6. **子层叠加**：`presentation/state` 同时受父层与子层两组禁令约束（不是替换）。
 7. **`presentation` 内部细粒度**（R-13）：第二段为 `state` / `views` / `rich` /
@@ -300,7 +302,8 @@ src/                                    # shell（root crate `rustmark`）
 ├─ main.rs / lib.rs                     # lib.rs 拼接点：pub use rustmark_core::{application, domain, infrastructure, shared}
 ├─ app.rs / app/{bootstrap.rs,frame.rs,crash_log.rs,…}
 │                                       # 组合根；帧预约唯一出口 app/frame/scheduler.rs
-├─ presentation.rs                      # 拼接点：pub mod views + pub use rustmark_core::presentation::{icons, rich, shortcuts, state, theme, widgets}
+├─ presentation.rs                      # 拼接点：pub mod views + pub use rustmark_core::presentation::{rich, shortcuts, state, theme, widgets}
+│                                       #   + pub use rustmark_icons as icons（V11-58）
 ├─ presentation/views/                  # 视图（唯一留在 shell 的 presentation 子层）
 └─ bin/check-arch.rs                    # 工具二进制
 
@@ -311,10 +314,13 @@ crates/rustmark-core/src/               # core（crate `rustmark-core`）
 │    └─ 各含 {aggregate.rs,value_objects.rs,events.rs,services.rs,repository.rs,errors.rs}
 ├─ application/{document,markdown,workspace,preferences,export}/ + dto/
 ├─ infrastructure/{persistence,text,parsing,highlighting,export,events,dialogs,…}/
-└─ presentation/{state,widgets,theme,shortcuts,rich}/ + icons.rs   # 无 views
+└─ presentation/{state,widgets,theme,shortcuts,rich}/   # 无 views、无 icons（V11-58 抽出）
 
 crates/rustmark-actions/src/            # actions（crate `rustmark-actions`，V11-57）
 └─ lib.rs / action.rs / action/{impls.rs,menu_group.rs}   # 零依赖词汇表，整根判 Free
+
+crates/rustmark-icons/src/              # icons（crate `rustmark-icons`，V11-58）
+└─ lib.rs                               # 16×16 图标规格 + Painter 渲染器；依赖 egui + rustmark-actions
 ```
 
 白名单外的顶层位置（shell `src/foo.rs`、core `src/utils/` 等）会被校验器报
@@ -330,9 +336,15 @@ crate 没有层内边界可言。「不得引用 core / 任何 crate」由 Cargo
 层禁令不适用于该根，但禁 `mod.rs`、帧预约唯一出口等**与层无关**的规则
 照旧生效（fixture 第十六节钉住）。
 
+`crates/rustmark-icons/src/`（V11-58）**不设**强制层：单文件 `lib.rs` 落在
+crate 入口白名单里，`layer_of` 自然判 Free（依赖面 = egui +
+rustmark-actions，由 `tests/workspace_topology_test.rs` 断言）。禁
+`mod.rs`、帧预约唯一出口等与层无关的规则照旧生效；将来若长出第二个文件，
+「未知层」警报会逼着给它定层——缺口要响，不静。
+
 **禁 `mod.rs` 已机械校验**（`CONSTR-03`，2026-10-22 起）：`scan_project`
-在 shell `src/`、`crates/rustmark-core/src/`、`crates/rustmark-actions/src/`
-与 `tests/` 四侧逐个文件判文件名，出现 `mod.rs` 即报违规，且**不设
+在 shell `src/`、`crates/rustmark-core/src/`、`crates/rustmark-actions/src/`、
+`crates/rustmark-icons/src/`（V11-58）与 `tests/` 五侧逐个文件判文件名，出现 `mod.rs` 即报违规，且**不设
 `arch-allow` 豁免**。正确形状是「`foo.rs` 与 `foo/bar.rs` 共存」——两者对编译器语义等价，但对人是
 「模块树 = 文件树」与「模块树藏在 `mod.rs` 里」的区别，
 而这恰恰是评审最容易漏、编译器又从不报错的一类偏差。

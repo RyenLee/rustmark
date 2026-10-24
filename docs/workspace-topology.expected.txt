@@ -18,8 +18,12 @@
 # 核对 diff 确为预期变更后，把输出写回本文件（保留本注释头），随变更 commit
 # 一并提交。CI 步骤见 .github/workflows/ci.yml「Workspace topology assertion」。
 #
-# 基线：2026-10-24，V11-57 抽出 rustmark-actions 后拓扑 = root → rustmark-core →
-# rustmark-actions 一条本地依赖链（root 不直连 actions，UiAction 经 core re-export）。
+#
+# 基线：2026-10-24，V11-58 抽出 rustmark-icons 后拓扑 = 两条本地依赖链在
+# rustmark-actions 汇合（无环）：root → rustmark-core → rustmark-actions 与
+# root → rustmark-icons → rustmark-actions（icons 依赖面 = egui +
+# rustmark-actions，由 tests/workspace_topology_test.rs 断言；root 仍不直连
+# actions，UiAction 经 core re-export 访问）。
 rustmark v0.2.0
 ├── anyhow v1.0.104
 ├── eframe v0.37.0
@@ -29,6 +33,7 @@ rustmark v0.2.0
 ├── log v0.4.34
 ├── rustmark-core v0.2.0
 │   [dev-dependencies]
+├── rustmark-icons v0.2.0
 └── wgpu v30.0.1
     [build-dependencies]
 [dev-dependencies]
@@ -55,3 +60,7 @@ rustmark-core v0.2.0
 └── ureq v3.5.0
 [dev-dependencies]
 └── tempfile v3.27.0
+
+rustmark-icons v0.2.0
+├── egui v0.37.0
+└── rustmark-actions v0.2.0

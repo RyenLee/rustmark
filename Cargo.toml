@@ -3,10 +3,12 @@
 # 全部 `crate::` 路径，存量源码零改动。
 # V11-57：rustmark-actions（UiAction 词汇表）是第二个成员——零依赖契约 crate，
 # core 依赖它、root 不直接依赖（UiAction 经 core 的 registry re-export 访问）。
+# V11-58：rustmark-icons（向量图标资源）是第三个成员——root **直接**依赖
+# （presentation.rs 把 crate re-export 成 icons 模块），core 不依赖。
 # **命令面必须带 `--workspace`**（clippy/check/test/llvm-cov），否则 core 的
 # 单测会静默退出测试集（测试数下降即事故信号）。
 [workspace]
-members = ["crates/rustmark-actions", "crates/rustmark-core"]
+members = ["crates/rustmark-actions", "crates/rustmark-core", "crates/rustmark-icons"]
 resolver = "3"
 
 # V11-65：版本单点真源。root 与 core 两份 manifest 原先逐字重复声明同规格依赖
@@ -140,6 +142,13 @@ eframe = { version = "0.37.0", default-features = false, features = [
 # 直接依赖**它——UiAction 经 core 的 registry re-export 访问（root→actions
 # 直连会让「词汇表只服务 core 契约」的边界多出一条边）。
 rustmark-core = { path = "crates/rustmark-core" }
+
+# --- 本地 crate（V11-58：向量图标资源）---
+# 16×16 设计栅格规格数据 + Painter 渲染器；core 内零消费者，只被 root 视图
+# （toolbar_view）与集成测试使用，故 root 直接依赖、core 不依赖。经
+# src/presentation.rs 的 `pub use rustmark_icons as icons;` 拼回
+# `crate::presentation::icons::*` 原路径（存量引用零改动）。
+rustmark-icons = { path = "crates/rustmark-icons" }
 
 # --- 解析与高亮（ADR-002）---
 # pulldown-cmark / syntect 已下沉 core（infrastructure::parsing / highlighting）；

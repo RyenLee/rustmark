@@ -13,6 +13,8 @@
 // 测试代码 unwrap/expect/panic，同 arch_violation_fixture.rs 的惯例在此豁免。
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
+use std::collections::BTreeSet;
+
 /// `rustmark-actions` 必须零依赖（V11-57 验收第 1 条的机械化）。
 ///
 /// 契约 crate 一旦获得任何依赖（normal / dev / build / target-specific），
@@ -36,6 +38,65 @@ fn actions_crate_declares_no_dependencies() {
             !line.contains("dependencies"),
             "rustmark-actions 是零依赖契约 crate，Cargo.toml 不得出现任何依赖段\
              （normal / dev / build / target-specific 均不可）：{line}"
+        );
+    }
+}
+
+/// `rustmark-icons` 的依赖面必须恰为 **egui + rustmark-actions**
+/// （V11-58 验收第 1 条的机械化）。
+///
+/// 图标是「16×16 规格数据 + Painter 渲染器」：绘制原语只要 egui，动作映射
+/// （`Icon::Action(UiAction)`）只要词汇表。任何第三个依赖都说明资源 crate
+/// 在长领域逻辑——「抽出」只换了住处、没换职责。判据同样走 manifest 文本：
+/// 收集 `[dependencies]` 段内的键与期望集合做**相等**断言，再全文禁掉其余
+/// 依赖段（dev / build / target-specific 一个都不许有）。
+#[test]
+fn icons_crate_dependency_face_is_egui_plus_actions() {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("crates")
+        .join("rustmark-icons")
+        .join("Cargo.toml");
+    let text = std::fs::read_to_string(&path).expect("icons crate 的 Cargo.toml 应可读");
+
+    let mut deps = BTreeSet::new();
+    let mut section = String::new();
+    for raw in text.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if line.starts_with('[') {
+            section = line.to_string();
+            continue;
+        }
+        if section != "[dependencies]" {
+            continue;
+        }
+        if let Some((name, _)) = line.split_once('=') {
+            deps.insert(name.trim().to_string());
+        }
+    }
+    let expected: BTreeSet<String> = ["egui", "rustmark-actions"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    assert_eq!(
+        deps, expected,
+        "rustmark-icons 的依赖面必须恰为 egui + rustmark-actions——\
+         资源 crate 不长领域逻辑，要加依赖先来改这条断言"
+    );
+
+    for raw in text.lines() {
+        let line = raw.trim();
+        if line.starts_with('#') {
+            continue;
+        }
+        assert!(
+            !(line.starts_with("[dev-dependencies")
+                || line.starts_with("[build-dependencies")
+                || line.starts_with("[target")),
+            "rustmark-icons 只许有 normal [dependencies] 一段；\
+             dev / build / target-specific 依赖段同样稀释「纯资源」定位：{line}"
         );
     }
 }

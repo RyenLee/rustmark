@@ -2,7 +2,8 @@
 //!
 //! 构建脚本每次运行都**无条件全量扫描**整个 workspace 的源码——
 //! shell `src/`、`crates/rustmark-core/src/`（D-3 阶段 4a 拆分）、
-//! `crates/rustmark-actions/src/`（V11-57，整根判 Free）与 `tests/`
+//! `crates/rustmark-actions/src/`（V11-57，整根判 Free）、
+//! `crates/rustmark-icons/src/`（V11-58，`lib.rs` 自然判 Free）与 `tests/`
 //! 的 `use` 语句，违反分层依赖即 `panic!` 使构建失败。
 //!
 //! `tests/` 自 R-02 起纳入扫描：测试是**消费者**不是层，可以引用任何层的
@@ -36,6 +37,8 @@ fn main() {
     // V11-57：actions 契约 crate 也进扫描（scan_project 第三根），
     // 改它的文件要重跑构建期校验。
     println!("cargo:rerun-if-changed=crates/rustmark-actions/src");
+    // V11-58：icons 资源 crate 进扫描（scan_project 第四根）。
+    println!("cargo:rerun-if-changed=crates/rustmark-icons/src");
     println!("cargo:rerun-if-changed=tests");
 
     if std::env::var("SKIP_ARCH_CHECK").is_ok() {

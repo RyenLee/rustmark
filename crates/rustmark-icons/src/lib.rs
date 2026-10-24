@@ -1,4 +1,21 @@
-//! 纯图形图标系统：工具栏按钮的「字形 + 文字」组合 → **向量手绘**的纯图形图标。
+//! # rustmark-icons —— 向量图标资源 crate（V11-58 从 core 抽出）
+//!
+//! 16×16 设计栅格上的图标规格数据（[`IconOp`] 表）+ 渲染器（[`paint_icon`]），
+//! 零领域逻辑、零 IO：绘制只依赖 egui 本身，动作映射只依赖
+//! [`rustmark_actions`] 的 `UiAction` 词汇表。
+//!
+//! # 依赖方向
+//!
+//! ```text
+//! rustmark（root）──► rustmark-icons ──► egui
+//!                        └──────────► rustmark-actions
+//! ```
+//!
+//! root 经 `pub use rustmark_icons as icons;` 把本 crate 拼回
+//! `crate::presentation::icons::*` 原路径（V11-58：core 内零消费者，
+//! 抽出后公开路径零变化，见 `docs/architecture-constraints.md` §7）。
+//!
+//! # 纯图形图标系统：工具栏按钮的「字形 + 文字」组合 → **向量手绘**的纯图形图标。
 //!
 //! # 为什么废止「字形图标」
 //!
@@ -36,12 +53,19 @@
 //! 与屏幕像素无关；缩放由渲染器统一完成，改图标尺寸只改调用方的矩形。
 //! 栅格纪律由单元测试把守：任何图元不得越界（[`icon_ops_stay_inside_the_grid`]）。
 
+// V11-58：unwrap 系列 lint 经 root `Cargo.toml` 的 `[workspace.lints]` 单点
+// 继承（`[lints] workspace = true`）；测试代码允许 `unwrap()` 的豁免是 cfg
+// 形态，无法进 workspace.lints 表，保留在本行，与 root / core lib.rs 同款。
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
+
 use egui::epaint::{
     CubicBezierShape, PathShape, PathStroke, QuadraticBezierShape, Stroke, StrokeKind,
 };
 use egui::{Color32, CornerRadius, Painter, Pos2, Rect, Shape, Vec2};
 
-use crate::presentation::shortcuts::registry::UiAction;
+// V11-58：随词汇表抽出的动作枚举住 `rustmark-actions`（原
+// `crate::presentation::shortcuts::registry::UiAction`，core 侧已无 icons）。
+use rustmark_actions::UiAction;
 
 // ============================================================================
 // 图元 DSL

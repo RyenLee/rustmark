@@ -2415,6 +2415,11 @@ fn rustmark_core_prefix_does_not_bypass_layer_bans() {
 /// 归一后的 `crate::presentation::…` 不在其中）。这条钉住「无需豁免」这个
 /// 结论——哪天有人往拼接点**追加** `rustmark_core::{domain,…}` 之外的
 /// 形状、或禁令表被改宽，这条会红，逼人重新审视而不是静默放行。
+///
+/// V11-58：`presentation.rs` 的拼接形状随 icons 抽出改为两行——
+/// `rustmark_core::presentation::{rich, shortcuts, state, theme, widgets}`
+/// 之外再加一行 `pub use rustmark_icons as icons;`（把 crate 本身 re-export
+/// 成模块）。后者同样不在 Presentation 禁令表里，一并钉住。
 #[test]
 fn shell_reexport_splice_points_are_not_violations() {
     let dir = tempfile::tempdir().unwrap();
@@ -2427,7 +2432,7 @@ fn shell_reexport_splice_points_are_not_violations() {
     write_fixture(
         &manifest.join("src"),
         "presentation.rs",
-        "//! x\npub mod views;\npub use rustmark_core::presentation::{icons, rich, shortcuts, state, theme, widgets};\n",
+        "//! x\npub mod views;\npub use rustmark_core::presentation::{rich, shortcuts, state, theme, widgets};\npub use rustmark_icons as icons;\n",
     );
 
     let violations = arch_check::scan_project(manifest);

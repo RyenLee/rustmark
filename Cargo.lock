@@ -2410,6 +2410,7 @@ dependencies = [
  "image",
  "log",
  "rustmark-core",
+ "rustmark-icons",
  "syntect",
  "tempfile",
  "wgpu",
@@ -2438,6 +2439,14 @@ dependencies = [
  "thiserror 2.0.21",
  "toml",
  "ureq",
+]
+
+[[package]]
+name = "rustmark-icons"
+version = "0.2.0"
+dependencies = [
+ "egui",
+ "rustmark-actions",
 ]
 
 [[package]]

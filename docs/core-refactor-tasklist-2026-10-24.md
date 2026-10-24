@@ -25,6 +25,11 @@
 > **基线再更新（2026-10-24，V11-57 完成后）：2139 passed / 0 failed / 4 ignored**
 > （`--all-targets` 2138 + `--doc` 1；V11-57 新增 fixture 2 例 + 拓扑断言 1 例）。
 > 下文「2131 / 2136」表述一律按 **2139** 执行。
+>
+> **基线再更新（2026-10-24，V11-58 完成后）：2140 passed / 0 failed / 4 ignored**
+> （`--all-targets` 2139 + `--doc` 1；净 +1：拓扑断言 icons 依赖面 1 例；
+> icons 4 个规格单测从 core lib 迁出为独立 crate 目标，总量守恒）。
+> 下文「2131 / 2136 / 2139」表述一律按 **2140** 执行。
 > V11-59 已完成（`2880678`）；V11-60 已关闭（审计 V=0，转 V11-62）；V11-61 已降级为记录。
 > 状态表见 `docs/v1.1-backlog.md` §3 的波次登记。
 
@@ -168,6 +173,14 @@ V11-59 ─────────────────────┼──�
 - **依赖与风险**：**强依赖 V11-57**（UiAction 来源）。风险：`pub use crate as mod` 的路径等价性——验收第 2 条专测；体积零增（同代码搬迁，>+1 KiB 即调查）。
 - **验收标准**：`cargo tree -p rustmark-icons` 依赖 = egui + rustmark-actions；`rustmark::presentation::icons::IconOp` 等公开路径可引用（既有测试覆盖即证）；4 个规格单测通过；工具栏/侧栏图标真帧视觉用例全绿；四门禁 + 2131 + size_gate（exe ≤ 10,485,760 B）。
 - **回退**：revert 单 commit。
+
+> **完成注记（2026-10-24）**：已落地，门禁 2140/0/4。与方案的偏差及处置：
+> 1. **文件布局取 `lib.rs` 单文件**（非「icons.rs + pub use」）：`layer_of` 对 crate 入口白名单自然判 Free，arch_check 第四根**无需** `forced_layer`（actions 根那种强制只在其文件名不在任何层名时才需要）；将来 icons 长出第二个文件，「未知层」警报会逼着定层——缺口要响。
+> 2. **field_visibility_guard 范围随扩**（任务清单未点名、但不扩即静默丢覆盖）：白名单 2 条 `presentation/icons.rs::IconColors::*` 改键为 `icons/lib.rs::IconColors::*`（crate 短名前缀防 `lib.rs` 同键碰撞），扫描函数泛化为「core 裸路径 + 叶子 crate 前缀路径」两根；总数仍 548。
+> 3. **`PRESENTATION_ICONS_FORBIDDEN` 规则与 fixture 保留防回归**（任务清单「清理或留防回归」取留）：icons 搬出 core 后该子层在 core 内休眠，`leaf_layers_may_not_depend_on_views` 合成用例继续钉住规则本身；约束文档 §4.0 表格行标注「V11-58 起休眠」。
+> 4. **fixture 拼接点用例随实桥接扩展**：`shell_reexport_splice_points_are_not_violations` 的合成 `presentation.rs` 补 `pub use rustmark_icons as icons;` 形状（真实桥接已改两行）。
+> 5. **视觉用例归属核对结论**：`tests/presentation/toolbar_visual_test.rs` 只用公开路径 `rustmark::presentation::icons::{Icon, spec}`，桥接后零改动，留在 presentation 测试目标。
+> 6. clippy 首跑暴露 3 处新问题（collapsible if + 6 处 doc 列表续行缩进——文档注释续行丢了两空格缩进，触发 `doc_lazy_continuation`），已修；复跑全绿。
 
 ### V11-60 · state 瘦身（分批） ｜ 优先级：中 ｜ 1–2 人日 ｜ 并行组 C
 

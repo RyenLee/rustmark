@@ -1286,14 +1286,18 @@ pub fn scan_with_tests(src_root: &Path, tests_root: &Path) -> Vec<Violation> {
 
 /// 扫描**整个 workspace**（D-3 阶段 4a 拆分后的口径）：
 /// shell `src/` + `crates/rustmark-core/src/` +
-/// `crates/rustmark-actions/src/`（V11-57）+ `tests/`。
+/// `crates/rustmark-actions/src/`（V11-57）+
+/// `crates/rustmark-icons/src/`（V11-58）+ `tests/`。
 ///
-/// # 四个根、两种记键
+/// # 五个根、两种记键
 ///
 /// - src 根**按各自根的层相对路径**判层、查豁免表
 ///   （core 的 `domain/x.rs` 与拆分前同键，登记表与既有禁令表零改动）；
 ///   actions 根例外：整个根判 [`Layer::Free`]（零依赖词汇契约 crate，
 ///   文件名不在任何层名里，不覆盖会误报「未知层」）；
+///   icons 根**无需**强制：单文件 `lib.rs` 落在 crate 入口白名单里
+///   （`layer_of` 对 `lib.rs` 自然判 Free），将来若长出第二个文件，
+///   「未知层」警报会逼着给它定层——这正是缺口要响的意图；
 /// - core 侧违规只在**报告**时补 `crates/rustmark-core/src/` 前缀——
 ///   层判定绝不能看该前缀，否则首段 `crates` 会把整个 core 判成
 ///   「未知层」而全量误报；
@@ -1329,6 +1333,11 @@ pub fn scan_project(manifest: &Path) -> Vec<Violation> {
     // 规则（禁 `mod.rs` / 帧预约唯一出口 / 豁免体检）在第三根照旧生效，
     // 由 fixture 第十六节钉住。
     //
+    // 第四根（V11-58）：`rustmark-icons` 是向量图标资源 crate（单文件
+    // `lib.rs` + 4 个规格单测），`layer_of` 对 `lib.rs` 自然判 Free，故
+    // **不**设 `forced_layer`。它与层无关的规则（禁 `mod.rs` / 帧预约）
+    // 与其他根同一套代码路径生效。
+    //
     // 「actions 不得引用 core / 任何 crate」刻意**不**做成词法禁令：core
     // 已依赖 actions，反向加普通依赖即 Cargo 循环依赖（解析期报错，比词法
     // 规则更强）；「获得任意依赖」由 workspace 拓扑断言兜底
@@ -1346,6 +1355,11 @@ pub fn scan_project(manifest: &Path) -> Vec<Violation> {
             manifest.join("crates").join("rustmark-actions").join("src"),
             "crates/rustmark-actions/src/",
             Some(Layer::Free),
+        ),
+        (
+            manifest.join("crates").join("rustmark-icons").join("src"),
+            "crates/rustmark-icons/src/",
+            None,
         ),
     ] {
         let mut files = Vec::new();
