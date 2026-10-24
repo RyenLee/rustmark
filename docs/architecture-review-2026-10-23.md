@@ -20,10 +20,12 @@
 | 前次评估 P0 问题（4 项） | **全部已修复**（§一） | ✓ |
 | 表现层占比 | **49%**（30 942 / 63 301 行），且 `preview_view.rs` 1 339 行未拆 | ⚠ |
 | 预览区 span→`LayoutJob` 构造器 | **已由 R-10 收敛**：唯一构造器 `span_job::build_job` + 唯一语义派发 `StyleSemantics::of`；双样式表为有意设计并有快照测试守卫（勘误见 §六 D-1） | ✓ |
-| 可观测性 | 仅 `log::warn` + 启动埋点，且 `docs/debug-guide.md` §2.4 与实现**自相矛盾** | ⚠ |
+| 可观测性 | 仅 `log::warn` + 启动埋点；~~`docs/debug-guide.md` §2.4 与实现**自相矛盾**~~ 已纠错（2026-10-24，D-2 闭合），帧级常态指标仍缺（D-5） | ⚠ |
 
-**问题分布**：无 P0（阻断级）问题；**中等 5 项、低 7 项**（清单见 §六）。最值得投入的三件事：
-① `debug-guide` 日志章节纠错（正在误导排障）；② 表现层「状态写入」的机械守卫补全 R-13 的最后缺口；③ `preview_view.rs` 拆分与帧级耗时可观测性。
+**问题分布**：无 P0（阻断级）问题；**中等 3 项（D-4/D-5/D-6）、低 7 项**（清单见 §六）；
+D-1/D-2/D-3/D-11 已闭合。最值得投入的三件事：
+① ~~`debug-guide` 日志章节纠错~~ **已完成（2026-10-24）**；② 表现层「状态写入」的机械守卫补全 R-13 的最后缺口
+**已随 D-3 全阶段闭合**；③ `preview_view.rs` 拆分与帧级耗时可观测性（D-4 / D-5，当前首要）。
 
 ---
 
@@ -114,7 +116,7 @@
 ### 4.2 可维护性
 - 测试金字塔显式分层（9 个 `[[test]]` 目标 + 目录即分层），2 100+ 测试，含 golden 语料、变异注入 fixture（`arch_violation_fixture`）、性能回归门禁。
 - 文档体系完整：架构约束（唯一真源）+ 12 篇 ADR + 依赖登记 + 测试/调试/发布文档 + 度量基线；`docs/README.md` 索引与 `testing.md` 实测数已更新到位。
-- 判定：**强**。唯二短板是 §六 D-2（`debug-guide` 日志章节过期）与大文件拆分不一致。
+- 判定：**强**。唯二短板是 §六 D-2（~~`debug-guide` 日志章节过期~~ 已于 2026-10-24 纠错）与大文件拆分不一致。
 
 ### 4.3 性能
 - 帧调度：ADR-009 `FrameScheduler` 单一出口（`request_repaint_after` 全仓只许出现在 `scheduler.rs`，无豁免、构建期拦截）——把「定时功能静默失效」这类历史 bug 类别机械消灭。
@@ -131,7 +133,7 @@
 
 ### 4.5 可观测性 —— **最弱维度**
 - 现状：`env_logger`（默认 warn，`main.rs:23`）+ 零散 `log::warn!` + `RUSTMARK_STARTUP_TIMING` 启动埋点 + panic backtrace；无结构化日志、无运行时指标、无帧耗时的用户可见归因（曾靠临时归因测试排查 TextEdit 开销）。
-- **且文档与实现矛盾**：[debug-guide.md](./debug-guide.md) §2.4 与 §400 仍声称「本项目没有 logger 后端，`RUST_LOG` 无效」——F-2 已注册 env_logger，`frame.rs:717` 注释也已同步，**只有 debug-guide 没改**。按文档排障会走弯路。
+- **且文档与实现矛盾**（~~已纠错~~ **2026-10-24 D-2 闭合**）：[debug-guide.md](./debug-guide.md) §2.4/§400 旧版声称「本项目没有 logger 后端，`RUST_LOG` 无效」——F-2 已注册 env_logger，`frame.rs:717` 注释也已同步，**当时只有 debug-guide 没改**；现已按 `main.rs` 实况改写（默认 warn、`RUST_LOG=rustmark::app=debug` 模块过滤、无正则 feature 的边界注明）。
 - 判定：对当前规模「够用」，但每次性能/行为排障都依赖临时插桩（近期两次排障均为事后复盘），**缺一层常态化的帧级/搜索级耗时指标**。
 
 ---
@@ -150,10 +152,10 @@
 | ADR 制度 | 12 篇，结构性决定（含 R-03/R-04/R-07）均有编号引用 | ✓ |
 | 测试分层规范 | `tests/` 禁库内部视角（R-02），显式 `[[test]]` 声明 | ✓ |
 | 数据流转（视图 → DTO → 应用 → 领域） | `mapper.rs` 用 `SpanView` 而非领域类型；DTO 隔离有效 | ✓ |
-| **文档与实现同步** | `debug-guide.md` §2.4 与 logger 现状矛盾（见 D-2） | ✗ |
+| **文档与实现同步** | ~~`debug-guide.md` §2.4 与 logger 现状矛盾（见 D-2）~~ 已纠错（2026-10-24） | ✓ |
 | **ADR-009 `begin/flush` 成对契约** | 仅测试兜底，无 debug 断言 | ⚠ |
 
-**判定：规范落地水平显著高于项目规模的通常水准——「规则 → 机械检查 → CI」的闭环是全项目最值钱的资产。** 残余缺口都是执行尾部（一处过期文档、一条软契约）。
+**判定：规范落地水平显著高于项目规模的通常水准——「规则 → 机械检查 → CI」的闭环是全项目最值钱的资产。** 残余缺口都是执行尾部（过期文档 D-2 已于 2026-10-24 纠错；软契约 D-7 待加 debug 断言）。
 
 ---
 
@@ -164,9 +166,9 @@
 | ID | 等级 | 问题 | 影响范围 | 可落地改进 |
 |---|:---:|---|---|---|
 | D-1 | ~~低~~ **已闭合（2026-10-23）** | **原描述「3 份并行实现 + 2 张样式表」不成立**——已由 R-10 收敛：切段唯一构造器 `span_job::build_job`、语义派发唯一 `StyleSemantics::of`，三处均为薄封装；双样式表为**有意保留**（字号体系与覆盖面不同，论证见 `span_job.rs` 模块头）。二次核查发现对拍用例也已存在（`shared_styles_have_identical_colors_in_both_tables`），但仅测 dark 主题、且注释承诺的反方向断言缺失 | 表现层（已闭合） | **已完成**：① 对拍用例参数化双主题（dark+light）；② 新增反方向用例 `exclusive_styles_stay_distinct_between_tables`（3 对特有样式不同色，防「无脑转发」退化）。`cargo test --lib mapper::tests` 17/17、fmt/clippy 全绿 |
-| D-2 | **中** | `docs/debug-guide.md` §2.4/§400 声称「无 logger 后端、`RUST_LOG` 无效」，与 `main.rs:23` 已注册 env_logger 矛盾 | 全体排障者；按文档操作会得出「日志坏了」的错误结论 | 改写 §2.4：`RUST_LOG=rustmark::app=debug cargo run` 即可生效（模块过滤、无正则）；§400 同步 |
+| D-2 | ~~中~~ **已闭合（2026-10-24）** | ~~`docs/debug-guide.md` §2.4/§400 声称「无 logger 后端、`RUST_LOG` 无效」，与 `main.rs:23` 已注册 env_logger 矛盾~~ 已按实况改写 | 全体排障者 | **已完成**：§2.4 改为「env_logger 已注册、默认 warn、`RUST_LOG` 调级别」并注明无 `regex` feature 的模块过滤边界、启动埋点独立通路；§400 脚注同步；全库排查无其他过期说法 |
 | D-3 | ~~中~~ **已闭合（2026-10-23，阶段 1/2/3/4a/4b 全部完成）** | `presentation` 状态写入守卫：裸字段赋值已收敛至 0；egui 控件借用 `&mut app.<state>.<field>` 穿透字段（原 7 处 / 5 文件，全在 views/）。~~单 crate 下字段私有化对 views 无编译期约束力~~ workspace 拆分 + 4b 可见性收紧后，core 内部面已对 views 编译不可见 | 表现层 125 文件；新增 UI 状态字段时的心智负担 | **阶段 1**（核实已存在）：R-12 赋值规则 + fixture 四条注入用例。**阶段 2 已完成**：`tests/presentation/state_borrow_guard_test.rs`——词法级（`lex_dump`）扫描全表现层，字段借用白名单双向断言 + 2 条匹配注入用例；词法补 `TokKind::Amp`（零行为变化，fixture 87/87 回归）。**阶段 3 已完成（2026-10-23）**：7 处穿透全部方法化——6 处 TextEdit/checkbox 走「clone（或读出）→ 就地编辑 → 变化才值写回」+ 7 个 state setter（`set_only_changes`/`set_output_dir`/`set_file_stem`/`set_find_text`/`set_replace_text`/`set_writing_goal_text` + `take_blocks`），**清单归零**（`APPROVED_BORROWS = &[]`，集合相等断言双向钉死，新增穿透必红）。**阶段 4a 已完成（2026-10-23）**：拆 workspace——新建 `crates/rustmark-core`（domain/application/infrastructure/shared 四层 + presentation 的 icons/rich/shortcuts/state/theme/widgets 六子模块），shell（root）只留组合根 `app` 与 `presentation::views`；root 经 `pub use rustmark_core::{…}` re-export 拼接，存量 `crate::` 路径**零改动**；依赖方向被 cargo 锁死（`cargo tree -p rustmark-core` 无反向依赖）；校验器改 `scan_project` 三根扫描（shell src + core src + tests，core 违规带 `crates/rustmark-core/src/` 前缀）并把 `rustmark_core::X` 归一为 `crate::X` 匹配同一禁令表（拼接点天然豁免）；命令面（ci clippy/check/test/llvm-cov）加 `--workspace`；全链验证绿（2125 测试 0 失败、注入 core `crate::app` 必红、release 10 485 248 B 启动冒烟通过）。**阶段 4b（原后置待办）**：可见性收紧——~~core 内字段/方法从 `pub` 收窄（`pub(crate)` / 私有 + 受控接口），让 D-11 的编译期强制对 views 真正生效；**后置条件**：4a 合入稳定后单独批次执行，逐字段核对存量读点（约 340 处读点当期零改动），不得与 4a 混批~~ **阶段 4b 已完成（2026-10-23，五批 2995d68 / 15e9020 / a24b5ca / e21ad8c / 2952872）**：模块级 pub 项 1 664 → 1 383、字段 pub 606 → 547（58 收紧为 pub(crate) + 1 死字段删除），E0616/E0451 实测 547 对读点逐条核对；新增 `tests/field_visibility_guard_test.rs` 白名单双向断言（548 条 + 3 注入用例）钉死放宽方向。全链验证 2 125 通过 0 失败。**D-3 全阶段（1/2/3/4a/4b）闭合** |
-| D-4 | **中** | `presentation/views` 拆分标准不一：`preview_view.rs` 1 339 行（全仓最大）+ `toolbar_view.rs` 683 行未拆，同目录 `sidebar_view/`、`settings_view/` 已拆干净 | 表现层可维护性；大文件的评审与定位成本 | 按已有先例拆：`preview_view.rs` → `preview_view/{mod,media,overlay}.rs`（其子目录已 3 000+ 行，壳比内容大即信号）；在约束文档 §7 记录「>600 行的视图须拆子目录」阈值 |
+| D-4 | **中**（阈值规则已入约束 §7，2026-10-24；拆分待执行） | `presentation/views` 拆分标准不一：`preview_view.rs` 1 339 行（全仓最大）+ `toolbar_view.rs` 683 行未拆，同目录 `sidebar_view/`、`settings_view/` 已拆干净 | 表现层可维护性；大文件的评审与定位成本 | 按已有先例拆：`preview_view.rs` → 保留 `preview_view.rs` 入口 + `preview_view/{media,overlay,…}.rs`（其子目录已 3 000+ 行，壳比内容大即信号）；~~在约束文档 §7 记录阈值~~ **已完成（2026-10-24）** |
 | D-5 | **中** | 可观测性薄弱（§四-5）：无帧级耗时常态指标，排障靠临时插桩 + 事后复盘 | 性能回归的发现时机（近期两次卡顿均为用户反馈后排查） | 在 `FrameScheduler::flush` 顺带累计帧耗时，超过预算（如 16ms）时 `log::warn!` 带上帧内 job 归因（工程已有 `textedit_cost_attribution` 测试级归因，复用其口径）；不新增依赖 |
 | D-6 | **中** | `shared` 无准入标准（§一-1）：19 文件 2 767 行，`pattern.rs` 474 行、`fonts.rs`/`encoding.rs` 等逐次加入 | 一旦松口，`shared` 会成为绕过依赖矩阵的通道（历史上 `std::process` 就是这么进来的） | 在 `architecture-constraints.md` §4 增加「shared 准入三问」：是否 ≥2 层需要、是否零 IO、是否无可归属的层——写成与豁免表同级的登记制 |
 | D-7 | 低 | ADR-009 `begin/flush` 成对契约仅测试兜底 | 漏调 `begin` 的表现是定时功能静默失效 | `FrameScheduler` 加 debug 断言：`flush` 时若本帧未 `begin` 则 `debug_assert`（release 不影响体积预算） |
@@ -191,7 +193,7 @@
 | P1-4 | 主题双枚举 + 第三份映射 | **已修复**：真源入 `shared/theme.rs` |
 | P1-5 | `persisted_key` 兜底静默失效 | **已修复**：穷举 match（无 `_ =>`）+ 双向契约测试 |
 | P2-1/2/3 | 重复实现 / 路径反斜杠 / 白名单硬编码 | 未逐条复核（不在本轮重点），建议按前次批次清单核销 |
-| P2-5 | 文档过期 8+ 处 | **大部分已修复**：README ADR 索引（010–012 已列）、testing.md 已改当日实测；**遗留 `debug-guide.md` §2.4**（→ 本轮 D-2） |
+| P2-5 | 文档过期 8+ 处 | **已修复**：README ADR 索引（010–012 已列）、testing.md 已改当日实测；~~遗留 `debug-guide.md` §2.4~~ **D-2 已于 2026-10-24 闭合** |
 | P2-7 | `fonts.rs` 1 111 行依赖真实资产 | **已缓解**：730 行，但仍含路径发现逻辑（择机拆分） |
 
 ---
@@ -199,8 +201,8 @@
 ## 八、改进路线（按投入产出排序）
 
 **第 1 批 · 立即（零风险，文档级）**
-1. 修 `debug-guide.md` §2.4/§400 日志章节（D-2）。
-2. 在 `architecture-constraints.md` §7 补「视图文件 >600 行须拆」阈值（D-4 的规则化）。
+1. ~~修 `debug-guide.md` §2.4/§400 日志章节（D-2）~~ **已完成（2026-10-24）**。
+2. ~~在 `architecture-constraints.md` §7 补「视图文件 >600 行须拆」阈值（D-4 的规则化）~~ **已完成（2026-10-24）**（阈值已入 §7，评审纪律、暂未机械校验）。
 
 **第 2 批 · 结构收口（表现层内聚性）**
 3. ~~跨表共同样式「颜色恒等」直接对拍断言~~ **已完成（2026-10-23，见 D-1 闭合记录）**。

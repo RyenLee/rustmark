@@ -149,19 +149,21 @@ cargo run --bin rustmark
 
 适合「只在某个交互动作后才崩溃」的场景——先复现到崩溃前，再 attach 打断点。
 
-### 2.4 日志输出（本项目**没有** logger，`RUST_LOG` 无效）
+### 2.4 日志输出（env_logger 已注册，`RUST_LOG` 调级别）
 
-先纠正一个常见误操作：`Cargo.toml` 里有 `log = "0.4"`，但**应用从未注册 logger 后端**
-（无 `env_logger` / `tracing` / `log::set_logger` 调用；`src/app/frame.rs` 的注释明确写了
-「本项目未注册 logger 后端，走 `eprintln!`」）。因此：
+> **2026-10-24 修订（D-2 纠错）**：本节旧版声称「本项目没有 logger 后端、`RUST_LOG` 无效」——
+> 那是 F-2 之前的状态，**已过期**。按旧版操作会得出「日志坏了」的错误结论。
 
-- **`RUST_LOG=debug cargo run` 什么也不会打印**——所有 `log::warn!`（如 `RegistryProvider`
-  RwLock poisoned、未知语言降级、scope 栈失衡）都被 `log` 门面**静默丢弃**；
-- 终端里真正可见的输出只有两条通路：① `eprintln!`（基础设施层越界告警、启动埋点，见 §1.1）；
-  ② panic 栈（debug profile 是 unwind，且全局已设 `RUST_BACKTRACE=1`）；
-- 临时想看 `log::warn!` 的内容：在 `app::run()` 最早处加一行 `env_logger::init()`
-  （需先把 `env_logger` 加进 `[dependencies]`），或把目标 `log::warn!` 临时改成 `eprintln!`——
-  **用完即删**并复跑门禁（纪律见 §6.8）。
+现状（真源：`src/main.rs` 的 `env_logger::Builder` 调用）：
+
+- **logger 后端已注册**：F-2 起 `main` 在启动时注册 `env_logger`，输出到 stderr；
+- **默认级别 warn**：不设 `RUST_LOG` 时，所有 `log::warn!` / `log::error!` 直接可见
+  （如 `RegistryProvider` RwLock poisoned、未知语言降级、scope 栈失衡）——**默认就能看到告警**；
+- **排障开全量**：`RUST_LOG=debug cargo run`；
+- **只看一个模块**：`RUST_LOG=rustmark::app=debug cargo run`（模块 + 级别指令，
+  不依赖正则——env_logger 未开 `regex` feature，正则模式的 `RUST_LOG` 表达式不支持）；
+- 启动埋点走另一条通路：`RUSTMARK_STARTUP_TIMING` 的 `eprintln!`（§1.1），与 logger 无关；
+- panic 栈照旧：debug profile 是 unwind，且全局已设 `RUST_BACKTRACE=1`。
 
 > release profile 是 `panic = "abort"`：panic 时**没有栈展开、没有 backtrace**，进程直接终止。
 > 调试 panic 一律用 debug 构建（`cargo run`），不要用 `--release`。
@@ -397,7 +399,7 @@ cargo test --test presentation top_menu
 
 _文档生成日期：2026-10-10；§6 方法论章节增补于 2026-10-14（源自问题记录 001–027 与 metrics 各节实测）。
 本地启动与构建信息于 2026-10-14 二次校准，对齐工程实际：产物路径（全局 `build.target` 三重目录）、
-日志机制（未注册 logger，`RUST_LOG` 无效，见 §2.4）、启动埋点 `RUSTMARK_STARTUP_TIMING`（§1.1）、
+日志机制（env_logger 已注册、默认 warn、`RUST_LOG` 调级别，2026-10-24 修订，见 §2.4）、启动埋点 `RUSTMARK_STARTUP_TIMING`（§1.1）、
 构建命令总表（§1.2：debug/release/check/打包/cargo bloat 与 build.rs 门禁、10MB 红线现状）、
 门禁命令 `--all-features` 与 `-- -D warnings` 位置（§4）、测试目标总览（§3）。
 命令基于仓库当前 `Cargo.toml`（`default-run = "rustmark"` 已生效）。_

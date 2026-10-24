@@ -281,6 +281,15 @@ shell `src/bin/` 是工具二进制（`check-arch`），与 `main.rs` / `lib.rs`
 「模块树 = 文件树」与「模块树藏在 `mod.rs` 里」的区别，
 而这恰恰是评审最容易漏、编译器又从不报错的一类偏差。
 
+**视图文件拆分阈值（D-4 规则化，2026-10-24）**：`presentation/views/` 下
+单文件 **> 600 行须拆子目录**——保留 `foo.rs` 为入口，子模块平铺进 `foo/bar.rs`
+（与既有先例 `sidebar_view.rs` + `sidebar_view/`、`settings_view.rs` +
+`settings_view/` 同形，遵守禁 `mod.rs` 规则）。依据：同目录已按此标准拆过的
+模块评审定位成本显著更低，而 `preview_view.rs`（1 339 行）、
+`toolbar_view.rs`（683 行）两个未拆文件正是当前最大维护盲区。
+本条为**评审纪律**（当前未机械校验，见 architecture-review D-4），
+评审超阈值视图 PR 时对照执行。
+
 ## 8. 体积与性能预算（改动前自查）
 
 | 组件 | 预算 |
