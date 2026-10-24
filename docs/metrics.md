@@ -1217,3 +1217,60 @@ cargo test --release --test presentation bench_layout_phases -- --ignored --noca
 2. 每次填写须同时记录：命令、采样次数、环境（OS / 工具链版本 / commit）；
 3. 阶段 08 的每条优化在 `docs/archive/stage-reports/optimization-log.md` 记录「手段 / 前值 / 后值 / 代价 / 结论」，含放弃项；
 4. 三平台内存口径不可横向比较，门禁按「各平台各自阈值」判定。
+
+## 7. 接入成本基线（V11-66，2026-10-24）
+
+> 命令：`python tools/onboard_cost.py`（口径全文见脚本 docstring：默认窗口 12 个月、
+> 不含 merge、D-3 4a 拆分前后路径合并计数、`--no-renames` 字面记录）。
+> 环境：Windows / `x86_64-pc-windows-msvc` / cargo 1.99.0 / commit `3cc4c42`。
+> 注：本仓非 merge 提交全部落在 6 个月窗口内（177 个），「12mo」即全部历史。
+
+### 7.1 每提交触及面
+
+| 指标 | 值 |
+|---|---|
+| 提交总数（不含 merge） | 177 |
+| 平均每提交触及文件数 | 14.5 |
+| 平均每提交触及逻辑模块数 | 4.1 |
+| 平均每提交触及 workspace crate 数 | 0.76 |
+| 平均每提交测试行变更（增+删） | 368.1 |
+| 单提交最大触及文件数 | 535（4a 拆分 `2f4fd07` 的机械搬迁，字面记录口径） |
+| 单提交最大测试行变更 | 28,820 |
+
+### 7.2 逻辑模块提交频率（Top 12；全表用脚本重跑）
+
+| 逻辑模块 | 提交数 | 触及文件数 | 文件 touch 次数 |
+|---|---|---|---|
+| docs | 71 | 161 | 369 |
+| presentation/views | 69 | 73 | 321 |
+| tests/presentation | 47 | 43 | 149 |
+| app | 43 | 29 | 144 |
+| presentation/state | 31 | 49 | 131 |
+| root-files | 25 | 29 | 60 |
+| tools | 24 | 26 | 55 |
+| tests/app | 21 | 25 | 52 |
+| presentation/theme | 20 | 22 | 70 |
+| domain/preferences | 18 | 18 | 50 |
+| application/markdown | 16 | 25 | 72 |
+| domain/markdown | 15 | 22 | 59 |
+
+**读法**：presentation 一家（views + tests/presentation + state + theme）占据热榜
+前五中的四席——「UI 层最热、领域层 cold」的格局与评审报告一致，是 V11-62
+（`rustmark-ui` 拆分）触发评估的核心输入；`app`（组合根）43 提交排第四，
+符合「装配逻辑随功能持续演进」的预期。
+
+### 7.3 构建耗时（debug）
+
+| 项 | 值 | 备注 |
+|---|---|---|
+| 冷构建 | **83s** | 评审期实测（同机同日；未在 10-24 复测——复测需 `cargo clean` 全量重建，代价约 2min，留给下次需要时） |
+| 增量构建 | **5.92s** | 2026-10-24 实测（`touch crates/rustmark-core/src/lib.rs` 后 `cargo build`，cargo 自报耗时；墙钟 6.4s）。评审期记录 4.6/4.7s——差异来自 4a 拆分后依赖图变化与机器状态，非回归信号 |
+
+### 7.4 与评审报告数字的差异（诚实记录）
+
+评审报告（`docs/core-structure-review-2026-10-24.md`）记 root views 70 /
+presentation/state 30 / theme 19（12mo）；本脚本同窗口实测 **69 / 31 / 20**
+（Δ −1 / +1 / +1，落在 V11-66 验收容差 ±1 内）。已尝试复现评审口径的变体：
+含 merge 计数、pathspec 计数、排除 4a 拆分 commit、含 tests 目录——均不能
+同时复现三个数（含 tests 会分别暴涨到 74/62/54）。判定为评审当时一次性聚合
+的方法学噪声，**热模块排序不变，不影响 D 组触发判定**；后续以本脚本输出为准。

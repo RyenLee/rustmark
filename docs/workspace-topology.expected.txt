@@ -1,0 +1,53 @@
+# workspace 本地依赖拓扑期望基线（V11-66 建立）。
+#
+# 作用：CI 对 `cargo tree --workspace --depth 1 --no-dedupe` 的归一化输出与
+# 本文件（去掉本注释头）做 diff——拓扑变更（新增/移除依赖边、Cargo.lock 版本
+# 漂移）必须显式更新本文件，使「加一条依赖」成为有意识的评审事件。
+#
+# 归一化规则（机器无关）：删除 cargo tree 输出中所有 ` (...)` 片段。其中
+# workspace 成员的绝对路径随平台变化（Windows `D:\...` vs Linux runner
+# `/home/runner/...`），`(*)` 重复标记随去重状态变化，均无评审价值；
+# **版本号保留**——体积红线余量仅 512 B，依赖升级可能直接吃掉它，
+# Cargo.lock 漂移同样是拓扑事件。
+#
+# `--no-dedupe` 必须带：默认去重模式下 workspace 第二个成员（rustmark-core）
+# 的直接依赖会被 `(*)` 折叠隐藏，core 新增依赖边将逃过本断言（2026-10-24 实测）。
+#
+# 更新方式：本地跑
+#   cargo tree --workspace --depth 1 --no-dedupe | sed -E 's| \([^)]*\)||g'
+# 核对 diff 确为预期变更后，把输出写回本文件（保留本注释头），随变更 commit
+# 一并提交。CI 步骤见 .github/workflows/ci.yml「Workspace topology assertion」。
+#
+# 基线：2026-10-24，D-3 阶段 4a 拆分后拓扑 = root → rustmark-core 一条本地边。
+rustmark v0.2.0
+├── anyhow v1.0.104
+├── eframe v0.37.0
+├── egui v0.37.0
+├── env_logger v0.11.11
+├── image v0.25.10
+├── log v0.4.34
+├── rustmark-core v0.2.0
+│   [dev-dependencies]
+└── wgpu v30.0.1
+    [build-dependencies]
+[dev-dependencies]
+├── syntect v5.3.0
+└── tempfile v3.27.0
+
+rustmark-core v0.2.0
+├── ahash v0.8.12
+│   [build-dependencies]
+├── egui v0.37.0
+├── image v0.25.10
+├── log v0.4.34
+├── pulldown-cmark v0.13.4
+├── rfd v0.17.2
+├── ropey v1.6.1
+├── rustls-native-certs v0.8.5
+├── serde v1.0.229
+├── syntect v5.3.0
+├── thiserror v2.0.21
+├── toml v1.1.8+spec-1.1.0
+└── ureq v3.5.0
+[dev-dependencies]
+└── tempfile v3.27.0

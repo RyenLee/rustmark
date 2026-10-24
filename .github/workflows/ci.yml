@@ -113,6 +113,26 @@ jobs:
       - name: Architecture boundary check
         run: cargo run --bin check-arch
 
+      # V11-66：workspace 拓扑断言。新增/移除依赖边或 Cargo.lock 版本漂移都会
+      # 改变 `cargo tree` 输出，与 docs/workspace-topology.expected.txt 对不上
+      # 即红——「加一条依赖」必须是显式评审事件（更新期望文件后随 commit 提交），
+      # 而非静默发生。归一化删除 ` (...)`：workspace 成员的绝对路径随平台变化
+      # （Windows 盘符路径 vs Linux runner 路径）、`(*)` 重复标记随去重状态变化，
+      # 均无评审价值；版本号保留（体积红线余量仅 512 B，锁文件漂移是拓扑事件）。
+      # `--no-dedupe` 必须带：默认去重模式下第二个 workspace 成员（rustmark-core）
+      # 的直接依赖被 `(*)` 折叠隐藏，core 新增依赖边会逃过本断言（2026-10-24 实测）。
+      # 本地复现：diff <(grep -v '^#' docs/workspace-topology.expected.txt) \
+      #   <(cargo tree --workspace --depth 1 --no-dedupe | sed -E 's| \([^)]*\)||g')
+      - name: Workspace topology assertion
+        shell: bash
+        run: |
+          set -o pipefail
+          if ! diff <(grep -v '^#' docs/workspace-topology.expected.txt) \
+                     <(cargo tree --workspace --depth 1 --no-dedupe | sed -E 's| \([^)]*\)||g'); then
+            echo "::error::workspace 拓扑与 docs/workspace-topology.expected.txt 不一致——若是预期变更，请按该文件头部注释的更新流程改完后重新提交"
+            exit 1
+          fi
+
       # `--workspace`（D-3 阶段 4a）：不加时 root 包是默认成员，
       # core 的单测会**静默消失**——测试数掉一大截而 CI 照绿。
       # `--no-fail-fast`：一个测试目标红也继续跑完其余目标，
