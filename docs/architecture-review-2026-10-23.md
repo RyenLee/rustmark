@@ -122,7 +122,7 @@ D-1/D-2/D-3/D-11 已闭合。最值得投入的三件事：
 - 帧调度：ADR-009 `FrameScheduler` 单一出口（`request_repaint_after` 全仓只许出现在 `scheduler.rs`，无豁免、构建期拦截）——把「定时功能静默失效」这类历史 bug 类别机械消灭。
 - 缓存：应用层真 LRU（`highlight_cache/render_cache/spell_cache`，键含 revision）+ 表现层 Galley 缓存，设计文档 [cache-design.md](./cache-design.md)。
 - 门禁：CI release 性能冒烟（1 MB 全文查找/解析/首屏阈值断言，仅 Linux 必过）+ 体积门禁 10 MB + 近期搜索优化有独立报告（切搜索标签首帧 250ms → **0.69ms**）。
-- 判定：**强，且有回归防线**。风险点：性能阈值仅 Linux 单平台（跨平台数字不可比，已显式裁定）；帧预算依赖 `begin/flush` 成对契约（ADR-009 自认的软肋，现仅 `repaint_delay` 测试兜底）。
+- 判定：**强，且有回归防线**。风险点：性能阈值仅 Linux 单平台（跨平台数字不可比，已显式裁定）；帧预算依赖 `begin/flush` 成对契约（ADR-009 自认的软肋，~~现仅 `repaint_delay` 测试兜底~~ **D-7 已补 debug 断言（2026-10-24）**：漏调 `begin` 在 debug 构建即 panic，含「下一帧漏调」的消费语义用例）。
 
 ### 4.4 容错
 - 写入原子性：同目录临时文件 → `sync` → `rename` 覆盖（`fs_document_repository.rs`）；草稿旁车 `<id>.draft.path` 不覆盖原文件。
@@ -153,9 +153,9 @@ D-1/D-2/D-3/D-11 已闭合。最值得投入的三件事：
 | 测试分层规范 | `tests/` 禁库内部视角（R-02），显式 `[[test]]` 声明 | ✓ |
 | 数据流转（视图 → DTO → 应用 → 领域） | `mapper.rs` 用 `SpanView` 而非领域类型；DTO 隔离有效 | ✓ |
 | **文档与实现同步** | ~~`debug-guide.md` §2.4 与 logger 现状矛盾（见 D-2）~~ 已纠错（2026-10-24） | ✓ |
-| **ADR-009 `begin/flush` 成对契约** | 仅测试兜底，无 debug 断言 | ⚠ |
+| **ADR-009 `begin/flush` 成对契约** | ~~仅测试兜底，无 debug 断言~~ `flush` debug 断言 + `begin` 消费语义（D-7，2026-10-24），2 条 `should_panic` 用例 | ✓ |
 
-**判定：规范落地水平显著高于项目规模的通常水准——「规则 → 机械检查 → CI」的闭环是全项目最值钱的资产。** 残余缺口都是执行尾部（过期文档 D-2 已于 2026-10-24 纠错；软契约 D-7 待加 debug 断言）。
+**判定：规范落地水平显著高于项目规模的通常水准——「规则 → 机械检查 → CI」的闭环是全项目最值钱的资产。** 残余缺口都是执行尾部（过期文档 D-2 已于 2026-10-24 纠错；软契约 D-7 已于 2026-10-24 补 debug 断言）。
 
 ---
 
@@ -170,8 +170,8 @@ D-1/D-2/D-3/D-11 已闭合。最值得投入的三件事：
 | D-3 | ~~中~~ **已闭合（2026-10-23，阶段 1/2/3/4a/4b 全部完成）** | `presentation` 状态写入守卫：裸字段赋值已收敛至 0；egui 控件借用 `&mut app.<state>.<field>` 穿透字段（原 7 处 / 5 文件，全在 views/）。~~单 crate 下字段私有化对 views 无编译期约束力~~ workspace 拆分 + 4b 可见性收紧后，core 内部面已对 views 编译不可见 | 表现层 125 文件；新增 UI 状态字段时的心智负担 | **阶段 1**（核实已存在）：R-12 赋值规则 + fixture 四条注入用例。**阶段 2 已完成**：`tests/presentation/state_borrow_guard_test.rs`——词法级（`lex_dump`）扫描全表现层，字段借用白名单双向断言 + 2 条匹配注入用例；词法补 `TokKind::Amp`（零行为变化，fixture 87/87 回归）。**阶段 3 已完成（2026-10-23）**：7 处穿透全部方法化——6 处 TextEdit/checkbox 走「clone（或读出）→ 就地编辑 → 变化才值写回」+ 7 个 state setter（`set_only_changes`/`set_output_dir`/`set_file_stem`/`set_find_text`/`set_replace_text`/`set_writing_goal_text` + `take_blocks`），**清单归零**（`APPROVED_BORROWS = &[]`，集合相等断言双向钉死，新增穿透必红）。**阶段 4a 已完成（2026-10-23）**：拆 workspace——新建 `crates/rustmark-core`（domain/application/infrastructure/shared 四层 + presentation 的 icons/rich/shortcuts/state/theme/widgets 六子模块），shell（root）只留组合根 `app` 与 `presentation::views`；root 经 `pub use rustmark_core::{…}` re-export 拼接，存量 `crate::` 路径**零改动**；依赖方向被 cargo 锁死（`cargo tree -p rustmark-core` 无反向依赖）；校验器改 `scan_project` 三根扫描（shell src + core src + tests，core 违规带 `crates/rustmark-core/src/` 前缀）并把 `rustmark_core::X` 归一为 `crate::X` 匹配同一禁令表（拼接点天然豁免）；命令面（ci clippy/check/test/llvm-cov）加 `--workspace`；全链验证绿（2125 测试 0 失败、注入 core `crate::app` 必红、release 10 485 248 B 启动冒烟通过）。**阶段 4b（原后置待办）**：可见性收紧——~~core 内字段/方法从 `pub` 收窄（`pub(crate)` / 私有 + 受控接口），让 D-11 的编译期强制对 views 真正生效；**后置条件**：4a 合入稳定后单独批次执行，逐字段核对存量读点（约 340 处读点当期零改动），不得与 4a 混批~~ **阶段 4b 已完成（2026-10-23，五批 2995d68 / 15e9020 / a24b5ca / e21ad8c / 2952872）**：模块级 pub 项 1 664 → 1 383、字段 pub 606 → 547（58 收紧为 pub(crate) + 1 死字段删除），E0616/E0451 实测 547 对读点逐条核对；新增 `tests/field_visibility_guard_test.rs` 白名单双向断言（548 条 + 3 注入用例）钉死放宽方向。全链验证 2 125 通过 0 失败。**D-3 全阶段（1/2/3/4a/4b）闭合** |
 | D-4 | **中**（阈值规则已入约束 §7，2026-10-24；拆分待执行） | `presentation/views` 拆分标准不一：`preview_view.rs` 1 339 行（全仓最大）+ `toolbar_view.rs` 683 行未拆，同目录 `sidebar_view/`、`settings_view/` 已拆干净 | 表现层可维护性；大文件的评审与定位成本 | 按已有先例拆：`preview_view.rs` → 保留 `preview_view.rs` 入口 + `preview_view/{media,overlay,…}.rs`（其子目录已 3 000+ 行，壳比内容大即信号）；~~在约束文档 §7 记录阈值~~ **已完成（2026-10-24）** |
 | D-5 | **中** | 可观测性薄弱（§四-5）：无帧级耗时常态指标，排障靠临时插桩 + 事后复盘 | 性能回归的发现时机（近期两次卡顿均为用户反馈后排查） | 在 `FrameScheduler::flush` 顺带累计帧耗时，超过预算（如 16ms）时 `log::warn!` 带上帧内 job 归因（工程已有 `textedit_cost_attribution` 测试级归因，复用其口径）；不新增依赖 |
-| D-6 | **中** | `shared` 无准入标准（§一-1）：19 文件 2 767 行，`pattern.rs` 474 行、`fonts.rs`/`encoding.rs` 等逐次加入 | 一旦松口，`shared` 会成为绕过依赖矩阵的通道（历史上 `std::process` 就是这么进来的） | 在 `architecture-constraints.md` §4 增加「shared 准入三问」：是否 ≥2 层需要、是否零 IO、是否无可归属的层——写成与豁免表同级的登记制 |
-| D-7 | 低 | ADR-009 `begin/flush` 成对契约仅测试兜底 | 漏调 `begin` 的表现是定时功能静默失效 | `FrameScheduler` 加 debug 断言：`flush` 时若本帧未 `begin` 则 `debug_assert`（release 不影响体积预算） |
+| D-6 | ~~中~~ **已闭合（2026-10-24）** | ~~`shared` 无准入标准（§一-1）：文件数持续增长，`pattern.rs` 474 行、`fonts.rs`/`encoding.rs` 等逐次加入~~ 已改为登记制 | 一旦松口，`shared` 会成为绕过依赖矩阵的通道（历史上 `std::process` 就是这么进来的） | **已完成（2026-10-24）**：① 约束 §4.5 新增「shared 准入三问」（≥2 层需要 / 零 IO / 无可归属的层）+ `<!-- shared:registry -->` 登记表（存量 18 文件全部带理由入表）；② `check-arch` 机械核对——`shared/` 下未登记文件在 `build.rs` 构建期与 CI 报文件级违规；③ fixture 三用例钉住（未登记必报 / 已登记放行且键写法归一 / 合成扫描 `scan` 不套用登记制） |
+| D-7 | ~~低~~ **已闭合（2026-10-24）** | ~~ADR-009 `begin/flush` 成对契约仅测试兜底~~ 已加 debug 断言 | 漏调 `begin` 的表现是定时功能静默失效 | **已完成（2026-10-24）**：`FrameScheduler::flush` 入口 `debug_assert`（本帧未 `begin` 即 panic），断言后**消费** `begun` 状态位使「下一帧漏调」也报得出；2 条 `should_panic` 用例钉住断言与消费语义；release 不编译断言、体积预算不受影响；ADR-009「后果」节已回写 |
 | D-8 | 低 | `app/frame` 内部仍有互相导入的纯函数（`group_search_hits` 被 `outline.rs` 反向导入等）与三条并存的「当前文档路径」方法（返回类型各异） | 组合根内 6 636 行的局部导航成本 | 纯函数下沉到所属 state 模块；三个路径方法收敛为一个返回 `Option<FilePath>` |
 | D-9 | 低 | 性能/测试门禁单平台（perf 仅 Linux）与 `panic=abort` 后无 unwind | 平台特有性能退化只在本地手测发现 | 记录为已知取舍即可；若 v1.1 增加 macOS 分发，再补 macOS perf job |
 | D-10 | 低 | 富文本渲染子系统（`presentation/rich/`：math + mermaid 手绘）复杂度集中 | 该子系统是未来 bug 密度最高的候选区 | 已有 ADR-007 边界（编译期保障）；建议维持「rich 不回指 views/state」并为 mermaid 图元补 golden 测试（已有部分） |
@@ -209,9 +209,9 @@ D-1/D-2/D-3/D-11 已闭合。最值得投入的三件事：
 4. 拆 `preview_view.rs`（D-4）。
 
 **第 3 批 · 守卫补全**
-5. `check-arch` 增加表现层状态赋值形态检查（先报告模式摸存量再启用，D-3）。
-6. `FrameScheduler` debug 断言（D-7）。
-7. `shared` 准入三问入约束文档（D-6）。
+5. ~~`check-arch` 增加表现层状态赋值形态检查（先报告模式摸存量再启用，D-3）~~ **已被 D-3 阶段 2 取代**（2026-10-23）：`tests/presentation/state_borrow_guard_test.rs` 的词法级白名单双向断言覆盖了同一判据，且比「报告模式」更严（存量已归零、新增穿透必红）。
+6. ~~`FrameScheduler` debug 断言（D-7）~~ **已完成（2026-10-24）**。
+7. ~~`shared` 准入三问入约束文档（D-6）~~ **已完成（2026-10-24）**（三问 + 登记表入约束 §4.5，且由 `check-arch` 机械核对，非仅文档）。
 
 **第 4 批 · 可观测性**
 8. 帧耗时超预算 `log::warn` + 归因（复用现有 attribution 口径，D-5）。

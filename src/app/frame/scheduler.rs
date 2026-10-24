@@ -72,6 +72,12 @@ pub(crate) struct FrameScheduler {
     due: BTreeMap<Deadline, u64>,
     /// 本帧时钟（毫秒），由 [`Self::begin`] 写入。
     now_ms: u64,
+    /// 本帧是否已 `begin`——`begin`/`flush` **成对契约**的机械判据。
+    ///
+    /// 由 [`Self::begin`] 置位、[`Self::flush`] 消费（断言后复位）：
+    /// 只置位不复位的话，「第一帧之后的每一帧漏调 `begin`」都会静默通过，
+    /// 而那恰恰是定时功能失效的形状。复位后，下一帧漏调才会被断言抓住。
+    begun: bool,
 }
 
 impl FrameScheduler {
@@ -82,6 +88,7 @@ impl FrameScheduler {
     pub(crate) fn begin(&mut self, now_ms: u64) {
         self.due.clear();
         self.now_ms = now_ms;
+        self.begun = true;
     }
 
     /// 登记「`deadline` 在 `due_ms` 时刻需要一帧」。
@@ -99,7 +106,19 @@ impl FrameScheduler {
     ///
     /// 这是全应用唯一允许调用 `request_repaint_after` 的地方（定时任务范畴；
     /// egui 自身的动画/IME 请求不在此列）。
+    ///
+    /// 调用前必须先跑过本帧的 [`Self::begin`]（debug 断言钉住，D-7）：
+    /// 漏调 `begin` 时 `now_ms` 停在旧值，全部剩余时长随之算错，
+    /// 表现正是「定时功能静默失效」——断言让它在 debug 构建里立刻炸出来。
     pub(crate) fn flush(&mut self, ctx: &egui::Context) {
+        debug_assert!(
+            self.begun,
+            "flush 必须跟在本帧的 begin(now_ms) 之后：漏调 begin 会让时钟停在旧值，\
+             定时任务静默失效（ADR-009 的 begin/flush 成对契约）"
+        );
+        // 消费本帧的 begin：不复位的话，断言只守得住第一帧，
+        // 「第二帧起漏调」这种最常见形态反而静默通过。
+        self.begun = false;
         let now = self.now_ms;
         let remaining = self.due.values().map(|due| due.saturating_sub(now)).min();
         // 先清表再预约：`request_repaint_after` 不会重入，但保持
@@ -239,5 +258,33 @@ mod tests {
             sched.entries().is_empty(),
             "帧首必须清空上一帧的登记，否则陈旧到期点会一直续命"
         );
+    }
+
+    /// D-7：`flush` 在整帧都没 `begin` 时必须断言炸出。
+    ///
+    /// 漏调 `begin` 的症状是**静默**的（时钟停在旧值 → 全部剩余时长算错，
+    /// 定时功能不触发），常规断言看不出来；只有把成对契约做成 debug 断言，
+    /// 测试与 debug 构建才会当场红。
+    #[test]
+    #[should_panic(expected = "begin")]
+    fn flush_without_begin_panics_in_debug() {
+        let mut sched = FrameScheduler::default();
+        let ctx = egui::Context::default();
+        sched.flush(&ctx);
+    }
+
+    /// D-7 的**消费语义**：`flush` 断言后复位 `begun`。
+    ///
+    /// 不复位的话，断言只守得住第一帧——「第二帧起漏调 `begin`」恰恰是
+    /// 最常见的形态（重构时把帧首那行挪走），反而静默通过。本用例跑完
+    /// 一对 begin/flush 再直接 flush，模拟下一帧漏调，必须报出来。
+    #[test]
+    #[should_panic(expected = "begin")]
+    fn a_missed_begin_on_the_next_frame_is_also_caught() {
+        let mut sched = FrameScheduler::default();
+        let ctx = egui::Context::default();
+        sched.begin(0);
+        sched.flush(&ctx);
+        sched.flush(&ctx);
     }
 }

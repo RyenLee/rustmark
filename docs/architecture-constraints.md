@@ -204,6 +204,51 @@ rich / widgets / icons ──► （不得回指 views / state / theme / widgets
 > 表头行与分隔行不算登记项。文件列写 `src/domain/x.rs` 或 `domain/x.rs` 均可。
 > 当前无任何豁免登记——这正是期望状态：豁免是例外，例外应当可见且可回收。
 
+### 4.5 `shared` 准入三问与登记表（D-6，机械守卫）
+
+`shared` 是**共享内核**：依赖矩阵里每一层都允许依赖它，它自己几乎不依赖任何层。
+这既是它存在的理由，也是它最危险的地方——「不知道放哪就放 `shared`」会让它
+变成绕过依赖矩阵的杂物间。历史先例：`std::process` 曾以「不在禁止清单」为由
+落位 `shared/system.rs`（R-03 已把执行端移到 `infrastructure/system.rs`）。
+
+**新文件进 `shared/` 必须同时回答三问**：
+
+| # | 问题 | 判据 |
+|---|---|---|
+| 1 | 是否至少被 **2 个层**需要？ | 只被一层需要的东西放进那一层；「2 层需要」须能指名是哪两层，且它们按依赖方向确实不能互相引用 |
+| 2 | 是否**零 IO**？ | 不含 `std::fs` / `std::io` / `std::process` 等（§4 禁令已机械拦截）；需要 IO 的留**端口**（trait），实现出去 |
+| 3 | 是否**无可归属的层**？ | 先尝试归入 domain / application / infrastructure / presentation；都归不进去的（三方共用的值对象、端口契约、唯一真源）才属于这里 |
+
+三问的答案不是口头论证，而是**登记**——下表与 §4.4 豁免表同级，且同样由
+`check-arch` 机械核对：`shared/` 下每个 `.rs` 文件必须在表中出现，
+**未登记即违规**（`build.rs` 构建期与 CI 同步拦截，报文件级错误）。
+
+<!-- shared:registry -->
+| 文件 | 三问理由 |
+|---|---|
+| `shared/dialog.rs` | 对话框端口：presentation（菜单触发）、application（用例取路径）、infrastructure（rfd 实现）三方共用——矩阵禁 presentation→domain、infrastructure→application，共同落点只有 shared |
+| `shared/encoding.rs` | 编码**标签**纯值：infrastructure 探测编码（IO），presentation 状态栏展示，两层方向互禁，抽值共享 |
+| `shared/error.rs` | `AppError` 跨层统一错误：domain / application 具体错误的汇聚点，全部层与二进制入口共用 |
+| `shared/event.rs` | 事件总线（Shared Kernel）：事件只携带 ID 与标量，订阅者横跨各层，总线契约须被全部层引用 |
+| `shared/export_format.rs` | 导出格式与页面尺寸唯一真源（R-07）：domain 校验、presentation 选择、infrastructure 路由三方需要 |
+| `shared/fonts.rs` | 编辑区等宽字体契约（哨兵 + 选项）：设置页（presentation）与装配两侧需要；本模块不引入 egui、零 IO |
+| `shared/geometry.rs` | 文本坐标值对象（字节偏移 / 区间 / 行列）：domain 与 presentation 共用的纯值，零 IO |
+| `shared/ids.rs` | 强类型 ID（Shared Kernel）：四个上下文共用防 `u64` 误传；进程内计数器，零依赖零 IO |
+| `shared/image_asset.rs` | 图片导入端口（R-04b）：app 编排与 infrastructure 实现共享同一契约；写盘在实现侧，端口零 IO |
+| `shared/lru.rs` | 有界 LRU：高亮 / 拼写 / 渲染 / 图片四处缓存（应用层与表现层）的唯一实现，纯逻辑 |
+| `shared/path.rs` | `FilePath` 路径值对象：document / workspace / export / preferences 四上下文共享内核；领域层禁 `PathBuf`，纯规则零 IO |
+| `shared/pattern.rs` | 迷你正则引擎：表现层查找面板与应用层跨文件搜索共用（依赖方向单向，两层不能互引），自研控体积 |
+| `shared/result.rs` | `AppResult` 结果别名：全应用统一错误结果，`error.rs` 的配套，被各层引用 |
+| `shared/system.rs` | 外部打开器**端口**与链接安全校验：app 与 infrastructure 共用契约；执行端已按 R-03 移出，本体零 IO |
+| `shared/text_format.rs` | 可打开文本格式白名单唯一出处：拖放分类（app）、对话框过滤（shared）、状态栏标签（presentation）三处共用 |
+| `shared/text.rs` | 英文分词规则唯一出处：应用层拼写建议与表现层右键菜单共用，与检查器同源 |
+| `shared/theme.rs` | 主题种类唯一真源（R-09）：原散落六处的枚举 / 映射收敛，domain / application / presentation 共用 |
+| `shared/time.rs` | `Clock` 可注入时钟与毫秒标量：领域逻辑禁读系统时间（可单测性），各层共用，零依赖 |
+<!-- /shared:registry -->
+
+> 新增文件的流程：**先答三问，再加一行**；答不出「≥2 层需要」就放回所属层。
+> 表头行与分隔行不算登记项；文件列写 `shared/x.rs`、`src/shared/x.rs` 或
+> `crates/rustmark-core/src/shared/x.rs` 均可。
 
 ## 5. 限界上下文与聚合根
 

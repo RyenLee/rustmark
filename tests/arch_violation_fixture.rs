@@ -60,6 +60,23 @@ fn write_registry_at(manifest: &Path, rows: &[(&str, &str)]) {
     std::fs::write(path, text).unwrap();
 }
 
+/// 写入 **shared 准入登记表**（`architecture-constraints.md` §4.5 三问，D-6）。
+///
+/// 与豁免表同一文件、不同区段标记（`<!-- shared:registry -->`）。
+/// 两者互不覆盖是标记对的职责；本 helper 只写 shared 区段，
+/// 既有用例需要豁免表时仍走 `write_registry_at`。
+fn write_shared_registry(manifest: &Path, files: &[&str]) {
+    let path = manifest.join("docs").join("architecture-constraints.md");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let mut text = String::from("# 架构约束\n\n<!-- shared:registry -->\n");
+    text.push_str("| 文件 | 三问理由 |\n|---|---|\n");
+    for f in files {
+        text.push_str(&format!("| `{f}` | 三问已答（测试登记） |\n"));
+    }
+    text.push_str("<!-- /shared:registry -->\n");
+    std::fs::write(path, text).unwrap();
+}
+
 fn described(vs: &[arch_check::Violation]) -> Vec<String> {
     vs.iter()
         .map(|v| format!("{}:{} {}", v.file, v.line, v.detail))
@@ -2447,6 +2464,99 @@ fn core_exemptions_resolve_from_the_manifest_registry() {
     assert!(
         violations.is_empty(),
         "core 侧豁免应从 manifest 级登记表命中（键为层相对路径）：{:?}",
+        described(&violations)
+    );
+}
+
+// ============================================================================
+// 十六、shared 准入登记制（D-6 / 约束 §4.5）
+// ============================================================================
+
+/// `shared/` 下**未登记**的文件必须被 `scan_project` 报出（文件级、报首行）。
+///
+/// # 为什么这条判据必须机械化
+///
+/// 三问（≥2 层需要 / 零 IO / 无可归属的层）如果只写在约束文档里，
+/// 回答与否完全靠自觉——`std::process` 当年就是「不在禁止清单」地混进
+/// `shared/system.rs` 的。登记制把它变成可执行判据：不登记，
+/// `build.rs`（每次构建）与 `check-arch`（CI）当场红。
+#[test]
+fn unregistered_shared_file_is_reported_by_scan_project() {
+    let dir = tempfile::tempdir().unwrap();
+    let manifest = dir.path();
+    write_fixture(&manifest.join("src"), "lib.rs", "//! x\n");
+    write_fixture(
+        &manifest.join("crates/rustmark-core/src"),
+        "shared/gateway.rs",
+        "//! x\n",
+    );
+
+    let violations = arch_check::scan_project(manifest);
+    assert_eq!(
+        violations.len(),
+        1,
+        "未登记的 shared 文件应恰好报 1 条，实际：{:?}",
+        described(&violations)
+    );
+    let v = &violations[0];
+    assert_eq!(
+        v.file, "crates/rustmark-core/src/shared/gateway.rs",
+        "报告路径须带 core 前缀（层判定仍按根内相对路径）：{v:?}"
+    );
+    assert_eq!(v.line, 1, "文件级规则报首行：{v:?}");
+    assert!(v.detail.contains("三问"), "文案须点名准入三问：{v:?}");
+    assert!(
+        v.detail.contains("shared 登记表"),
+        "文案须指路登记表：{v:?}"
+    );
+}
+
+/// 登记过的 `shared/` 文件放行；登记列的**三种写法**等价。
+///
+/// 用最啰嗦的 `crates/rustmark-core/src/shared/gateway.rs` 做登记键，
+/// 钉住归一化链（先剥 core 前缀再剥 `src/`）——写法一旦漂移，
+/// 真实工程 18 个登记键会全部失配、守卫用例当场红。
+#[test]
+fn registered_shared_file_passes_scan_project() {
+    let dir = tempfile::tempdir().unwrap();
+    let manifest = dir.path();
+    write_fixture(&manifest.join("src"), "lib.rs", "//! x\n");
+    write_fixture(
+        &manifest.join("crates/rustmark-core/src"),
+        "shared/gateway.rs",
+        "//! x\n",
+    );
+    write_shared_registry(manifest, &["crates/rustmark-core/src/shared/gateway.rs"]);
+
+    let violations = arch_check::scan_project(manifest);
+    assert!(
+        violations.is_empty(),
+        "已登记的 shared 文件不应报错：{:?}",
+        described(&violations)
+    );
+}
+
+/// **边界**：合成目录口径（`scan` / `scan_with_tests`）不套用登记制。
+///
+/// # 为什么单独钉这条边界
+///
+/// 登记制只挂在 `scan_project`（真实工程入口）：fixture 的合成目录里
+/// 有几十个用例往 tempdir 写 `shared/*.rs` 注入层禁令违规，那里没有
+/// 「三问登记表」的语境——把登记查挂进 `scan_impl` 会把它们全部误伤成
+/// 两倍违规（既有用例的 `len == 1` 断言当场红）。这条用例是反方向钉子：
+/// 哪天有人把校验下沉进 `scan_impl`「统一口径」，这里立刻红，
+/// 逼人显式面对 fixture 边界而不是静默改坏一片。
+#[test]
+fn synthetic_scan_does_not_require_shared_registration() {
+    let dir = tempfile::tempdir().unwrap();
+    let src_root = dir.path().join("src");
+    write_fixture(&src_root, "lib.rs", "//! x\n");
+    write_fixture(&src_root, "shared/gateway.rs", "//! x\n");
+
+    let violations = arch_check::scan(&src_root);
+    assert!(
+        violations.is_empty(),
+        "合成目录口径不查 shared 登记（无登记表语境），实际：{:?}",
         described(&violations)
     );
 }

@@ -242,6 +242,11 @@ const ARCH_ALLOW: &str = "arch-allow:";
 const REGISTRY_BEGIN: &str = "<!-- arch-allow:registry -->";
 const REGISTRY_END: &str = "<!-- /arch-allow:registry -->";
 
+/// `shared` 准入登记表在 `docs/architecture-constraints.md` 里的区段标记
+/// （§4.5 三问，D-6）。与豁免表同级：`shared/` 下每个文件必须登记。
+const SHARED_REGISTRY_BEGIN: &str = "<!-- shared:registry -->";
+const SHARED_REGISTRY_END: &str = "<!-- /shared:registry -->";
+
 // ============================================================================
 // 层判定
 // ============================================================================
@@ -1126,33 +1131,88 @@ fn load_registry_at(manifest: &Path) -> Registry {
 }
 
 fn parse_registry(text: &str) -> Registry {
-    let mut rows: Vec<(String, String)> = Vec::new();
+    let rows = parse_marked_table(text, REGISTRY_BEGIN, REGISTRY_END)
+        .into_iter()
+        .filter_map(|cells| {
+            let name = cells.get(1)?;
+            if name.is_empty() {
+                return None;
+            }
+            Some((normalize_registry_file(&cells[0]), name.clone()))
+        })
+        .collect();
+    Registry { rows }
+}
+
+/// 解析标记对之间的 Markdown 表格，返回每行的单元格（已 trim、去反引号）。
+///
+/// 表头行（首格 `文件`）与分隔行（`---`）不是登记项，统一跳过——
+/// 两张登记表（豁免表 / shared 准入表）的行走规则只有「取哪几列」的差别，
+/// 行的语法共用这一处，避免两份遍历各自漂移。
+fn parse_marked_table(text: &str, begin: &str, end: &str) -> Vec<Vec<String>> {
+    let mut rows: Vec<Vec<String>> = Vec::new();
     let mut in_table = false;
     for line in text.lines() {
         let t = line.trim();
-        if t.starts_with(REGISTRY_BEGIN) {
+        if t.starts_with(begin) {
             in_table = true;
             continue;
         }
-        if t.starts_with(REGISTRY_END) {
+        if t.starts_with(end) {
             in_table = false;
             continue;
         }
         if !in_table || !t.starts_with('|') {
             continue;
         }
-        let cells: Vec<&str> = t.trim_matches('|').split('|').map(|c| c.trim()).collect();
-        if cells.len() < 2 {
+        let cells: Vec<String> = t
+            .trim_matches('|')
+            .split('|')
+            .map(|c| c.trim().trim_matches('`').trim().to_string())
+            .collect();
+        let Some(file) = cells.first() else {
+            continue;
+        };
+        if file.is_empty() || file.starts_with('-') || file == "文件" {
             continue;
         }
-        let file = cells[0].trim_matches('`').trim();
-        let name = cells[1].trim_matches('`').trim();
-        if file.is_empty() || name.is_empty() || file.starts_with('-') || file == "文件" {
-            continue;
-        }
-        rows.push((normalize_registry_file(file), name.to_string()));
+        rows.push(cells);
     }
-    Registry { rows }
+    rows
+}
+
+/// `shared` 准入登记表（§4.5 三问；D-6）：`shared/` 下已登记的文件。
+#[derive(Debug, Default)]
+struct SharedRegistry {
+    /// 层相对路径（如 `shared/theme.rs`）。
+    files: Vec<String>,
+}
+
+impl SharedRegistry {
+    fn contains(&self, rel: &str) -> bool {
+        self.files.iter().any(|f| f == rel)
+    }
+}
+
+/// 按 manifest 读取 `shared` 准入登记表（与豁免表同一文件、不同区段）。
+///
+/// 路径按 manifest 而非扫描根，理由与 [`load_registry_at`] 相同：
+/// core 根的 parent 没有 `docs/`。
+fn load_shared_registry_at(manifest: &Path) -> SharedRegistry {
+    let path = manifest.join("docs").join("architecture-constraints.md");
+    let Ok(text) = fs::read_to_string(&path) else {
+        return SharedRegistry::default();
+    };
+    parse_shared_registry(&text)
+}
+
+fn parse_shared_registry(text: &str) -> SharedRegistry {
+    let files = parse_marked_table(text, SHARED_REGISTRY_BEGIN, SHARED_REGISTRY_END)
+        .into_iter()
+        .filter_map(|cells| cells.into_iter().next())
+        .map(|file| normalize_shared_file(&file))
+        .collect();
+    SharedRegistry { files }
 }
 
 /// 登记表里的文件列允许写成 `src/domain/x.rs` 或 `domain/x.rs`，统一成后者。
@@ -1160,6 +1220,16 @@ fn normalize_registry_file(raw: &str) -> String {
     let s = raw.replace('\\', "/");
     let s = s.strip_prefix("./").unwrap_or(s.as_str());
     s.strip_prefix("src/").unwrap_or(s).to_string()
+}
+
+/// shared 登记表的文件列允许写成 `shared/x.rs`、`src/shared/x.rs` 或
+/// `crates/rustmark-core/src/shared/x.rs`，统一成**根内相对**的 `shared/x.rs`
+/// （与层判定 [`layer_of`] 的输入同口径）。
+fn normalize_shared_file(raw: &str) -> String {
+    let s = normalize_registry_file(raw);
+    s.strip_prefix("crates/rustmark-core/src/")
+        .unwrap_or(&s)
+        .to_string()
 }
 
 // ============================================================================
@@ -1233,11 +1303,18 @@ pub fn scan_with_tests(src_root: &Path, tests_root: &Path) -> Vec<Violation> {
 /// 沿用 [`load_registry`] 的「parent 即 manifest」推断会让 core 侧豁免
 /// 全部变成「未登记」，故显式 [`load_registry_at`]（manifest）。
 ///
+/// # `shared` 准入登记只在本入口查（§4.5 三问 / D-6）
+///
+/// `shared/` 下的每个文件须登记在约束文档的 shared 登记表里，未登记即违规
+/// （文件级、报首行）。合成目录用例（[`scan`] / [`scan_with_tests`]）**不查**
+/// ——那里没有登记表语境，边界由 fixture 用例双向钉住。
+///
 /// [`scan`] / [`scan_with_tests`] 的签名与口径**保持不变**：fixture 的
 /// 合成目录用例靠它们表达「只扫一个根」的范围差异；真实工程的入口
 /// （`build.rs` / `check-arch` / fixture 的零违规守卫）一律用本函数。
 pub fn scan_project(manifest: &Path) -> Vec<Violation> {
     let registry = load_registry_at(manifest);
+    let shared_registry = load_shared_registry_at(manifest);
     let mut violations = Vec::new();
 
     // 两个 src 根：层判定用**根内相对路径**，报告字段补显示前缀。
@@ -1262,6 +1339,22 @@ pub fn scan_project(manifest: &Path) -> Vec<Violation> {
                 violations.push(v);
             }
             let layer = layer_of(&rel);
+            // shared 准入登记（§4.5 三问 / D-6）：只挂在**真实工程**口径上。
+            // `scan` / `scan_with_tests` 的合成目录用例没有登记表语境，
+            // 边界由 fixture 的「合成扫描不套用登记制」用例钉住。
+            // 判据限定 `shared/` **目录内**的文件：层根 `shared.rs` 只有
+            // `pub mod` 声明（无实现内容），不属三问的对象。
+            if rel.starts_with("shared/") && !shared_registry.contains(&rel) {
+                violations.push(Violation {
+                    file: display.clone(),
+                    line: 1,
+                    detail: format!(
+                        "shared 准入三问未登记（§4.5 / D-6）：`{rel}` 不在 \
+                         docs/architecture-constraints.md 的 shared 登记表里——进 `shared/` 前 \
+                         须答 ①是否 ≥2 层需要 ②是否零 IO ③是否无可归属的层，登记一行方可准入"
+                    ),
+                });
+            }
             let Ok(content) = fs::read_to_string(path) else {
                 continue;
             };
