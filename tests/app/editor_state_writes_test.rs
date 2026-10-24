@@ -14,6 +14,7 @@ use std::sync::Arc;
 
 use rustmark::app::bootstrap::{ConfigPaths, Services};
 use rustmark::app::frame::EditorApp;
+use rustmark::presentation::shortcuts::registry::UiAction;
 use rustmark::presentation::state::editor_ui_state::SpellSuggestMenu;
 
 use crate::support::fake_dialog::FakeDialog;
@@ -128,4 +129,115 @@ fn word_wrap_toggles_through_the_app_method() {
 
     app.toggle_word_wrap();
     assert_eq!(app.editor.word_wrap, before, "再切一次应回到原值");
+}
+
+// ————————————————————————————————————————————————————————————
+// F-1：自动换行 / 拼写检查的「会话 ↔ 领域」双写
+//
+// 缺陷原状：设置页只写领域（当前会话不生效、重启不回读），状态栏点击只翻
+// 会话（不落盘、重启丢失），两条路互相矛盾。以下用例用**同一个配置目录
+// 重新装配**模拟重启，判据全部走方法入口。
+// ————————————————————————————————————————————————————————————
+
+/// 状态栏切换自动换行后，重启应回读到切换值（旧实现会退回领域默认）。
+#[test]
+fn word_wrap_toggle_survives_restart() {
+    let dir = tempfile::tempdir().expect("工作区");
+    let toggled = {
+        let mut app = app_in(dir.path());
+        let before = app.editor.word_wrap;
+        app.toggle_word_wrap();
+        assert_eq!(app.editor.word_wrap, !before, "前置：切换应生效");
+        !before
+    };
+
+    let app = app_in(dir.path());
+    assert_eq!(app.editor.word_wrap, toggled, "重启后会话值应回读");
+    assert_eq!(
+        app.settings().editor.word_wrap,
+        toggled,
+        "领域侧也应记下同一个值（两份值矛盾正是 F-1 的症状）"
+    );
+}
+
+/// 状态栏切换拼写检查后，重启应回读到切换值。
+#[test]
+fn spell_check_toggle_survives_restart() {
+    let dir = tempfile::tempdir().expect("工作区");
+    let toggled = {
+        let mut app = app_in(dir.path());
+        let before = app.editor.spell_check;
+        app.toggle_spell_check();
+        assert_eq!(app.editor.spell_check, !before, "前置：切换应生效");
+        !before
+    };
+
+    let app = app_in(dir.path());
+    assert_eq!(app.editor.spell_check, toggled, "重启后会话值应回读");
+    assert_eq!(
+        app.settings().editor.spell_check,
+        toggled,
+        "领域侧也应记下同一个值"
+    );
+}
+
+/// 设置页的置位入口：会话立即可见 + 领域同时写入 + 重启回读（三处齐）。
+#[test]
+fn set_word_wrap_writes_session_and_domain() {
+    let dir = tempfile::tempdir().expect("工作区");
+    let mut app = app_in(dir.path());
+    let target = !app.editor.word_wrap;
+
+    app.set_word_wrap(target);
+
+    assert_eq!(app.editor.word_wrap, target, "当前会话应立即生效");
+    assert_eq!(
+        app.settings().editor.word_wrap,
+        target,
+        "领域应同时写入（否则重启丢）"
+    );
+    let app = app_in(dir.path());
+    assert_eq!(app.editor.word_wrap, target, "重启后应回读");
+}
+
+/// 设置页的置位入口：拼写检查同样三处齐。
+#[test]
+fn set_spell_check_writes_session_and_domain() {
+    let dir = tempfile::tempdir().expect("工作区");
+    let mut app = app_in(dir.path());
+    let target = !app.editor.spell_check;
+
+    app.set_spell_check(target);
+
+    assert_eq!(app.editor.spell_check, target, "当前会话应立即生效");
+    assert_eq!(
+        app.settings().editor.spell_check,
+        target,
+        "领域应同时写入（否则重启丢）"
+    );
+    let app = app_in(dir.path());
+    assert_eq!(app.editor.spell_check, target, "重启后应回读");
+}
+
+/// 「取消」要把会话侧的两份镜像一起回滚：只回滚领域会让编辑区停在
+/// 取消前的行为上，与设置页复选框显示的值矛盾。
+#[test]
+fn cancel_settings_rolls_back_word_wrap_and_spell_check() {
+    let dir = tempfile::tempdir().expect("工作区");
+    let mut app = app_in(dir.path());
+    let wrap = app.editor.word_wrap;
+    let spell = app.editor.spell_check;
+
+    app.execute(UiAction::OpenSettings);
+    app.set_word_wrap(!wrap);
+    app.set_spell_check(!spell);
+    assert_ne!(app.editor.word_wrap, wrap, "前置：设置期间已改");
+    assert_ne!(app.editor.spell_check, spell, "前置：设置期间已改");
+
+    app.cancel_settings();
+
+    assert_eq!(app.editor.word_wrap, wrap, "会话侧自动换行应回滚");
+    assert_eq!(app.editor.spell_check, spell, "会话侧拼写检查应回滚");
+    assert_eq!(app.settings().editor.word_wrap, wrap, "领域侧也应回滚");
+    assert_eq!(app.settings().editor.spell_check, spell, "领域侧也应回滚");
 }

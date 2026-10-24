@@ -529,6 +529,11 @@ impl EditorApp {
         app.sidebar_visible_persisted = sidebar_effective;
         // 行号栏开关同样以持久化配置为权威来源（默认隐藏，见领域 `EditorSettings`）。
         app.editor.line_numbers = settings.editor.show_line_numbers;
+        // 自动换行 / 拼写检查同理（F-1）：两条写入口都落盘，启动必须回读——
+        // 缺了这两行，设置页存下的值重启后又退回领域默认，用户看到的是
+        // 「设了没保存」；而状态栏的切换更是每次都丢。
+        app.editor.word_wrap = settings.editor.word_wrap;
+        app.editor.spell_check = settings.editor.spell_check;
         app
     }
 }

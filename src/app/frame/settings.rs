@@ -205,6 +205,10 @@ impl EditorApp {
         self.reload_shortcut_registry();
         // 行号栏的会话开关同样回到回滚基准（与主题/快捷键同理由：取消即还原）。
         self.editor.line_numbers = self.settings().editor.show_line_numbers;
+        // 自动换行 / 拼写检查是「会话 + 领域」双份值，取消时两份一起回滚（F-1）：
+        // 只回滚领域会把编辑区留在取消前的行为上，与设置页复选框显示的值矛盾。
+        self.editor.word_wrap = self.settings().editor.word_wrap;
+        self.editor.spell_check = self.settings().editor.spell_check;
         // **在这里**关浮层，而不是让调用方关：三条关闭路径
         // （取消按钮 / 标题栏 × / Esc）必须得到同样结果。
         // 放在调用方的话，Esc 那条路径（`CloseOverlay` 直接

@@ -666,13 +666,48 @@ impl EditorApp {
         self.editor.line_numbers = on;
     }
 
+    /// 自动换行开关：会话状态与领域设置**一起写**（F-1）。
+    ///
+    /// 设置页复选框与状态栏点击是同一个偏好的两个入口，任一处只写一半都会
+    /// 让另一处与它矛盾：只写领域 → 当前会话不生效、重启才回读；只写会话 →
+    /// 当前生效但重启丢失。两条入口都收敛到这里，写入即落盘。
+    pub fn set_word_wrap(&mut self, on: bool) {
+        self.editor.word_wrap = on;
+        self.persist_editor_toggle("自动换行", |e| e.word_wrap = on);
+    }
+
+    /// 拼写检查开关：会话状态与领域设置一起写（F-1，理由同 [`Self::set_word_wrap`]）。
+    pub fn set_spell_check(&mut self, on: bool) {
+        self.editor.spell_check = on;
+        self.persist_editor_toggle("拼写检查", |e| e.spell_check = on);
+    }
+
     /// 切换拼写检查（状态栏点击）。
     pub fn toggle_spell_check(&mut self) {
-        self.editor.spell_check = !self.editor.spell_check;
+        let next = !self.editor.spell_check;
+        self.set_spell_check(next);
     }
 
     /// 切换自动换行（状态栏点击）。
     pub fn toggle_word_wrap(&mut self) {
-        self.editor.word_wrap = !self.editor.word_wrap;
+        let next = !self.editor.word_wrap;
+        self.set_word_wrap(next);
+    }
+
+    /// 把一个编辑器开关写进领域设置；失败报到状态栏。
+    ///
+    /// 刻意不复用 `apply_editor_field`：那条路把错误记进 `settings_ui.error`，
+    /// 而状态栏点击时设置浮层通常关着——错误会无人看见（禁静默）。开关是
+    /// 布尔值，领域不会因取值拒绝，真正会失败的只有落盘本身，文案按此如实写。
+    fn persist_editor_toggle(&mut self, label: &str, mutate: impl FnOnce(&mut EditorSettingsView)) {
+        let mut view = self.settings().editor;
+        mutate(&mut view);
+        if let Err(e) = self
+            .services
+            .preferences
+            .set_editor(SetEditorCommand { editor: view })
+        {
+            self.set_status_error(&format!("{label}设置未能保存：{e}"));
+        }
     }
 }

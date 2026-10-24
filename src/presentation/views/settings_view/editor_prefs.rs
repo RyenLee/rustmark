@@ -26,14 +26,16 @@ pub(super) fn editor(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
         });
     });
     field(ui, theme, "自动换行", |ui| {
-        let mut on = view.word_wrap;
+        // 读**会话**值：它是编辑区实际生效的那份。启动时由领域播种、改动经
+        // `set_word_wrap` 双写（会话 + 领域），故与设置页其它项显示一致。
+        let mut on = app.editor.word_wrap;
         if ui.checkbox(&mut on, "按窗口宽度折行").changed() {
-            app.apply_editor_field(|e| e.word_wrap = on);
+            app.set_word_wrap(on);
         }
     });
-    // 行号栏：**会话开关立即生效**（与 word_wrap 不同——那要重启或状态栏
-    // 切换才对编辑区生效，这里不能照抄）。持久化值在启动时播种进会话
-    // 状态（`EditorApp::new`），故复选框读会话值即可与设置页其它项一致。
+    // 行号栏：与自动换行同一手法——`set_line_numbers` 让会话立即生效，
+    // `apply_editor_field` 负责落盘；持久化值在启动时播种进会话状态
+    // （`EditorApp::new`），故复选框读会话值即可与设置页其它项一致。
     field(ui, theme, "行号栏", |ui| {
         let mut on = app.editor.line_numbers;
         if ui.checkbox(&mut on, "在编辑区左侧显示行号").changed() {
@@ -97,10 +99,11 @@ pub(super) fn editor(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
 
 /// 「语法检查」分区。
 pub(super) fn spellcheck(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
-    let view = app.settings().editor;
-    let mut on = view.spell_check;
+    // 读会话值（启动时由领域播种、改动经 `set_spell_check` 双写），
+    // 与状态栏显示及编辑区实际生效值一致。
+    let mut on = app.editor.spell_check;
     if ui.checkbox(&mut on, "在编辑区标记拼写错误").changed() {
-        app.apply_editor_field(|e| e.spell_check = on);
+        app.set_spell_check(on);
     }
     ui.colored_label(
         theme.text_secondary,
