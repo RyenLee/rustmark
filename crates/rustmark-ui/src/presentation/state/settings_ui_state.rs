@@ -18,9 +18,9 @@
 //! 少一个字段不会报错——所以额外用 `snapshot_covers_every_field` 风格的
 //! 测试在应用层钉住）。
 
+use crate::presentation::shortcuts::registry::UiAction;
 use rustmark_core::application::dto::LintRulesView;
 use rustmark_core::application::preferences::commands::SettingsSection;
-use rustmark_core::presentation::shortcuts::registry::UiAction;
 
 /// 设置页标签（**视图**概念：导航栏上能看到的那几项）。
 ///

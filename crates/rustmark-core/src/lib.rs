@@ -32,3 +32,13 @@ pub mod domain;
 pub mod infrastructure;
 pub mod presentation;
 pub mod shared;
+
+// V11-62 批次 3：`shortcuts` 迁入 `rustmark-ui` 后，其 `registry` 仍需 actions crate 的
+// 类型（MenuGroup / UiAction / action）。ui crate 不直接依赖 `rustmark-actions`（保持
+// ui 依赖面 = egui + core，拓扑断言 `ui_crate_dependency_face_is_egui_plus_core` 不变），
+// 故由 core 在此以 `actions` 子模块转发，供 ui 经 `rustmark_core::actions` 间接访问。
+pub mod actions {
+    //! actions crate 的符号转发层：把 `rustmark_actions` 的 `MenuGroup` / `UiAction` /
+    //! `action` 经 core 暴露给下游（ui crate 不直接依赖 `rustmark-actions`）。
+    pub use rustmark_actions::{MenuGroup, UiAction, action};
+}

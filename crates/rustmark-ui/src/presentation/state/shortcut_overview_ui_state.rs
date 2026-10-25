@@ -9,13 +9,13 @@
 //!
 //! 本模块只做**分组与筛选**这类纯展示逻辑，数据一律从注册表现取。
 
-use rustmark_core::presentation::shortcuts::registry::{ActionEntry, MenuGroup};
+use crate::presentation::shortcuts::registry::{ActionEntry, MenuGroup};
 
 /// 一行展示项。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ShortcutRow {
     /// 动作。
-    pub action: rustmark_core::presentation::shortcuts::registry::UiAction,
+    pub action: crate::presentation::shortcuts::registry::UiAction,
     /// 中文显示名。
     pub label: &'static str,
     /// 当前生效键位（空串 = 未绑定）。
@@ -125,7 +125,7 @@ fn contains_subsequence(haystack: &str, needle: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rustmark_core::presentation::shortcuts::registry::{ShortcutRegistry, UiAction};
+    use crate::presentation::shortcuts::registry::{ShortcutRegistry, UiAction};
 
     fn groups_of(reg: &ShortcutRegistry) -> Vec<(MenuGroup, Vec<ActionEntry>)> {
         let table = reg.table();
@@ -181,8 +181,8 @@ mod tests {
         // 改键后本模块读到的必须是新值——这是原型缺陷 B-08 的验收点。
         let mut reg = ShortcutRegistry::with_defaults();
         let before = reg.display_for(UiAction::Save);
-        let combo = rustmark_core::presentation::shortcuts::registry::normalize("Ctrl+Alt+K")
-            .expect("应能解析");
+        let combo =
+            crate::presentation::shortcuts::registry::normalize("Ctrl+Alt+K").expect("应能解析");
         reg.rebind(UiAction::Save, combo);
         let out = sections(groups_of(&reg), "保存");
         let row = out

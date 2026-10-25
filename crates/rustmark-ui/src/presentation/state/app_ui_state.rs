@@ -10,9 +10,9 @@
 //! 切换文件后 A 的内容被写进 B（缺陷 B-05）。
 //! 本项目由`check-arch` +下面的静态断言共同保证这条边界。
 
+use crate::presentation::shortcuts::dispatcher::ShortcutDispatcher;
+use crate::presentation::shortcuts::registry::ShortcutRegistry;
 use crate::presentation::state::scroll_sync_state::ScrollSync;
-use rustmark_core::presentation::shortcuts::dispatcher::ShortcutDispatcher;
-use rustmark_core::presentation::shortcuts::registry::ShortcutRegistry;
 use rustmark_core::presentation::theme::builtin::Theme;
 
 /// 侧边栏当前标签。

@@ -42,7 +42,7 @@
 
 use std::collections::HashMap;
 
-use crate::application::dto::ShortcutView;
+use rustmark_core::application::dto::ShortcutView;
 
 mod combo;
 mod keys;
@@ -60,7 +60,7 @@ pub use palette::{ActionEntry, ActionTable};
 // `action` **模块本身**——`registry::action::…` 深层路径保持解析（存量零使用，
 // 但「搬走就让路径 404」不该是抽取的代价）。`keywords` / `default_combo`
 // 随之在该 crate 里升 `pub`：core 的命令面板与 `build` 都要跨 crate 读。
-pub use rustmark_actions::{MenuGroup, UiAction, action};
+pub use rustmark_core::actions::{MenuGroup, UiAction, action};
 
 // ============================================================================
 // 注册表

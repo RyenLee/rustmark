@@ -23,7 +23,7 @@
 //! 为命令面板单独扩检索范围等于**推翻一条已通过的验收**——收益不足。
 //! 真要按分组筛，应该另给面板一个分组筛选器，而不是混进模糊匹配。
 
-use rustmark_core::presentation::shortcuts::registry::ActionEntry;
+use crate::presentation::shortcuts::registry::ActionEntry;
 
 /// 一行命令（视图用）。
 ///
@@ -43,7 +43,7 @@ pub struct CommandRow {
 
 impl CommandRow {
     /// 动作。
-    pub fn action(&self) -> rustmark_core::presentation::shortcuts::registry::UiAction {
+    pub fn action(&self) -> crate::presentation::shortcuts::registry::UiAction {
         self.entry.action
     }
 
@@ -124,7 +124,7 @@ impl CommandPaletteUiState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rustmark_core::presentation::shortcuts::registry::{MenuGroup, ShortcutRegistry, UiAction};
+    use crate::presentation::shortcuts::registry::{MenuGroup, ShortcutRegistry, UiAction};
 
     fn entry(action: UiAction) -> ActionEntry {
         ShortcutRegistry::with_defaults().table().entry(action)

@@ -13,8 +13,9 @@
 //! V11-62 批次 2：`state`（UI State，24 文件 / 6,682 行）抽去 `rustmark-ui`。
 //! 它是表现层内部依赖的枢纽（theme / shortcuts 均被 state 读取，反向零引用），
 //! 故按依赖拓扑先于 theme / shortcuts 搬迁——批次序由 DAG 定，不由行数定。
-//! theme / rich / shortcuts 按批次计划随后迁移。
+//! V11-62 批次 3：`shortcuts`（5 文件 / 892 行）抽去 `rustmark-ui`——纯叶
+//! （仅依赖 `application::dto`），不引用 theme/state/rich，顺序自由。
+//! theme / rich 按批次计划随后迁移。
 
 pub mod rich;
-pub mod shortcuts;
 pub mod theme;
