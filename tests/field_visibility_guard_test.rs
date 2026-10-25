@@ -360,6 +360,7 @@ const APPROVED_PUB_FIELDS: &[&str] = &[
     "infrastructure/fonts.rs::FontSetup::editor_fonts",
     "infrastructure/persistence/asset_loader/policy.rs::AssetLimits::download_timeout",
     "infrastructure/persistence/asset_loader/policy.rs::AssetLimits::max_inline_bytes",
+    "infrastructure/persistence/asset_loader/policy.rs::AssetLimits::max_local_bytes",
     "infrastructure/persistence/asset_loader/policy.rs::LoadedAsset::alt",
     "infrastructure/persistence/asset_loader/policy.rs::LoadedAsset::bytes",
     "infrastructure/persistence/asset_loader/policy.rs::LoadedAsset::mime",

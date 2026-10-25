@@ -253,7 +253,8 @@ fn search_covers_unsaved_draft_over_disk() {
 #[test]
 fn search_caps_hits_per_file() {
     let f = build();
-    let content: String = "apple ".repeat(60);
+    // 160 次命中 > 单文件上限 100，确保真的触发截断。
+    let content: String = "apple ".repeat(160);
     seed_files(&f, &["/d/a.md"], &content);
 
     let result = f
@@ -270,22 +271,19 @@ fn search_caps_hits_per_file() {
     assert_eq!(
         result.hits.len(),
         MAX_HITS_PER_FILE,
-        "单文件命中不得超过 50（上限保护，避免阻塞 UI 帧）"
+        "单文件命中不得超过 100（上限保护，避免阻塞 UI 帧）"
     );
-    assert!(!result.truncated);
+    assert!(result.truncated, "单文件命中被截断时也必须标记");
 }
 
 #[test]
 fn search_caps_total_hits() {
     let f = build();
+    // 20 个文件 × 60 次命中 = 1200，超过总量上限 1000。
     let content: String = "apple ".repeat(60);
-    seed_files(
-        &f,
-        &[
-            "/d/a.md", "/d/b.md", "/d/c.md", "/d/d.md", "/d/e.md", "/d/f.md", "/d/g.md",
-        ],
-        &content,
-    );
+    let files: Vec<String> = (0..20).map(|i| format!("/d/f{i}.md")).collect();
+    let refs: Vec<&str> = files.iter().map(String::as_str).collect();
+    seed_files(&f, &refs, &content);
 
     let result = f
         .service
@@ -298,7 +296,7 @@ fn search_caps_total_hits() {
             only_open_documents: false,
         })
         .unwrap();
-    assert_eq!(result.hits.len(), MAX_TOTAL_HITS, "总命中不得超过 300");
+    assert_eq!(result.hits.len(), MAX_TOTAL_HITS, "总命中不得超过上限");
     assert!(result.truncated, "超过总上限必须标记截断");
 }
 
@@ -306,9 +304,9 @@ fn search_caps_total_hits() {
 fn search_snippet_never_splits_utf8_chars() {
     let f = build();
     // 崩溃回归（docs/logs/crash-20261014135941-29300.txt）：摘要窗口按前后
-    // 各 24 **字节**截取，混合字节宽度的上下文使窗口落点必然切进多字节
+    // 各 40 **字节**截取，混合字节宽度的上下文使窗口落点必然切进多字节
     // 字符中间，直接切片曾令搜索功能 panic。注意单一宽度序列测不出来——
-    // 24 能被 3 和 4 整除，落点恰好都是边界，必须混合宽度才覆盖得到。
+    // 40 能被 4 整除，落点恰好都是边界，必须混合宽度才覆盖得到。
     let content = format!("{}needle{}", "🎉中文测试".repeat(8), "🎉中文测试".repeat(8),);
     seed_files(&f, &["/d/mixed.md"], &content);
 
@@ -345,15 +343,16 @@ fn search_snippet_never_splits_utf8_chars() {
 ///
 /// # 判据设计
 ///
-/// 用例内容让摘要窗口的**两端都落在多字节字符中间**：
-/// - 窗口起点 = `128 - 24 = 104` 字节 → 落在「文」字中间（该字占 103..106）；
-/// - 窗口终点 = `134 + 24 = 158` 字节 → 落在「中」字中间（该字占 154..157）。
+/// 用例内容让摘要窗口的**两端都落在多字节字符中间**（每 16 字节一个
+/// 「🎉中文测试」单元）：
+/// - 窗口起点 = `128 - 40 = 88` 字节 → 落在单元内偏移 8，「文」字（7..10）；
+/// - 窗口终点 = `134 + 40 = 174` 字节 → 落在单元内偏移 14，「试」字（13..16）。
 ///
-/// 向下吸附 → 起点 103（首字符「文」）、终点 157（末字符「中」）；
-/// 向上吸附 → 起点 106（首字符「测」）、终点 160（末字符「文」）。
+/// 向下吸附 → 起点 87（首字符「文」）、终点 173（末字符「中」）；
+/// 向上吸附 → 起点 90（首字符「测」）、终点 176（末字符「试」）。
 ///
 /// 两者的**首字符与末字符都不同**，因此断言首尾字符即可区分方向；
-/// 字节长度（54）再钉一道，防「整体平移但首尾恰好同字」的漏网。
+/// 字节长度（86）再钉一道，防「整体平移但首尾恰好同字」的漏网。
 #[test]
 fn search_snippet_snaps_to_char_boundaries_downward() {
     let f = build();
@@ -374,24 +373,24 @@ fn search_snippet_snaps_to_char_boundaries_downward() {
     assert_eq!(result.hits.len(), 1);
     let hit = &result.hits[0];
 
-    // 窗口两端向下吸附到最近的字符边界：起点 103、终点 157。
+    // 窗口两端向下吸附到最近的字符边界：起点 87、终点 173。
     assert_eq!(
         hit.snippet.chars().next(),
         Some('文'),
-        "摘要起点应向下吸附到「文」字开头（字节 103），而非向上取整的「测」：{:?}",
+        "摘要起点应向下吸附到「文」字开头（字节 87），而非向上取整的「测」：{:?}",
         hit.snippet
     );
     assert_eq!(
         hit.snippet.chars().last(),
         Some('中'),
-        "摘要终点应向下吸附到「中」字结尾（字节 157），而非向上取整的「文」：{:?}",
+        "摘要终点应向下吸附到「中」字结尾（字节 173），而非向上取整的「试」：{:?}",
         hit.snippet
     );
-    // 字节长度 = 157 - 103 = 54。
+    // 字节长度 = 173 - 87 = 86。
     assert_eq!(
         hit.snippet.len(),
-        54,
-        "摘要字节长度应为 54（103..157），方向或偏移不对：{:?}",
+        86,
+        "摘要字节长度应为 86（87..173），方向或偏移不对：{:?}",
         hit.snippet
     );
 }

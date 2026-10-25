@@ -139,6 +139,11 @@ impl WorkspaceAppService {
                 regex.as_ref(),
                 MAX_HITS_PER_FILE,
             );
+            // 单文件命中被上限截断时同样标记：否则用户只看到「前 100 条」，
+            // 会误以为该文件真的只有这些命中（与总量截断同一语义）。
+            if raw.len() >= MAX_HITS_PER_FILE {
+                truncated = true;
+            }
             for hit in raw {
                 if hits.len() >= MAX_TOTAL_HITS {
                     truncated = true;
@@ -492,22 +497,22 @@ fn search_text_regex(text: &str, regex: &Regex, max_per_file: usize) -> Vec<RawH
 
 /// 取命中上下文片段（前后各 24 字节，行内截断）。
 ///
-/// 摘要窗口按**字节**取，而 `±24` 后的落点完全可能停在多字节 UTF-8
-/// 字符中间：中文 3 字节、emoji 4 字节，混合排版时 24 的偏移几乎必然
+/// 摘要窗口按**字节**取，而 `±40` 后的落点完全可能停在多字节 UTF-8
+/// 字符中间：中文 3 字节、emoji 4 字节，混合排版时 40 的偏移仍可能
 /// 切进字符内部，直接切片会 panic（崩溃记录
 /// docs/logs/crash-20261014135941-29300.txt：`end byte index 305 is not
 /// a char boundary; it is inside '行'`）。切片前把两端都向下对齐到字符
 /// 边界：最多少取半个字符，摘要语义不受影响；`find('\n')` 那条路径
 /// 本就是边界，对齐是恒等的。
 fn snippet_window(text: &str, line_start: usize, start_off: usize, end_off: usize) -> String {
-    let snippet_start = floor_char_boundary(text, line_start.max(start_off.saturating_sub(24)));
+    let snippet_start = floor_char_boundary(text, line_start.max(start_off.saturating_sub(40)));
     let snippet_end = floor_char_boundary(
         text,
         (text[end_off..]
             .find('\n')
             .map(|x| end_off + x)
             .unwrap_or(text.len()))
-        .min(end_off + 24),
+        .min(end_off + 40),
     );
     text[snippet_start..snippet_end].to_string()
 }

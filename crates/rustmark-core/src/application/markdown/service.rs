@@ -55,7 +55,10 @@ pub use span_cache::{HighlightCache, HighlightPace};
 pub(crate) use spell_cache::SpellCache;
 
 /// 超过该字节数（500 KiB）的源文档标记为截断预览（FR-06 应用层判定）。
-pub const TRUNCATE_THRESHOLD_BYTES: usize = 500 * 1024;
+///
+/// 单一真源在 [`crate::shared::constants::LARGE_FILE_BYTES`]：增量高亮与
+/// 表现层排版共用同一阈值，避免三处副本各自漂移。
+pub const TRUNCATE_THRESHOLD_BYTES: usize = crate::shared::constants::LARGE_FILE_BYTES;
 
 /// 渲染缓存容量（LRU 上限）。
 ///

@@ -39,9 +39,9 @@ on:
   workflow_dispatch:
     inputs:
       size_limit_bytes:
-        description: "体积红线（字节）；默认 10485760 = 10 MB"
+        description: "体积红线（字节）；默认 11534336 = 11 MiB"
         required: false
-        default: "10485760"
+        default: "11534336"
 
 # 最小权限：CI 只读代码。需要写权限的 job（release）单独声明。
 permissions:
@@ -51,13 +51,14 @@ env:
   CARGO_TERM_COLOR: always
   # 断言失败时打印回溯，省掉「复现一次只为拿 backtrace」的往返。
   RUST_BACKTRACE: "1"
-  # 体积门禁：红线 10 MB（`§1.2` 硬指标），预警线 8 MB（需求 §8.1）。
-  # 2026-10-22（REL-03）：字体外置 + 关 `rustls-webpki-roots`（改用平台信任库）
-  # 后，Windows 产物实测 10,466,816 B（9.98 MiB），已回到红线内——
-  # 详见 docs/metrics.md §2.7。macOS / Linux 产物仍待真机复测。
+  # 体积门禁：红线 11 MiB（NFR-PERF-01，2026-10-25 由 10 MiB 上调），
+  # 预警线 10.5 MiB（保留约 512 KiB 的可行动窗口，而不是贴着产物常亮）。
+  # 三个数值的唯一真源是 `scripts/size_gate.sh` 的默认值与 docs/metrics.md §2.8；
+  # 本处 env 只是把同一口径传给 CI，不得单独改动。
+  # 2026-10-25 实测（Windows）10,487,296 B = 10.001 MiB：距红线余约 1.0 MiB。
   # 断言失败时可直接用 workflow_dispatch 的 size_limit_bytes 覆盖阈值，以验证门禁本身有效。
-  SIZE_LIMIT_BYTES: ${{ github.event.inputs.size_limit_bytes || '10485760' }}
-  SIZE_WARN_BYTES: '8388608'
+  SIZE_LIMIT_BYTES: ${{ github.event.inputs.size_limit_bytes || '11534336' }}
+  SIZE_WARN_BYTES: '11010048'
   # cargo 命令行工具（cargo-deny / cargo-llvm-cov / cargo-bloat）统一装到
   # 这个根目录，便于缓存；不能装进 ~/.cargo/bin——那里放着 rustup 的
   # cargo/rustc 代理，缓存回写会覆盖它们。

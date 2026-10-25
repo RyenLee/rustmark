@@ -6,11 +6,17 @@ use std::time::Duration;
 use crate::shared::error::AppError;
 
 /// 资源加载的限制参数。
+///
+/// 体积上限**按来源分层**：data URI 是写进 Markdown 文本的内联数据，
+/// 过大既撑爆文档也拖慢解析，故保持 512 KB；本地文件与远程图片没有
+/// 文本膨胀问题，按普通照片的典型体积（2–5 MB）放到 8 MiB。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AssetLimits {
-    /// 允许内联的最大字节数（默认 512 KB，与原型的 `IMAGE_WARN_BYTES` 同值）。
+    /// data URI 允许内联的最大字节数（512 KiB）。
     pub max_inline_bytes: usize,
-    /// 远程下载超时（默认 5秒）。
+    /// 本地文件与远程下载的体积上限（8 MiB）。
+    pub max_local_bytes: usize,
+    /// 远程下载超时（10 秒）。
     ///
     /// 首版用同步下载，故必须有超时：否则一个无响应的服务器会把
     /// 整个预览线程挂住，用户看到的是「编辑器卡死了」。
@@ -21,7 +27,8 @@ impl Default for AssetLimits {
     fn default() -> Self {
         Self {
             max_inline_bytes: 512 * 1024,
-            download_timeout: Duration::from_secs(5),
+            max_local_bytes: 8 * 1024 * 1024,
+            download_timeout: Duration::from_secs(10),
         }
     }
 }
@@ -45,7 +52,9 @@ pub enum AssetError {
     /// 超过体积上限。
     ///
     /// 携带上限值与实际值，便于 UI 直接显示「当前 2.1 MB，上限 512 KB」。
-    #[error("图片体积 {actual} 字节超过上限 {limit} 字节；请改用相对路径引用，或压缩后再插入")]
+    #[error(
+        "图片体积 {actual} 字节超过上限 {limit} 字节；请压缩或缩小尺寸后重试，或改用相对路径引用"
+    )]
     TooLarge {
         /// 实际字节数。
         actual: usize,

@@ -1,7 +1,7 @@
 //! Workspace 用例查询（阶段 04 · S4-07）。
 //!
 //! 查询与命令命名不冲突（动名词区分）。跨文件搜索沿用原型的命中上限
-//! （单文件 50、总 300），由 [`SearchQuery`] 描述检索条件。
+//! （单文件 100、总 1000），由 [`SearchQuery`] 描述检索条件。
 
 use crate::shared::ids::DocumentId;
 use crate::shared::path::FilePath;

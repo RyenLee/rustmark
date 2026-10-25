@@ -82,7 +82,7 @@ pub(super) fn search_tab(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
                 }
             }
             if result.truncated {
-                ui.colored_label(theme.warning, "结果较多，已显示前 300 条，请缩小搜索范围");
+                ui.colored_label(theme.warning, "结果较多，已截断，请缩小搜索范围");
             }
         });
     if let Some((path, line)) = jump {

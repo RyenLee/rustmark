@@ -492,6 +492,14 @@ fn measure_10kb_parse_time() {
         p95 <= 50.0,
         "10KB 解析 p95 {p95:.2}ms 疑似退化（目标 ≤5ms）"
     );
+    // NFR 合规断言（2026-10-25 阈值评审）：与上面的 smoke 门禁并存——
+    // 50ms 只防灾难，10ms 才守住 NFR-PERF-06 的 5ms 指标（留 2× 容差）。
+    // debug 构建的解析吞吐约为 release 的 1/8，故只在 release 判定。
+    #[cfg(not(debug_assertions))]
+    assert!(
+        p95 <= 10.0,
+        "NFR-PERF-06：10KB 解析 p95 {p95:.2}ms 超过 10ms（指标 5ms + 2× 容差）"
+    );
 }
 
 #[test]
@@ -742,5 +750,14 @@ fn measure_editor_frame_highlight_cost() {
     assert!(
         after_p95 <= 5.0,
         "停手补算后 p95 {after_p95:.2}ms 仍居高，说明每帧都在重算（防抖退化成节流）"
+    );
+
+    // NFR 合规断言（2026-10-25 阈值评审）：`settle` 就是「10KB 文档停手后
+    // 一次性全文高亮」的耗时，正是 NFR-PERF-05 的口径（≤10ms）。
+    // 40ms 的整帧门禁只防灾难，这一条才守指标；debug 下 syntect 慢一个量级，故只判 release。
+    #[cfg(not(debug_assertions))]
+    assert!(
+        settle <= 10.0,
+        "NFR-PERF-05：10KB 停手补算 {settle:.2}ms 超过 10ms 预算"
     );
 }

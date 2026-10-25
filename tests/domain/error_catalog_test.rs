@@ -200,12 +200,20 @@ fn undo_policy_accessors_and_default() {
     );
     assert_eq!(policy.merge_window_ms(), 400);
     assert_eq!(policy.max_depth(), 200);
+    assert_eq!(
+        policy.max_bytes(),
+        rustmark::domain::document::undo::DEFAULT_MAX_BYTES,
+        "默认字节预算应与常量同源"
+    );
 
     let custom = UndoPolicy::new(250, 7);
     assert_eq!(custom.merge_window_ms(), 250);
     assert_eq!(custom.max_depth(), 7);
     // 0 深度按 1 处理：至少保留一个撤销点（不然撤销栈形同虚设）。
     assert_eq!(UndoPolicy::new(250, 0).max_depth(), 1);
+    // 字节预算可覆盖；0 收敛到 1，避免撤销能力被静默关闭。
+    assert_eq!(custom.with_max_bytes(1024).max_bytes(), 1024);
+    assert_eq!(custom.with_max_bytes(0).max_bytes(), 1);
 }
 
 /// 覆盖补充：仓储 trait 的**默认草稿方法**（空实现）。

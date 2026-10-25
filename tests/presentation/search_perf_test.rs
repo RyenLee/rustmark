@@ -44,7 +44,7 @@ use rustmark::presentation::state::app_ui_state::SidebarTab;
 use rustmark::presentation::views::sidebar_view;
 use rustmark::shared::path::FilePath;
 
-/// 合成 `target_bytes` 的 Markdown 语料，且 `needle` 出现次数远超 300 条上限。
+/// 合成 `target_bytes` 的 Markdown 语料，且 `needle` 出现次数远超总命中上限。
 fn sample(target_bytes: usize) -> String {
     let unit = "# 标题 H1\n\n\
                 这是一段中文正文，needle 用于模拟真实编辑场景：包含 **加粗**、`行内代码` \

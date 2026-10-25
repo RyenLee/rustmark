@@ -54,8 +54,8 @@ use super::syntect_highlighter::{classify, default_syntax_set, push_span, resolv
 /// 约 12 个检查点、几十 KB 内存，平均恢复距离 12.5 行。
 const CHECKPOINT_INTERVAL_LINES: usize = 25;
 
-/// 超过该字节数的文档不做增量（与现有 >500KB 降级为空片段的策略对齐）。
-const MAX_INCREMENTAL_BYTES: usize = 512 * 1024;
+/// 超过该字节数的文档不做增量（与预览降级共用同一常量，不再各写一份）。
+const MAX_INCREMENTAL_BYTES: usize = crate::shared::constants::LARGE_FILE_BYTES;
 
 /// 检查点：某一**行首**处的完整解析状态。
 ///

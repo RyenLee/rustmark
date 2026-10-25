@@ -229,6 +229,7 @@ rich / widgets ──► （不得回指 views / state / theme / widgets）
 <!-- shared:registry -->
 | 文件 | 三问理由 |
 |---|---|
+| `shared/constants.rs` | 跨层阈值常量（大文件 500KB / 防抖 150ms / 滚动容差 0.5pt）：core 的应用层、基础设施层、表现层与 `rustmark-ui`、root 五处消费，改一处漏一处即行为分叉；纯常量零 IO，无业务归属层 |
 | `shared/dialog.rs` | 对话框端口：presentation（菜单触发）、application（用例取路径）、infrastructure（rfd 实现）三方共用——矩阵禁 presentation→domain、infrastructure→application，共同落点只有 shared |
 | `shared/encoding.rs` | 编码**标签**纯值：infrastructure 探测编码（IO），presentation 状态栏展示，两层方向互禁，抽值共享 |
 | `shared/error.rs` | `AppError` 跨层统一错误：domain / application 具体错误的汇聚点，全部层与二进制入口共用 |

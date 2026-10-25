@@ -20,9 +20,11 @@
 //! - [`system`]：外部打开器与链接安全校验（S6-05 超链接点击）
 //! - [`image_asset`]：图片资源导入端口（R-04b 插入图片）
 //! - [`lru`]：有界 LRU 映射（D-4；高亮 / 拼写 / 渲染 / 图片四缓存共用）
+//! - [`constants`]：跨层共用的阈值常量（大文件 / 防抖 / 滚动容差，单一真源）
 
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
+pub mod constants;
 pub mod dialog;
 pub mod encoding;
 pub mod error;

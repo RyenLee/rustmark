@@ -18,8 +18,10 @@
 //!
 //! 原型对超过 `IMAGE_WARN_BYTES`（512 KB）的图片**只提示但依然插入**，
 //! 结果是 localStorage 配额超限、整篇文档存不下去——提示没有约束力。
-//! 本实现改为**硬约束**：超过 [`AssetLimits::max_inline_bytes`] 直接返回
-//! [`AssetError::TooLarge`]，并带上「建议改用相对路径」的可操作提示。
+//! 本实现改为**硬约束**：按来源分层——data URI 超过
+//! [`AssetLimits::max_inline_bytes`]（512 KiB）、本地/远程超过
+//! [`AssetLimits::max_local_bytes`]（8 MiB）即返回 [`AssetError::TooLarge`]，
+//! 并带上可操作提示。
 //!
 //! # 为什么解码失败不 `panic`
 //!
@@ -62,7 +64,8 @@ impl AssetLoader {
         Self {
             limits: AssetLimits {
                 max_inline_bytes: 512 * 1024,
-                download_timeout: Duration::from_secs(5),
+                max_local_bytes: 8 * 1024 * 1024,
+                download_timeout: Duration::from_secs(10),
             },
         }
     }
@@ -72,9 +75,14 @@ impl AssetLoader {
         Self { limits }
     }
 
-    /// 当前的体积上限。
+    /// 当前的 data URI 内联上限。
     pub const fn max_inline_bytes(&self) -> usize {
         self.limits.max_inline_bytes
+    }
+
+    /// 当前的本地 / 远程图片上限。
+    pub const fn max_local_bytes(&self) -> usize {
+        self.limits.max_local_bytes
     }
 
     /// 判定是否为受支持的图片引用（本地路径 / 远程 URL / data URI）。
@@ -110,10 +118,11 @@ impl AssetLoader {
             });
         }
 
-        let asset = if let Some(rest) = trimmed.strip_prefix("data:") {
-            self.load_data_uri(rest)?
+        // 分层上限：data URI 是文本内联（512 KiB），本地与远程是资源文件（8 MiB）。
+        let (asset, limit) = if let Some(rest) = trimmed.strip_prefix("data:") {
+            (self.load_data_uri(rest)?, self.limits.max_inline_bytes)
         } else if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
-            self.load_remote(trimmed)?
+            (self.load_remote(trimmed)?, self.limits.max_local_bytes)
         } else if let Some(scheme_end) = trimmed.find("://") {
             // 带 scheme 但不是 http/https/data（如 ftp://、file://）：
             // 明确报错，而不是把 `x://…/a.png` 当成本地路径去 `fs::read`。
@@ -123,15 +132,18 @@ impl AssetLoader {
                 reason: format!("不支持的协议「{scheme}」：仅支持 http/https 与本地路径"),
             });
         } else {
-            self.load_local(trimmed, base_dir)?
+            (
+                self.load_local(trimmed, base_dir)?,
+                self.limits.max_local_bytes,
+            )
         };
 
         // 体积硬约束放在最后统一判定：三条来源都要过这一关，
         // 避免某个分支忘了检查（这正是原型「只提示不约束」的教训）。
-        if asset.len() > self.limits.max_inline_bytes {
+        if asset.len() > limit {
             return Err(AssetError::TooLarge {
                 actual: asset.len(),
-                limit: self.limits.max_inline_bytes,
+                limit,
             });
         }
         Ok(asset)
@@ -204,6 +216,20 @@ impl AssetLoader {
         // SVG 即使扩展名合法也不内联——见 ALLOWED_MIME 的说明。
         if !ALLOWED_MIME.contains(&mime.as_str()) {
             return Err(AssetError::DisallowedMime { mime });
+        }
+
+        // 先看元数据再读：超限文件若先 `fs::read` 进内存再拒绝，
+        // 一张数百 MB 的图会先造成内存尖峰（远程路径已是边读边判）。
+        if let Ok(meta) = std::fs::metadata(&path) {
+            let too_large = usize::try_from(meta.len())
+                .map(|len| len > self.limits.max_local_bytes)
+                .unwrap_or(true);
+            if too_large {
+                return Err(AssetError::TooLarge {
+                    actual: usize::try_from(meta.len()).unwrap_or(usize::MAX),
+                    limit: self.limits.max_local_bytes,
+                });
+            }
         }
 
         let bytes = std::fs::read(&path).map_err(|e| AssetError::ReadFailed {
@@ -288,10 +314,10 @@ impl AssetLoader {
                 Ok(0) => break,
                 Ok(n) => {
                     bytes.extend_from_slice(&chunk[..n]);
-                    if bytes.len() > self.limits.max_inline_bytes * 2 {
+                    if bytes.len() > self.limits.max_local_bytes {
                         return Err(AssetError::TooLarge {
                             actual: bytes.len(),
-                            limit: self.limits.max_inline_bytes,
+                            limit: self.limits.max_local_bytes,
                         });
                     }
                 }

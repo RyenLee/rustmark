@@ -389,10 +389,43 @@ fn oversized_data_uri_is_rejected_with_actionable_message() {
     );
 }
 
-/// 原型的 `IMAGE_WARN_BYTES` 是 512 KB，本实现保持同值。
+/// 原型的 `IMAGE_WARN_BYTES` 是 512 KB，data URI 保持同值。
 #[test]
 fn default_limit_matches_prototype() {
     assert_eq!(AssetLoader::new().max_inline_bytes(), 512 * 1024);
+}
+
+/// 体积上限按来源分层：data URI 512 KiB，本地/远程 8 MiB；下载超时 10s。
+#[test]
+fn limits_are_tiered_by_source() {
+    let limits = AssetLimits::default();
+    assert_eq!(limits.max_inline_bytes, 512 * 1024);
+    assert_eq!(limits.max_local_bytes, 8 * 1024 * 1024);
+    assert_eq!(limits.download_timeout, std::time::Duration::from_secs(10));
+    assert_eq!(AssetLoader::new().max_local_bytes(), 8 * 1024 * 1024);
+}
+
+/// 本地文件在 `fs::read` 之前就按元数据拒绝：超大文件不得先整份进内存。
+#[test]
+fn oversized_local_file_is_rejected_before_read() {
+    let dir = TempDir::new("local-limit");
+    let path = dir.join("big.png");
+    std::fs::write(&path, [0u8; 32]).expect("应能写测试文件");
+    let loader = AssetLoader::with_limits(AssetLimits {
+        max_local_bytes: 16,
+        ..AssetLimits::default()
+    });
+
+    let error = loader
+        .load(path.to_str().expect("路径应可转字符串"), None)
+        .expect_err("超过本地上限应拒绝");
+    match error {
+        AssetError::TooLarge { actual, limit } => {
+            assert_eq!(actual, 32, "应按元数据报告的字节数报错");
+            assert_eq!(limit, 16);
+        }
+        other => panic!("应是体积超限，实际：{other:?}"),
+    }
 }
 
 #[test]

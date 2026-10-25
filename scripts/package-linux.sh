@@ -110,14 +110,14 @@ else
 fi
 rm -rf "$appdir"
 
-# —— 体积门禁 + 校验和 ——
-limit=10485760
+# —— 体积门禁 + 校验和（安装包口径，与二进制门禁分开计价）——
+packageLimitBytes=11534336
 status=0
 for f in "dist/rustmark-v$version-linux-x64.tar.gz" $([ -f "$appimage" ] && echo "$appimage"); do
     size=$(wc -c < "$f" | tr -d ' ')
     echo "产物：$f（$size 字节）"
-    if [ "$size" -gt "$limit" ]; then
-        echo "体积超红线：$size > $limit 字节（10 MB）" >&2
+    if [ "$size" -gt "$packageLimitBytes" ]; then
+        echo "体积超红线：$size > $packageLimitBytes 字节（11 MiB）" >&2
         status=1
     fi
     if command -v sha256sum >/dev/null 2>&1; then

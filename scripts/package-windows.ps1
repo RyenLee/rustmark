@@ -5,7 +5,7 @@
 #   -Version 缺省时取 Cargo.toml 的 package.version。
 # 产出：dist\rustmark-v<version>-windows-x64.zip + 同名 .sha256。
 #
-# 校验：打包后核对 zip 体积 ≤ 10 MB（红线）并生成 SHA256；
+# 校验：打包后核对 zip 体积 ≤ 11 MiB（安装包口径）并生成 SHA256；
 # 纯净虚拟机启动验证属发布演练步骤（docs/release.md），本脚本不做 GUI 冒烟。
 
 param(
@@ -69,13 +69,13 @@ if (Test-Path $out) { Remove-Item -Force $out }
 Compress-Archive -Path "$staging/*" -DestinationPath $out
 Remove-Item -Recurse -Force $staging
 
-# 体积门禁：红线 10 MB（与 CI SIZE_LIMIT_BYTES 同源）。
-$limitBytes = 10485760
+# 体积门禁：红线 11 MiB（安装包口径，与二进制门禁分开计价）。
+$packageLimitBytes = 11534336
 $size = (Get-Item $out).Length
 $mb = [math]::Round($size / 1MB, 3)
 Write-Host "产物：$out（$size 字节 ≈ $mb MB）"
-if ($size -gt $limitBytes) {
-    throw "体积超红线：$size > $limitBytes 字节（10 MB）"
+if ($size -gt $packageLimitBytes) {
+    throw "体积超红线：$size > $packageLimitBytes 字节（11 MiB）"
 }
 
 # SHA256 校验和（格式与 sha256sum -c 兼容：<hash>  <filename>）。

@@ -9,13 +9,13 @@
 #   SIZE_LIMIT_BYTES=5242880 bash scripts/size_gate.sh   # 调低阈值验证门禁会红
 #
 # 环境变量：
-#   SIZE_LIMIT_BYTES  红线（字节），默认 11534336（11 MiB）
-#   SIZE_WARN_BYTES   预警线（字节），默认 10485760（10 MiB）
+#   SIZE_LIMIT_BYTES  红线（字节，二进制口径），默认 11534336（11 MiB）
+#   SIZE_WARN_BYTES   预警线（字节），默认 11010048（10.5 MiB）
 #
 # 历史：2026-10-25 由 10 MiB / 8 MiB 上调——V11-62 批次 2（state 6,682 行迁入
 #   `rustmark-ui`）致 +2,560 B，旧 10 MiB 红线余量（512 B）耗尽越线；经维护者决策，
-#   红线上调至 11 MiB、预警线设为 10 MiB（原红线降级为预警线，语义连贯：
-#   突破旧 10 MiB 硬承诺即进入告警窗口，逼近新 11 MiB 红线）。
+#   红线上调至 11 MiB、预警线设为 10.5 MiB（保留约 512 KiB 可行动窗口；
+#   10 MiB 的旧红线语义由 NFR 历史承诺承载，不再作为告警线）。
 #   GITHUB_STEP_SUMMARY  存在时额外写入 Job Summary（CI 自动提供）
 #
 # 退出码：0 = 未越红线；1 = 越红线或未找到产物。
@@ -23,7 +23,7 @@
 set -u
 
 LIMIT="${SIZE_LIMIT_BYTES:-11534336}"
-WARN="${SIZE_WARN_BYTES:-10485760}"
+WARN="${SIZE_WARN_BYTES:-11010048}"
 
 # 产物路径随是否指定 --target 而不同：显式 target 时为
 # target/<triple>/release/，否则为 target/release/。此处两者都找。

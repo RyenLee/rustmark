@@ -2,7 +2,7 @@
 //!
 //! 编排文件树、最近文件、标签页与跨文件搜索。最近文件的去重与上限（20）由领域层
 //! [`crate::domain::workspace::value_objects::RecentFiles`] 保证；跨文件搜索沿用原型的
-//! 命中上限（单文件 50、总 300），并**优先使用未保存草稿的内存内容**，确保检索覆盖
+//! 命中上限（单文件 100、总 1000），并**优先使用未保存草稿的内存内容**，确保检索覆盖
 //! 尚未落盘的修改。
 //!
 //! # 模块结构
@@ -35,16 +35,16 @@ use crate::application::document::DocumentContentProvider;
 
 use search::SearchCacheEntry;
 
-/// 单文件命中上限（与原型一致）。
-pub const MAX_HITS_PER_FILE: usize = 50;
-/// 总命中上限（与原型一致）。
-pub const MAX_TOTAL_HITS: usize = 300;
+/// 单文件命中上限（原型的 50 条在千文件工作区偏紧，放宽到 100）。
+pub const MAX_HITS_PER_FILE: usize = 100;
+/// 总命中上限（1000 条；仍无分页，超限由 UI 明确提示已截断）。
+pub const MAX_TOTAL_HITS: usize = 1000;
 
 /// 文件树扫描深度上限（S6-11）。
 ///
 /// 取 8 层：普通工程目录深到 8 层已经极少，而无限深度会被
 /// 误指向 `node_modules` 之类的大目录拖死 UI。文件系统实现另有
-/// 5000 条的硬上限兜底，两者都不该由表现层决定。
+/// 10000 条的硬上限兜底，两者都不该由表现层决定。
 pub const TREE_MAX_DEPTH: usize = 8;
 
 /// Workspace 用例服务。

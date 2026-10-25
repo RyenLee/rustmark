@@ -145,7 +145,7 @@ impl Default for StatsPace {
 /// 取 150ms：与编辑器高亮 `HighlightPace` 的静止窗口一致——用户停手约一帧半后
 /// 刷新字数，打字期完全不重算。数字来自 `docs/metrics.md` §3.2.5：`compute_stats`
 /// 在 1MB 上 ≈ 9.5ms，与其每击键付一次，不如等静止后付一次。
-pub(crate) const STATS_DEBOUNCE_MS: u64 = 150;
+pub(crate) const STATS_DEBOUNCE_MS: u64 = crate::shared::constants::DEBOUNCE_MS;
 
 /// 编辑器主应用：`eframe::App` 的实现载体，持有用例服务与全部 UI 子状态。
 ///

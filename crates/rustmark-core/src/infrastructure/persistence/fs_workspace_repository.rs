@@ -57,7 +57,7 @@ impl Default for TraversalRules {
                 "__pycache__".to_string(),
             ],
             skip_hidden: true,
-            max_entries: 5000,
+            max_entries: 10_000,
         }
     }
 }

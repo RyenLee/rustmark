@@ -60,7 +60,9 @@ use crate::shared::system::ExternalOpener;
 use crate::shared::time::{Clock, SystemClock};
 
 /// 预览防抖间隔（毫秒，FR-01）。
-pub const PREVIEW_DEBOUNCE_MS: u64 = 150;
+///
+/// 与统计防抖、高亮静止窗口共用 core 的单一真源。
+pub const PREVIEW_DEBOUNCE_MS: u64 = crate::shared::constants::DEBOUNCE_MS;
 
 // 渲染缓存容量（`RENDER_CACHE_CAPACITY`）的**单一事实来源**在
 // `application::markdown::service` 层定义，本文件通过上方 `use` 引入并在装配处使用。

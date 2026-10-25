@@ -147,6 +147,20 @@ impl<K: Eq + Hash + Clone, V> LruMap<K, V> {
         }
     }
 
+    /// 摘除并返回访问序最旧的一对键值；空表返回 `None`。
+    ///
+    /// 供**按值计价**的缓存（如图片纹理按字节预算）自行结算淘汰：
+    /// `insert` 的容量淘汰不知道值的大小，调用方需要在同一张表上再按
+    /// 字节数回收，直到预算内。
+    pub fn pop_oldest(&mut self) -> Option<(K, V)> {
+        if self.order.is_empty() {
+            return None;
+        }
+        let key = self.order.remove(0);
+        let value = self.entries.remove(&key)?;
+        Some((key, value))
+    }
+
     /// 失效单个键。
     pub fn invalidate<Q>(&mut self, key: &Q)
     where

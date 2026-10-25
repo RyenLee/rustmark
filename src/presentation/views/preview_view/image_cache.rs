@@ -32,6 +32,11 @@ pub(super) struct ImageEntry {
     pub(super) error: Option<String>,
     /// 远程图片的后台加载进行中（占位文案用「加载中」而非「无法加载」）。
     pub(super) loading: bool,
+    /// 解码后占用的字节数（`宽 × 高 × 4`，RGBA）；加载中 / 失败为 0。
+    ///
+    /// 缓存的淘汰按**字节预算**结算，而不是按张数：压缩文件的体积
+    /// 完全不能代表解码后的显存占用（512 KB 的 JPEG 可以是 6000×4000）。
+    pub(super) bytes: usize,
 }
 
 impl ImageEntry {
@@ -42,28 +47,50 @@ impl ImageEntry {
             size: [0.0, 0.0],
             error: None,
             loading: true,
+            bytes: 0,
         }
     }
 }
 
-/// 图片纹理缓存的 LRU 容量上限（张）。
-///
-/// 旧实现「不设淘汰上限」，理由是「有界于用户内容」；但 `ImageEntry.texture`
-/// 是 egui GPU 纹理，多图 / 大图场景会持续占显存（缺陷 G3）。正常文档引用的
-/// 独立图片远少于此，仅当引用图极多时才触发淘汰，把显存 / 内存占用收束到可预测的量级。
+/// 图片纹理缓存的条目上限（张）：兜底，防止极小图撑爆 HashMap 条目数。
 const IMAGE_CACHE_CAPACITY: usize = 64;
+
+/// 图片纹理缓存的**字节预算**（128 MiB）。
+///
+/// 只按张数淘汰挡不住大图：单张 12MP 图解码后约 46 MiB RGBA，
+/// 64 张的理论峰值接近 2.9 GiB。按解码后的 `宽 × 高 × 4` 结算，
+/// 才能把显存 / 内存占用收束到与 NFR-PERF-03 同量级。
+const IMAGE_CACHE_BUDGET_BYTES: usize = 128 * 1024 * 1024;
+
+/// 解码时的最长边上限（像素）。
+///
+/// 预览最宽只画到 620pt，超出该量级的分辨率对屏幕没有意义，
+/// 却会按原始像素占用内存。解码后先缩到 1600px 再建纹理，
+/// 一张 6000×4000 的相机图从 96 MiB 降到约 6 MiB。
+const DECODE_MAX_EDGE: u32 = 1600;
 
 /// 图片纹理缓存：引用字符串 → 已解码纹理 / 失败原因，带 LRU 淘汰。
 ///
 /// 淘汰策略本体在 [`LruMap`]（D-4 收敛：高亮 / 拼写 / 渲染 / 图片四处共用）。
 struct ImageCache {
     entries: LruMap<String, ImageEntry>,
+    /// 当前缓存内所有纹理的合计字节数（与 `entries` 同步维护）。
+    bytes: usize,
+    /// 条目上限（兜底）。
+    capacity: usize,
+    /// 字节预算（主约束）。
+    budget: usize,
 }
 
 impl ImageCache {
-    fn new(capacity: usize) -> Self {
+    fn new(capacity: usize, budget: usize) -> Self {
         Self {
-            entries: LruMap::new(capacity),
+            // 容量交给本类型自己结算：LruMap 的容量淘汰不知道值的大小，
+            // 若让它先踢，本类型的字节账就对不上了。
+            entries: LruMap::new(usize::MAX),
+            bytes: 0,
+            capacity: capacity.max(1),
+            budget: budget.max(1),
         }
     }
 
@@ -76,7 +103,20 @@ impl ImageCache {
     /// `ImageEntry` 析构自动释放 GPU 资源：egui 在最后一个 handle 落下时
     /// `free_texture`）。
     fn insert(&mut self, url: String, entry: ImageEntry) {
+        if let Some(old) = self.entries.peek(&url) {
+            self.bytes = self.bytes.saturating_sub(old.bytes);
+        }
+        self.bytes = self.bytes.saturating_add(entry.bytes);
         self.entries.insert(url, entry);
+        // 双约束：条目数兜底 + 字节预算为主；至少保留一张（当前帧正在画的）。
+        while (self.entries.len() > self.capacity || self.bytes > self.budget)
+            && self.entries.len() > 1
+        {
+            let Some((_key, evicted)) = self.entries.pop_oldest() else {
+                break;
+            };
+            self.bytes = self.bytes.saturating_sub(evicted.bytes);
+        }
     }
 }
 
@@ -89,7 +129,8 @@ thread_local! {
     ///
     /// 远程图片的「加载中」占位条目同样进这张表（F-3）：它既是渲染状态，
     /// 也是「已有线程在下载」的标记（配合 [`REMOTE_INFLIGHT`] 防重复 spawn）。
-    static IMAGE_CACHE: RefCell<ImageCache> = RefCell::new(ImageCache::new(IMAGE_CACHE_CAPACITY));
+    static IMAGE_CACHE: RefCell<ImageCache> =
+        RefCell::new(ImageCache::new(IMAGE_CACHE_CAPACITY, IMAGE_CACHE_BUDGET_BYTES));
     /// 正在后台下载的远程 URL（防重复 spawn 的守卫）。
     ///
     /// 正常情况下「加载中」条目在缓存里就能挡住重复 spawn；本集合兜住
@@ -101,7 +142,7 @@ thread_local! {
 struct RemoteLoadDone {
     /// 引用字符串（与缓存同键）。
     url: String,
-    /// 解码后的颜色图 / 失败原因。解码放在后台线程：512KB 上限内也要几十毫秒。
+    /// 解码后的颜色图 / 失败原因。解码放在后台线程：8MiB 上限内可到数百毫秒。
     result: Result<egui::ColorImage, String>,
 }
 
@@ -176,6 +217,8 @@ fn drain_remote_results(ctx: &egui::Context) -> bool {
         let entry = match msg.result {
             Ok(img) => {
                 let size = [img.size[0] as f32, img.size[1] as f32];
+                // 必须在 `load_texture` 移动 `img` 之前结算字节数。
+                let bytes = img.size[0].saturating_mul(img.size[1]).saturating_mul(4);
                 let texture = ctx.load_texture(
                     format!("preview-image:{}", msg.url),
                     img,
@@ -186,6 +229,7 @@ fn drain_remote_results(ctx: &egui::Context) -> bool {
                     size,
                     error: None,
                     loading: false,
+                    bytes,
                 }
             }
             Err(reason) => ImageEntry {
@@ -193,6 +237,7 @@ fn drain_remote_results(ctx: &egui::Context) -> bool {
                 size: [0.0, 0.0],
                 error: Some(reason),
                 loading: false,
+                bytes: 0,
             },
         };
         IMAGE_CACHE.with(|c| c.borrow_mut().insert(msg.url, entry));
@@ -210,7 +255,7 @@ fn drain_remote_results(ctx: &egui::Context) -> bool {
 ///
 /// # 远程图片为什么异步（F-3）
 ///
-/// 远程地址若在绘制路径同步下载，UI 线程会阻塞到响应或超时（默认 5s）——
+/// 远程地址若在绘制路径同步下载，UI 线程会阻塞到响应或超时（默认 10s）——
 /// 含远程图的文档首绘预览时整个界面卡住。故远程走「后台线程下载 + 解码 →
 /// 通道回执 → UI 线程建纹理」：绘制路径只发一个「加载中」占位，
 /// 完成后由后台线程 `request_repaint` 唤醒下一帧换上真图。
@@ -255,12 +300,15 @@ pub(super) fn image_entry(ui: &Ui, app: &EditorApp, url: &str) -> ImageEntry {
         size: [0.0, 0.0],
         error: Some(msg),
         loading: false,
+        bytes: 0,
     };
     let entry = match app.services.assets.load(url, base_dir.as_deref()) {
         Err(e) => failed(e.to_string()),
         Ok(asset) => match decode(&asset.bytes) {
             Ok(img) => {
                 let size = [img.width() as f32, img.height() as f32];
+                // 必须在 `load_texture` 移动 `img` 之前结算字节数。
+                let bytes = img.size[0].saturating_mul(img.size[1]).saturating_mul(4);
                 let texture = ui.ctx().load_texture(
                     format!("preview-image:{url}"),
                     img,
@@ -271,6 +319,7 @@ pub(super) fn image_entry(ui: &Ui, app: &EditorApp, url: &str) -> ImageEntry {
                     size,
                     error: None,
                     loading: false,
+                    bytes,
                 }
             }
             Err(e) => failed(e),
@@ -310,10 +359,58 @@ pub struct ImageEntryState {
 /// 而图片解码是外部输入驱动的（损坏的 PNG、伪装成 PNG 的文本）。
 fn decode(bytes: &[u8]) -> Result<egui::ColorImage, String> {
     let img = image::load_from_memory(bytes).map_err(|e| format!("图片解码失败：{e}"))?;
+    // 先降采样再转 RGBA：`thumbnail` 保持宽高比，且比全尺寸缩放的峰值内存低。
+    let img = if img.width().max(img.height()) > DECODE_MAX_EDGE {
+        img.thumbnail(DECODE_MAX_EDGE, DECODE_MAX_EDGE)
+    } else {
+        img
+    };
     let rgba = img.to_rgba8();
     let (w, h) = rgba.dimensions();
     Ok(egui::ColorImage::from_rgba_unmultiplied(
         [w as usize, h as usize],
         rgba.as_raw(),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(bytes: usize) -> ImageEntry {
+        ImageEntry {
+            texture: None,
+            size: [0.0, 0.0],
+            error: None,
+            loading: false,
+            bytes,
+        }
+    }
+
+    /// 淘汰按字节预算结算，而不是按张数：条目数未超上限也要能踢掉最旧的大图。
+    #[test]
+    fn cache_evicts_by_byte_budget() {
+        let mut cache = ImageCache::new(8, 300);
+        cache.insert("a".to_string(), entry(100));
+        cache.insert("b".to_string(), entry(100));
+        cache.insert("c".to_string(), entry(100));
+        assert_eq!(cache.bytes, 300);
+
+        cache.insert("d".to_string(), entry(100));
+        assert_eq!(cache.entries.len(), 3, "400 字节超过 300 预算，应淘汰一张");
+        assert!(cache.entries.peek("a").is_none(), "应淘汰访问序最旧的 a");
+        assert_eq!(cache.bytes, 300);
+        assert_eq!(cache.entries.len(), 3);
+    }
+
+    /// 条目数兜底仍然生效（极小图不会无限堆积）。
+    #[test]
+    fn cache_keeps_entry_cap() {
+        let mut cache = ImageCache::new(2, 1024 * 1024);
+        for key in ["a", "b", "c"] {
+            cache.insert(key.to_string(), entry(1));
+        }
+        assert_eq!(cache.entries.len(), 2);
+        assert!(cache.entries.peek("a").is_none());
+    }
 }

@@ -108,7 +108,7 @@ pub fn tree_rows(
         });
     }
     // 标注「是否最后一项」：同深度的相邻两行，前者不是最后一项。
-    // 逐层扫一遍即可，条目数上限 5000，代价可忽略。
+    // 逐层扫一遍即可，条目数上限 10000，代价可忽略。
     for i in 0..out.len() {
         let (depth, path) = (out[i].depth, out[i].path.clone());
         let has_next = out

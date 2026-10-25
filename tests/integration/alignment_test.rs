@@ -262,10 +262,16 @@ fn align_default_undo_merge_window_is_400ms() {
     );
 }
 
+/// A-17 的原型值为 50 / 300；2026-10-25 阈值评审裁定上调到 100 / 1000
+/// （1000 文件夹具中常见词会立即触顶且无分页）。此处断言**本实现的决策值**，
+/// 偏差已登记在 `docs/threshold-review-2026-10-25.md` 与原型契约 A-17 备注。
 #[test]
-fn align_search_hit_caps_are_50_and_300() {
-    assert_eq!(MAX_HITS_PER_FILE, 50, "单文件命中上限应为 50（A-17）");
-    assert_eq!(MAX_TOTAL_HITS, 300, "总命中上限应为 300（A-17）");
+fn align_search_hit_caps_follow_reviewed_limits() {
+    assert_eq!(
+        MAX_HITS_PER_FILE, 100,
+        "单文件命中上限应为 100（A-17 偏差）"
+    );
+    assert_eq!(MAX_TOTAL_HITS, 1000, "总命中上限应为 1000（A-17 偏差）");
 }
 
 #[test]

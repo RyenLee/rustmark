@@ -18,7 +18,8 @@ use rustmark_core::application::dto::BlockView;
 ///
 /// FR-01 要求 150ms。太短会让打字时每敲一下就重排全文，
 /// 表现为「输入一顿一顿」；太长则松手后预览迟迟不更新。
-pub const PREVIEW_DEBOUNCE_MS: u64 = 150;
+/// 数值取自 core 的单一真源，与组合根同名常量不再各写一份。
+pub const PREVIEW_DEBOUNCE_MS: u64 = rustmark_core::shared::constants::DEBOUNCE_MS;
 
 /// 预览缓存键：**换了文档**、内容变了或配色变了都要重建。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

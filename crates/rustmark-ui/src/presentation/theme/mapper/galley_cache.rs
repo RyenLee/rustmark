@@ -78,7 +78,9 @@ pub(super) struct LineLayout {
 }
 
 /// 大文件阈值（FR-06）：超过后停止 span 着色，只做纯文本排版。
-pub(super) const LARGE_FILE_BYTES: usize = 500 * 1024;
+///
+/// 取自 core 的单一真源，与应用层截断、增量高亮同值。
+pub(super) const LARGE_FILE_BYTES: usize = rustmark_core::shared::constants::LARGE_FILE_BYTES;
 
 // 语法高亮 `Galley` 的线程局部缓存（S6-04）。
 //

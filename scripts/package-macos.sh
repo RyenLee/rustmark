@@ -105,13 +105,13 @@ dmg="dist/rustmark-v$version-macos.dmg"
 rm -f "$dmg"
 hdiutil create -volname "Rustmark $version" -srcfolder "$app" -ov -format UDZO "$dmg"
 
-# —— 体积门禁 + 校验和 ——
-limit=10485760
+# —— 体积门禁 + 校验和（安装包口径，与二进制门禁分开计价）——
+packageLimitBytes=11534336
 for f in "$appzip" "$dmg"; do
     size=$(wc -c < "$f" | tr -d ' ')
     echo "产物：$f（$size 字节）"
-    if [ "$size" -gt "$limit" ]; then
-        echo "体积超红线：$size > $limit 字节（10 MB）" >&2
+    if [ "$size" -gt "$packageLimitBytes" ]; then
+        echo "体积超红线：$size > $packageLimitBytes 字节（11 MiB）" >&2
         exit 1
     fi
 done
