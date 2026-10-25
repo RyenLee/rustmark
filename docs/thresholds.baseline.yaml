@@ -1,0 +1,906 @@
+# rustmark 阈值基线（只读参考，运行时不加载）
+# 生成日期：2026-10-25（整改后复核）；扫描基线提交：574b946 + 工作树
+# 与 docs/threshold-audit-2026-10-25.md 同源生成；source 字段精确到行，value 与源码逐字一致。
+schema: rustmark.thresholds/v1
+runtime_consumed: false
+scan_base_commit: 574b946+working-tree
+state: post-remediation
+audit_report: docs/threshold-audit-2026-10-25.md
+review_report: docs/threshold-review-2026-10-25.md
+scope:
+  included:
+    - src/
+    - crates/*/src/
+    - build.rs
+    - Cargo.toml
+    - rust-toolchain.toml
+    - .rustfmt.toml
+    - deny.toml
+    - .github/workflows/ci.yml
+    - .github/workflows/release.yml
+    - scripts/*
+    - tools/coverage_gate.py
+    - tests/ (仅性能与覆盖率门禁断言)
+  excluded:
+    - 纯几何排版常量（窗口/对话框宽高、padding、圆角、图标尺寸）
+    - tests/ 内部数据构造与 fixture 参数
+    - Cargo.lock 依赖版本
+  absent_by_design:
+    - .env / .env.example
+    - Dockerfile / 部署清单
+    - 重试 / 退避 / 并发度 / 限流 / 分页参数
+modules:
+  build_ci:
+    title: 构建工具链与 CI 门禁
+    thresholds:
+      toolchain_channel:
+        value: "1.99.0"
+        unit: "toolchain version"
+        source: "rust-toolchain.toml:4"
+        purpose: "全仓 Rust 工具链唯一真源，CI 不再另写版本号。文件缺失或版本低于此值即编译失败；升级需改这一处。"
+        recommended: "1.99.0（随 MSRV 单点升级）"
+        configurable: "配置文件 rust-toolchain.toml"
+      rust_msrv:
+        value: 1.99
+        unit: "Rust version"
+        source: "Cargo.toml:78"
+        purpose: "包级最低 Rust 版本声明，cargo 解析依赖时据此拒绝过低版本。与 toolchain_channel 须同步。"
+        recommended: "1.99（与工具链同步）"
+        configurable: "配置文件 Cargo.toml"
+      rustfmt_max_width:
+        value: 100
+        unit: "columns"
+        source: ".rustfmt.toml:2"
+        purpose: "格式化行宽硬上限，cargo fmt --check 的第一步门禁。超宽即 fmt 失败、CI 红。"
+        recommended: "100"
+        configurable: "配置文件 .rustfmt.toml"
+      deny_confidence_threshold:
+        value: 0.93
+        unit: "ratio"
+        source: "deny.toml:27"
+        purpose: "许可证文本识别的置信度下限。低于阈值的依赖无法自动判定许可，需手写 [[licenses.clarify]]，否则 licenses 检查失败。"
+        recommended: "0.90-0.95"
+        configurable: "配置文件 deny.toml"
+      artifact_size_limit_ci:
+        value: 11534336
+        unit: "bytes"
+        source: ".github/workflows/ci.yml:60"
+        purpose: "CI 体积红线（11 MiB），由 size_gate.sh 读取；越线 exit 1 使 check job 失败。按基线 10,487,296 B 尚有约 1.0 MiB 余量。"
+        recommended: "11534336（须与 NFR-PERF-01 单一真源一致）"
+        configurable: "环境变量 SIZE_LIMIT_BYTES（CI env）"
+      artifact_size_warn_ci:
+        value: 11010048
+        unit: "bytes"
+        source: ".github/workflows/ci.yml:61"
+        purpose: "CI 体积预警线（10.5 MiB），越线只输出 ::warning 不失败；保留约 512 KiB 可行动窗口，当前产物不触发。"
+        recommended: "11010048（10.5 MiB，保留约 512 KiB 可行动窗口）"
+        configurable: "环境变量 SIZE_WARN_BYTES（CI env）"
+      artifact_size_limit_local:
+        value: 11534336
+        unit: "bytes"
+        source: "scripts/size_gate.sh:25"
+        purpose: "本地与 CI 共用的体积红线默认值（11 MiB）；CI 经环境变量覆盖，故实际生效值取决于 CI。越线 exit 1。"
+        recommended: "11534336"
+        configurable: "环境变量 SIZE_LIMIT_BYTES（默认值）"
+      artifact_size_warn_local:
+        value: 11010048
+        unit: "bytes"
+        source: "scripts/size_gate.sh:26"
+        purpose: "体积预警线默认值（10.5 MiB）；越线仅告警并打印距红线余量。"
+        recommended: "11010048（10.5 MiB）"
+        configurable: "环境变量 SIZE_WARN_BYTES（默认值）"
+      package_size_limit_linux:
+        value: 11534336
+        unit: "bytes"
+        source: "scripts/package-linux.sh:114"
+        purpose: "Linux 打包后 tar.gz / AppImage 单产物红线（安装包口径，11 MiB）；越线 status=1 使打包失败。"
+        recommended: "11534336（与 CI 同源）"
+        configurable: "硬编码字面量（脚本内）"
+      package_size_limit_macos:
+        value: 11534336
+        unit: "bytes"
+        source: "scripts/package-macos.sh:109"
+        purpose: "macOS .app.zip / .dmg 单产物红线（安装包口径，11 MiB）；越线 exit 1。"
+        recommended: "11534336（与 CI 同源）"
+        configurable: "硬编码字面量（脚本内）"
+      package_size_limit_windows:
+        value: 11534336
+        unit: "bytes"
+        source: "scripts/package-windows.ps1:73"
+        purpose: "Windows zip 产物红线（安装包口径，11 MiB）；越线 throw 终止打包。"
+        recommended: "11534336（与 CI 同源）"
+        configurable: "硬编码字面量（脚本内）"
+      ci_timeout_check:
+        value: 45
+        unit: "minutes"
+        source: ".github/workflows/ci.yml:76"
+        purpose: "check job（三平台编译 + 全量测试）超时上限；超时即取消并判定失败。"
+        recommended: "30-60"
+        configurable: "配置文件 ci.yml"
+      ci_timeout_perf:
+        value: 30
+        unit: "minutes"
+        source: ".github/workflows/ci.yml:223"
+        purpose: "perf job（release 性能冒烟）超时上限；超时即失败。"
+        recommended: "40（整帧 smoke）；NFR 另测服务层 ≤10ms"
+        configurable: "配置文件 ci.yml"
+      ci_timeout_coverage:
+        value: 30
+        unit: "minutes"
+        source: ".github/workflows/ci.yml:259"
+        purpose: "coverage job（llvm-cov 全量插桩）超时上限；超时即无 lcov.info，门禁失败。"
+        recommended: "30-45"
+        configurable: "配置文件 ci.yml"
+      ci_timeout_release_dryrun:
+        value: 10
+        unit: "minutes"
+        source: ".github/workflows/ci.yml:313"
+        purpose: "release-dryrun job 超时上限；离线演练为纯 Python，超时即流程异常。"
+        recommended: "5-15"
+        configurable: "配置文件 ci.yml"
+      ci_timeout_deny:
+        value: 20
+        unit: "minutes"
+        source: ".github/workflows/ci.yml:333"
+        purpose: "deny job（依赖许可 / 安全公告）超时上限；超时即门禁未判定。"
+        recommended: "10-20"
+        configurable: "配置文件 ci.yml"
+      ci_timeout_release_build:
+        value: 45
+        unit: "minutes"
+        source: ".github/workflows/release.yml:48"
+        purpose: "release 打包矩阵单平台超时上限；超时即该平台产物缺失。"
+        recommended: "30-60"
+        configurable: "配置文件 release.yml"
+      ci_timeout_release_publish:
+        value: 15
+        unit: "minutes"
+        source: ".github/workflows/release.yml:112"
+        purpose: "release 汇总与 gh release create 的超时上限；超时即 tag 已推但 Release 未生成。"
+        recommended: "10-20"
+        configurable: "配置文件 release.yml"
+      coverage_overall_min:
+        value: 70
+        unit: "percent"
+        source: "tools/coverage_gate.py:88"
+        purpose: "整体行覆盖门限；低于「门限-2 个百分点」即 ::error 并 exit 1。"
+        recommended: "70-80"
+        configurable: "命令行参数 --overall（默认值）"
+      coverage_domain_min:
+        value: 90
+        unit: "percent"
+        source: "tools/coverage_gate.py:89"
+        purpose: "领域层（src/domain/**）行覆盖门限；低于 门限-2 即失败。"
+        recommended: "90-95"
+        configurable: "命令行参数 --domain（默认值）"
+      coverage_buffer:
+        value: 2
+        unit: "percent"
+        source: "tools/coverage_gate.py:105"
+        purpose: "覆盖率门限缓冲区：落在 [门限-2, 门限) 只告警，低于门限-2 才失败。"
+        recommended: "1-3"
+        configurable: "硬编码字面量（脚本内）"
+  perf_gates:
+    title: 性能门禁（release 测试断言）
+    thresholds:
+      perf_1mb_parse_p50:
+        value: 2000
+        unit: "ms"
+        source: "tests/integration/large_file_test.rs:159"
+        purpose: "1MB 文档解析 p50 上限（仅 release 生效）；超线测试失败，perf job 红。"
+        recommended: "1000-2500"
+        configurable: "硬编码字面量（测试断言）"
+      perf_1mb_first_screen_p50:
+        value: 500
+        unit: "ms"
+        source: "tests/integration/large_file_test.rs:177"
+        purpose: "1MB 文档首屏渲染 p50 上限（降级路径，仅 release）；超线判退化。"
+        recommended: "300-800"
+        configurable: "硬编码字面量（测试断言）"
+      perf_1mb_scroll_map_p50:
+        value: 200
+        unit: "ms"
+        source: "tests/integration/large_file_test.rs:196"
+        purpose: "1MB 文档滚动映射 p50 上限（仅 release）；超线说明映射退化为 O(全文)。"
+        recommended: "100-300"
+        configurable: "硬编码字面量（测试断言）"
+      perf_1mb_find_p50:
+        value: 1500
+        unit: "ms"
+        source: "tests/integration/large_file_test.rs:234"
+        purpose: "1MB 全文查找（忽略大小写）p50 上限（仅 release）；超线即命中扫描退化。"
+        recommended: "500-2000"
+        configurable: "硬编码字面量（测试断言）"
+      perf_1mb_find_case_sensitive_p50:
+        value: 1500
+        unit: "ms"
+        source: "tests/integration/large_file_test.rs:260"
+        purpose: "1MB 全文查找（大小写敏感）p50 上限（仅 release）。"
+        recommended: "500-2000"
+        configurable: "硬编码字面量（测试断言）"
+      perf_100k_lines_parse:
+        value: 5000
+        unit: "ms"
+        source: "tests/integration/large_file_test.rs:413"
+        purpose: "10 万行文本解析上限；该断言无 release 限定，debug 下同样生效。"
+        recommended: "3000-8000"
+        configurable: "硬编码字面量（测试断言）"
+      perf_long_url_parse:
+        value: 3000
+        unit: "ms"
+        source: "tests/integration/large_file_test.rs:458"
+        purpose: "10 万字符超长 URL 解析上限（防灾难性回溯）；debug 下同样生效。"
+        recommended: "1000-3000"
+        configurable: "硬编码字面量（测试断言）"
+      perf_10kb_parse_p95:
+        value: 50
+        unit: "ms"
+        source: "tests/integration/main.rs:492"
+        purpose: "10KB 文档解析 p95 上限（目标 5ms 的 10 倍宽限）；超线判数量级退化。"
+        recommended: "50（smoke）；另加 NFR 断言 ≤10ms"
+        configurable: "硬编码字面量（测试断言）"
+      perf_nfr_10kb_parse_p95:
+        value: 10
+        unit: "ms"
+        source: "tests/integration/main.rs:501"
+        purpose: "NFR 合规断言（仅 release）：10KB 解析 p95 ≤10ms（指标 5ms + 2× 容差），与 50ms 的 smoke 门禁并存。"
+        recommended: "10"
+        configurable: "硬编码字面量（测试断言）"
+      perf_syntax_set_load:
+        value: 30
+        unit: "ms"
+        source: "tests/integration/main.rs:546"
+        purpose: "syntect 语法集加载耗时上限；超线影响首屏高亮可用时间。"
+        recommended: "50（smoke）；另加 NFR 断言 ≤10ms"
+        configurable: "硬编码字面量（测试断言）"
+      perf_highlight_per_lang_warm:
+        value: 1000
+        unit: "µs"
+        source: "tests/integration/main.rs:607"
+        purpose: "20 种语言热路径单语言高亮耗时上限（约 1ms）；超线逼近一帧预算。"
+        recommended: "500-2000"
+        configurable: "硬编码字面量（测试断言）"
+      perf_10kb_incremental_frame_p95:
+        value: 40
+        unit: "ms"
+        source: "tests/presentation/highlight_perf_test.rs:212"
+        purpose: "10KB 文档改一行后的增量帧 p95 上限（目标 10ms 的 4 倍宽限）。"
+        recommended: "40（整帧 smoke）；NFR 另测服务层 ≤10ms"
+        configurable: "硬编码字面量（测试断言）"
+      perf_nfr_10kb_highlight_settle:
+        value: 10
+        unit: "ms"
+        source: "tests/integration/main.rs:761"
+        purpose: "NFR 合规断言（仅 release）：10KB 停手后一次性全文高亮 ≤10ms，正对 NFR-PERF-05 的口径。"
+        recommended: "10"
+        configurable: "硬编码字面量（测试断言）"
+      perf_1mb_degraded_frame_p95:
+        value: 16
+        unit: "ms"
+        source: "tests/presentation/highlight_perf_test.rs:258"
+        purpose: "1MB 降级路径稳态滚动帧 p95 上限（60fps 单帧预算）；超线即掉帧。"
+        recommended: "16-33"
+        configurable: "硬编码字面量（测试断言）"
+      perf_long_line_p95_release:
+        value: 500
+        unit: "ms"
+        source: "tests/presentation/highlight_perf_test.rs:332"
+        purpose: "超长单行（27 万字节）改一字符的 p95 上限（release）；超线判定需行级截断保护。"
+        recommended: "300-800"
+        configurable: "硬编码字面量（测试断言）"
+      perf_long_line_p95_debug:
+        value: 1500
+        unit: "ms"
+        source: "tests/presentation/highlight_perf_test.rs:330"
+        purpose: "同一用例的 debug 阈值（release 的 3 倍）；只用于钉住“不卡死”，达标结论以 release 为准。"
+        recommended: "1000-2000"
+        configurable: "硬编码字面量（测试断言）"
+      perf_idle_frame_limit:
+        value: "8 / 24"
+        unit: "ms"
+        source: "tests/presentation/textedit_frame_perf_test.rs:247"
+        purpose: "编辑区空闲帧 p50 上限：文档 <1MiB 取 8ms，≥1MiB 取 24ms（release）；超线说明 O(全文) 工作回到每帧路径。"
+        recommended: "8（小文档）/ 24（1MB）"
+        configurable: "硬编码字面量（测试断言）"
+      perf_typing_frame_limit:
+        value: "16 / 64"
+        unit: "ms"
+        source: "tests/presentation/textedit_frame_perf_test.rs:204"
+        purpose: "编辑区击键帧 p95 上限：<1MiB 取 16ms，≥1MiB 取 64ms（release）；超线说明高亮防抖失效。"
+        recommended: "16（小文档）/ 64（1MB）"
+        configurable: "硬编码字面量（测试断言）"
+      perf_debug_multiplier:
+        value: 8
+        unit: "ratio"
+        source: "tests/presentation/textedit_frame_perf_test.rs:249"
+        purpose: "debug 构建下空闲帧/击键帧阈值的统一放大倍数（debug 排版约慢一个数量级）。"
+        recommended: "6-10"
+        configurable: "硬编码字面量（测试断言）"
+      perf_search_tab_switch:
+        value: 100
+        unit: "ms"
+        source: "tests/presentation/search_perf_test.rs:225"
+        purpose: "切到搜索标签首帧上限（1MB 文档 + 50 命中，仅 release）；超线即 UI 卡顿。"
+        recommended: "100（一帧交互预算）"
+        configurable: "硬编码字面量（测试断言）"
+      perf_current_doc_search:
+        value: 10
+        unit: "ms"
+        source: "tests/presentation/search_perf_test.rs:327"
+        purpose: "「当前文档」范围单次搜索上限（1000 文件工作区）；超线说明又按工作区全量读盘。该断言 debug 也生效。"
+        recommended: "5-10"
+        configurable: "硬编码字面量（测试断言）"
+  document_workspace:
+    title: 文档与工作区
+    thresholds:
+      preferences_schema_version:
+        value: 1
+        unit: "version"
+        source: "crates/rustmark-core/src/domain/preferences/aggregate.rs:12"
+        purpose: "偏好配置 schema 版本；版本不匹配时配置按迁移/回退处理，避免旧字段静默生效。"
+        recommended: "1（破坏性变更时 +1）"
+        configurable: "硬编码 const"
+      autosave_interval_default:
+        value: 30
+        unit: "seconds"
+        source: "crates/rustmark-core/src/domain/preferences/value_objects/editor.rs:258"
+        purpose: "自动保存默认间隔；None 关闭自动保存，0 被 is_valid 拒绝。间隔过短会频繁落盘，过长丢失窗口变大。"
+        recommended: "10-60"
+        configurable: "配置文件 settings.toml（editor.auto_save_interval）+ 硬编码默认值"
+      undo_merge_window_ms:
+        value: 400
+        unit: "ms"
+        source: "crates/rustmark-core/src/domain/document/undo.rs:44"
+        purpose: "撤销合并窗口：窗口内连续同类编辑合并为一个撤销点。过短则撤销粒度碎，过长则一次撤销吃掉整段输入。"
+        recommended: "300-800"
+        configurable: "配置文件 settings.toml（editor.undo_merge_window_ms）+ 硬编码默认值"
+      undo_max_depth:
+        value: 200
+        unit: "snapshots"
+        source: "crates/rustmark-core/src/domain/document/undo.rs:45"
+        purpose: "每文档撤销栈最大深度；超出丢弃最旧快照。过大徒增内存，过小历史不够用。"
+        recommended: "200（须配合 64 MiB 字节上限）"
+        configurable: "硬编码 const（UndoPolicy::default_policy）"
+      undo_max_bytes:
+        value: 67108864
+        unit: "bytes"
+        source: "crates/rustmark-core/src/domain/document/undo.rs:46"
+        purpose: "undo + redo 两份栈的合计字节预算（64 MiB）；快照是全文副本，只按条数限制会让 1MB 文档最坏占到 200 MiB。超限先丢 redo 远端，再丢 undo 最旧项。"
+        recommended: "67108864"
+        configurable: "硬编码 const（UndoPolicy::default_policy）＋ with_max_bytes 可覆盖"
+      max_open_documents_default:
+        value: 12
+        unit: "documents"
+        source: "crates/rustmark-core/src/domain/preferences/value_objects/editor.rs:151"
+        purpose: "同时打开文档数默认上限；达到上限后打开新文件需先关闭。低于 12 会碍事，高于 30 标签条已无法辨认。"
+        recommended: "8-16"
+        configurable: "配置文件 settings.toml（editor.max_open_documents）+ 硬编码默认值"
+      max_open_documents_max:
+        value: 30
+        unit: "documents"
+        source: "crates/rustmark-core/src/domain/preferences/value_objects/editor.rs:157"
+        purpose: "打开文档数可选上限（设置页滑块量程上端）；超过 30 无实际收益。"
+        recommended: "40（整帧 smoke）；NFR 另测服务层 ≤10ms"
+        configurable: "硬编码 const"
+      max_open_documents_min:
+        value: 1
+        unit: "documents"
+        source: "src/presentation/views/settings_view.rs:83"
+        purpose: "设置页滑块下限；1 表示「一次只看一份」也是合法用法。"
+        recommended: "1"
+        configurable: "硬编码字面量（表现层量程）"
+      recent_files_limit:
+        value: 20
+        unit: "entries"
+        source: "crates/rustmark-core/src/domain/workspace/value_objects.rs:73"
+        purpose: "最近文件列表持久化条数上限；超出按最近打开时间淘汰。"
+        recommended: "10-30"
+        configurable: "硬编码 const"
+      welcome_recent_shown:
+        value: 5
+        unit: "entries"
+        source: "src/presentation/views/welcome_view.rs:58"
+        purpose: "欢迎页展示的最近文件条数；只影响呈现层，不裁剪持久化列表。"
+        recommended: "3-8"
+        configurable: "硬编码 const"
+      tree_max_depth:
+        value: 8
+        unit: "levels"
+        source: "crates/rustmark-core/src/application/workspace/service.rs:48"
+        purpose: "文件树扫描深度上限；超深目录被截断，避免误指 node_modules 之类拖死 UI。"
+        recommended: "6-12"
+        configurable: "硬编码 const"
+      tree_max_entries:
+        value: 10000
+        unit: "entries"
+        source: "crates/rustmark-core/src/infrastructure/persistence/fs_workspace_repository.rs:60"
+        purpose: "单次文件树遍历条目数硬上限；超出即停止扫描，表现为树不完整而非卡死。"
+        recommended: "10000（并透出 truncated）"
+        configurable: "硬编码字面量（TraversalRules 默认值）"
+      search_hits_per_file:
+        value: 100
+        unit: "hits"
+        source: "crates/rustmark-core/src/application/workspace/service.rs:39"
+        purpose: "跨文件搜索单文件命中上限；超出该文件的后续命中被丢弃，并置 truncated。"
+        recommended: "100"
+        configurable: "硬编码 const"
+      search_hits_total:
+        value: 1000
+        unit: "hits"
+        source: "crates/rustmark-core/src/application/workspace/service.rs:41"
+        purpose: "搜索总命中上限（1000）；达到后置 truncated 标志并停止扫描，UI 明确显示已截断。"
+        recommended: "1000（或实现分页）"
+        configurable: "硬编码 const"
+      search_snippet_context:
+        value: 40
+        unit: "bytes"
+        source: "crates/rustmark-core/src/application/workspace/service/search.rs:508"
+        purpose: "命中摘要前后各取的字节数（随后对齐 UTF-8 边界）；24 字节在混合排版下上下文过短，放宽到 40。"
+        recommended: "16-40"
+        configurable: "硬编码字面量"
+      draft_preview_chars:
+        value: 80
+        unit: "chars"
+        source: "src/app/frame/recovery.rs:19"
+        purpose: "崩溃恢复草稿的标题预览长度；超出截断，仅用于列表呈现。"
+        recommended: "40-120"
+        configurable: "硬编码字面量"
+      doc_view_preview_chars:
+        value: 120
+        unit: "chars"
+        source: "crates/rustmark-core/src/application/document/service/mapping.rs:57"
+        purpose: "文档详情视图的正文预览长度；该函数会读全文，故上限同时限制快照成本。"
+        recommended: "80-200"
+        configurable: "硬编码字面量"
+  render_cache:
+    title: 渲染、防抖与缓存
+    thresholds:
+      truncate_threshold_bytes:
+        value: 512000
+        unit: "bytes"
+        source: "crates/rustmark-core/src/application/markdown/service.rs:61"
+        purpose: "源文档超过 500 KiB 即标记截断预览（FR-06），不调用解析器；用户看到的是降级纯文本。"
+        recommended: "524288（data URI）/ 8388608（本地与远程，需配合解码降采样）"
+        configurable: "硬编码 const"
+      render_cache_capacity:
+        value: 32
+        unit: "entries"
+        source: "crates/rustmark-core/src/application/markdown/service.rs:69"
+        purpose: "渲染缓存 LRU 容量（按文档）；超出驱逐旧条目，再次切换标签会重解析。"
+        recommended: "16-64"
+        configurable: "硬编码 const（装配处引用）"
+      highlight_cache_capacity:
+        value: 32
+        unit: "entries"
+        source: "crates/rustmark-core/src/application/markdown/service.rs:78"
+        purpose: "高亮缓存 + 防抖计时表 + 拼写缓存共用的容量；小于同时打开文档数会反复触发全文重算。"
+        recommended: "16-64"
+        configurable: "硬编码 const"
+      highlight_checkpoint_lines:
+        value: 25
+        unit: "lines"
+        source: "crates/rustmark-core/src/infrastructure/highlighting/incremental.rs:55"
+        purpose: "增量高亮检查点间隔；越小恢复点越近但检查点内存越大，越大则增量收益下降。"
+        recommended: "16-64"
+        configurable: "硬编码 const"
+      max_incremental_bytes:
+        value: 512000
+        unit: "bytes"
+        source: "crates/rustmark-core/src/infrastructure/highlighting/incremental.rs:58"
+        purpose: "超过该字节数不做增量高亮（降级纯文本）；与截断阈值、排版阈值共用同一常量。"
+        recommended: "512000（与 LARGE_FILE_BYTES 同源）"
+        configurable: "硬编码 const"
+      large_file_bytes_ui:
+        value: 512000
+        unit: "bytes"
+        source: "crates/rustmark-ui/src/presentation/theme/mapper/galley_cache.rs:83"
+        purpose: "UI 排版侧的大文件阈值：超过后停止 span 着色，只做纯文本排版（FR-06）。"
+        recommended: "512000（与 truncate 阈值同源）"
+        configurable: "硬编码 const"
+      preview_debounce_ms:
+        value: 150
+        unit: "ms"
+        source: "src/app/bootstrap.rs:65"
+        purpose: "预览防抖窗口（FR-01），装配 DebouncePolicy 时传入；打字期不重排，停手 150ms 后渲染。"
+        recommended: "100-250"
+        configurable: "硬编码 const"
+      preview_debounce_ms_ui:
+        value: 150
+        unit: "ms"
+        source: "crates/rustmark-ui/src/presentation/state/preview_ui_state.rs:22"
+        purpose: "表现层另一份预览防抖常量，用于判断预览是否到期；与装配层同名同值但独立定义。"
+        recommended: "150（合并为单一真源）"
+        configurable: "硬编码 const"
+      stats_debounce_ms:
+        value: 150
+        unit: "ms"
+        source: "src/app/frame.rs:148"
+        purpose: "状态栏字数统计防抖窗口；1MB 文档 compute_stats 约 9.5ms，故等停手后算一次。"
+        recommended: "100-250"
+        configurable: "硬编码 const"
+      image_texture_cache:
+        value: 64
+        unit: "entries"
+        source: "src/presentation/views/preview_view/image_cache.rs:56"
+        purpose: "预览图片纹理缓存的条目上限（兜底）；主约束是字节预算，见 image_texture_budget。"
+        recommended: "64（仅兜底）"
+        configurable: "硬编码 const"
+      image_texture_budget:
+        value: 134217728
+        unit: "bytes"
+        source: "src/presentation/views/preview_view/image_cache.rs:63"
+        purpose: "纹理缓存字节预算（128 MiB，按解码后 W×H×4 结算）；超限从最旧开始淘汰，避免大图把显存吃穿。"
+        recommended: "134217728"
+        configurable: "硬编码 const"
+      image_decode_max_edge:
+        value: 1600
+        unit: "px"
+        source: "src/presentation/views/preview_view/image_cache.rs:70"
+        purpose: "解码最长边上限；超出先等比缩到 1600px 再建纹理，一张 6000×4000 相机图从 96 MiB 降到约 6 MiB。"
+        recommended: "1280-2048"
+        configurable: "硬编码 const"
+      embedded_math_mermaid_cache:
+        value: 32
+        unit: "entries"
+        source: "src/presentation/views/preview_view/embedded_cache.rs:36"
+        purpose: "公式与 Mermaid 排版结果记忆化容量；超出 LRU 淘汰后需重排。"
+        recommended: "16-64"
+        configurable: "硬编码 const"
+  asset_export:
+    title: 资源加载、截图与导出
+    thresholds:
+      asset_max_inline_bytes:
+        value: 512000
+        unit: "bytes"
+        source: "crates/rustmark-core/src/infrastructure/persistence/asset_loader/policy.rs:29"
+        purpose: "data URI 内联体积硬上限：写进 Markdown 文本的数据过大既撑爆文档也拖慢解析；超限返回 TooLarge。"
+        recommended: "524288（data URI）"
+        configurable: "硬编码字面量（AssetLimits::default）"
+      asset_max_local_bytes:
+        value: 8388608
+        unit: "bytes"
+        source: "crates/rustmark-core/src/infrastructure/persistence/asset_loader/policy.rs:30"
+        purpose: "本地文件与远程下载的体积上限（8 MiB）；本地在读盘前按元数据预检，远程边读边判。超限返回 TooLarge 并显示占位。"
+        recommended: "8388608（本地/远程）"
+        configurable: "硬编码字面量（AssetLimits::default）"
+      asset_download_timeout:
+        value: 10
+        unit: "seconds"
+        source: "crates/rustmark-core/src/infrastructure/persistence/asset_loader/policy.rs:31"
+        purpose: "远程图片下载总超时（10s，全局 deadline 含 TLS 与重定向）；超时即报 DownloadFailed，预览显示占位。"
+        recommended: "3-10"
+        configurable: "硬编码字面量（AssetLimits::default）"
+      asset_remote_stream_cap:
+        value: 8388608
+        unit: "bytes"
+        source: "crates/rustmark-core/src/infrastructure/persistence/asset_loader.rs:317"
+        purpose: "远程下载边读边判的瞬时上限（= 本地上限 8 MiB），超过即中止，不再先读到 2× 再拒绝。"
+        recommended: "8388608"
+        configurable: "硬编码字面量（复用 max_local_bytes）"
+      image_dedupe_attempts:
+        value: 1000
+        unit: "attempts"
+        source: "crates/rustmark-core/src/infrastructure/persistence/image_store.rs:31"
+        purpose: "同名图片落盘的序号去重上限；1000 次仍冲突则返回可读错误，避免无限循环。"
+        recommended: "100-10000"
+        configurable: "硬编码 const"
+      capture_max_dimension:
+        value: 8192
+        unit: "px"
+        source: "crates/rustmark-core/src/infrastructure/export/viewport_capture.rs:110"
+        purpose: "截图单轴边长上限（约 A4@300dpi）；超限拒绝导出，避免单张图先吃数百 MB 再失败。"
+        recommended: "4096-16384"
+        configurable: "硬编码 const"
+      capture_max_long_height:
+        value: 16384
+        unit: "px"
+        source: "crates/rustmark-core/src/infrastructure/export/viewport_capture.rs:117"
+        purpose: "长图拼接成品高度上限（约 131MB 内存峰值）；超限建议改用 HTML/PDF 导出。"
+        recommended: "8192-32768"
+        configurable: "硬编码 const"
+      long_image_max_segments:
+        value: 256
+        unit: "segments"
+        source: "src/app/frame/capture.rs:53"
+        purpose: "整篇长图捕获的最大滚动段数；超限中止并提示改用文档导出。"
+        recommended: "128-512"
+        configurable: "硬编码 const"
+      crash_reports_retained:
+        value: 10
+        unit: "files"
+        source: "src/app/crash_log.rs:164"
+        purpose: "崩溃报告保留份数；每次启动按文件名降序清理更旧的，防崩溃风暴吃满磁盘。"
+        recommended: "5-50"
+        configurable: "硬编码 const"
+  spell_rules:
+    title: 拼写与 Markdown 规则
+    thresholds:
+      spell_min_check_len:
+        value: 3
+        unit: "chars"
+        source: "crates/rustmark-core/src/infrastructure/spell/simple_checker.rs:32"
+        purpose: "短于该长度的词不判错；阈值过低会把缩写与噪声全部标红。"
+        recommended: "3-4"
+        configurable: "硬编码 const"
+      spell_max_edit_dist:
+        value: 1
+        unit: "edit distance"
+        source: "crates/rustmark-core/src/infrastructure/spell/simple_checker.rs:35"
+        purpose: "判错时的最大编辑距离；放宽会把整篇技术文档标红（误报优先收紧）。"
+        recommended: "1"
+        configurable: "硬编码 const"
+      spell_max_suggest_dist:
+        value: 2
+        unit: "edit distance"
+        source: "crates/rustmark-core/src/infrastructure/spell/simple_checker.rs:42"
+        purpose: "建议候选的最大编辑距离，比判错阈值宽一档；放宽只增加候选，不会误标红。"
+        recommended: "2-3"
+        configurable: "硬编码 const"
+      spell_suggest_limit:
+        value: 5
+        unit: "items"
+        source: "src/presentation/views/editor_view/spell.rs:16"
+        purpose: "右键拼写建议菜单最大条数；超过 5 条菜单过高且用户只看前几条。"
+        recommended: "3-8"
+        configurable: "硬编码 const"
+      heading_max_level:
+        value: 6
+        unit: "level"
+        source: "crates/rustmark-core/src/domain/document/services/headings.rs:26"
+        purpose: "ATX 标题层级上限；7 个及以上 # 按 6 级处理，保证大纲缩进不越界。"
+        recommended: "6（规范固定）"
+        configurable: "硬编码字面量（CommonMark 规则）"
+      table_insert_default:
+        value: "3×3"
+        unit: "rows x cols"
+        source: "crates/rustmark-core/src/application/document/service/editing.rs:22"
+        purpose: "「插入表格」生成的默认骨架尺寸；固定 3×3，后续由用户增删行列。"
+        recommended: "3x3"
+        configurable: "硬编码 const"
+      table_max_rows:
+        value: 100
+        unit: "rows"
+        source: "crates/rustmark-core/src/domain/document/services/compose.rs:112"
+        purpose: "程序化插入表格的行数上限；超出被夹紧到 100，防止一次生成超长表格。"
+        recommended: "50-200"
+        configurable: "硬编码字面量（clamp 上界）"
+      table_max_cols:
+        value: 32
+        unit: "cols"
+        source: "crates/rustmark-core/src/domain/document/services/compose.rs:113"
+        purpose: "程序化插入表格的列数上限；超出夹紧到 32，避免超宽表格撑破预览。"
+        recommended: "16-64"
+        configurable: "硬编码字面量（clamp 上界）"
+      reading_wpm:
+        value: 300
+        unit: "words per minute"
+        source: "crates/rustmark-core/src/application/document/service/stats.rs:93"
+        purpose: "阅读时长的每分钟字数基准；用于把字数换算为分钟数，值越大估计越短。"
+        recommended: "200-400"
+        configurable: "硬编码字面量"
+  ui_bounds:
+    title: UI 边界与交互窗口
+    thresholds:
+      window_min_width:
+        value: 960
+        unit: "pt"
+        source: "src/app/frame.rs:682"
+        purpose: "主窗口最小宽度；小于该值布局无法保证编辑区可用（侧栏动态上界的下限由此兜底）。"
+        recommended: "800-1024"
+        configurable: "硬编码字面量"
+      window_min_height:
+        value: 600
+        unit: "pt"
+        source: "src/app/frame.rs:682"
+        purpose: "主窗口最小高度；低于该值顶栏 + 状态栏 + 正文无法同时容纳。"
+        recommended: "540-720"
+        configurable: "硬编码字面量"
+      split_min:
+        value: 0.2
+        unit: "ratio"
+        source: "crates/rustmark-ui/src/presentation/state/app_ui_state.rs:57"
+        purpose: "编辑区/预览区分割比例下界；拖拽夹紧，防止一侧被拖到完全消失。"
+        recommended: "0.15-0.30"
+        configurable: "硬编码 const"
+      split_max:
+        value: 0.8
+        unit: "ratio"
+        source: "crates/rustmark-ui/src/presentation/state/app_ui_state.rs:59"
+        purpose: "分割比例上界；与下界对称，保证另一侧仍够看全文。"
+        recommended: "0.70-0.85"
+        configurable: "硬编码 const"
+      sidebar_min:
+        value: 180
+        unit: "pt"
+        source: "crates/rustmark-ui/src/presentation/state/app_ui_state.rs:64"
+        purpose: "侧栏宽度静态下界；再窄活动栏（48pt）+ 内容面板放不下文件树一行。"
+        recommended: "160-220"
+        configurable: "硬编码 const"
+      sidebar_max:
+        value: 560
+        unit: "pt"
+        source: "crates/rustmark-ui/src/presentation/state/app_ui_state.rs:69"
+        purpose: "侧栏宽度静态上界；再宽会把编辑区压到角落。"
+        recommended: "480-640"
+        configurable: "硬编码 const"
+      sidebar_body_share_max:
+        value: 0.6
+        unit: "ratio"
+        source: "crates/rustmark-ui/src/presentation/state/app_ui_state.rs:76"
+        purpose: "侧栏占主体区宽度的动态上界（窄窗口兜底）；展开为 sw ≤ 0.375×(total-divider)。"
+        recommended: "0.5-0.7"
+        configurable: "硬编码 const"
+      sidebar_default_width:
+        value: 308
+        unit: "pt"
+        source: "crates/rustmark-ui/src/presentation/theme/builtin/metrics.rs:85"
+        purpose: "侧栏默认宽度（未在 settings.toml 指定时）；低于 180 会被夹紧。"
+        recommended: "280-360"
+        configurable: "配置文件 settings.toml（editor.sidebar_width）+ 硬编码默认值"
+      preview_image_max_w:
+        value: 620
+        unit: "pt"
+        source: "src/presentation/views/preview_view.rs:120"
+        purpose: "预览图片最大显示宽度；超过等比缩放，避免小图放大或大图撑破面板。"
+        recommended: "480-800"
+        configurable: "硬编码 const"
+      message_ttl_ms:
+        value: 4000
+        unit: "ms"
+        source: "crates/rustmark-ui/src/presentation/state/status_bar_ui_state.rs:28"
+        purpose: "状态栏消息默认存活时长；过短看不清，过长会让人以为程序卡住。"
+        recommended: "3000-8000"
+        configurable: "硬编码 const"
+      scroll_suppress_ms:
+        value: 100
+        unit: "ms"
+        source: "crates/rustmark-ui/src/presentation/state/scroll_sync_state.rs:36"
+        purpose: "滚动同步回声抑制窗口；短于帧间隔覆盖不住回声，长于 150ms 会让用户觉得前 0.1 秒没反应。"
+        recommended: "80-150"
+        configurable: "硬编码 const"
+      scroll_move_eps:
+        value: 0.5
+        unit: "pt"
+        source: "crates/rustmark-ui/src/presentation/state/scroll_sync_state.rs:42"
+        purpose: "判定「偏移真的变了」的容差；取 0 会把静止帧的像素取整抖动误判为用户滚动。"
+        recommended: "0.5-1.0"
+        configurable: "硬编码 const"
+      find_scroll_eps:
+        value: 0.5
+        unit: "pt"
+        source: "src/app/frame/find.rs:114"
+        purpose: "查找跳转时「需要改滚动位置」的容差；与 MOVE_EPS 同值但独立定义。"
+        recommended: "0.5（复用 MOVE_EPS）"
+        configurable: "硬编码字面量"
+      ime_guard_ms:
+        value: 800
+        unit: "ms"
+        source: "src/app/frame.rs:412"
+        purpose: "IME 组合期冻结窗口；每次 Preedit 续期。过短会中途解冻打掉预编辑选区，过长则回车被吞。"
+        recommended: "600-1000"
+        configurable: "硬编码 const"
+      ime_arm_ms:
+        value: 50
+        unit: "ms"
+        source: "src/app/frame.rs:431"
+        purpose: "egui ime_enabled 复位窗口；宁短勿长（过长等于冻结回车）。"
+        recommended: "30-80"
+        configurable: "硬编码 const"
+      scheduler_min_delay_ms:
+        value: 1
+        unit: "ms"
+        source: "src/app/frame/scheduler.rs:130"
+        purpose: "帧调度最小重绘延迟；已过期任务也至少等 1ms，避免 0ms 造成静止应用忙循环。"
+        recommended: "1"
+        configurable: "硬编码字面量"
+      quick_open_candidates:
+        value: 12
+        unit: "items"
+        source: "crates/rustmark-ui/src/presentation/state/quick_open_ui_state.rs:26"
+        purpose: "快速打开候选上限；再多需滚动，违背「不打字就选」的定位。"
+        recommended: "8-20"
+        configurable: "硬编码 const"
+      diff_max_cells:
+        value: 2000000
+        unit: "cells (rows x cols)"
+        source: "crates/rustmark-ui/src/presentation/state/diff_ui_state/model.rs:7"
+        purpose: "差异比较规模上限（行数乘积，约 1400×1400）；超过降级，避免 Myers 算法等待过久。"
+        recommended: "1000000-4000000"
+        configurable: "硬编码 const"
+      find_max_matches:
+        value: 100000
+        unit: "matches"
+        source: "crates/rustmark-ui/src/presentation/state/find_replace_ui_state/engine.rs:35"
+        purpose: "单次查找命中上限；超过即停止收集，防止退化模式把内存吃满。"
+        recommended: "50000-200000"
+        configurable: "硬编码 const（函数内）"
+  preferences:
+    title: 偏好默认值（settings.toml）
+    thresholds:
+      font_size_default:
+        value: 14
+        unit: "px"
+        source: "crates/rustmark-core/src/domain/preferences/value_objects/theme.rs:198"
+        purpose: "默认正文字号；影响行高与排版缓存键。"
+        recommended: "13-16"
+        configurable: "配置文件 settings.toml（theme.font_size）+ 硬编码默认值"
+      font_size_range:
+        value: "8.0-48.0"
+        unit: "px"
+        source: "crates/rustmark-core/src/domain/preferences/value_objects/theme.rs:188"
+        purpose: "字号合法区间（含端点）；越界配置被 is_valid 拒绝并整体回退默认。"
+        recommended: "8.0-48.0"
+        configurable: "硬编码 const"
+      line_height_default:
+        value: 1.6
+        unit: "ratio"
+        source: "crates/rustmark-core/src/domain/preferences/value_objects/theme.rs:199"
+        purpose: "默认行高倍数；过小中文拥挤，过大一屏信息量骤降。"
+        recommended: "1.4-1.8"
+        configurable: "配置文件 settings.toml（theme.line_height）+ 硬编码默认值"
+      line_height_range:
+        value: "1.0-3.0"
+        unit: "ratio"
+        source: "crates/rustmark-core/src/domain/preferences/value_objects/theme.rs:190"
+        purpose: "行高合法区间；1.0 为紧贴（字形可能裁切），3.0 为极端稀疏。"
+        recommended: "1.0-3.0"
+        configurable: "硬编码 const"
+      settings_font_presets:
+        value: "8,10,12,13,14,15,16,18,20,24,32,48"
+        unit: "px"
+        source: "src/presentation/views/settings_view.rs:67"
+        purpose: "设置页可选字号档位；现已覆盖 8-48 合法区间的端点与常用档，配置任意合法值都有选中态。"
+        recommended: "8,10,12,14,16,18,20,24,32,48"
+        configurable: "硬编码字面量（表现层）"
+      settings_line_height_presets:
+        value: "1.0,1.2,1.4,1.5,1.6,1.7,1.8,2.0,2.4,3.0"
+        unit: "ratio"
+        source: "src/presentation/views/settings_view.rs:71"
+        purpose: "设置页可选行高档位；现已覆盖 1.0-3.0 的端点与常用档。"
+        recommended: "1.0,1.2,1.4,1.6,1.8,2.0,2.4,3.0"
+        configurable: "硬编码字面量（表现层）"
+      tab_size_default:
+        value: 4
+        unit: "spaces"
+        source: "crates/rustmark-core/src/domain/preferences/value_objects/editor.rs:256"
+        purpose: "默认缩进宽度；枚举只允许 2/4/8，其它值无法表示。"
+        recommended: "2/4/8"
+        configurable: "配置文件 settings.toml（editor.tab_size）+ 硬编码默认值"
+      split_ratio_default:
+        value: 0.5
+        unit: "ratio"
+        source: "crates/rustmark-core/src/domain/preferences/value_objects/editor.rs:262"
+        purpose: "默认分栏比例（编辑区:预览区 = 1:1）；渲染时再夹紧到 SPLIT_MIN-SPLIT_MAX。"
+        recommended: "0.4-0.6"
+        configurable: "配置文件 settings.toml（editor.split_ratio）+ 硬编码默认值"
+      writing_goal_max:
+        value: 1000000
+        unit: "chars"
+        source: "crates/rustmark-core/src/domain/preferences/value_objects/editor.rs:63"
+        purpose: "写作目标字数上限；超出饱和到 100 万而非报错，避免设置整体保存失败。"
+        recommended: "100000-1000000"
+        configurable: "硬编码 const"
+  env_flags:
+    title: 运行时环境变量
+    thresholds:
+      env_skip_arch_check:
+        value: "任意值"
+        unit: "switch"
+        source: "build.rs:47"
+        purpose: "设置后跳过构建期架构边界校验（逃生口）；CI 不得设置，否则分层违规不再拦截构建。"
+        recommended: "仅本地排障临时使用"
+        configurable: "环境变量 SKIP_ARCH_CHECK"
+      env_startup_timing:
+        value: "1 / true"
+        unit: "switch"
+        source: "src/app/startup_timing.rs:34"
+        purpose: "开启启动阶段耗时埋点；仅接受字符串 1 或 true，其它值视作关闭。"
+        recommended: "1 / true"
+        configurable: "环境变量 RUSTMARK_STARTUP_TIMING"
+      env_log_default:
+        value: "warn"
+        unit: "log level"
+        source: "src/main.rs:23"
+        purpose: "RUST_LOG 未设时的默认日志级别；warn 保证告警与错误可见，debug 需显式开启。"
+        recommended: "warn"
+        configurable: "环境变量 RUST_LOG（默认值 warn）"
