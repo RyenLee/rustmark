@@ -3,8 +3,8 @@
 //! # 为什么这里没有枚举
 //!
 //! 格式与纸张的**取值**只有一个真源：
-//! [`crate::shared::export_format::ExportFormat`] /
-//! [`crate::shared::export_format::PageSize`]。它们是跨层值对象——
+//! [`rustmark_core::shared::export_format::ExportFormat`] /
+//! [`rustmark_core::shared::export_format::PageSize`]。它们是跨层值对象——
 //! 领域层用它校验任务、基础设施层用它路由导出器、表现层用它渲染对话框。
 //!
 //! 此前本文件另有一份 `ExportFormatChoice`（与领域枚举逐方法同构），
@@ -23,7 +23,7 @@
 //! 一旦同构（同样的方法名、同样的签名），下一次就会有人把它们
 //! 「顺手搬回」枚举里，双份实现的坑就回来了。
 
-use crate::shared::export_format::{ExportFormat, PageSize};
+use rustmark_core::shared::export_format::{ExportFormat, PageSize};
 
 /// 该格式在本实现中是否**真的可用**。
 ///

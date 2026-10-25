@@ -22,7 +22,9 @@ pub struct ActionEntry {
     /// 中文显示名。
     pub label: &'static str,
     /// 分组。
-    pub(crate) group: MenuGroup,
+    // V11-62 批次 2：随 ActionEntry 跨 crate（ui 的命令面板测试断言
+    // `entry.group`）由 `pub(crate)` 升 `pub`，已登记 field guard 白名单。
+    pub group: MenuGroup,
     /// 显示用键位（可能为空串）。
     pub combo: String,
 }

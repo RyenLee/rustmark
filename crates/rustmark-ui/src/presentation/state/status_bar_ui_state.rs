@@ -15,11 +15,11 @@
 //!
 //! 二者都不对，所以按时间到期。
 //!
-//! 时间的注入走 [`crate::shared::time::Clock`]：直接调 `now_millis()`
+//! 时间的注入走 [`rustmark_core::shared::time::Clock`]：直接调 `now_millis()`
 //! 会让「3 秒后消失」这条规则无法被测试验证。
 
-use crate::application::dto::GoalProgressView;
-use crate::shared::encoding::TextEncoding;
+use rustmark_core::application::dto::GoalProgressView;
+use rustmark_core::shared::encoding::TextEncoding;
 
 /// 状态栏消息的默认存活时长（毫秒）。
 ///
@@ -63,7 +63,7 @@ pub struct StatusBarUiState {
     ///
     /// 类型取自共享内核 [`TextEncoding`]——它只有「这是什么编码」的语义，
     /// 不含解码实现，因此表现层引用它不会违反分层（禁止的是
-    /// `use crate::infrastructure::*`，不是禁止「知道编码名」）。
+    /// `use rustmark_core::infrastructure::*`，不是禁止「知道编码名」）。
     ///
     /// 取值由 `EditorApp` 在打开 / 切换 / 关闭文档时向应用层
     /// `DocumentAppService::encoding_of` 查询后写入。

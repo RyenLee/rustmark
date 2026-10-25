@@ -20,7 +20,7 @@ mod tree;
 pub use search::*;
 pub use tree::*;
 
-use crate::shared::text_format::default_extension;
+use rustmark_core::shared::text_format::default_extension;
 
 /// 侧边栏 UI 状态。
 #[derive(Clone, Debug, Default)]
@@ -189,7 +189,7 @@ impl SidebarUiState {
     /// 开始新建（`parent` 为 `None` 表示建在工作区根目录）。
     ///
     /// 文件的默认名用 `未命名.<默认扩展名>`，扩展名取
-    /// [`crate::shared::text_format::default_extension`]（白名单首选的
+    /// [`rustmark_core::shared::text_format::default_extension`]（白名单首选的
     /// 唯一出处）——此处硬编码 `.md` 会在白名单首选变化时漏改，
     /// 给出用户一个打不开的默认名。
     pub fn start_create(&mut self, parent: Option<&str>, is_directory: bool) {

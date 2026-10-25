@@ -31,6 +31,10 @@
 #   root → rustmark-icons → rustmark-actions
 #   root → rustmark-ui → rustmark-core → rustmark-actions（ui 依赖面 = egui +
 #   rustmark-core，由 tests/workspace_topology_test.rs 断言）。
+#
+# 批次 2 复核：2026-10-25，V11-62 批次 2 搬入 state（UI State，24 文件）后
+# 拓扑不变——state 对 core 的引用走既有 ui→core 边，本地依赖边仍 6 条，
+# CI 式 diff CLEAN（非「忘记更新」，实测无变更）。
 rustmark v0.2.0
 ├── anyhow v1.0.104
 ├── eframe v0.37.0

@@ -6,7 +6,7 @@
 //! 验收要求「打开浮层期间背景不可交互」（原型 A-28），由 [`Self::is_modal`]
 //! 依据浮层是否模态判定——查找面板是非模态工具面板，打开时编辑区仍可编辑。
 
-use crate::presentation::shortcuts::registry::UiAction;
+use rustmark_core::presentation::shortcuts::registry::UiAction;
 
 /// 可打开的浮层。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

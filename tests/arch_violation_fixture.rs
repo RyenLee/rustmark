@@ -106,8 +106,8 @@ fn current_project_has_no_violations() {
 #[test]
 fn ui_state_modules_import_no_domain_document() {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    // 阶段 4a 后 `state/` 在 core 根下（报告带 crates/rustmark-core/src/ 前缀），
-    // 故按**包含**匹配层内路径，而不是前缀匹配。
+    // V11-62 批次 2 起 `state/` 住在 ui 根下（报告带 crates/rustmark-ui/src/
+    // 前缀；此前在 core 根下），故按**包含**匹配层内路径，而不是前缀匹配。
     let state_violations: Vec<_> = arch_check::scan_project(&manifest)
         .into_iter()
         .filter(|v| v.file.contains("presentation/state/"))

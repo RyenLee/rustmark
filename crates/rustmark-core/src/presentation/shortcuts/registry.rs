@@ -50,7 +50,12 @@ mod palette;
 
 pub use combo::{KeyCombo, ParseComboError, normalize};
 pub use keys::{Key, Modifiers, NamedKey};
-pub(crate) use palette::{ActionEntry, ActionTable};
+// V11-62 批次 2：state（UI State）搬入 `rustmark-ui` 后，命令面板状态
+// （`CommandRow { entry: ActionEntry, .. }`）与快捷键总览的 `sections`
+// 签名都要跨 crate 读写这两个类型——re-export 随升 `pub`（类型本身早已
+// 是 `pub struct`，此前只是路径不可达）。`group` 字段同步公开（与
+// action / label / combo 三个兄弟字段一致），已登记 field guard 白名单。
+pub use palette::{ActionEntry, ActionTable};
 // V11-57：动作词汇表抽成零依赖契约 crate `rustmark-actions`。连带 re-export
 // `action` **模块本身**——`registry::action::…` 深层路径保持解析（存量零使用，
 // 但「搬走就让路径 404」不该是抽取的代价）。`keywords` / `default_combo`

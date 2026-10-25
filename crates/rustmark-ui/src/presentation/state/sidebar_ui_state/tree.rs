@@ -1,6 +1,6 @@
 //! 文件树的投影模型：扁平扫描条目折成带缩进的可见行，以及名字编辑提交。
 
-use crate::shared::path::file_name_of;
+use rustmark_core::shared::path::file_name_of;
 
 /// 文件树的一行（**投影**，非缓存）。
 #[derive(Clone, PartialEq, Eq, Debug)]

@@ -1,6 +1,6 @@
 //! 全局搜索的视图模型：三个开关、按文件分组的命中投影与片段定位。
 
-use crate::shared::path::file_name_of;
+use rustmark_core::shared::path::file_name_of;
 
 /// 全局搜索选项（对齐原型 `searchOptions`）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]

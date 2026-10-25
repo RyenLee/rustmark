@@ -16,8 +16,8 @@
 
 use std::collections::HashSet;
 
-use crate::application::dto::RecentFileView;
-use crate::shared::path::file_name_of;
+use rustmark_core::application::dto::RecentFileView;
+use rustmark_core::shared::path::file_name_of;
 
 /// 候选上限。
 ///
@@ -227,7 +227,7 @@ mod tests {
 
     fn recent(path: &str) -> RecentFileView {
         RecentFileView {
-            path: crate::shared::path::FilePath::new(path).expect("测试路径应合法"),
+            path: rustmark_core::shared::path::FilePath::new(path).expect("测试路径应合法"),
             last_opened: 0,
         }
     }

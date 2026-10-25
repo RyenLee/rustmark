@@ -12,12 +12,12 @@
 //! # 模块结构
 //!
 //! facade 保留对话框状态 `ExportUiState` 及其全部行为与内联测试；
-//! **取值**（格式 / 纸张）来自 [`crate::shared::export_format`]（唯一真源），
+//! **取值**（格式 / 纸张）来自 [`rustmark_core::shared::export_format`]（唯一真源），
 //! **界面专属**的可用性判断与文案在 `format_hints`。
 
 mod format_hints;
 
-use crate::shared::export_format::{ExportFormat, PageSize};
+use rustmark_core::shared::export_format::{ExportFormat, PageSize};
 
 pub use format_hints::{is_available, page_size_label, pdf_caveat, unavailable_reason};
 
@@ -67,7 +67,10 @@ impl Default for ExportUiState {
         // 走真源的持久化契约值，不硬编码 `"dark"`——
         // 契约值写错的后果是「导出的主题与界面不一致」，
         // 而编译与运行**都不报错**。
-        Self::new("document", crate::shared::theme::ThemeKind::Dark.as_str())
+        Self::new(
+            "document",
+            rustmark_core::shared::theme::ThemeKind::Dark.as_str(),
+        )
     }
 }
 
@@ -243,7 +246,10 @@ mod tests {
 
     #[test]
     fn switching_to_markdown_clears_toc_and_pagination() {
-        let mut state = ExportUiState::new("doc", crate::shared::theme::ThemeKind::Dark.as_str());
+        let mut state = ExportUiState::new(
+            "doc",
+            rustmark_core::shared::theme::ThemeKind::Dark.as_str(),
+        );
         state.include_toc = true;
         state.paginate = true;
 

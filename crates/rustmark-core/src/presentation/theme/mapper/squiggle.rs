@@ -2,7 +2,8 @@
 
 /// 编辑区查找命中高亮区间（**文档字节**坐标）。
 ///
-/// 由表现层在绘制编辑区前从 [`crate::presentation::state::find_replace_ui_state::FindReplaceUiState`]
+/// 由表现层在绘制编辑区前从 `rustmark_ui::presentation::state::find_replace_ui_state::FindReplaceUiState`
+/// （V11-62 批次 2 起住在 `rustmark-ui`；core 不反向依赖 ui，文字指路不成链接）
 /// 的命中列表换算而来，传给 [`crate::presentation::theme::mapper::highlight_layout_with_find`]，由其落到逐行 `Galley`
 /// 的背景上。`current` 标记「当前命中」，使用更醒目的背景色
 /// （[`Theme::find_current_bg`](crate::presentation::theme::builtin::Theme::find_current_bg)），其余命中用 [`Theme::find_bg`](crate::presentation::theme::builtin::Theme::find_bg)——

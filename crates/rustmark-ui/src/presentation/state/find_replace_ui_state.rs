@@ -23,7 +23,7 @@
 //! # 模块结构
 //!
 //! facade 保留查找选项、错误类型、输入框常量与面板状态 `FindReplaceUiState`；
-//! 迷你正则引擎（AST / 编译 / 回溯）本体在 [`crate::shared::pattern`]——
+//! 迷你正则引擎（AST / 编译 / 回溯）本体在 [`rustmark_core::shared::pattern`]——
 //! 它同时服务侧栏跨文件搜索（应用层），下沉是分层依赖的硬要求；
 //! 本目录的 `pattern` 只留依赖 [`FindOptions`] 的编译适配，
 //! 扫描、循环定位与字面量匹配算法在 `engine`。
@@ -31,10 +31,10 @@
 mod engine;
 mod pattern;
 
-/// 模式校验结果：引擎本体移入 [`crate::shared::pattern`]（侧栏跨文件搜索
-/// 同样要报它），此处重导出以保持原引用路径不变。
-pub use crate::shared::pattern::PatternError;
 pub use engine::{Finder, Match, ReplaceSummary};
+/// 模式校验结果：引擎本体移入 [`rustmark_core::shared::pattern`]（侧栏跨文件搜索
+/// 同样要报它），此处重导出以保持原引用路径不变。
+pub use rustmark_core::shared::pattern::PatternError;
 
 /// 查找选项。
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -99,7 +99,7 @@ pub struct FindReplaceUiState {
     /// 查找框是否拥有焦点（查找期间编辑区仍可编辑，A-28）。
     pub find_focused: bool,
     /// 上次查找的文档 ID——跨文档切换时据此决定是否保留状态。
-    pub(crate) last_doc_id: Option<crate::shared::ids::DocumentId>,
+    pub(crate) last_doc_id: Option<rustmark_core::shared::ids::DocumentId>,
     /// 跨文档切换时是否保留查找状态。
     ///
     /// 定义（验收要求「明确定义并写进文档」）：**保留**查询与选项，
@@ -283,7 +283,7 @@ impl FindReplaceUiState {
     /// 成为结构性保证而非调用方的自觉。
     ///
     /// 文档切换：按 `keep_query_across_documents` 决定保留什么。
-    pub fn on_document_switched(&mut self, doc_id: crate::shared::ids::DocumentId) {
+    pub fn on_document_switched(&mut self, doc_id: rustmark_core::shared::ids::DocumentId) {
         match self.last_doc_id {
             None => self.last_doc_id = Some(doc_id),
             Some(previous) if previous == doc_id => {}

@@ -10,9 +10,9 @@
 //! （版本号是每份文档各自的计数器，两份未编辑的文档版本号天然相同）。
 //! 故本模块把这三者（连同代码块高亮状态）合成一个 [`PreviewCacheKey`]。
 
-use crate::application::dto::BlockView;
 use crate::presentation::state::scroll_sync_state::BlockRect;
-use crate::presentation::theme::builtin::palette_signature;
+use rustmark_core::application::dto::BlockView;
+use rustmark_core::presentation::theme::builtin::palette_signature;
 
 /// 防抖时长（毫秒）。
 ///
@@ -26,7 +26,7 @@ pub struct PreviewCacheKey {
     /// 源文档标识。
     ///
     /// **必须参与键，且优先级高于版本号**：`content_version` 是
-    /// [`Document::revision`](crate::domain::document::aggregate::Document::revision)，
+    /// [`Document::revision`](rustmark_core::domain::document::aggregate::Document::revision)，
     /// 那是**每份文档各自**的计数器——两份刚打开、都还没编辑过的文档
     /// 版本号天然相同（都是初始值）。若按「版本号相同 ⇒ 内容没变 ⇒ 不用重排」
     /// 推断，切 tab 时预览会**一直显示第一份文档**，
@@ -46,7 +46,7 @@ impl PreviewCacheKey {
     pub fn new(
         doc_id: u64,
         content_version: u64,
-        theme: &crate::presentation::theme::builtin::Theme,
+        theme: &rustmark_core::presentation::theme::builtin::Theme,
     ) -> Self {
         Self {
             doc_id,

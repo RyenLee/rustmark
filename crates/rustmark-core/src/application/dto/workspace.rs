@@ -30,7 +30,10 @@ pub struct RecentFileView {
     /// 路径。
     pub path: FilePath,
     /// 最近打开时间（UNIX 毫秒）。
-    pub(crate) last_opened: u64,
+    // V11-62 批次 2：ui 的 quick_open 状态测试构造 RecentFileView 夹具
+    // （state 搬入 rustmark-ui 后跨 crate），由 `pub(crate)` 升 `pub`，
+    // 已登记 field guard 白名单。
+    pub last_opened: u64,
 }
 
 /// 文件树条目视图。

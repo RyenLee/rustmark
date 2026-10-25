@@ -14,10 +14,11 @@
 //! - [`domain`]：领域层，零 IO、零 UI 依赖（阶段 03）
 //! - [`application`]：应用层，用例编排与 DTO（阶段 04）
 //! - [`infrastructure`]：基础设施层，外部库适配（阶段 05）
-//! - [`presentation`]：表现层的 state / theme / rich / shortcuts
+//! - [`presentation`]：表现层的 theme / rich / shortcuts
 //!   （egui 视图与组合根在 root crate 的 `presentation::views` / `app`；
-//!   widgets 布局封装在 V11-62 批次 1 抽去的 `rustmark-ui` crate；
-//!   icons 向量图标资源在 V11-58 抽去的 `rustmark-icons` crate）
+//!   widgets 布局封装（V11-62 批次 1）与 UI State（V11-62 批次 2）住在
+//!   `rustmark-ui` crate；icons 向量图标资源在 V11-58 抽去的
+//!   `rustmark-icons` crate）
 
 // V11-65：unwrap 系列与 missing_docs 的 lint 声明已收敛至 root `Cargo.toml`
 // 的 `[workspace.lints]` 单点真源（本 crate 经 `[lints] workspace = true` 继承）。

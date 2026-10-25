@@ -376,7 +376,7 @@ rustmark-actions，由 `tests/workspace_topology_test.rs` 断言）。禁
 | ropey | ≤ 0.2 MB |
 | rfd + serde 等 | 0.5 MB |
 | 应用代码 | 0.5–1 MB |
-| **总计** | **5–7 MB（红线 10 MB）** |
+| **总计** | **5–7 MB（红线 11 MB）** |
 
 新增依赖必须登记体积贡献（`docs/dependencies.md`）并经 ADR 追加评审。
 
