@@ -1,9 +1,9 @@
 # rustmark 阈值基线（只读参考，运行时不加载）
-# 生成日期：2026-10-25（整改后复核）；扫描基线提交：574b946 + 工作树
+# 生成日期：2026-10-25（整改后复核）；扫描基线提交：574b946 + c08fd13
 # 与 docs/threshold-audit-2026-10-25.md 同源生成；source 字段精确到行，value 与源码逐字一致。
 schema: rustmark.thresholds/v1
 runtime_consumed: false
-scan_base_commit: 574b946+working-tree
+scan_base_commit: 574b946+c08fd13
 state: post-remediation
 audit_report: docs/threshold-audit-2026-10-25.md
 review_report: docs/threshold-review-2026-10-25.md

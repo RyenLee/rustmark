@@ -211,6 +211,7 @@ CI `SIZE_WARN_BYTES=8388608`（8 MiB）比产物低 2 MiB，预警永久点亮�
 
 ### 11.3 门禁与体积
 
+- 提交：代码/配置/测试 `c08fd13`，文档回填 `0bf931a`。
 - `cargo fmt --check`：OK
 - `cargo run --bin check-arch`：OK（新增 `shared/constants.rs` 已按 §4.5 三问登记）
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings`：exit 0（仅环境锁文件噪声）
