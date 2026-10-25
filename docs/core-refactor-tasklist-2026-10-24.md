@@ -62,6 +62,17 @@
 > 字符字面量处于该路径：crates 98 / src 17 / tests 85，剔注释与字符串实测；
 > 泄漏长期不可见）；修复后真实工程复扫仍零违规。release exe
 > **10,520,576 B** 逐字节不变。下文「2153」及更早数字表述一律按 **2164** 执行。
+>
+> **守卫加固包 · 守卫③（2026-10-25）：纯文档，基线不变**。constraints §3 依赖
+> 矩阵下补 `shared` 定位声明（「被跨层复用的纯函数 / 纯数据结构模块合法居
+> shared」）：`text_format` / `lru` / `text` 三例使用点分布实测（app 2 /
+> presentation 1 / shared 1；application 3 / presentation 1；application 2 /
+> presentation 1），下沉任一层都触发矩阵违例，与 §4.5 准入第一问「≥2 层需要」
+> 互为正反两面；立案档案 `docs/shared-internal-cycle-review.md` §2.2 补复核注
+> （11 处计数不变、路径漂移三处、模块 17→19 / 边 10→11，§2.3「无机械规则」
+> 同日作废）。无代码改动：测试 **2164** / release exe **10,520,576 B** /
+> check-arch 零违规均不变，门禁数字不进本次提交的差值口径。守卫加固包三项
+> （① infrastructure 禁 egui 棘轮 / ② shared 内部无环守卫 / ③ 本声明）全部收官。
 
 **通用验收（每项必含）**：上表五项全绿 + `cargo fmt --check` 绿 + 所有命令带
 `--workspace`（root `Cargo.toml` 注释警告：否则 core 单测静默退出测试集，

@@ -64,6 +64,17 @@ dialog.rs:26       use crate::shared::text_format::TextFormats;
 - 下沉到 `app` → presentation 的 3 处触发「表现层 → `crate::app`」check-arch 违例（`crate::app::frame` 的窄豁免不覆盖这些符号）；
 - 下沉到 `application` → shared 内部的 `dialog.rs:26` 触发「shared → application」违例（依赖矩阵 shared 行全 ✗）；且 presentation 用 application 虽为矩阵明许，会把「纯数据结构」塞进业务层。
 
+> **复核注（2026-10-25，附案① 落档 `constraints.md` §3 时复测）**：上表 11 处
+> 使用点计数不变，三处路径漂移不影响结论——`sidebar_ui_state.rs` 随 V11-62
+> 批次 2 迁入 `crates/rustmark-ui/`（层名不变），`preview_view.rs` 的 `LruMap`
+> 消费点随 TD-02 拆入 `preview_view/image_cache.rs`，`src/shared/` 随 workspace
+> 化迁至 `crates/rustmark-core/src/shared/`。§2.1 的「17 个模块 / 10 条边」为
+> 基准日快照，现为 **19 个模块 / 11 条边**（现清单以 `constraints.md` §4.5
+> 登记表与 §4.6 边集清单为准）。§2.3「shared 内部 import 不在任何机械规则
+> 管辖内」亦已作废——2026-10-25 机械守卫
+> `tests/shared/internal_cycle_guard_test.rs` 落地（三条判据见
+> `constraints.md` §4.6）。
+
 ### 2.3 规则覆盖现状（环为何能存在）
 
 - `docs/architecture-constraints.md` §3 依赖矩阵与 `tools/arch_check.rs:150` 的 `SHARED_FORBIDDEN`（已含 `std::process`，R-03 后加入）**只管跨层依赖**；

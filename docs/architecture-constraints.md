@@ -67,6 +67,24 @@ presentation ──► application ──► domain ◄── infrastructure
 | presentation | ✓ | ✗ | ✓ | ✗ | – |
 | app.rs | ✓ | ✓ | ✓ | ✓ | ✓ |
 
+**`shared` 定位声明（V11-55 附案，2026-10-25 落档）**：被跨层复用的**纯函数 /
+纯数据结构**模块合法居 `shared`。这不是「不知道放哪就放 `shared`」的宽容，
+而是矩阵的设计后果——同时被两个方向互禁的层需要的东西，共同落点只有
+`shared`（`dialog` / `encoding` / `export_format` 同款理由，见 §4.5 登记表）。
+现存三例，使用点均为 2026-10-25 实测（`src` 生产代码，测试消费者按 R-02 不计层）：
+
+| 模块 | 使用点分布 | 下沉为何不可行 |
+|---|---|---|
+| `text_format` | app 2 / presentation 1 / shared 1（`dialog` 的过滤器清单派生） | 去 `app`：presentation 侧触发 §4 `crate::app` 禁令（4.2 窄豁免只罩 `frame`）；去 `application`：`shared/dialog.rs` 触发矩阵 shared 行全 ✗ |
+| `lru` | application 3 / presentation 1 | 落任一层都让另一层违例；且它是四处缓存的唯一实现 |
+| `text` | application 2 / presentation 1 | 同 `lru`：应用层与表现层共用的分词规则 |
+
+三例**不搬移**——「为什么不归位」在此写成规则，避免后人重复提案
+（V11-55 §2.2 的下沉方案即被该实测证伪；档案与复现命令见
+`docs/shared-internal-cycle-review.md`）。「至少 2 层需要」正是 §4.5 准入
+第一问的**正面情形**，不是擦边球。新模块进 `shared` 先过 §4.5 三问并登记；
+`shared` 内部依赖必须无环（§4.6）。
+
 ## 4. 各层禁止的具体 crate
 
 | 层 | 禁止 |
