@@ -1,8 +1,8 @@
 use super::galley_cache::build_line_job;
 use super::*;
-use rustmark_core::application::dto::{RangeView, SpanView};
 use egui::Color32;
 use egui::text::{LayoutJob, LayoutSection};
+use rustmark_core::application::dto::{RangeView, SpanView};
 
 /// 可用于排版的 `Context`（先跑空帧装好字库，否则 `fonts_mut` 会 panic）。
 fn test_ctx() -> egui::Context {

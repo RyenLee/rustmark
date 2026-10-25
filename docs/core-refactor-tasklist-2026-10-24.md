@@ -35,7 +35,7 @@
 > widgets 7 个内联测试从 core lib 迁 ui lib，总量守恒）。
 > 下文「2131 / 2136 / 2139 / 2140」表述一律按 **2144** 执行。
 > V11-59 已完成（`2880678`）；V11-60 已关闭（审计 V=0，转 V11-62）；V11-61 已降级为记录；
-> **V11-62 已开工——动作 2 批次 1（widgets）+ 批次 2（state）+ 批次 3（shortcuts）+ 批次 4（theme）已落地，批次 5（rich）待续**（见 V11-62 节末记录块）。
+> **V11-62 已开工——动作 2 批次 1（widgets）+ 批次 2（state）+ 批次 3（shortcuts）+ 批次 4（theme）+ 批次 5（rich）已落地，V11-62 收官**（见 V11-62 节末记录块）。
 > 状态表见 `docs/v1.1-backlog.md` §3 的波次登记。
 
 **通用验收（每项必含）**：上表五项全绿 + `cargo fmt --check` 绿 + 所有命令带
@@ -282,7 +282,17 @@ V11-59 ─────────────────────┼──�
 > - **release exe 10,489,856 B**：较批次 3（10,488,832 B）+1 KiB（1,024 B），新红线 11 MiB 下 size_gate exit 0（仅预警），距红线余 **1,044,480 B（~1.0 MiB）**，可容纳批次 5（rich）。
 > - **文档同步**：constraints §7（模块树 core 仅剩 rich / ui 含 widgets+state+shortcuts+theme）+ §10.1（crate 地图 core 195/33,693、ui 47/11,676、规模口径、演进图 2026-10-25 注记）+ R-13 表（rich 禁令 theme 已迁出说明）；metrics.md §2.8 + NFR-PERF-01 + TD-01；本 backlog 波次表与本节。
 >
-> **动作 2 批次 5 待续（rich，约 5,918 行）**：纯叶（自绘排版，零 egui 依赖，不引用 theme/state/shortcuts/widgets/views），顺序自由，零守卫扩展（rich 不携带被守模式）。V11-62 收官批次。
+> **动作 2 批次 5 已落地（rich，2026-10-25）。** V11-62 收官批次：rich 是表现层非视图子层中最后一个、且唯一自绘排版的引擎（数学公式 / Mermaid 图表）。顺序自由（纯叶），零守卫扩展（rich 不携带被守模式，arch_check 的 `PresentationRich` 禁令针对四个 workspace 兄弟子层、rich 对它们零引用；egui 属第三方不被拦）。批次 5 实测如下。
+>
+> - **纯叶搬迁**：rich 仅依赖 egui（自绘排版，零 `crate::shared` / `application` / `domain` / `infrastructure` 依赖，不引用 theme/state/shortcuts/widgets/views），25 文件（含模块根 `rich.rs`）/ **5,918 行**（目录）+ `rich.rs` 53 行 = **5,971 行** git mv 入 `crates/rustmark-ui/src/presentation/rich/`（保留历史，`layer_of` 按根内相对路径判 `PresentationRich` 子层零改动，R-13 仍适用）；rich 内部零真实 `crate::` 依赖，**无需 import 改写**。
+> - **模块根随迁**：`core/.../presentation/rich.rs`（声明 `pub mod math; pub mod mermaid;`）一并 git mv 到 `ui/.../presentation/rich.rs`，使 `ui/presentation.rs` 的 `pub mod rich;` 有根文件；core 侧 `presentation/` 目录清空，`crates/rustmark-core/src/presentation.rs` 退化为 doc-only 空壳（保留 `pub mod presentation;` 维持 crate 路径稳定）。
+> - **root 桥接对调**：`src/presentation.rs` 把 `pub use rustmark_core::presentation::rich` 移除、rich 加入 ui 行的花括号列表 `{rich, shortcuts, state, theme, widgets}`；`views.rs` 经 `crate::presentation::rich::{math, mermaid}` 透明复用，零改动。
+> - **唯一守卫改动**：field_visibility_guard 9 条 `presentation/rich/...` 白名单键（`MathLayout::ascent/width`、`MermaidLayout::height/width`、`MermaidStyle::edge/label_bg/node_fill/node_stroke/text`）改 `ui/presentation/rich/...`（ui 根批次 1 已铺，覆盖无断档）；白名单总数仍 550。arch_check 零改动（`PresentationRich` 禁令词法守门、rich 对兄弟子层零引用）。
+> - **五门禁实测**：fmt OK；check-arch OK（未发现分层依赖违规）；clippy OK（CLIPPY_EXIT=0）；`--all-targets` **2143 passed / 0 failed / 4 ignored** + `--doc` 1 = 2144（rich 内联测试 core→ui 守恒）；topology CI 式 diff CLEAN（本地边仍 6 条，`ui_crate_dependency_face_is_egui_plus_core` 不变）。
+> - **release exe 10,487,296 B**：较批次 4（10,489,856 B）**-2,560 B**（非单调）——rich 自绘排版零跨 crate 内联，迁移回吐批次 2 引入的 LTO 边界成本；新红线 11 MiB 内、超预警 10 MiB（SIZE_EXIT=0 仅预警），距红线余 **1,047,040 B（~1.0 MiB）**。V11-62 收官，体积窗口稳定。
+> - **文档同步**：constraints §7（模块树 core 的 `presentation` 退化为 doc-only 空壳 / ui 含全部五个非视图子模块）+ §10.1（crate 地图 core 169/27,721、ui 73/17,648、规模口径、演进图 2026-10-25 收官注记）+ R-13 表（rich 迁入 ui 后禁令转词法守门说明）；metrics.md §2.8 + TD-01；本 backlog 波次表与本节。
+>
+> **V11-62 收官**：动作 2 五批次（widgets / state / shortcuts / theme / rich）全部落地，core 表现层非视图子模块清零，`rustmark_core::presentation` 退化为 doc-only 空壳；views 始终留 root（R-11/R-12 编译保证保留）。后续见 V11-63（infrastructure 去 egui 化）/ V11-64（抽 `rustmark-infra`）。
 
 ### V11-63 · infrastructure 去 egui 化 ｜ 优先级：低（触发式）｜ 2–3 人日 ｜ 并行组 D
 
@@ -314,7 +324,7 @@ V11-59 ─────────────────────┼──�
 
 | ID | 债务 | 证据 | 处置 | 关联任务 |
 |---|---|---|---|---|
-| TD-01 | release 体积吃紧（已越旧红线，红线上调后入预警窗口） | 2026-10-24 基线 10,485,248 B（旧红线 10 MiB 余 512 B）；2026-10-25 V11-62 批次 2（state 迁入 `rustmark-ui`）致 +2,560 B → 10,487,808 B，旧 10 MiB 红线越线；批次 3（shortcuts）致 +1 KiB → 10,488,832 B；批次 4（theme）致 +1 KiB → 10,489,856 B；新红线 11 MiB 内、超预警 10 MiB。worktree A/B 实证 +2,560 B 确由跨 crate LTO 边界成本产生，无针对性修法。**维护者决策：NFR 红线 10→11 MiB、预警 8→10 MiB（原红线降级为预警）**，见 `scripts/size_gate.sh`、metrics.md §2.8 | 任何加依赖动作先过 size_gate；批次 5（rich，~5,918 行）将再吃体积，需监控距新红线（11 MiB）余量（当前 1,044,480 B，批次 4 后） | V11-62 / 所有 |
+| TD-01 | release 体积吃紧（已越旧红线，红线上调后入预警窗口） | 2026-10-24 基线 10,485,248 B（旧红线 10 MiB 余 512 B）；2026-10-25 V11-62 批次 2（state 迁入 `rustmark-ui`）致 +2,560 B → 10,487,808 B，旧 10 MiB 红线越线；批次 3（shortcuts）致 +1 KiB → 10,488,832 B；批次 4（theme）致 +1 KiB → 10,489,856 B；批次 5（rich，~5,918 行，V11-62 收官）致 -2,560 B → 10,487,296 B（非单调：rich 自绘排版零跨 crate 内联，迁移回吐批次 2 的 LTO 边界成本）；新红线 11 MiB 内、超预警 10 MiB。worktree A/B 实证 +2,560 B 确由跨 crate LTO 边界成本产生，无针对性修法。**维护者决策：NFR 红线 10→11 MiB、预警 8→10 MiB（原红线降级为预警）**，见 `scripts/size_gate.sh`、metrics.md §2.8 | V11-62 收官，体积窗口稳定（距新红线 11 MiB 余 1,047,040 B）；后续加依赖动作仍须过 size_gate | V11-62 / 所有 |
 | TD-02 | `src/presentation/views/preview_view.rs` 1,421 行 | 上轮评估 | 600 行阈值入 check-arch；V11-62 搬迁窗口顺带拆 | V11-62 |
 | TD-03 | `domain.rs:3` 依赖注释宽于实际 | 允许 ropey/chrono，实测零使用 | 注释校正 | V11-67 |
 | TD-04 | shared 通用件 ≈900 行且可能继续长 | pattern 494 + lru + text | 阈值：合计 >1,500 行或第 4 个非领域通用模块 → 抽 crate | 监控 |

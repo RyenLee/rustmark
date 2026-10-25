@@ -99,7 +99,7 @@ rich / widgets ──► （不得回指 views / state / theme / widgets）
 | 子层 | 额外禁止 |
 |---|---|
 | `presentation/state/` | `crate::presentation::views` |
-| `presentation/rich/` | `crate::presentation::views` / `state` / `widgets`（theme 已于 V11-62 批次 4 抽去 `rustmark-ui`，rich 经跨 crate 路径反向依赖 ui 即触发 Cargo 环、结构性不可达；`crate::presentation::theme` 词条在 `tools/arch_check.rs` 的 `PRESENTATION_RICH_FORBIDDEN` 保留作防御性守门） |
+| `presentation/rich/` | `crate::presentation::views` / `state` / `widgets`（theme 已于 V11-62 批次 4 抽去 `rustmark-ui`；rich 本身于批次 5 收官迁入 ui，与 widgets/state/shortcuts/theme 同 crate——禁令改为**词法守门**：rich 内出现 `crate::presentation::views` / `state` / `widgets` 字面即触发，不因同 crate 而放松；`crate::presentation::theme` 词条在 `tools/arch_check.rs` 的 `PRESENTATION_RICH_FORBIDDEN` 保留作防御性守门） |
 | `presentation/widgets/` | `crate::presentation::views` |
 | `presentation/icons.rs` | `crate::presentation::views`（**V11-58 起休眠**：icons 已抽去独立 crate `rustmark-icons`，core 内暂无文件落此子层。规则与 fixture（`leaf_layers_may_not_depend_on_views`）保留防回归——icons 若搬回 core 即自动生效） |
 
@@ -306,9 +306,10 @@ src/                                    # shell（root crate `rustmark`）
 ├─ main.rs / lib.rs                     # lib.rs 拼接点：pub use rustmark_core::{application, domain, infrastructure, shared}
 ├─ app.rs / app/{bootstrap.rs,frame.rs,crash_log.rs,…}
 │                                       # 组合根；帧预约唯一出口 app/frame/scheduler.rs
-├─ presentation.rs                      # 拼接点：pub mod views + pub use rustmark_core::presentation::{rich, theme}
-│                                       #   + pub use rustmark_ui::presentation::{shortcuts, state, widgets}（V11-62 批次 2-3）
+├─ presentation.rs                      # 拼接点：pub mod views（唯一留 shell 的 presentation 子层）
+│                                       #   + pub use rustmark_ui::presentation::{rich, shortcuts, state, theme, widgets}（V11-62 批次 1-5 收官）
 │                                       #   + pub use rustmark_icons as icons（V11-58）
+│                                       #   （core 的 presentation 已全迁 ui，退化为 doc-only 空壳）
 ├─ presentation/views/                  # 视图（唯一留在 shell 的 presentation 子层）
 └─ bin/check-arch.rs                    # 工具二进制
 
@@ -319,7 +320,7 @@ crates/rustmark-core/src/               # core（crate `rustmark-core`）
 │    └─ 各含 {aggregate.rs,value_objects.rs,events.rs,services.rs,repository.rs,errors.rs}
 ├─ application/{document,markdown,workspace,preferences,export}/ + dto/
 ├─ infrastructure/{persistence,text,parsing,highlighting,export,events,dialogs,…}/
-└─ presentation/{rich}/                   # 无 views；theme（V11-62 批次 4 抽去 ui）、state（批次 2）、shortcuts（批次 3）、widgets（批次 1）与 icons（V11-58）已抽出
+└─ presentation/                          # 无 views；rich（V11-62 批次 5 抽去 ui）、theme（批次 4）、state（批次 2）、shortcuts（批次 3）、widgets（批次 1）与 icons（V11-58）已抽出；core 的 presentation 退化为 doc-only 空壳
 
 crates/rustmark-actions/src/            # actions（crate `rustmark-actions`，V11-57）
 └─ lib.rs / action.rs / action/{impls.rs,menu_group.rs}   # 零依赖词汇表，整根判 Free
@@ -327,8 +328,8 @@ crates/rustmark-actions/src/            # actions（crate `rustmark-actions`，V
 crates/rustmark-icons/src/              # icons（crate `rustmark-icons`，V11-58）
 └─ lib.rs                               # 16×16 图标规格 + Painter 渲染器；依赖 egui + rustmark-actions
 
-crates/rustmark-ui/src/                 # ui（crate `rustmark-ui`，V11-62 批次 1）
-└─ lib.rs / presentation.rs / presentation/{widgets,state,shortcuts,theme}/  # widgets（批次 1）、state（批次 2）、shortcuts（批次 3）、theme（批次 4）；依赖 egui + rustmark-core
+crates/rustmark-ui/src/                 # ui（crate `rustmark-ui`，V11-62 批次 1-5 收官）
+└─ lib.rs / presentation.rs / presentation/{widgets,state,shortcuts,theme,rich}/  # widgets（批次 1）、state（批次 2）、shortcuts（批次 3）、theme（批次 4）、rich（批次 5）；依赖 egui + rustmark-core
 ```
 
 白名单外的顶层位置（shell `src/foo.rs`、core `src/utils/` 等）会被校验器报
@@ -431,10 +432,10 @@ rustmark（root：组合根 + views + bin）
 | crate | 角色 | 实测规模（2026-10-24，`src/` 口径） | 外部依赖面 |
 |---|---|---|---|
 | `rustmark`（root） | 组合根 + 视图层 + 工具 bin | 82 文件 / 21,049 行 | eframe / egui / image / rfd / anyhow / env_logger / log / wgpu(build) + 3 个本地 crate |
-| `rustmark-core` | 四层脊柱 + 表现层非视图子模块（rich；theme 已于 V11-62 批次 4 抽去 `rustmark-ui`） | 195 文件 / 33,693 行 | 13 个直接外部依赖（`cargo tree -p rustmark-core`）+ 1 个本地（actions） |
+| `rustmark-core` | 四层脊柱；表现层非视图子模块已全部于 V11-62 批次 1-5 抽去 `rustmark-ui`（core 的 `presentation` 退化为 doc-only 空壳） | 169 文件 / 27,721 行 | 13 个直接外部依赖（`cargo tree -p rustmark-core`）+ 1 个本地（actions） |
 | `rustmark-actions` | 动作词汇表契约（V11-57） | 4 文件 / 687 行 | **零依赖** |
 | `rustmark-icons` | 16×16 图标规格 + Painter 渲染器（V11-58） | 1 文件 / 613 行 | egui + rustmark-actions |
-| `rustmark-ui` | 表现层非视图部分：widgets（批次 1）/ state（批次 2）/ shortcuts（批次 3）/ theme（批次 4） | 47 文件 / 11,676 行 | egui + rustmark-core |
+| `rustmark-ui` | 表现层非视图部分：widgets（批次 1）/ state（批次 2）/ shortcuts（批次 3）/ theme（批次 4）/ rich（批次 5，V11-62 收官） | 73 文件 / 17,648 行 | egui + rustmark-core |
 
 规模口径：`find <源码根> -name '*.rs' | xargs wc -l`，只含 `src/`、不含
 `tests/`，命令随文可复跑。core 与评审快照（46,375 行 / 238 文件）的差额 =
@@ -442,7 +443,7 @@ V11-57/58/62 拆出的文件（actions 3 + icons 1 + ui 的 widgets 3 / state 24
 shortcuts 5，另 2 个为 ui 的新建骨架 lib.rs / presentation.rs）扣除期间
 core 内的模块清单与文档增补；快照 238 与 git 树基线 `662536b` 的 244 文件
 之间存在未逐文件核对的口径差（评审当时工作区含 D-6/D-7 在途改动），
-**本节数字以今日实测为准**（2026-10-25：core 195 / 33,693，ui 47 / 11,676；theme 于批次 4 从 core 迁 ui）。
+**本节数字以今日实测为准**（2026-10-25：core 169 / 27,721，ui 73 / 17,648；rich 于批次 5 从 core 迁 ui，V11-62 收官）。
 
 **三阶段演进**（照评审报告 §4；阶段 1 已由 V11-57 / V11-58 落地，阶段 2/3 为计划值）：
 
@@ -469,10 +470,10 @@ core 内的模块清单与文档增补；快照 238 与 git 树基线 `662536b` 
 （阶段 0/2/3 行数为评审时实测的 k 口径；阶段 1 的 core 45.3k 与上表
 45,280 行同源。阶段 2/3 落地时以实测刷新本图。）
 
-**2026-10-25 更新（V11-62 批次 1–4 已落地）**：`rustmark-ui` 实测
-**47 文件 / 11,676 行**（widgets 0.6k + state 6.7k + shortcuts 0.9k + theme 3.5k），属演进图
-阶段 2「触发后」列的部分落地；`rustmark-core` 降至 195 / 33,693（仅 rich
-仍在 core，待批次 5）。阶段 2 列 ui 的 18.1k 计划值含 theme/rich，尚未全落（rich 留批次 5）。
+**2026-10-25 更新（V11-62 批次 1–5 收官）**：`rustmark-ui` 实测
+**73 文件 / 17,648 行**（widgets 0.6k + state 6.7k + shortcuts 0.9k + theme 3.5k + rich 5.9k），属演进图
+阶段 2「触发后」列的部分落地；`rustmark-core` 降至 169 / 27,721（表现层非视图子模块全迁 ui，
+`presentation` 退化为 doc-only 空壳）。阶段 2 列 ui 的 18.1k 计划值（含 theme/rich）至此全落。
 
 方向规则不变的三条硬约束：
 
