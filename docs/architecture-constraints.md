@@ -368,7 +368,7 @@ rustmark-actions，由 `tests/workspace_topology_test.rs` 断言）。禁
 `preview_view/image_cache.rs`（图片纹理缓存簇 319 行）+
 `preview_view/tests.rs`（外置单测 664 行，`app/frame/tests.rs` 同款先例），
 公开路径 `preview_view::{show, image_cache_state, is_remote_url, …}` 经
-`pub use` 重导出零变化。**D-4 第二例已闭环（2026-10-25，`toolbar_view.rs` 拆分）**：原 695 行 → 入口
+`pub use` 重导出零变化。**D-4 第二例已闭环（2026-10-25，`22d4550`）**：原 695 行 → 入口
 `toolbar_view.rs` **211 行**（`show` / 面包屑 / 侧栏切换）+ `toolbar_view/tab_strip.rs`
 **498 行**（`draw_tab_strip` 及其硬规则 doc、15 个标签条常量、`paint_nav_arrow`；`draw_tab_strip`
 转 `pub(super)` 供 facade 调用——子模块私有项对父不可见，E0603 实证）。簇内零 `pub` 项，公开路径
