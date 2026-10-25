@@ -294,6 +294,15 @@ V11-59 ─────────────────────┼──�
 >
 > **V11-62 收官**：动作 2 五批次（widgets / state / shortcuts / theme / rich）全部落地，core 表现层非视图子模块清零，`rustmark_core::presentation` 退化为 doc-only 空壳；views 始终留 root（R-11/R-12 编译保证保留）。后续见 V11-63（infrastructure 去 egui 化）/ V11-64（抽 `rustmark-infra`）。
 
+> **TD-02 已闭环（preview_view.rs 拆分，2026-10-25）。** V11-62 原计划「搬迁窗口顺带拆」，窗口已过而文件未拆——收官后按 §7 D-4 阈值（> 600 行）专项执行。实测如下。
+>
+> - **拆分形态**：1,421 行 → 入口 `preview_view.rs` **458 行**（header + facade：`show` / `pane_header` / `draw_block` / `heading_slug` / `hairline`）+ `preview_view/image_cache.rs` **319 行**（图片纹理缓存簇：`ImageEntry` / `ImageCache` / `RemoteChannel` / 远端加载线程 / `decode` / `image_entry` / `image_cache_state` / `ImageEntryState` / `is_remote_url`）+ `preview_view/tests.rs` **664 行**（原内联 `#[cfg(test)] mod tests` 整体外置，`app/frame/tests.rs` 同款先例）。facade 对缓存簇零引用（实测断言），唯一生产调用点 `media.rs:177`。
+> - **可见性收尾**：`image_entry` 转 `pub(super) fn`；`ImageEntry` 本体与 4 字段转 `pub(super)`（编译器 E0616/E0446 实证：media.rs 读 `entry.loading` / `entry.error` 等跨子模块够不着私有项）；`media.rs` 调用点改 `super::image_cache::image_entry(...)`。
+> - **公开路径零变化**：`preview_view::{show, image_cache_state, is_remote_url, ImageEntryState}` 经 facade `pub use image_cache::{…}` 重导出，集成测试 `tests/presentation/preview_view_test.rs`（`use …preview_view::{image_cache_state, is_remote_url}`）零改动。行尾统一 LF（git autocrlf 检出的 CRLF 混存随重写清除，index 恒 LF 不受影响）。
+> - **五门禁实测**：fmt OK；check-arch OK（未发现分层依赖违规——簇内 import `crate::app::frame::EditorApp` / `crate::shared::lru::LruMap` 原样随迁，零新依赖边）；clippy OK（CLIPPY_EXIT=0）；`--all-targets` **2143 passed / 0 failed / 4 ignored** + `--doc` 1 = **2144 守恒**（外置测试块不改变用例数）；topology CLEAN（本地边仍 6 条，纯 crate 内文件搬迁）。
+> - **release exe 10,487,296 B**：与 V11-62 收官基线**逐字节相同**（纯 crate 内拆分零 codegen 变化），size_gate exit 0（仅预警，距红线余 1,047,040 B）。
+> - **文档同步**：constraints §7（D-4 阈值段：TD-02 闭环 + 现存超阈值文件清单）+ §10.1（root 84/21,073、规模口径注记）；本登记簿 TD-02 行。
+
 ### V11-63 · infrastructure 去 egui 化 ｜ 优先级：低（触发式）｜ 2–3 人日 ｜ 并行组 D
 
 - **涉及**：`infrastructure/fonts.rs` + `fonts/discovery.rs` + `fonts/assembly.rs`（产 `egui::FontDefinitions`）、`infrastructure/export/viewport_capture.rs` + `viewport_capture/image.rs`（`egui::ViewportCommand::Screenshot` / `ColorImage`）；`shared/`（新端口）；`src/app/frame.rs` 组合根（装配点）。
@@ -325,7 +334,7 @@ V11-59 ─────────────────────┼──�
 | ID | 债务 | 证据 | 处置 | 关联任务 |
 |---|---|---|---|---|
 | TD-01 | release 体积吃紧（已越旧红线，红线上调后入预警窗口） | 2026-10-24 基线 10,485,248 B（旧红线 10 MiB 余 512 B）；2026-10-25 V11-62 批次 2（state 迁入 `rustmark-ui`）致 +2,560 B → 10,487,808 B，旧 10 MiB 红线越线；批次 3（shortcuts）致 +1 KiB → 10,488,832 B；批次 4（theme）致 +1 KiB → 10,489,856 B；批次 5（rich，~5,918 行，V11-62 收官）致 -2,560 B → 10,487,296 B（非单调：rich 自绘排版零跨 crate 内联，迁移回吐批次 2 的 LTO 边界成本）；新红线 11 MiB 内、超预警 10 MiB。worktree A/B 实证 +2,560 B 确由跨 crate LTO 边界成本产生，无针对性修法。**维护者决策：NFR 红线 10→11 MiB、预警 8→10 MiB（原红线降级为预警）**，见 `scripts/size_gate.sh`、metrics.md §2.8 | V11-62 收官，体积窗口稳定（距新红线 11 MiB 余 1,047,040 B）；后续加依赖动作仍须过 size_gate | V11-62 / 所有 |
-| TD-02 | `src/presentation/views/preview_view.rs` 1,421 行 | 上轮评估 | 600 行阈值入 check-arch；V11-62 搬迁窗口顺带拆 | V11-62 |
+| TD-02 | `src/presentation/views/preview_view.rs` 1,421 行 | 上轮评估 | **已闭环（2026-10-25，TD-02 专项）**：按 §7 D-4 阈值拆为入口 458 行 + `preview_view/image_cache.rs`（图片纹理缓存簇 319 行）+ `preview_view/tests.rs`（外置单测 664 行）；`ImageEntry` 本体与字段转 `pub(super)`（消费者 media.rs 跨子模块）；公开路径 `preview_view::{show, image_cache_state, is_remote_url, ImageEntryState}` 经 `pub use` 零变化；四门禁绿（2144 守恒）、release 逐字节 10,487,296 B、topology CLEAN | TD-02 专项 |
 | TD-03 | `domain.rs:3` 依赖注释宽于实际 | 允许 ropey/chrono，实测零使用 | 注释校正 | V11-67 |
 | TD-04 | shared 通用件 ≈900 行且可能继续长 | pattern 494 + lru + text | 阈值：合计 >1,500 行或第 4 个非领域通用模块 → 抽 crate | 监控 |
 | TD-05 | D-6/D-7 六文件未提交合入 | git status | 先合入再动 arch_check 的任务 | BLK-03 |

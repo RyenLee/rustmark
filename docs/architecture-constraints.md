@@ -362,8 +362,14 @@ rustmark-actions，由 `tests/workspace_topology_test.rs` 断言）。禁
 单文件 **> 600 行须拆子目录**——保留 `foo.rs` 为入口，子模块平铺进 `foo/bar.rs`
 （与既有先例 `sidebar_view.rs` + `sidebar_view/`、`settings_view.rs` +
 `settings_view/` 同形，遵守禁 `mod.rs` 规则）。依据：同目录已按此标准拆过的
-模块评审定位成本显著更低，而 `preview_view.rs`（1 339 行）、
-`toolbar_view.rs`（683 行）两个未拆文件正是当前最大维护盲区。
+模块评审定位成本显著更低。**TD-02 已闭环（2026-10-25）**：`preview_view.rs`
+（原 1,421 行）按本标准拆为入口 `preview_view.rs` 458 行 +
+`preview_view/image_cache.rs`（图片纹理缓存簇 319 行）+
+`preview_view/tests.rs`（外置单测 664 行，`app/frame/tests.rs` 同款先例），
+公开路径 `preview_view::{show, image_cache_state, is_remote_url, …}` 经
+`pub use` 重导出零变化。现存超阈值文件：`toolbar_view.rs`（695 行，视图入口，
+下一候选）与 `preview_view/inline.rs`（642 行，已拆目录内的子模块，行内排版
+为内聚单元，是否再拆留待评审）。
 本条为**评审纪律**（当前未机械校验，见 architecture-review D-4），
 评审超阈值视图 PR 时对照执行。
 
@@ -431,7 +437,7 @@ rustmark（root：组合根 + views + bin）
 
 | crate | 角色 | 实测规模（2026-10-24，`src/` 口径） | 外部依赖面 |
 |---|---|---|---|
-| `rustmark`（root） | 组合根 + 视图层 + 工具 bin | 82 文件 / 21,049 行 | eframe / egui / image / rfd / anyhow / env_logger / log / wgpu(build) + 3 个本地 crate |
+| `rustmark`（root） | 组合根 + 视图层 + 工具 bin | 84 文件 / 21,073 行 | eframe / egui / image / rfd / anyhow / env_logger / log / wgpu(build) + 3 个本地 crate |
 | `rustmark-core` | 四层脊柱；表现层非视图子模块已全部于 V11-62 批次 1-5 抽去 `rustmark-ui`（core 的 `presentation` 退化为 doc-only 空壳） | 169 文件 / 27,721 行 | 13 个直接外部依赖（`cargo tree -p rustmark-core`）+ 1 个本地（actions） |
 | `rustmark-actions` | 动作词汇表契约（V11-57） | 4 文件 / 687 行 | **零依赖** |
 | `rustmark-icons` | 16×16 图标规格 + Painter 渲染器（V11-58） | 1 文件 / 613 行 | egui + rustmark-actions |
@@ -443,7 +449,9 @@ V11-57/58/62 拆出的文件（actions 3 + icons 1 + ui 的 widgets 3 / state 24
 shortcuts 5，另 2 个为 ui 的新建骨架 lib.rs / presentation.rs）扣除期间
 core 内的模块清单与文档增补；快照 238 与 git 树基线 `662536b` 的 244 文件
 之间存在未逐文件核对的口径差（评审当时工作区含 D-6/D-7 在途改动），
-**本节数字以今日实测为准**（2026-10-25：core 169 / 27,721，ui 73 / 17,648；rich 于批次 5 从 core 迁 ui，V11-62 收官）。
+**本节数字以今日实测为准**（2026-10-25：core 169 / 27,721，ui 73 / 17,648；
+root 84 / 21,073——TD-02 拆分 `preview_view.rs` 后 +2 文件 / +20 行；
+rich 于批次 5 从 core 迁 ui，V11-62 收官）。
 
 **三阶段演进**（照评审报告 §4；阶段 1 已由 V11-57 / V11-58 落地，阶段 2/3 为计划值）：
 

@@ -174,7 +174,7 @@ pub(super) fn draw_image_spec(
     // 图片按「预览区可用宽度」与上限 `IMAGE_MAX_W` 的较小值缩放：窄面板里图片
     // 缩到区域宽（不再溢出被裁），宽面板里也不超过上限（问题 2：预览未适配区域宽度）。
     let max_w = ui.available_width().min(IMAGE_MAX_W);
-    let entry = image_entry(ui, app, &url);
+    let entry = super::image_cache::image_entry(ui, app, &url);
     let param = effective_size_param(*width, *height, &url);
     let align = image_align_of(Some(align.as_str()));
     // 整块按 `#pic_*` 标记对齐；未写标记时左对齐——与 CSDN 预览一致
