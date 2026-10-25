@@ -262,7 +262,7 @@ V11-59 ─────────────────────┼──�
 > - **⚠️ release exe 越旧红线，触发 NFR 红线决策**：批次 2 树 **10,487,808 B**，较批次 1 基线（10,485,248 B，worktree @ `9ab57ae` 共享 target 重建逐字节相同）**+2,560 B**。旧红线 10 MiB（余 512 B）耗尽越线。worktree A/B 实证 +2,560 B 确由跨 crate 搬迁在 `opt-level=z` + fat LTO + `codegen-units=1` 下的 LTO 边界成本产生，无针对性修法。**维护者决策：NFR 红线 10 → 11 MiB、预警 8 → 10 MiB（原红线降级为预警）**，已同步 `scripts/size_gate.sh`、`docs/metrics.md` §2.8 + NFR-PERF-01、`docs/architecture-constraints.md` §预算、TD-01。新红线 11 MiB 下距红线余 **1,046,528 B（0.91 MiB）**，可容纳批次 3–5。
 > - **文档同步**：constraints §7（state 移出 core 模块树）/§10.1；metrics.md §2.8 + NFR-PERF-01 + TD-01；本 backlog 波次表与本节。
 >
-> **动作 2 批次 3 已落地（shortcuts，2026-10-25）。** 顺序（方案 A）：state → **shortcuts** → theme → rich。批次 3 实测如下。
+> **动作 2 批次 3 已落地（shortcuts，2026-10-25，`6778f20`）。** 顺序（方案 A）：state → **shortcuts** → theme → rich。批次 3 实测如下。
 >
 > - **纯叶搬迁**：shortcuts 仅依赖 `application::dto`（1 处 import），不引用 theme/state/rich，无内部依赖边——顺序自由。5 文件 / **892 行** git mv 入 `crates/rustmark-ui/src/presentation/shortcuts/`（保留历史）；1 处 import 改写 `crate::application::dto` → `rustmark_core::application::dto`；自引用 `crate::presentation::shortcuts::registry::normalize` 路径搬后有效不改。
 > - **跨 crate 依赖连锁（批次 2 的副效应，本批暴露并修复）**：state 在 ui crate 内原引 `rustmark_core::presentation::shortcuts`（批次 2 改写时 shortcuts 尚在 core），shortcuts 搬入 ui 后该路径失效 → 11 处改回 `crate::presentation::shortcuts`（同 crate 引用）。另 registry 原直引 `rustmark_actions`（ui 不直接依赖该 crate）→ 改经 `rustmark_core::actions`，由 **core re-export** `pub mod actions { pub use rustmark_actions::{MenuGroup, UiAction, action}; }` 间接暴露，保持 ui 依赖面 = egui + core（拓扑断言 `ui_crate_dependency_face_is_egui_plus_core` 不变）。
