@@ -1,7 +1,7 @@
 //! 侧栏「整行可点」容器。
 
-use crate::presentation::theme::builtin::Theme;
 use egui::{Response, Sense, Ui};
+use rustmark_core::presentation::theme::builtin::Theme;
 
 /// 排一行内容，并在**整行矩形**上挂 `Sense::click()` 命中区。
 ///

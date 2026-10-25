@@ -24,6 +24,13 @@
 # root → rustmark-icons → rustmark-actions（icons 依赖面 = egui +
 # rustmark-actions，由 tests/workspace_topology_test.rs 断言；root 仍不直连
 # actions，UiAction 经 core re-export 访问）。
+#
+# 基线更新：2026-10-24，V11-62 批次 1 抽出 rustmark-ui（widgets）后拓扑 =
+# 三条本地链汇合（无环，本地依赖边 4 → 6 条）：
+#   root → rustmark-core → rustmark-actions
+#   root → rustmark-icons → rustmark-actions
+#   root → rustmark-ui → rustmark-core → rustmark-actions（ui 依赖面 = egui +
+#   rustmark-core，由 tests/workspace_topology_test.rs 断言）。
 rustmark v0.2.0
 ├── anyhow v1.0.104
 ├── eframe v0.37.0
@@ -34,6 +41,7 @@ rustmark v0.2.0
 ├── rustmark-core v0.2.0
 │   [dev-dependencies]
 ├── rustmark-icons v0.2.0
+├── rustmark-ui v0.2.0
 └── wgpu v30.0.1
     [build-dependencies]
 [dev-dependencies]
@@ -64,3 +72,8 @@ rustmark-core v0.2.0
 rustmark-icons v0.2.0
 ├── egui v0.37.0
 └── rustmark-actions v0.2.0
+
+rustmark-ui v0.2.0
+├── egui v0.37.0
+└── rustmark-core v0.2.0
+    [dev-dependencies]

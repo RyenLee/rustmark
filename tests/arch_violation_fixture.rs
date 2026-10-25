@@ -2420,6 +2420,12 @@ fn rustmark_core_prefix_does_not_bypass_layer_bans() {
 /// `rustmark_core::presentation::{rich, shortcuts, state, theme, widgets}`
 /// 之外再加一行 `pub use rustmark_icons as icons;`（把 crate 本身 re-export
 /// 成模块）。后者同样不在 Presentation 禁令表里，一并钉住。
+///
+/// V11-62 批次 1：widgets 抽去 `rustmark-ui` 后改为三行——core 侧少一个
+/// 子模块、新增 `pub use rustmark_ui::widgets;`。注意 `rustmark_ui::` **不做**
+/// `crate::` 归一（归一只覆盖 `rustmark_core::`：root 拼接的是 core 的**全部**
+/// 模块，而 ui 只拼接 `widgets` 一个模块，两种拼写不等价）；该写法不在
+/// Presentation 禁令表里，同样零豁免通过。
 #[test]
 fn shell_reexport_splice_points_are_not_violations() {
     let dir = tempfile::tempdir().unwrap();
@@ -2432,7 +2438,7 @@ fn shell_reexport_splice_points_are_not_violations() {
     write_fixture(
         &manifest.join("src"),
         "presentation.rs",
-        "//! x\npub mod views;\npub use rustmark_core::presentation::{rich, shortcuts, state, theme, widgets};\npub use rustmark_icons as icons;\n",
+        "//! x\npub mod views;\npub use rustmark_core::presentation::{rich, shortcuts, state, theme};\npub use rustmark_ui::widgets;\npub use rustmark_icons as icons;\n",
     );
 
     let violations = arch_check::scan_project(manifest);
@@ -2664,5 +2670,128 @@ fn layer_independent_rules_still_apply_in_actions_root() {
         repaint.detail.contains("request_repaint_after"),
         "文案须点名帧预约唯一出口：{}",
         repaint.detail
+    );
+}
+
+// ============================================================================
+// 十七、V11-62：rustmark-ui 第五扫描根（presentation/ 前缀保子层判定）
+// ============================================================================
+
+/// ui 根的合成布局零违规：`presentation/` 路径前缀让 `layer_of` 判对应
+/// 子层，不误报「未知层」。
+///
+/// # 为什么这条必须钉
+///
+/// `layer_of` 按**根内相对路径**判层且不感知 crate：ui 根若不用
+/// `presentation/` 前缀（把 `widgets.rs` 平铺到 src 根下），首段
+/// `widgets` 不在任何层名里 → 判 Unknown → 全量误报。批次 1 的方案是
+/// **保留前缀**（`crates/rustmark-ui/src/presentation/widgets.rs`），层
+/// 禁令表与豁免表零改动。合成布局复刻真实 crate 的文件名与跨 crate 引用
+/// 形状：`rustmark_core::presentation::theme::builtin::Theme` 归一为
+/// `crate::presentation::theme…` 后不在 widgets 子层禁令表里（widgets 是
+/// 主题的合法消费者）——若哪天有人把 widgets→theme 禁掉，这条当场红。
+#[test]
+fn ui_root_presentation_prefix_keeps_sublayer_judgement() {
+    let dir = tempfile::tempdir().unwrap();
+    let manifest = dir.path();
+    let ui = manifest.join("crates/rustmark-ui/src");
+    write_fixture(&ui, "lib.rs", "//! x\npub mod presentation;\n");
+    write_fixture(&ui, "presentation.rs", "//! x\npub mod widgets;\n");
+    write_fixture(
+        &ui,
+        "presentation/widgets.rs",
+        "//! x\npub mod row;\npub mod text;\n",
+    );
+    write_fixture(
+        &ui,
+        "presentation/widgets/row.rs",
+        "//! x\nuse rustmark_core::presentation::theme::builtin::Theme;\npub fn f(t: &Theme) {}\n",
+    );
+
+    let violations = arch_check::scan_project(manifest);
+    assert!(
+        violations.is_empty(),
+        "ui 根应凭 presentation/ 前缀判对应子层、零违规（前缀丢了会误报未知层）：{:?}",
+        described(&violations)
+    );
+}
+
+/// ui 根不是 checker 盲区：widgets 子层禁令在新根照旧报。
+///
+/// # 为什么必须钉
+///
+/// 与上一条是一对：那条防「误报」（前缀丢了会全量未知层），这条防「漏报」
+/// （新根被跳过、或「搬进新 crate = 洗白层禁令」的错觉）。搬到 ui 不等于
+/// 豁免：`presentation/widgets/` 引 `views` 在 core 里报，在 ui 里同样报，
+/// 且报告带 `crates/rustmark-ui/src/` 前缀（层判定仍按根内相对路径，
+/// 不吃显示前缀——首段 `crates` 会把整个根误判成未知层）。
+#[test]
+fn ui_root_does_not_launder_sublayer_bans() {
+    let dir = tempfile::tempdir().unwrap();
+    let manifest = dir.path();
+    let ui = manifest.join("crates/rustmark-ui/src");
+    write_fixture(&ui, "lib.rs", "//! x\npub mod presentation;\n");
+    write_fixture(
+        &ui,
+        "presentation/widgets/row.rs",
+        "//! x\nuse crate::presentation::views::file_tree::FileTree;\npub fn f() {}\n",
+    );
+
+    let violations = arch_check::scan_project(manifest);
+    assert_eq!(
+        violations.len(),
+        1,
+        "widgets 引 views 在 ui 根应恰好报 1 条：{:?}",
+        described(&violations)
+    );
+    let v = &violations[0];
+    assert_eq!(
+        v.file, "crates/rustmark-ui/src/presentation/widgets/row.rs",
+        "报告路径须带 ui 前缀（层判定按根内相对路径）：{v:?}"
+    );
+    assert!(
+        v.detail.contains("crate::presentation::views"),
+        "文案须点名子层禁令表词条：{}",
+        v.detail
+    );
+}
+
+/// views 若被误搬进 ui 根，既有禁令自动生效（ADR-013 决策 3 的结构防护）。
+///
+/// # 为什么必须钉
+///
+/// 决策 3「views 必须留 root」此前靠**人记得**；批次 1 起它有了结构形态：
+/// views 的文件落在哪就按哪判层——搬进 ui 的 `presentation/views/` 同样判
+/// `PresentationViews`，`crate::domain` 照报。这条钉住「防护是真的」：
+/// 若 `layer_of` 的 views 分支被改成只认 shell 根，或有人给 ui 根加
+/// `forced_layer = Free` 式豁免，这里立刻红。
+#[test]
+fn views_misplaced_in_ui_root_still_trip_the_bans() {
+    let dir = tempfile::tempdir().unwrap();
+    let manifest = dir.path();
+    let ui = manifest.join("crates/rustmark-ui/src");
+    write_fixture(&ui, "lib.rs", "//! x\npub mod presentation;\n");
+    write_fixture(
+        &ui,
+        "presentation/views/sidebar.rs",
+        "//! x\nuse crate::domain::document::repository::Repo;\npub fn f() {}\n",
+    );
+
+    let violations = arch_check::scan_project(manifest);
+    assert_eq!(
+        violations.len(),
+        1,
+        "views 搬进 ui 也逃不过 presentation 父层禁令：{:?}",
+        described(&violations)
+    );
+    let v = &violations[0];
+    assert_eq!(
+        v.file, "crates/rustmark-ui/src/presentation/views/sidebar.rs",
+        "报告路径须带 ui 前缀：{v:?}"
+    );
+    assert!(
+        v.detail.contains("crate::domain"),
+        "文案须点名父层禁令表词条：{}",
+        v.detail
     );
 }

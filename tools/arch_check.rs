@@ -1287,9 +1287,10 @@ pub fn scan_with_tests(src_root: &Path, tests_root: &Path) -> Vec<Violation> {
 /// 扫描**整个 workspace**（D-3 阶段 4a 拆分后的口径）：
 /// shell `src/` + `crates/rustmark-core/src/` +
 /// `crates/rustmark-actions/src/`（V11-57）+
-/// `crates/rustmark-icons/src/`（V11-58）+ `tests/`。
+/// `crates/rustmark-icons/src/`（V11-58）+
+/// `crates/rustmark-ui/src/`（V11-62）+ `tests/`。
 ///
-/// # 五个根、两种记键
+/// # 六个根、两种记键
 ///
 /// - src 根**按各自根的层相对路径**判层、查豁免表
 ///   （core 的 `domain/x.rs` 与拆分前同键，登记表与既有禁令表零改动）；
@@ -1298,13 +1299,17 @@ pub fn scan_with_tests(src_root: &Path, tests_root: &Path) -> Vec<Violation> {
 ///   icons 根**无需**强制：单文件 `lib.rs` 落在 crate 入口白名单里
 ///   （`layer_of` 对 `lib.rs` 自然判 Free），将来若长出第二个文件，
 ///   「未知层」警报会逼着给它定层——这正是缺口要响的意图；
+///   ui 根同样**不设**强制层：批次 1 起保留 `presentation/` 路径前缀，
+///   `layer_of` 按前缀判对应子层（`presentation/widgets.rs` →
+///   [`Layer::PresentationWidgets`]），层禁令表零改动，views 若被误搬进
+///   ui 会落在 `presentation/views` 子层自动触发既有禁令（fixture 第十七节）；
 /// - core 侧违规只在**报告**时补 `crates/rustmark-core/src/` 前缀——
 ///   层判定绝不能看该前缀，否则首段 `crates` 会把整个 core 判成
 ///   「未知层」而全量误报；
 /// - `tests/` 侧与 [`scan_with_tests`] 完全一致（全判 [`Layer::Tests`]、
 ///   rel 带 `tests/` 前缀）。
 ///
-/// # 登记表按 manifest 加载一次、四个根共用
+/// # 登记表按 manifest 加载一次、五个 src 根共用
 ///
 /// core 根的 parent 是 `crates/rustmark-core`，那里没有 `docs/`——
 /// 沿用 [`load_registry`] 的「parent 即 manifest」推断会让 core 侧豁免
@@ -1338,6 +1343,13 @@ pub fn scan_project(manifest: &Path) -> Vec<Violation> {
     // **不**设 `forced_layer`。它与层无关的规则（禁 `mod.rs` / 帧预约）
     // 与其他根同一套代码路径生效。
     //
+    // 第五根（V11-62 批次 1）：`rustmark-ui` 是表现层非视图 crate（当前
+    // 仅 widgets）。保留 `presentation/` 路径前缀，`layer_of` 按前缀判
+    // 对应子层，故同样**不**设 `forced_layer`——层判定零改动即等价于
+    // 「widgets 还在 core」的旧判定，而 views 若被误搬进 ui 会落在
+    // `presentation/views` 子层自动触发既有禁令（ADR-013 决策 3 的结构
+    // 防护：views 留 root 不靠人记，靠路径判层自动生效）。
+    //
     // 「actions 不得引用 core / 任何 crate」刻意**不**做成词法禁令：core
     // 已依赖 actions，反向加普通依赖即 Cargo 循环依赖（解析期报错，比词法
     // 规则更强）；「获得任意依赖」由 workspace 拓扑断言兜底
@@ -1359,6 +1371,11 @@ pub fn scan_project(manifest: &Path) -> Vec<Violation> {
         (
             manifest.join("crates").join("rustmark-icons").join("src"),
             "crates/rustmark-icons/src/",
+            None,
+        ),
+        (
+            manifest.join("crates").join("rustmark-ui").join("src"),
+            "crates/rustmark-ui/src/",
             None,
         ),
     ] {

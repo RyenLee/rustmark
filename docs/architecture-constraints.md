@@ -137,7 +137,8 @@ rich / widgets ──► （不得回指 views / state / theme / widgets）
    `scan_project` 扫 shell `src/` + `crates/rustmark-core/src/` +
    `crates/rustmark-actions/src/`（V11-57，整根 Free）+
    `crates/rustmark-icons/src/`（V11-58，`lib.rs` 自然判 Free）+
-   `tests/` 五个根，core 侧只在**报告**时补 `crates/rustmark-core/src/` 前缀
+   `crates/rustmark-ui/src/`（V11-62 批次 1，`presentation/` 前缀判子层）+
+   `tests/` 六个根，core 侧只在**报告**时补 `crates/rustmark-core/src/` 前缀
    （层判定若吃这个前缀，首段 `crates` 会把整个 core 误判成「未知层」）。
 6. **子层叠加**：`presentation/state` 同时受父层与子层两组禁令约束（不是替换）。
 7. **`presentation` 内部细粒度**（R-13）：第二段为 `state` / `views` / `rich` /
@@ -305,7 +306,8 @@ src/                                    # shell（root crate `rustmark`）
 ├─ main.rs / lib.rs                     # lib.rs 拼接点：pub use rustmark_core::{application, domain, infrastructure, shared}
 ├─ app.rs / app/{bootstrap.rs,frame.rs,crash_log.rs,…}
 │                                       # 组合根；帧预约唯一出口 app/frame/scheduler.rs
-├─ presentation.rs                      # 拼接点：pub mod views + pub use rustmark_core::presentation::{rich, shortcuts, state, theme, widgets}
+├─ presentation.rs                      # 拼接点：pub mod views + pub use rustmark_core::presentation::{rich, shortcuts, state, theme}
+│                                       #   + pub use rustmark_ui::presentation::widgets（V11-62 批次 1）
 │                                       #   + pub use rustmark_icons as icons（V11-58）
 ├─ presentation/views/                  # 视图（唯一留在 shell 的 presentation 子层）
 └─ bin/check-arch.rs                    # 工具二进制
@@ -317,13 +319,16 @@ crates/rustmark-core/src/               # core（crate `rustmark-core`）
 │    └─ 各含 {aggregate.rs,value_objects.rs,events.rs,services.rs,repository.rs,errors.rs}
 ├─ application/{document,markdown,workspace,preferences,export}/ + dto/
 ├─ infrastructure/{persistence,text,parsing,highlighting,export,events,dialogs,…}/
-└─ presentation/{state,widgets,theme,shortcuts,rich}/   # 无 views、无 icons（V11-58 抽出）
+└─ presentation/{state,theme,shortcuts,rich}/   # 无 views；widgets（V11-62 批次 1）与 icons（V11-58）已抽出
 
 crates/rustmark-actions/src/            # actions（crate `rustmark-actions`，V11-57）
 └─ lib.rs / action.rs / action/{impls.rs,menu_group.rs}   # 零依赖词汇表，整根判 Free
 
 crates/rustmark-icons/src/              # icons（crate `rustmark-icons`，V11-58）
 └─ lib.rs                               # 16×16 图标规格 + Painter 渲染器；依赖 egui + rustmark-actions
+
+crates/rustmark-ui/src/                 # ui（crate `rustmark-ui`，V11-62 批次 1）
+└─ lib.rs / presentation.rs / presentation/widgets/{,row,text}.rs   # widgets 布局封装；依赖 egui + rustmark-core
 ```
 
 白名单外的顶层位置（shell `src/foo.rs`、core `src/utils/` 等）会被校验器报
@@ -413,25 +418,28 @@ rustmark-actions，由 `tests/workspace_topology_test.rs` 断言）。禁
 
 ### 10.1 crate 地图
 
-**当前拓扑**（2026-10-24 实测，`cargo tree --workspace --depth 1`；本地依赖边共 4 条）：
+**当前拓扑**（2026-10-24 实测，`cargo tree --workspace --depth 1`；本地依赖边共 6 条）：
 
 ```
 rustmark（root：组合根 + views + bin）
 ├──► rustmark-core  ──► rustmark-actions
-└──► rustmark-icons ──► rustmark-actions
-                        （两条本地链在 rustmark-actions 汇合；actions 零依赖）
+├──► rustmark-icons ──► rustmark-actions
+└──► rustmark-ui    ──► rustmark-core ──► rustmark-actions
+                        （三条本地链在 rustmark-actions 汇合；actions 零依赖）
 ```
 
 | crate | 角色 | 实测规模（2026-10-24，`src/` 口径） | 外部依赖面 |
 |---|---|---|---|
-| `rustmark`（root） | 组合根 + 视图层 + 工具 bin | 82 文件 / 21,049 行 | eframe / egui / image / rfd / anyhow / env_logger / log / wgpu(build) + 2 个本地 crate |
-| `rustmark-core` | 四层脊柱 + 表现层非视图子模块 | 240 文件 / 45,280 行 | 13 个直接外部依赖（`cargo tree -p rustmark-core`）+ 1 个本地（actions） |
+| `rustmark`（root） | 组合根 + 视图层 + 工具 bin | 82 文件 / 21,049 行 | eframe / egui / image / rfd / anyhow / env_logger / log / wgpu(build) + 3 个本地 crate |
+| `rustmark-core` | 四层脊柱 + 表现层非视图子模块 | 237 文件 / 44,746 行 | 13 个直接外部依赖（`cargo tree -p rustmark-core`）+ 1 个本地（actions） |
 | `rustmark-actions` | 动作词汇表契约（V11-57） | 4 文件 / 687 行 | **零依赖** |
 | `rustmark-icons` | 16×16 图标规格 + Painter 渲染器（V11-58） | 1 文件 / 613 行 | egui + rustmark-actions |
+| `rustmark-ui` | 表现层非视图部分：widgets 布局封装（V11-62 批次 1） | 5 文件 / 584 行 | egui + rustmark-core |
 
 规模口径：`find <源码根> -name '*.rs' | xargs wc -l`，只含 `src/`、不含
 `tests/`，命令随文可复跑。core 与评审快照（46,375 行 / 238 文件）的差额 =
-V11-57/58 拆出的 5 个文件（actions 3 + icons 1）扣除期间 core 内的模块清单
+V11-57/58/62 拆出的 11 个文件（actions 3 + icons 1 + ui 的 widgets 3，另 2
+个为 ui 的新建骨架 lib.rs / presentation.rs）扣除期间 core 内的模块清单
 与文档增补；快照 238 与 git 树基线 `662536b` 的 244 文件之间存在未逐文件
 核对的口径差（评审当时工作区含 D-6/D-7 在途改动），**本节数字以今日实测为准**。
 
@@ -439,21 +447,21 @@ V11-57/58 拆出的 5 个文件（actions 3 + icons 1）扣除期间 core 内的
 
 ```
 阶段 0（评审时）            阶段 1（P1 首拆，已落地）    阶段 2（触发后）           阶段 3（真实非 UI 消费者出现后）
-rustmark                   rustmark                     rustmark                   rustmark（组合根 + views + bin）
-├─ app/            7.0k    ├─ app/            7.0k      ├─ app/          7.0k      ├─ app/                    7.0k
-├─ presentation/  13.8k    ├─ presentation/  13.8k     ├─ presentation/views 13.8k ├─ presentation/views      13.8k
-└─ rustmark-core  46.4k    ├─ rustmark-icons  0.6k ─┐   ├─ rustmark-actions 0.7k   ├─ rustmark-actions         0.7k
-   ├─ shared       3.0k    ├─ rustmark-actions 0.7k ─┤  ├─ rustmark-ui     18.1k   ├─ rustmark-ui             18.1k
-   ├─ domain       7.2k    └─ rustmark-core   45.3k    │  │  └─ state/theme/rich/   └─ rustmark-core          16.7k（去 egui 化）
-   ├─ application  6.6k      ├─ shared     3.0k       │  │     shortcuts/widgets    ├─ rustmark-infra          10.8k
-   ├─ infrastructure 10.8k   ├─ domain     7.2k       │  └─ rustmark-core   27.6k   └─（core 只留 shared/domain/
-   └─ presentation 18.8k     ├─ application 6.6k      │     ├─ shared / domain /      application 脊柱）
-      ├─ state    6.7k       ├─ infrastructure 10.8k  │     │  application
-      ├─ rich     5.9k       └─ presentation 17.9k    │     └─ infrastructure 10.8k
-      ├─ theme    3.5k         ├─ state / theme / rich│        （fonts/viewport_capture 端口化后
-      ├─ shortcuts 1.5k        │  / shortcuts / widgets│         可再拆 rustmark-infra）
-      ├─ widgets  0.5k         └─（icons 已拆出）      │
-      └─ icons    0.6k                                 │
+ rustmark                   rustmark                     rustmark                   rustmark（组合根 + views + bin）
+ ├─ app/            7.0k    ├─ app/            7.0k      ├─ app/          7.0k      ├─ app/                    7.0k
+ ├─ presentation/  13.8k    ├─ presentation/  13.8k      ├─ presentation/views 13.8k ├─ presentation/views      13.8k
+ └─ rustmark-core  46.4k    ├─ rustmark-icons  0.6k ─┐   ├─ rustmark-actions 0.7k   ├─ rustmark-actions         0.7k
+    ├─ shared       3.0k    ├─ rustmark-actions 0.7k ─┤  ├─ rustmark-ui     18.1k   ├─ rustmark-ui             18.1k
+    ├─ domain       7.2k    ├─ rustmark-ui      0.6k ─┤  │  └─ state/theme/rich/    └─ rustmark-core          16.7k（去 egui 化）
+    ├─ application  6.6k    └─ rustmark-core   44.7k     │     shortcuts/widgets    ├─ rustmark-infra          10.8k
+    ├─ infrastructure 10.8k    ├─ shared     3.0k        └─ rustmark-core   27.6k   └─（core 只留 shared/domain/
+    └─ presentation 18.8k      ├─ domain     7.2k           ├─ shared / domain /       application 脊柱）
+       ├─ state    6.7k        ├─ application 6.6k          │  application
+       ├─ rich     5.9k        ├─ infrastructure 10.8k      └─ infrastructure 10.8k
+       ├─ theme    3.5k        └─ presentation 17.4k           （fonts/viewport_capture 端口化后
+       ├─ shortcuts 1.5k          ├─ state / theme / rich          可再拆 rustmark-infra）
+       ├─ widgets  0.5k           │  / shortcuts
+       └─ icons    0.6k           └─（icons / widgets 已拆出）
                           方向：icons→actions；ui→core；root→{ui,core,icons,actions}
 ```
 
@@ -511,7 +519,7 @@ core。同一子模块内两种结论，判据的粒度是**模块**，不是目
 
 | 动作 | 触发条件（任一满足即启动评估） | 度量方式 | 当前状态（2026-10-24） |
 |---|---|---|---|
-| presentation 非视图子模块 → `rustmark-ui`（V11-62） | ① UI 并行开发人数 ≥2；② core 增量编译 >10s；③ presentation 年变更 ≥80 提交**且**「views↔core state 跨 crate 摩擦」在 ≥3 个功能中复现 | `tools/onboard_cost.py` + `git log` 去重 | ② 未触发（增量 5.92s）。③ **提交数已去重实测**——表现层整体 **88**、含 `tests/presentation` **93**、仅待搬迁的非视图部分 **51**（阈值 80：整体口径满足、待搬迁部分不满足，口径差异如实保留）；**摩擦已取证：8 个功能复现**（state 字段白名单 169/548 条 + 22 个 `pub` setter + 桥接 6 行 / 21 个 view 文件经桥接访问）。**③ 判定：满足**（证据见 tasklist V11-62 节）。① 仍待维护者提供 |
+| presentation 非视图子模块 → `rustmark-ui`（V11-62） | ① UI 并行开发人数 ≥2；② core 增量编译 >10s；③ presentation 年变更 ≥80 提交**且**「views↔core state 跨 crate 摩擦」在 ≥3 个功能中复现 | `tools/onboard_cost.py` + `git log` 去重 | ② 未触发（增量 5.92s）。③ **提交数已去重实测**——表现层整体 **88**、含 `tests/presentation` **93**、仅待搬迁的非视图部分 **51**（阈值 80：整体口径满足、待搬迁部分不满足，口径差异如实保留）；**摩擦已取证：8 个功能复现**（state 字段白名单 169/548 条 + 22 个 `pub` setter + 桥接 6 行 / 21 个 view 文件经桥接访问）。**③ 判定：满足**（证据见 tasklist V11-62 节）。① 仍待维护者提供。**已开工**：动作 2 批次 1 已落地（widgets 538 行 → `rustmark-ui`，本地依赖边 4→6，门禁 2144 / release exe 10,485,248 B 与基线逐字节相同）；批次 2–5 待续（theme → shortcuts → state → rich） |
 | infrastructure → `rustmark-infra`（V11-63/64） | 出现真实非 UI 消费者（CLI / headless / 嵌入）**且**去 egui 化完成 | 需求事实 + `cargo tree -p rustmark-core \| grep egui` 为 0 | 未触发（无 headless 消费者；core 现引 egui） |
 | math / mermaid → `rustmark-render` | mermaid/math 年变更 ≥10 提交或合计 >8k 行（现 5.6k） | git log + wc -l | 未触发 |
 | 新 crate 合并回退（防过度拆分） | 新建 crate <1k 行且 12mo 变更 <5 提交 | git log | 不适用：actions（687 行）/ icons（613 行）均 <1k 行，但属零依赖契约 / 纯资源 crate，回退等于把契约塞回 core——判据本意防「为拆而拆的业务模块」（ADR-013 决策 5） |

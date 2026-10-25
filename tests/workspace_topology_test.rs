@@ -100,3 +100,65 @@ fn icons_crate_dependency_face_is_egui_plus_actions() {
         );
     }
 }
+
+/// `rustmark-ui` 的依赖面必须恰为 **egui + rustmark-core**
+/// （V11-62 批次 1 验收第 1 条的机械化）。
+///
+/// widgets 是「egui 布局配方 + 主题配色消费者」：绘制原语只要 egui，
+/// `row::paint_row_background` 读 `Theme` 的 accent_soft / bg_tertiary 只要
+/// core。任何第三个依赖都说明表现层 crate 在长领域逻辑——「抽出」只换了
+/// 住处、没换职责。判据同样走 manifest 文本：`[dependencies]` 段键集合与
+/// 期望集合**相等**断言，再全文禁掉其余依赖段（dev / build / target）。
+///
+/// 与 CI 拓扑 diff 的分工：那条守「root→ui、ui→core 两条边的增减」，
+/// 本条守「ui 自身不再多要依赖」——后者是前者的细化，本地先红。
+#[test]
+fn ui_crate_dependency_face_is_egui_plus_core() {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("crates")
+        .join("rustmark-ui")
+        .join("Cargo.toml");
+    let text = std::fs::read_to_string(&path).expect("ui crate 的 Cargo.toml 应可读");
+
+    let mut deps = BTreeSet::new();
+    let mut section = String::new();
+    for raw in text.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if line.starts_with('[') {
+            section = line.to_string();
+            continue;
+        }
+        if section != "[dependencies]" {
+            continue;
+        }
+        if let Some((name, _)) = line.split_once('=') {
+            deps.insert(name.trim().to_string());
+        }
+    }
+    let expected: BTreeSet<String> = ["egui", "rustmark-core"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    assert_eq!(
+        deps, expected,
+        "rustmark-ui 的依赖面必须恰为 egui + rustmark-core——\
+         表现层 crate 不长领域逻辑，要加依赖先来改这条断言"
+    );
+
+    for raw in text.lines() {
+        let line = raw.trim();
+        if line.starts_with('#') {
+            continue;
+        }
+        assert!(
+            !(line.starts_with("[dev-dependencies")
+                || line.starts_with("[build-dependencies")
+                || line.starts_with("[target")),
+            "rustmark-ui 只许有 normal [dependencies] 一段；\
+             dev / build / target-specific 依赖段同样稀释「纯表现层」定位：{line}"
+        );
+    }
+}

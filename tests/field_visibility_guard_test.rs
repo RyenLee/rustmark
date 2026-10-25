@@ -21,7 +21,8 @@
 //! # 判定口径（对照阶段 2）
 //!
 //! - **范围 = `crates/rustmark-core/src` + 从 core 抽出的叶子 crate**
-//!   （当前 `crates/rustmark-icons/src`，V11-58）：4b 收的是 core 的面
+//!   （当前 `crates/rustmark-icons/src`，V11-58；`crates/rustmark-ui/src`，
+//!   V11-62 批次 1）：4b 收的是 core 的面
 //!   （review §4.2「core 的 693+ pub 面收缩到真实接口面」）；shell 的 `src/`
 //!   是应用根，其 pub 面不属本批次出口。抽出的叶子 crate 的 pub 面同样跨
 //!   crate 边界，不纳入就等于**静默放弃覆盖**（V11-57 的 shortcut guard
@@ -56,12 +57,13 @@ mod arch_check {
 
 /// 已批准保持 `pub` 的 core 与抽出叶子 crate 的字段。
 ///
-/// 键格式（V11-58 起两种前缀）：
+/// 键格式（V11-58 起两种前缀，V11-62 起三种）：
 ///
 /// - core 条目（历史口径，548 条不动）：`<相对 crates/rustmark-core/src
 ///   的路径>::<结构体>::<字段>`；
 /// - 抽出的叶子 crate 条目：`<crate 短名>/<相对该 crate src 的路径>::
-///   <结构体>::<字段>`（当前仅 icons：`icons/lib.rs::…`）。前缀是**防碰撞**
+///   <结构体>::<字段>`（当前 icons：`icons/lib.rs::…`，ui：`ui/…`——
+///   批次 1 的 widgets 零结构体零字段，暂无 ui 条目）。前缀是**防碰撞**
 ///   的键命名空间——core 与叶子 crate 各有一个 `lib.rs`，裸路径会把两边的
 ///   条目合并成同键，白名单 quietly 少算。
 ///
@@ -787,12 +789,13 @@ fn pub_fields_in(source: &str) -> Vec<String> {
 /// 叶子 crate 为 crate 短名 + `/`（防 `lib.rs` 同键碰撞）。
 fn scan_pub_fields() -> (BTreeSet<String>, Vec<String>) {
     let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let roots: [(&str, PathBuf); 2] = [
+    let roots: [(&str, PathBuf); 3] = [
         ("", base.join("crates").join("rustmark-core").join("src")),
         (
             "icons/",
             base.join("crates").join("rustmark-icons").join("src"),
         ),
+        ("ui/", base.join("crates").join("rustmark-ui").join("src")),
     ];
 
     let mut actual: BTreeSet<String> = BTreeSet::new();

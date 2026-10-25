@@ -30,7 +30,12 @@
 > （`--all-targets` 2139 + `--doc` 1；净 +1：拓扑断言 icons 依赖面 1 例；
 > icons 4 个规格单测从 core lib 迁出为独立 crate 目标，总量守恒）。
 > 下文「2131 / 2136 / 2139」表述一律按 **2140** 执行。
-> V11-59 已完成（`2880678`）；V11-60 已关闭（审计 V=0，转 V11-62）；V11-61 已降级为记录。
+> **基线再更新（2026-10-24，V11-62 批次 1 完成后）：2144 passed / 0 failed / 4 ignored**
+> （`--all-targets` 2143 + `--doc` 1；净 +4：fixture 第十七节 3 例 + 拓扑断言 ui 依赖面 1 例；
+> widgets 7 个内联测试从 core lib 迁 ui lib，总量守恒）。
+> 下文「2131 / 2136 / 2139 / 2140」表述一律按 **2144** 执行。
+> V11-59 已完成（`2880678`）；V11-60 已关闭（审计 V=0，转 V11-62）；V11-61 已降级为记录；
+> **V11-62 已开工——动作 2 批次 1（widgets）已落地，批次 2–5 待续**（见 V11-62 节末记录块）。
 > 状态表见 `docs/v1.1-backlog.md` §3 的波次登记。
 
 **通用验收（每项必含）**：上表五项全绿 + `cargo fmt --check` 绿 + 所有命令带
@@ -233,6 +238,19 @@ V11-59 ─────────────────────┼──�
 > - **摩擦取证**（先定义后测量，避免事后解释）：F-a = 为跨 crate 读写而必须 `pub` 的 state setter；F-b = 为跨 crate 可见性而登记的 `pub` 字段白名单条目；F-c = views 经桥接访问 state 的面。实测：**F-b 169 条 / 548 条白名单是 state 字段**（settings 25、app 16、sidebar 28、find_replace 19、export 14、editor 12、scroll_sync 8、diff 8、preview 7、status_bar 6、shortcut_overview 6、quick_open 5…）；**F-a 22 个 `pub fn set_/with_`** 分布在 12 个 state 模块；**F-c** 桥接 6 行（`src/presentation.rs`）+ 21 个 view 文件经 `state::` 访问。三个形态在 **8 个功能**复现：设置、侧栏（含搜索/文件树）、查找替换、导出、编辑器（含滚动同步）、预览、diff、命令面板·快速打开·符号。
 > - **一项必须直说的结论**：该摩擦是「保住 R-11/R-12 编译保证」的代价，**V11-62 不会消除它**——views 留 root，state 搬到 ui crate 后边界依旧存在，169 条白名单与 22 个 setter 只是换 crate（对应动作 5：field_visibility_guard 范围须扩到 ui crate）。V11-62 的真实收益仍是 core 名实相符（45.3k → 27.6k）、UI 单 crate 迭代、以及 headless 复用的前置条件。
 > - **判定**：触发成立（③），可进入动作 2；是否开工由维护者拍板——本项量级 2–3 人日、涉及 622 条用例拆分与 arch_check 改双 roots。
+
+> **动作 2 批次 1 已落地（widgets，2026-10-24）。** 用户已拍板「进入 V11-62 动作 2」，批次策略：widgets → theme → shortcuts → state → rich，每批一个 commit、每批门禁、可 revert。批次 1 实测如下。
+>
+> - **新 crate 三件套**：`crates/rustmark-ui/`（Cargo.toml + src/lib.rs + src/presentation.rs），**核心设计是 ui crate 保留 `presentation/` 路径前缀**（`crates/rustmark-ui/src/presentation/widgets.rs`）——`layer_of` 按根内相对路径判层零改动（widgets → PresentationWidgets 子层），全部禁令表/豁免表零改动，且 **views 若被误搬进 ui 会自动触发既有禁令**（ADR-013 决策 3 的结构防护）。依赖面 = egui + rustmark-core（本地边 4→6：root→ui、ui→core；ui→core→actions 与 icons→actions 在 actions 汇合，无环）。
+> - **桥接路径与 core 同形**：root `pub use rustmark_ui::presentation::widgets;`（后续批次迁入 state/theme/rich/shortcuts 时只改花括号列表）；8 个 view 文件 `use crate::presentation::widgets;` 零改动，公开路径零变化。
+> - **每批守卫扩展决策规则（本批确立，防后人重复决策）**：field_visibility_guard 必须扩根（pub 面跨 crate 边界，白名单 548 条零变化——widgets 零结构体零 pub 字段）；四个模式守卫（default_extension / export_format / shortcut_action / theme）**不扩**——按 icons 先例，只在「搬迁代码实际携带被守模式」的批次扩（theme 批次必须扩 theme_guard，其 SOURCE_OF_TRUTH 会搬走）。
+> - **归一化边界（坑）**：arch_check 只把 `rustmark_core::` 归一为 `crate::`；`rustmark_ui::` **不归一**（root 拼接 core 全部模块 vs 只拼 ui 的 widgets，两种拼写不等价）。fixture 合成内容同步改三行拼接。
+> - **新 crate 必备件（坑）**：lib.rs 须带 `#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]`——workspace lints 的 panic=warn 会打死迁入的带 `panic!` 测试代码。
+> - **守卫与 fixture**：arch_check 加第五根（ui 根不强制层，lib.rs 自然 Free）；build.rs 加 rerun-if-changed；field_visibility_guard 扩到 3 根（键格式 `<短名>/<路径>`）；fixture 新增第十七节 3 例（ui 前缀不误判 / ui 根洗不掉子层禁令 / views 误搬 ui 照旧报）。
+> - **五门禁实测**：fmt OK；check-arch OK（未发现分层依赖违规）；clippy OK；`--all-targets` **2143 passed / 0 failed / 4 ignored** + `--doc` 1 = 合计 2144（基线 2140，+4 = 3 fixture + 1 拓扑断言）；topology CI 式 diff CLEAN；release exe **10,485,248 B 与基线逐字节相同**（红线 10,485,760 B，余 512 B）。
+> - **三组变异验证全捕获**：① 注释掉 arch_check 第五根 → 两个「ui 根禁令」用例双红；② 向 ui/presentation.rs 注入 `pub struct` + `pub` 字段 → guard 报 `ui/presentation.rs::...`；③ 向 ui Cargo.toml 注入第三个依赖 `log` → 依赖面断言红。
+> - **文档同步**：constraints §4.1/§7/§10.1/§10.3（含三阶段演进图重算）；topology 期望文件重算；本 backlog 波次表；本节。
+> - **批次 2–5 计划**：theme（3,482 行，**必须扩 theme_guard src_roots**——SOURCE_OF_TRUTH 随迁）→ shortcuts（1,532）→ state（6,682，field guard 白名单重点核对）→ rich（5,918）。views 始终留 root。
 
 ### V11-63 · infrastructure 去 egui 化 ｜ 优先级：低（触发式）｜ 2–3 人日 ｜ 并行组 D
 

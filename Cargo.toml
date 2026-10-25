@@ -5,10 +5,19 @@
 # core 依赖它、root 不直接依赖（UiAction 经 core 的 registry re-export 访问）。
 # V11-58：rustmark-icons（向量图标资源）是第三个成员——root **直接**依赖
 # （presentation.rs 把 crate re-export 成 icons 模块），core 不依赖。
+# V11-62 批次 1：rustmark-ui（表现层非视图部分，现仅 widgets）是第四个成员——
+# root 直接依赖（presentation.rs 把 crate 的 widgets 模块 re-export 回原路径），
+# ui 反向依赖 core（row 封装读 Theme 配色），root → ui → core 与
+# root → core 两条边并存，无环。
 # **命令面必须带 `--workspace`**（clippy/check/test/llvm-cov），否则 core 的
 # 单测会静默退出测试集（测试数下降即事故信号）。
 [workspace]
-members = ["crates/rustmark-actions", "crates/rustmark-core", "crates/rustmark-icons"]
+members = [
+    "crates/rustmark-actions",
+    "crates/rustmark-core",
+    "crates/rustmark-icons",
+    "crates/rustmark-ui",
+]
 resolver = "3"
 
 # V11-65：版本单点真源。root 与 core 两份 manifest 原先逐字重复声明同规格依赖
@@ -136,7 +145,8 @@ eframe = { version = "0.37.0", default-features = false, features = [
 
 # --- 本地 crate（D-3 阶段 4a：核心库）---
 # domain / application / infrastructure / shared 与 presentation 的
-# state / theme / rich / widgets / icons / shortcuts 都在 core；
+# state / theme / rich / shortcuts 都在 core；widgets 在 V11-62 批次 1
+# 抽去的 rustmark-ui、icons 在 V11-58 抽去的 rustmark-icons；
 # root 只留组合根 app 与 presentation::views。
 # V11-57：rustmark-actions（UiAction 词汇表）是 workspace 成员，但 root **不
 # 直接依赖**它——UiAction 经 core 的 registry re-export 访问（root→actions
@@ -149,6 +159,14 @@ rustmark-core = { path = "crates/rustmark-core" }
 # src/presentation.rs 的 `pub use rustmark_icons as icons;` 拼回
 # `crate::presentation::icons::*` 原路径（存量引用零改动）。
 rustmark-icons = { path = "crates/rustmark-icons" }
+
+# --- 本地 crate（V11-62 批次 1：表现层非视图部分）---
+# widgets（egui 布局不变式封装，T8）；core 内零消费者，只被 root 视图
+# （8 个 view 文件）与集成测试使用，故 root 直接依赖。ui 反向依赖 core
+# （`row::paint_row_background` 读 `Theme` 的 accent_soft / bg_tertiary）。
+# 经 src/presentation.rs 的 `pub use rustmark_ui::widgets;` 拼回
+# `crate::presentation::widgets` 原路径（存量引用零改动）。
+rustmark-ui = { path = "crates/rustmark-ui" }
 
 # --- 解析与高亮（ADR-002）---
 # pulldown-cmark / syntect 已下沉 core（infrastructure::parsing / highlighting）；
