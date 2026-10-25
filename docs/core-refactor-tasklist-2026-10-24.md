@@ -239,7 +239,7 @@ V11-59 ─────────────────────┼──�
 > - **一项必须直说的结论**：该摩擦是「保住 R-11/R-12 编译保证」的代价，**V11-62 不会消除它**——views 留 root，state 搬到 ui crate 后边界依旧存在，169 条白名单与 22 个 setter 只是换 crate（对应动作 5：field_visibility_guard 范围须扩到 ui crate）。V11-62 的真实收益仍是 core 名实相符（45.3k → 27.6k）、UI 单 crate 迭代、以及 headless 复用的前置条件。
 > - **判定**：触发成立（③），可进入动作 2；是否开工由维护者拍板——本项量级 2–3 人日、涉及 622 条用例拆分与 arch_check 改双 roots。
 
-> **动作 2 批次 1 已落地（widgets，2026-10-24）。** 用户已拍板「进入 V11-62 动作 2」，批次策略：widgets → theme → shortcuts → state → rich，每批一个 commit、每批门禁、可 revert。批次 1 实测如下。
+> **动作 2 批次 1 已落地（widgets，2026-10-24，`9ab57ae`）。** 用户已拍板「进入 V11-62 动作 2」，批次策略：widgets → theme → shortcuts → state → rich，每批一个 commit、每批门禁、可 revert。批次 1 实测如下。
 >
 > - **新 crate 三件套**：`crates/rustmark-ui/`（Cargo.toml + src/lib.rs + src/presentation.rs），**核心设计是 ui crate 保留 `presentation/` 路径前缀**（`crates/rustmark-ui/src/presentation/widgets.rs`）——`layer_of` 按根内相对路径判层零改动（widgets → PresentationWidgets 子层），全部禁令表/豁免表零改动，且 **views 若被误搬进 ui 会自动触发既有禁令**（ADR-013 决策 3 的结构防护）。依赖面 = egui + rustmark-core（本地边 4→6：root→ui、ui→core；ui→core→actions 与 icons→actions 在 actions 汇合，无环）。
 > - **桥接路径与 core 同形**：root `pub use rustmark_ui::presentation::widgets;`（后续批次迁入 state/theme/rich/shortcuts 时只改花括号列表）；8 个 view 文件 `use crate::presentation::widgets;` 零改动，公开路径零变化。
