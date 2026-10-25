@@ -272,7 +272,7 @@ V11-59 ─────────────────────┼──�
 > - **release exe 10,488,832 B**：较批次 2（10,487,808 B）+1 KiB，新红线 11 MiB 下 size_gate exit 0（仅预警），距红线余 **1,045,504 B（~1.0 MiB）**，可容纳批次 4–5。
 > - **文档同步**：constraints §7（模块树 shortcuts 移出 core / ui 含 widgets+state+shortcuts）+ §10.1（crate 地图 core 206/37,178、ui 36/8,188、规模口径、演进图 2026-10-25 注记）；本 backlog 波次表与本节。
 
-> **动作 2 批次 4 已落地（theme，2026-10-25）。** 顺序（方案 A）：state → shortcuts → **theme** → rich。批次 4 实测如下。
+> **动作 2 批次 4 已落地（theme，2026-10-25，`14f7d87`）。** 顺序（方案 A）：state → shortcuts → **theme** → rich。批次 4 实测如下。
 >
 > - **纯叶搬迁**：theme 仅依赖 `shared::theme`（`ThemeKind`）/ `application::dto`（`CustomThemePaletteView` / `SpanView` / `ThemeView` / `RangeView`）/ `shared::geometry`，不引用 state/shortcuts/rich，无内部依赖边——顺序自由。11 文件 / **3,487 行** git mv 入 `crates/rustmark-ui/src/presentation/theme/`（保留历史，`layer_of` 按根内相对路径判子层零改动，views 若误搬 ui 自动触发既有禁令）；10 文件内 `crate::shared` / `crate::application` 共 ~13 处 import 改写 `rustmark_core::*`，内部兄弟引用 `crate::presentation::theme::*` 保持不变（同 crate 仍有效）。
 > - **同 crate 引用回收（批次 2/3 搬迁的副效应，本批收尾）**：ui 内 `widgets/row.rs`、`state/app_ui_state.rs`、`state/preview_ui_state.rs` 原引 `rustmark_core::presentation::theme`（theme 尚在 core 时合法），theme 搬入 ui 后改回 `crate::presentation::theme`（同 crate 引用）。
