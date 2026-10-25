@@ -13,6 +13,7 @@
   运行时无重试、退避、并发度、限流、分页参数（本地单线程 GUI，网络仅图片下载一条同步路径，
   超时即失败、不重试）。偏好配置为 `settings.toml`（键名 `theme.*` / `editor.*`），
   **不存在**「一个阈值一个环境变量」的通用覆盖机制。
+- **开发期校验**：`python tools/check_thresholds.py`（CI Linux 单平台执行；行号漂移 `--fix` 回写）。
 - **配套文件**：`docs/thresholds.baseline.yaml`（与本文同源生成，供后续校验脚本消费）；
   合理性判定与调整建议见 `docs/threshold-review-2026-10-25.md`。
 
@@ -36,10 +37,10 @@
 | `package_size_limit_macos` | 11534336 字节 | `scripts/package-macos.sh:109` | 发布脚本 | macOS .app.zip / .dmg 单产物红线（安装包口径，11 MiB）；越线 exit 1。 | 硬编码字面量（脚本内） |
 | `package_size_limit_windows` | 11534336 字节 | `scripts/package-windows.ps1:73` | 发布脚本 | Windows zip 产物红线（安装包口径，11 MiB）；越线 throw 终止打包。 | 硬编码字面量（脚本内） |
 | `ci_timeout_check` | 45 分钟 | `.github/workflows/ci.yml:76` | CI workflow | check job（三平台编译 + 全量测试）超时上限；超时即取消并判定失败。 | 配置文件 ci.yml |
-| `ci_timeout_perf` | 30 分钟 | `.github/workflows/ci.yml:223` | CI workflow | perf job（release 性能冒烟）超时上限；超时即失败。 | 配置文件 ci.yml |
-| `ci_timeout_coverage` | 30 分钟 | `.github/workflows/ci.yml:259` | CI workflow | coverage job（llvm-cov 全量插桩）超时上限；超时即无 lcov.info，门禁失败。 | 配置文件 ci.yml |
-| `ci_timeout_release_dryrun` | 10 分钟 | `.github/workflows/ci.yml:313` | CI workflow | release-dryrun job 超时上限；离线演练为纯 Python，超时即流程异常。 | 配置文件 ci.yml |
-| `ci_timeout_deny` | 20 分钟 | `.github/workflows/ci.yml:333` | CI workflow | deny job（依赖许可 / 安全公告）超时上限；超时即门禁未判定。 | 配置文件 ci.yml |
+| `ci_timeout_perf` | 30 分钟 | `.github/workflows/ci.yml:229` | CI workflow | perf job（release 性能冒烟）超时上限；超时即失败。 | 配置文件 ci.yml |
+| `ci_timeout_coverage` | 30 分钟 | `.github/workflows/ci.yml:265` | CI workflow | coverage job（llvm-cov 全量插桩）超时上限；超时即无 lcov.info，门禁失败。 | 配置文件 ci.yml |
+| `ci_timeout_release_dryrun` | 10 分钟 | `.github/workflows/ci.yml:319` | CI workflow | release-dryrun job 超时上限；离线演练为纯 Python，超时即流程异常。 | 配置文件 ci.yml |
+| `ci_timeout_deny` | 20 分钟 | `.github/workflows/ci.yml:339` | CI workflow | deny job（依赖许可 / 安全公告）超时上限；超时即门禁未判定。 | 配置文件 ci.yml |
 | `ci_timeout_release_build` | 45 分钟 | `.github/workflows/release.yml:48` | CI workflow | release 打包矩阵单平台超时上限；超时即该平台产物缺失。 | 配置文件 release.yml |
 | `ci_timeout_release_publish` | 15 分钟 | `.github/workflows/release.yml:112` | CI workflow | release 汇总与 gh release create 的超时上限；超时即 tag 已推但 Release 未生成。 | 配置文件 release.yml |
 | `coverage_overall_min` | 70 百分比 | `tools/coverage_gate.py:88` | 工具链门禁 | 整体行覆盖门限；低于「门限-2 个百分点」即 ::error 并 exit 1。 | 命令行参数 --overall（默认值） |
@@ -116,7 +117,7 @@
 
 | 键名 | 当前值（单位） | 位置（文件:行） | 所属模块 | 用途 / 击穿后果 | 可配置性 |
 |---|---|---|---|---|---|
-| `asset_max_inline_bytes` | 512000 字节 | `crates/rustmark-core/src/infrastructure/persistence/asset_loader/policy.rs:29` | core::infrastructure::persistence::asset_loader::policy | data URI 内联体积硬上限：写进 Markdown 文本的数据过大既撑爆文档也拖慢解析；超限返回 TooLarge。 | 硬编码字面量（AssetLimits::default） |
+| `asset_max_inline_bytes` | 524288 字节 | `crates/rustmark-core/src/infrastructure/persistence/asset_loader/policy.rs:29` | core::infrastructure::persistence::asset_loader::policy | data URI 内联体积硬上限：写进 Markdown 文本的数据过大既撑爆文档也拖慢解析；超限返回 TooLarge。 | 硬编码字面量（AssetLimits::default） |
 | `asset_max_local_bytes` | 8388608 字节 | `crates/rustmark-core/src/infrastructure/persistence/asset_loader/policy.rs:30` | core::infrastructure::persistence::asset_loader::policy | 本地文件与远程下载的体积上限（8 MiB）；本地在读盘前按元数据预检，远程边读边判。超限返回 TooLarge 并显示占位。 | 硬编码字面量（AssetLimits::default） |
 | `asset_download_timeout` | 10 秒 | `crates/rustmark-core/src/infrastructure/persistence/asset_loader/policy.rs:31` | core::infrastructure::persistence::asset_loader::policy | 远程图片下载总超时（10s，全局 deadline 含 TLS 与重定向）；超时即报 DownloadFailed，预览显示占位。 | 硬编码字面量（AssetLimits::default） |
 | `asset_remote_stream_cap` | 8388608 字节 | `crates/rustmark-core/src/infrastructure/persistence/asset_loader.rs:317` | core::infrastructure::persistence::asset_loader | 远程下载边读边判的瞬时上限（= 本地上限 8 MiB），超过即中止，不再先读到 2× 再拒绝。 | 硬编码字面量（复用 max_local_bytes） |

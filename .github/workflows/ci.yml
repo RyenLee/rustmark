@@ -114,6 +114,12 @@ jobs:
       - name: Architecture boundary check
         run: cargo run --bin check-arch
 
+      # 阈值基线（2026-10-25）：YAML 与源码逐条比对。改了常量忘改基线、
+      # 或基线数值被悄悄调走，这一步直接红；单平台足够（仓库一致性检查）。
+      - name: Threshold baseline
+        if: runner.os == 'Linux'
+        run: python3 tools/check_thresholds.py
+
       # V11-66：workspace 拓扑断言。新增/移除依赖边或 Cargo.lock 版本漂移都会
       # 改变 `cargo tree` 输出，与 docs/workspace-topology.expected.txt 对不上
       # 即红——「加一条依赖」必须是显式评审事件（更新期望文件后随 commit 提交），

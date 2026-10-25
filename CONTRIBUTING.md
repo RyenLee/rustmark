@@ -30,7 +30,15 @@ python tools/coverage_gate.py lcov.info
 
 # 离线发布演练：版本守卫 / 校验和 / Notes 归组 / 无私钥入仓 / 回滚步骤
 python tools/release_dryrun.py              # 红路径验证：--tag v9.9.9 须 exit 1
+
+# 阈值基线：docs/thresholds.baseline.yaml 与源码逐条比对
+python tools/check_thresholds.py            # 行号漂移默认 WARN；--strict-lines 升级为失败
 ```
+
+**改阈值的顺序**：先改源码里的常量（跨层共用的先落 `shared/constants.rs`），
+再改 `docs/thresholds.baseline.yaml` 的 `value`/`purpose`，最后跑上面的校验；
+纯位置变化（上方增删行）用 `python tools/check_thresholds.py --fix` 回写 `source` 行号。
+数值与基线不一致会直接失败——这是为了禁止「改了常量、基线还写着旧值」。
 
 > **已知缺口（v1.1 待办）**：§4「生产代码禁用 `unwrap()` / `expect()` / `panic!`」
 > 目前**没有机械检查**——`clippy` 默认不开启 `unwrap_used` / `expect_used`。
