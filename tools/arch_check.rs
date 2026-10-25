@@ -76,8 +76,55 @@ const APPLICATION_FORBIDDEN: &[&str] = &[
     "crate::presentation",
 ];
 
-const INFRASTRUCTURE_FORBIDDEN: &[&str] =
-    &["crate::app", "crate::application", "crate::presentation"];
+/// `infrastructure` 禁 `egui`（V11-63 棘轮守卫，2026-10-25）。
+///
+/// # 为什么 infrastructure 不该出现 egui
+///
+/// §10.2 四问之④：「egui 只应出现在表现适配器」。infrastructure 是右侧
+/// 适配器（FS / 网络 / 解码 / 高亮），产物应是字节与端口类型；一旦它直接
+/// 产 `egui::FontDefinitions` / `ColorImage`，「core 可 headless 复用」
+/// 就不成立——消费者为了拿字体装配结果被迫拖进整个 egui。
+///
+/// # 为什么是棘轮而不是一刀切
+///
+/// 存量泄漏精确落在 5 个文件（fonts 系 3 + viewport_capture 系 2，即
+/// V11-63 的任务清单，见 [`V11_63_KNOWN_EGUI_LEAKS`]）。一刀切禁 = 5 文件
+/// 同时报错，规则无法遵守；文件级放行后，**未登记**文件的新增引用照常
+/// 拦截——渗漏只能缩小不能扩大。V11-63 端口化落地后放行清单清空，本条
+/// 升级为无条件生效。
+///
+/// 已知取舍：放行是文件级的，5 个文件内部新增 egui 引用不会被本条捕获——
+/// 它们本就是 V11-63 的重写对象，边界由任务时间盒控制。
+const INFRASTRUCTURE_FORBIDDEN: &[&str] = &[
+    "crate::app",
+    "crate::application",
+    "crate::presentation",
+    "egui",
+];
+
+/// [`INFRASTRUCTURE_FORBIDDEN`] 的 `egui` 项的文件级放行清单（V11-63）。
+///
+/// 5 个文件 = V11-63 任务清单全集：`fonts.rs` / `fonts/discovery.rs` /
+/// `fonts/assembly.rs`（产 `egui::FontDefinitions` 一条链）+
+/// `export/viewport_capture.rs` / `viewport_capture/image.rs`
+/// （`egui::ViewportCommand::Screenshot` / `ColorImage` 一条链）。
+///
+/// 为什么不做成行内 `// arch-allow: egui`：两簇合计 35 处候选（含
+/// `#[cfg(test)]` 里的 `egui::Context` 用法），行内注释会在即将被 V11-63
+/// 重写的文件里留下 35 处只为删除而存在的噪音；清单是一处、删一次。
+///
+/// 为什么放在 checker 而不是 constraints §4.4 豁免登记表：那张表的语义是
+/// 「行内豁免注释的治理门槛」（未登记的行内豁免报「豁免未登记」，三态用例
+/// 钉死），把文件级放行也塞进去会让一种表格承载两种语义。清单与它服务的
+/// 规则同址（[`allowed_for`] 的 `crate::app::frame` 窄豁免同款先例），
+/// 约束文档 §4 有对应文字。
+const V11_63_KNOWN_EGUI_LEAKS: &[&str] = &[
+    "infrastructure/fonts.rs",
+    "infrastructure/fonts/discovery.rs",
+    "infrastructure/fonts/assembly.rs",
+    "infrastructure/export/viewport_capture.rs",
+    "infrastructure/export/viewport_capture/image.rs",
+];
 
 const PRESENTATION_FORBIDDEN: &[&str] = &["crate::app", "crate::domain", "crate::infrastructure"];
 
@@ -1652,6 +1699,16 @@ fn check_file(rel: &str, layer: Layer, lexed: &Lexed, registry: &Registry) -> Ve
     if !forbidden.is_empty() {
         let candidates = collect_candidates(tokens, &forbidden, allowed_for(layer));
         for cand in &candidates {
+            // V11-63 棘轮的文件级放行：只放行 [`V11_63_KNOWN_EGUI_LEAKS`]
+            // 登记的 5 个存量泄漏文件，未登记文件（含同目录新文件）照常
+            // 拦截——渗漏只能缩小不能扩大。放在 `hit` 计算之前：这些行
+            // 没有行内豁免注释，走不到「已用豁免」的分支。
+            if layer == Layer::Infrastructure
+                && cand.banned == "egui"
+                && V11_63_KNOWN_EGUI_LEAKS.contains(&rel)
+            {
+                continue;
+            }
             let hit = lexed
                 .allows
                 .iter()

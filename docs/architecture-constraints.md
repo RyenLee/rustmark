@@ -73,7 +73,7 @@ presentation ──► application ──► domain ◄── infrastructure
 |---|---|
 | domain | `egui`、`eframe`、`rfd`、`syntect`、`pulldown_cmark`、`std::fs`、`std::io`、`anyhow`、`crate::app`、`crate::application`、`crate::infrastructure`、`crate::presentation`、直接打印（`print!` / `println!` / `eprint!` / `eprintln!` / `dbg!`） |
 | application | `egui`、`eframe`、`rfd`、`syntect`、`pulldown_cmark`、`std::fs`、`std::io`、`crate::app`、`crate::infrastructure`、`crate::presentation` |
-| infrastructure | `crate::app`、`crate::application`、`crate::presentation` |
+| infrastructure | `crate::app`、`crate::application`、`crate::presentation`、`egui`（V11-63 棘轮守卫：存量 5 文件见本节下文放行清单，清单外新增引用拦截） |
 | presentation | `crate::domain`（含聚合与值对象）、`crate::infrastructure`、`crate::app`（**唯一例外 `crate::app::frame`**，见 4.2） |
 | shared | `egui`、`eframe`、`rfd`、`syntect`、`pulldown_cmark`、`std::process`（R-03）、全部业务层（`crate::domain` / `crate::application` / `crate::infrastructure` / `crate::presentation` / `crate::app`） |
 
@@ -84,6 +84,19 @@ presentation ──► application ──► domain ◄── infrastructure
 
 `shared` 的 `std::process` 禁令见 R-03：端口 trait 与纯逻辑校验可留在 `shared`，
 起进程的执行端必须在 `infrastructure`。`tests/` 的规则见第 9 节。
+
+infrastructure 的 `egui` 禁令（V11-63 棘轮守卫，2026-10-25）：依据是 §10.2
+四问之④「egui 只应出现在表现适配器」——infrastructure 产字节与端口类型，
+直接产 `egui::FontDefinitions` / `ColorImage` 意味着「core 可 headless 复用」
+不成立。存量泄漏 5 文件（`infrastructure/fonts.rs`、`fonts/discovery.rs`、
+`fonts/assembly.rs`、`export/viewport_capture.rs`、
+`viewport_capture/image.rs`，即 V11-63 任务清单全集）在校验器里以文件级
+放行清单（`V11_63_KNOWN_EGUI_LEAKS`）grandfather：清单外文件（含同目录
+新文件）新增 egui 引用一律拦截——渗漏只能缩小不能扩大；清单内文件内部
+新增引用不被捕获，它们本就是 V11-63 的重写对象，边界由任务时间盒控制。
+放行清单不放 §4.4 豁免登记表：那张表的语义是行内豁免注释的治理门槛，
+文件级放行与规则同址置于校验器（`allowed_for` 的 `crate::app::frame`
+窄豁免同款先例）。**V11-63 端口化落地后清单清空**，禁令升级为无条件生效。
 
 ### 4.0 `presentation` 内部依赖方向（R-13）
 
@@ -206,6 +219,7 @@ rich / widgets ──► （不得回指 views / state / theme / widgets）
 
 > 表头行与分隔行不算登记项。文件列写 `src/domain/x.rs` 或 `domain/x.rs` 均可。
 > 当前无任何豁免登记——这正是期望状态：豁免是例外，例外应当可见且可回收。
+> （infrastructure 禁 `egui` 的存量放行不走本表，见本节下文。）
 
 ### 4.5 `shared` 准入三问与登记表（D-6，机械守卫）
 

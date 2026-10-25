@@ -584,6 +584,100 @@ fn std_process_is_allowed_in_infrastructure() {
 }
 
 // ============================================================================
+// 一之补二、V11-63 棘轮：infrastructure 禁 egui（2026-10-25）
+// ============================================================================
+
+/// **棘轮守卫的牙口**：清单外的 infrastructure 文件引 `egui` 必报。
+///
+/// # 为什么需要这条
+///
+/// §10.2 四问之④规定「egui 只应出现在表现适配器」，但 infrastructure 有
+/// 5 个 V11-63 待端口化的已知泄漏文件（fonts 系 3 + viewport_capture 系
+/// 2，见 checker 的 `V11_63_KNOWN_EGUI_LEAKS`）。一刀切禁会让那 5 个文件
+/// 同时报错、规则无法遵守；放之不管则渗漏会扩大。棘轮方案：清单内文件
+/// 文件级放行（见下一条），**清单外**文件照常拦截——渗漏只能缩小不能
+/// 扩大。用例故意取 `highlighting/` 下的真实兄弟文件：它与泄漏清单同层
+/// 不同目录，是最像「漏网新文件」的形状。
+#[test]
+fn egui_is_forbidden_in_infrastructure() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "infrastructure/highlighting/syntect_highlighter.rs",
+        "//! x\nuse egui::Color32;\npub fn f(c: Color32) {}\n",
+    );
+
+    let violations = arch_check::scan(&root);
+    assert_eq!(
+        violations.len(),
+        1,
+        "清单外的 infrastructure 文件引 egui 应报 1 处，实际：{:?}",
+        described(&violations)
+    );
+    assert!(
+        violations[0]
+            .detail
+            .contains("infrastructure 层禁止依赖 egui"),
+        "违规说明应点名 egui，实际：{}",
+        violations[0].detail
+    );
+    assert_eq!(violations[0].line, 2, "应报告具体行号");
+}
+
+/// 放行清单内的已知泄漏文件不报——棘轮≠一刀切。
+///
+/// 与上一条是同一枚硬币的两面：这条证明放行通道真实存在（否则真实工程
+/// 里那 5 个文件的 35 处存量引用会让 `current_project_has_no_violations`
+/// 常红，规则将无法落地）。取 fonts 簇与 viewport_capture 簇各一个文件，
+/// 覆盖两条链。
+#[test]
+fn known_v11_63_leak_files_are_grandfathered() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "infrastructure/fonts.rs",
+        "//! x\nuse egui::FontDefinitions;\npub fn f(d: &FontDefinitions) {}\n",
+    );
+    write_fixture(
+        &root,
+        "infrastructure/export/viewport_capture/image.rs",
+        "//! x\nuse egui::epaint::ColorImage;\npub fn g(i: &ColorImage) {}\n",
+    );
+
+    let violations = arch_check::scan(&root);
+    assert!(
+        violations.is_empty(),
+        "清单内的已知泄漏应放行，实际：{:?}",
+        described(&violations)
+    );
+}
+
+/// 放行按**文件**精确匹配：已知泄漏文件旁边的新文件照样拦截。
+///
+/// 防「清单被稀释」——若哪天匹配退化成目录前缀（`fonts/` 下全部放行），
+/// `fonts/extra.rs` 这种新文件就能带着 egui 静溜进来，这条当场红。
+#[test]
+fn a_new_file_next_to_a_known_leak_is_still_caught() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "infrastructure/fonts/extra.rs",
+        "//! x\nuse egui::FontData;\npub fn f(d: &FontData) {}\n",
+    );
+
+    let violations = arch_check::scan(&root);
+    assert_eq!(
+        violations.len(),
+        1,
+        "放行不扩散到同目录新文件，实际：{:?}",
+        described(&violations)
+    );
+}
+
+// ============================================================================
 // 一之补、R-13：presentation 内部依赖方向
 // ============================================================================
 

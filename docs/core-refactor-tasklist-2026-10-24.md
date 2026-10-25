@@ -45,6 +45,12 @@
 > 预警 10.5 MiB（11,010,048 B），size_gate exit 0 且低于预警线；字段白名单
 > 548 → **550**（V11-62 批次 2 跨 crate 可见性登记）。下文「2131 / 2136 / 2139 /
 > 2140 / 2144」表述一律按 **2150** 执行。
+>
+> **基线再更新（2026-10-25，守卫加固包 · 守卫①）：2153 passed / 0 failed / 4 ignored**
+> （`--all-targets` 2152 + `--doc` 1；净 +3 = `tests/arch_violation_fixture.rs` 的
+> infrastructure 禁 egui 棘轮守卫三例：清单外必报 / 清单内放行 / 同目录新文件仍拦）。
+> release exe 不变（tools/ 与 tests/ 改动不进 release 产物）。下文「2150」及更早
+> 数字表述一律按 **2153** 执行。
 
 **通用验收（每项必含）**：上表五项全绿 + `cargo fmt --check` 绿 + 所有命令带
 `--workspace`（root `Cargo.toml` 注释警告：否则 core 单测静默退出测试集，
@@ -416,8 +422,8 @@ V11-59 ─────────────────────┼──�
 cargo fmt --check
 cargo run --bin check-arch
 cargo clippy --workspace --all-targets --all-features -- -D warnings   # 0 告警
-cargo test --workspace --all-targets --no-fail-fast   # 2149 passed / 0 failed / 4 ignored
-cargo test --workspace --doc                          # +1 = 合计 2150
+cargo test --workspace --all-targets --no-fail-fast   # 2152 passed / 0 failed / 4 ignored
+cargo test --workspace --doc                          # +1 = 合计 2153
                                  # （grep '^test result:' | awk 逐行求和；命令必带 --workspace）
 bash scripts/size_gate.sh       # exe ≤ 11,534,336 B（11 MiB 红线；预警 11,010,048 B = 10.5 MiB）
 cargo tree --workspace --depth 1   # 拓扑对 docs/workspace-topology.expected.txt
