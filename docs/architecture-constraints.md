@@ -362,7 +362,7 @@ rustmark-actions，由 `tests/workspace_topology_test.rs` 断言）。禁
 单文件 **> 600 行须拆子目录**——保留 `foo.rs` 为入口，子模块平铺进 `foo/bar.rs`
 （与既有先例 `sidebar_view.rs` + `sidebar_view/`、`settings_view.rs` +
 `settings_view/` 同形，遵守禁 `mod.rs` 规则）。依据：同目录已按此标准拆过的
-模块评审定位成本显著更低。**TD-02 已闭环（2026-10-25）**：`preview_view.rs`
+模块评审定位成本显著更低。**TD-02 已闭环（2026-10-25，`999e63c`）**：`preview_view.rs`
 （原 1,421 行）按本标准拆为入口 `preview_view.rs` 458 行 +
 `preview_view/image_cache.rs`（图片纹理缓存簇 319 行）+
 `preview_view/tests.rs`（外置单测 664 行，`app/frame/tests.rs` 同款先例），
