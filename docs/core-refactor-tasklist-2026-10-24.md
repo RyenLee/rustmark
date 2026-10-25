@@ -282,7 +282,7 @@ V11-59 ─────────────────────┼──�
 > - **release exe 10,489,856 B**：较批次 3（10,488,832 B）+1 KiB（1,024 B），新红线 11 MiB 下 size_gate exit 0（仅预警），距红线余 **1,044,480 B（~1.0 MiB）**，可容纳批次 5（rich）。
 > - **文档同步**：constraints §7（模块树 core 仅剩 rich / ui 含 widgets+state+shortcuts+theme）+ §10.1（crate 地图 core 195/33,693、ui 47/11,676、规模口径、演进图 2026-10-25 注记）+ R-13 表（rich 禁令 theme 已迁出说明）；metrics.md §2.8 + NFR-PERF-01 + TD-01；本 backlog 波次表与本节。
 >
-> **动作 2 批次 5 已落地（rich，2026-10-25）。** V11-62 收官批次：rich 是表现层非视图子层中最后一个、且唯一自绘排版的引擎（数学公式 / Mermaid 图表）。顺序自由（纯叶），零守卫扩展（rich 不携带被守模式，arch_check 的 `PresentationRich` 禁令针对四个 workspace 兄弟子层、rich 对它们零引用；egui 属第三方不被拦）。批次 5 实测如下。
+> **动作 2 批次 5 已落地（rich，2026-10-25，`d8126a4`）。** V11-62 收官批次：rich 是表现层非视图子层中最后一个、且唯一自绘排版的引擎（数学公式 / Mermaid 图表）。顺序自由（纯叶），零守卫扩展（rich 不携带被守模式，arch_check 的 `PresentationRich` 禁令针对四个 workspace 兄弟子层、rich 对它们零引用；egui 属第三方不被拦）。批次 5 实测如下。
 >
 > - **纯叶搬迁**：rich 仅依赖 egui（自绘排版，零 `crate::shared` / `application` / `domain` / `infrastructure` 依赖，不引用 theme/state/shortcuts/widgets/views），25 文件（含模块根 `rich.rs`）/ **5,918 行**（目录）+ `rich.rs` 53 行 = **5,971 行** git mv 入 `crates/rustmark-ui/src/presentation/rich/`（保留历史，`layer_of` 按根内相对路径判 `PresentationRich` 子层零改动，R-13 仍适用）；rich 内部零真实 `crate::` 依赖，**无需 import 改写**。
 > - **模块根随迁**：`core/.../presentation/rich.rs`（声明 `pub mod math; pub mod mermaid;`）一并 git mv 到 `ui/.../presentation/rich.rs`，使 `ui/presentation.rs` 的 `pub mod rich;` 有根文件；core 侧 `presentation/` 目录清空，`crates/rustmark-core/src/presentation.rs` 退化为 doc-only 空壳（保留 `pub mod presentation;` 维持 crate 路径稳定）。
