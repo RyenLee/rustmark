@@ -328,6 +328,15 @@ V11-59 ─────────────────────┼──�
 > - **五门禁实测**：fmt OK；check-arch OK（未发现分层依赖违规——簇内 import `crate::app::frame::EditorApp` / `crate::shared::lru::LruMap` 原样随迁，零新依赖边）；clippy OK（CLIPPY_EXIT=0）；`--all-targets` **2143 passed / 0 failed / 4 ignored** + `--doc` 1 = **2144 守恒**（外置测试块不改变用例数）；topology CLEAN（本地边仍 6 条，纯 crate 内文件搬迁）。
 > - **release exe 10,487,296 B**：与 V11-62 收官基线**逐字节相同**（纯 crate 内拆分零 codegen 变化），size_gate exit 0（仅预警，距红线余 1,047,040 B）。
 > - **文档同步**：constraints §7（D-4 阈值段：TD-02 闭环 + 现存超阈值文件清单）+ §10.1（root 84/21,073、规模口径注记）；本登记簿 TD-02 行。
+>
+> **D-4 第二例已闭环（toolbar_view.rs 拆分，2026-10-25）。** TD-02 闭环时 constraints §7 标注的「下一候选」，按同一阈值（> 600 行）专项执行。实测如下。
+>
+> - **拆分形态**：695 行 → 入口 `toolbar_view.rs` **211 行**（header + `show` + `draw_breadcrumb` + `SIDEBAR_TOGGLE_W` + `draw_sidebar_toggle`）+ `toolbar_view/tab_strip.rs` **498 行**（`draw_tab_strip` 及其硬规则 doc、15 个标签条常量、`paint_nav_arrow`）。提取依据全部实测：15 个常量的使用点 100% 落在 `draw_tab_strip` 内（`BREADCRUMB_ROW_H` 虽名为面包屑，唯一使用点是标签条钳高 L118），`paint_nav_arrow` 唯一调用点在簇内（L428）；无内联测试故不需要 `tests.rs` 外置。
+> - **可见性**：`draw_tab_strip` 转 `pub(super) fn`——E0603 实证「子模块私有项对父模块不可见」（可见性只向下传递，与 TD-02 的 E0446 方向相反）；簇内其余项（`paint_nav_arrow`、15 常量）保持私有。零 `pub` 项提取，公开路径零变化（外部仅 `tab_strip_test.rs` 注释按值钉常量）。
+> - **附带修正**：`draw_tab_strip` doc 标题「四条硬规则」实列五条（037/038/040/041），随迁改「五条」；其余移动代码逐字节一致（手术脚本断言）。
+> - **五门禁实测**：fmt OK；check-arch OK（纯目录内拆分，层判定按路径段命中 views 不变）；clippy OK（EXIT=0，仅 27 条 lock 文件噪声）；`--all-targets` **2149 passed / 0 failed / 4 ignored** + `--doc` 1 = **2150 守恒**；topology CLEAN（本地边仍 6 条）。
+> - **release exe 10,520,576 B**：与拆分前基线**逐字节相同**（纯 crate 内文件重组零 codegen 变化），size_gate exit 0（低于 10.5 MiB 预警线）。
+> - **文档同步**：constraints §7（D-4 阈值段第二例 + 现存超阈值清单）+ §10.1（root 85/21,188、core 170/27,892、ui 73/17,651 今日实测——`c08fd13` 增量一并归因）；本登记簿 TD-09 行。
 
 ### V11-63 · infrastructure 去 egui 化 ｜ 优先级：低（触发式）｜ 2–3 人日 ｜ 并行组 D
 
@@ -367,6 +376,7 @@ V11-59 ─────────────────────┼──�
 | TD-06 | 双 manifest 重复 | egui/image/syntect/log/tempfile | **已闭环（2026-10-24，`12e65bc`，V11-65）**：5 项依赖与 lint 收敛至 root `[workspace.dependencies]` / `[workspace.lints]`，两侧 `{ workspace = true }` 继承，Cargo.lock 零 diff | V11-65 |
 | TD-07 | tests/presentation 43 文件将随 V11-62 拆分 | 2026-10-25 实测：**未随迁**——43 文件仍在 root `tests/presentation/`，其中 38 个经 `rustmark::presentation::*` 公开桥接路径消费 ui 模块，零改动通过（2149+1 守恒） | 按被测模块归属拆；保持总数。**已复核决定维持 root 集成测试定位**：公开契约的测试保证属于应用 crate，随迁只增目标声明成本、零覆盖收益；仅当 ui crate 出现独立复用/发布需求时再评估 | V11-62 |
 | TD-08 | metrics.md 体积记录与实测差 +18,432 B 未 bisect | 上轮发现 | **已闭环（被事件覆盖）**：metrics §2.8 已补全基线链（2026-10-24 基线 → V11-62 五批次 → 阈值整改 10,520,576 B）；「下次转红 bisect」旧建议已被批次 2 转红事件覆盖——维护者决策上调红线，worktree A/B 实证 +2,560 B 为跨 crate LTO 边界成本；+18,432 B 历史差异的专项 bisect 无后续行动价值，归档 | V11-67 |
+| TD-09 | `toolbar_view.rs` 695 行（D-4 阈值「下一候选」） | TD-02 闭环时 constraints §7 标注 | **已闭环（2026-10-25，D-4 专项）**：拆为入口 211 行（`show`/面包屑/侧栏切换）+ `toolbar_view/tab_strip.rs` 498 行（`draw_tab_strip` + 15 常量 + `paint_nav_arrow`，`pub(super)` 可见性）；零 `pub` 项提取、公开路径零变化；五门禁绿（2150 守恒）、release 逐字节 10,520,576 B、topology CLEAN | D-4 阈值 |
 
 ## 4. 阻塞项
 

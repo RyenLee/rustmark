@@ -368,9 +368,13 @@ rustmark-actions，由 `tests/workspace_topology_test.rs` 断言）。禁
 `preview_view/image_cache.rs`（图片纹理缓存簇 319 行）+
 `preview_view/tests.rs`（外置单测 664 行，`app/frame/tests.rs` 同款先例），
 公开路径 `preview_view::{show, image_cache_state, is_remote_url, …}` 经
-`pub use` 重导出零变化。现存超阈值文件：`toolbar_view.rs`（695 行，视图入口，
-下一候选）与 `preview_view/inline.rs`（642 行，已拆目录内的子模块，行内排版
-为内聚单元，是否再拆留待评审）。
+`pub use` 重导出零变化。**D-4 第二例已闭环（2026-10-25，`toolbar_view.rs` 拆分）**：原 695 行 → 入口
+`toolbar_view.rs` **211 行**（`show` / 面包屑 / 侧栏切换）+ `toolbar_view/tab_strip.rs`
+**498 行**（`draw_tab_strip` 及其硬规则 doc、15 个标签条常量、`paint_nav_arrow`；`draw_tab_strip`
+转 `pub(super)` 供 facade 调用——子模块私有项对父不可见，E0603 实证）。簇内零 `pub` 项，公开路径
+零变化（外部仅 `tab_strip_test.rs` 注释按值钉常量）。现存超阈值文件：`preview_view/inline.rs`
+（642 行，已拆目录内的子模块，行内排版为内聚单元，是否再拆留待评审）与 `preview_view/tests.rs`
+（664 行，`#[cfg(test)]` 外置单测——不进 release、评审定位成本低，不列为拆分候选）。
 本条为**评审纪律**（当前未机械校验，见 architecture-review D-4），
 评审超阈值视图 PR 时对照执行。
 
@@ -438,11 +442,11 @@ rustmark（root：组合根 + views + bin）
 
 | crate | 角色 | 实测规模（2026-10-24，`src/` 口径） | 外部依赖面 |
 |---|---|---|---|
-| `rustmark`（root） | 组合根 + 视图层 + 工具 bin | 84 文件 / 21,073 行 | eframe / egui / image / rfd / anyhow / env_logger / log / wgpu(build) + 3 个本地 crate |
-| `rustmark-core` | 四层脊柱；表现层非视图子模块已全部于 V11-62 批次 1-5 抽去 `rustmark-ui`（core 的 `presentation` 退化为 doc-only 空壳） | 169 文件 / 27,721 行 | 13 个直接外部依赖（`cargo tree -p rustmark-core`）+ 1 个本地（actions） |
+| `rustmark`（root） | 组合根 + 视图层 + 工具 bin | 85 文件 / 21,188 行 | eframe / egui / image / rfd / anyhow / env_logger / log / wgpu(build) + 3 个本地 crate |
+| `rustmark-core` | 四层脊柱；表现层非视图子模块已全部于 V11-62 批次 1-5 抽去 `rustmark-ui`（core 的 `presentation` 退化为 doc-only 空壳） | 170 文件 / 27,892 行 | 13 个直接外部依赖（`cargo tree -p rustmark-core`）+ 1 个本地（actions） |
 | `rustmark-actions` | 动作词汇表契约（V11-57） | 4 文件 / 687 行 | **零依赖** |
 | `rustmark-icons` | 16×16 图标规格 + Painter 渲染器（V11-58） | 1 文件 / 613 行 | egui + rustmark-actions |
-| `rustmark-ui` | 表现层非视图部分：widgets（批次 1）/ state（批次 2）/ shortcuts（批次 3）/ theme（批次 4）/ rich（批次 5，V11-62 收官） | 73 文件 / 17,648 行 | egui + rustmark-core |
+| `rustmark-ui` | 表现层非视图部分：widgets（批次 1）/ state（批次 2）/ shortcuts（批次 3）/ theme（批次 4）/ rich（批次 5，V11-62 收官） | 73 文件 / 17,651 行 | egui + rustmark-core |
 
 规模口径：`find <源码根> -name '*.rs' | xargs wc -l`，只含 `src/`、不含
 `tests/`，命令随文可复跑。core 与评审快照（46,375 行 / 238 文件）的差额 =
@@ -450,8 +454,10 @@ V11-57/58/62 拆出的文件（actions 3 + icons 1 + ui 的 widgets 3 / state 24
 shortcuts 5，另 2 个为 ui 的新建骨架 lib.rs / presentation.rs）扣除期间
 core 内的模块清单与文档增补；快照 238 与 git 树基线 `662536b` 的 244 文件
 之间存在未逐文件核对的口径差（评审当时工作区含 D-6/D-7 在途改动），
-**本节数字以今日实测为准**（2026-10-25：core 169 / 27,721，ui 73 / 17,648；
-root 84 / 21,073——TD-02 拆分 `preview_view.rs` 后 +2 文件 / +20 行；
+**本节数字以今日实测为准**（2026-10-25：core 170 / 27,892，ui 73 / 17,651，
+root 85 / 21,188——TD-02 拆分 `preview_view.rs` 后 +2 文件 / +20 行；
+`c08fd13` 阈值整改在 core / ui / root 分别 +171 / +3 / +101 行（撤销字节
+预算、纹理缓存字节预算等）；`toolbar_view.rs` D-4 拆分再 +1 文件 / +14 行；
 rich 于批次 5 从 core 迁 ui，V11-62 收官）。
 
 **三阶段演进**（照评审报告 §4；阶段 1 已由 V11-57 / V11-58 落地，阶段 2/3 为计划值）：
@@ -480,9 +486,11 @@ rich 于批次 5 从 core 迁 ui，V11-62 收官）。
 45,280 行同源。阶段 2/3 落地时以实测刷新本图。）
 
 **2026-10-25 更新（V11-62 批次 1–5 收官）**：`rustmark-ui` 实测
-**73 文件 / 17,648 行**（widgets 0.6k + state 6.7k + shortcuts 0.9k + theme 3.5k + rich 5.9k），属演进图
-阶段 2「触发后」列的部分落地；`rustmark-core` 降至 169 / 27,721（表现层非视图子模块全迁 ui，
-`presentation` 退化为 doc-only 空壳）。阶段 2 列 ui 的 18.1k 计划值（含 theme/rich）至此全落。
+**73 文件 / 17,651 行**（widgets 0.6k + state 6.7k + shortcuts 0.9k + theme 3.5k + rich 5.9k，
+另含 `c08fd13` 阈值整改 +3 行），属演进图阶段 2「触发后」列的部分落地；
+`rustmark-core` 为 170 / 27,892（表现层非视图子模块全迁 ui，`presentation`
+退化为 doc-only 空壳；`c08fd13` 另 +1 文件 / +171 行）。阶段 2 列 ui 的
+18.1k 计划值（含 theme/rich）至此全落。
 
 方向规则不变的三条硬约束：
 
