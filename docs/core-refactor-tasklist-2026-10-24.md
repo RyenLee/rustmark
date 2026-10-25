@@ -252,7 +252,7 @@ V11-59 ─────────────────────┼──�
 > - **文档同步**：constraints §4.1/§7/§10.1/§10.3（含三阶段演进图重算）；topology 期望文件重算；本 backlog 波次表；本节。
 > - **批次 2–5 计划（原定）**：theme（3,482 行，**必须扩 theme_guard src_roots**——SOURCE_OF_TRUTH 随迁）→ shortcuts（1,532）→ state（6,682，field guard 白名单重点核对）→ rich（5,918）。views 始终留 root。**【实际执行顺序因依赖环调整见下】**
 >
-> **动作 2 批次 2 已落地（state，2026-10-25）。** 原定顺序 theme→shortcuts→state→rich **被依赖分析推翻**，改为按依赖拓扑 **state → shortcuts → theme → rich**（state 为枢纽最先搬）。批次 2 实测如下。
+> **动作 2 批次 2 已落地（state，2026-10-25，`c40235c`）。** 原定顺序 theme→shortcuts→state→rich **被依赖分析推翻**，改为按依赖拓扑 **state → shortcuts → theme → rich**（state 为枢纽最先搬）。批次 2 实测如下。
 >
 > - **顺序调整（阻塞后用户拍板方案 A）**：core 内 `state → {theme, shortcuts}`（3+11 处真实代码依赖），theme/shortcuts/rich 为纯叶。若先搬 theme 会致 core(state) 的 `crate::presentation::theme` 失效 + 形成 core→ui 回边成环（与既有 ui→core 边相撞），Cargo 拒编。故 state 先行（ui→core 引用 theme/shortcuts 合法，纯路径改写）。后续：批次 3 = shortcuts、批次 4 = theme（**必须扩 theme_guard src_roots**）、批次 5 = rich。
 > - **搬迁规模**：24 文件 / 6,682 行 git mv 入 `crates/rustmark-ui/src/presentation/state/`（保留历史）；15 文件 import 改写 `crate::{shared,application,domain,infrastructure,presentation::{shortcuts,theme}}` → `rustmark_core::*`（内部兄弟引用 `crate::presentation::state::*` 保持不变）；root 桥接改为 `{state, widgets}`；core `presentation.rs` 删 `pub mod state` + lib.rs 文档清单；theme 内 squiggle.rs 指向 state 的 intra-doc 链接改文字指路（非真实依赖）。
