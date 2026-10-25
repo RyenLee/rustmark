@@ -17,7 +17,7 @@
 //!
 //! # 字符串契约
 //!
-//! 映射的输入是**字符串**（[`crate::application::dto::SpanView::style`]），
+//! 映射的输入是**字符串**（[`rustmark_core::application::dto::SpanView::style`]），
 //! 而不是领域类型——因为表现层不得依赖 `domain`。
 //! 取值来自 `MarkdownAppService::span_style_str`，共 21 种；
 //! 本模块的 [`StyleMapper::format`] 是它们的**唯一**解释处。

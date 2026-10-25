@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use super::span_job;
 use super::*;
-use crate::application::dto::SpanView;
+use rustmark_core::application::dto::SpanView;
 use crate::presentation::theme::builtin::palette_signature;
 
 /// 单行高亮统计：供单元测试断言「仅变更行重建」与调试面板显示命中率。

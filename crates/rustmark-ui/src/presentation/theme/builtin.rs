@@ -24,7 +24,7 @@
 //!
 //! # 主题种类的唯一真源
 //!
-//! 种类枚举是 [`crate::shared::theme::ThemeKind`]（三方共用）——
+//! 种类枚举是 [`rustmark_core::shared::theme::ThemeKind`]（三方共用）——
 //! 表现层**不得**依赖领域（`check-arch` 拦 `crate::domain`），
 //! 故真源落在 `shared`。
 //!
@@ -55,11 +55,11 @@ pub use self::labels::theme_kind_label;
 pub use self::metrics::Metrics;
 pub use self::resolve::{palette_signature, resolve};
 
-use crate::shared::theme::ThemeKind;
+use rustmark_core::shared::theme::ThemeKind;
 
 use egui::Color32;
 
-use crate::application::dto::CustomThemePaletteView;
+use rustmark_core::application::dto::CustomThemePaletteView;
 
 /// 完整主题：配色 + 尺寸 + 字体。
 #[derive(Clone, PartialEq, Debug)]

@@ -11,8 +11,8 @@
 //! 故本模块把这三者（连同代码块高亮状态）合成一个 [`PreviewCacheKey`]。
 
 use crate::presentation::state::scroll_sync_state::BlockRect;
+use crate::presentation::theme::builtin::palette_signature;
 use rustmark_core::application::dto::BlockView;
-use rustmark_core::presentation::theme::builtin::palette_signature;
 
 /// 防抖时长（毫秒）。
 ///
@@ -46,7 +46,7 @@ impl PreviewCacheKey {
     pub fn new(
         doc_id: u64,
         content_version: u64,
-        theme: &rustmark_core::presentation::theme::builtin::Theme,
+        theme: &crate::presentation::theme::builtin::Theme,
     ) -> Self {
         Self {
             doc_id,

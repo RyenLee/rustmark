@@ -234,12 +234,18 @@ fn collect_rs_files(dir: &Path) -> Vec<PathBuf> {
     out
 }
 
-/// 两根扫描（D-3 阶段 4a workspace 化）：四层与非视图子模块在
-/// `crates/rustmark-core/src`，组合根与视图在 `src`。两根都扫，
-/// 才等价于拆分前对单一 `src` 的全量覆盖；各根内均按层相对路径记键。
+/// 三根扫描（D-3 阶段 4a workspace 化 + V11-62）：四层与非视图子模块在
+/// `crates/rustmark-core/src`，组合根与视图在 `src`，从 core 抽出的
+/// `rustmark-ui` 非视图子模块（widgets / state / shortcuts / theme）在
+/// `crates/rustmark-ui/src`。三根都扫，才等价于拆分前对单一 `src` 的
+/// 全量覆盖；各根内均按层相对路径记键。
 fn src_roots() -> Vec<PathBuf> {
     let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    vec![base.join("src"), base.join("crates/rustmark-core/src")]
+    vec![
+        base.join("src"),
+        base.join("crates/rustmark-core/src"),
+        base.join("crates/rustmark-ui/src"),
+    ]
 }
 
 /// 现状守卫：主题种类**只有一处**定义。

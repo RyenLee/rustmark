@@ -1,6 +1,6 @@
 //! 主题设置的运行时解析与「配色变更签名」。
 
-use crate::application::dto::ThemeView;
+use rustmark_core::application::dto::ThemeView;
 
 use super::*;
 

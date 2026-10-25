@@ -13,7 +13,7 @@
 use crate::presentation::shortcuts::dispatcher::ShortcutDispatcher;
 use crate::presentation::shortcuts::registry::ShortcutRegistry;
 use crate::presentation::state::scroll_sync_state::ScrollSync;
-use rustmark_core::presentation::theme::builtin::Theme;
+use crate::presentation::theme::builtin::Theme;
 
 /// 侧边栏当前标签。
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]

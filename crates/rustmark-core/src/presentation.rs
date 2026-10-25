@@ -15,7 +15,8 @@
 //! 故按依赖拓扑先于 theme / shortcuts 搬迁——批次序由 DAG 定，不由行数定。
 //! V11-62 批次 3：`shortcuts`（5 文件 / 892 行）抽去 `rustmark-ui`——纯叶
 //! （仅依赖 `application::dto`），不引用 theme/state/rich，顺序自由。
-//! theme / rich 按批次计划随后迁移。
+//! V11-62 批次 4：`theme`（主题，11 文件 / 3,487 行）抽去 `rustmark-ui`——纯叶
+//! （仅依赖 `shared::theme` / `application::dto` / `shared::geometry`），顺序自由。
+//! 至此 core 的 `presentation` 仅剩 `rich`（批次 5 计划迁出）。
 
 pub mod rich;
-pub mod theme;

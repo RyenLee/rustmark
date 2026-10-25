@@ -1,6 +1,6 @@
 use super::galley_cache::build_line_job;
 use super::*;
-use crate::application::dto::{RangeView, SpanView};
+use rustmark_core::application::dto::{RangeView, SpanView};
 use egui::Color32;
 use egui::text::{LayoutJob, LayoutSection};
 

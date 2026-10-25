@@ -14,9 +14,10 @@
 //! - [`domain`]：领域层，零 IO、零 UI 依赖（阶段 03）
 //! - [`application`]：应用层，用例编排与 DTO（阶段 04）
 //! - [`infrastructure`]：基础设施层，外部库适配（阶段 05）
-//! - [`presentation`]：表现层的 theme / rich / shortcuts
+//! - [`presentation`]：表现层的 rich（富文本自绘排版）
 //!   （egui 视图与组合根在 root crate 的 `presentation::views` / `app`；
-//!   widgets 布局封装（V11-62 批次 1）与 UI State（V11-62 批次 2）住在
+//!   widgets 布局封装（V11-62 批次 1）、UI State（V11-62 批次 2）、
+//!   shortcuts 快捷键（V11-62 批次 3）、theme 主题（V11-62 批次 4）住在
 //!   `rustmark-ui` crate；icons 向量图标资源在 V11-58 抽去的
 //!   `rustmark-icons` crate）
 

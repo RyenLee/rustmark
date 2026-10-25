@@ -35,7 +35,7 @@
 > widgets 7 个内联测试从 core lib 迁 ui lib，总量守恒）。
 > 下文「2131 / 2136 / 2139 / 2140」表述一律按 **2144** 执行。
 > V11-59 已完成（`2880678`）；V11-60 已关闭（审计 V=0，转 V11-62）；V11-61 已降级为记录；
-> **V11-62 已开工——动作 2 批次 1（widgets）+ 批次 2（state）+ 批次 3（shortcuts）已落地，批次 4–5（theme/rich）待续**（见 V11-62 节末记录块）。
+> **V11-62 已开工——动作 2 批次 1（widgets）+ 批次 2（state）+ 批次 3（shortcuts）+ 批次 4（theme）已落地，批次 5（rich）待续**（见 V11-62 节末记录块）。
 > 状态表见 `docs/v1.1-backlog.md` §3 的波次登记。
 
 **通用验收（每项必含）**：上表五项全绿 + `cargo fmt --check` 绿 + 所有命令带
@@ -272,6 +272,18 @@ V11-59 ─────────────────────┼──�
 > - **release exe 10,488,832 B**：较批次 2（10,487,808 B）+1 KiB，新红线 11 MiB 下 size_gate exit 0（仅预警），距红线余 **1,045,504 B（~1.0 MiB）**，可容纳批次 4–5。
 > - **文档同步**：constraints §7（模块树 shortcuts 移出 core / ui 含 widgets+state+shortcuts）+ §10.1（crate 地图 core 206/37,178、ui 36/8,188、规模口径、演进图 2026-10-25 注记）；本 backlog 波次表与本节。
 
+> **动作 2 批次 4 已落地（theme，2026-10-25）。** 顺序（方案 A）：state → shortcuts → **theme** → rich。批次 4 实测如下。
+>
+> - **纯叶搬迁**：theme 仅依赖 `shared::theme`（`ThemeKind`）/ `application::dto`（`CustomThemePaletteView` / `SpanView` / `ThemeView` / `RangeView`）/ `shared::geometry`，不引用 state/shortcuts/rich，无内部依赖边——顺序自由。11 文件 / **3,487 行** git mv 入 `crates/rustmark-ui/src/presentation/theme/`（保留历史，`layer_of` 按根内相对路径判子层零改动，views 若误搬 ui 自动触发既有禁令）；10 文件内 `crate::shared` / `crate::application` 共 ~13 处 import 改写 `rustmark_core::*`，内部兄弟引用 `crate::presentation::theme::*` 保持不变（同 crate 仍有效）。
+> - **同 crate 引用回收（批次 2/3 搬迁的副效应，本批收尾）**：ui 内 `widgets/row.rs`、`state/app_ui_state.rs`、`state/preview_ui_state.rs` 原引 `rustmark_core::presentation::theme`（theme 尚在 core 时合法），theme 搬入 ui 后改回 `crate::presentation::theme`（同 crate 引用）。
+> - **零跨 crate 可见性摩擦**：`Theme` / `Metrics` / `palette_signature` 等对外符号本就 `pub`（root 视图经 `rustmark::presentation::theme` 公开路径早已消费），无需升 `pub`，白名单总数仍 **550**。
+> - **守卫扩展（唯一一处）**：`theme_guard_test.rs` 的 `src_roots()` 由 2 根扩为 3 根（增 `crates/rustmark-ui/src`，与 arch_check 同口径）——SOURCE_OF_TRUTH 为 `shared/theme.rs`，不在 theme 模块内，不受迁移影响；扫描覆盖 theme 迁入 ui 后的文件。field_visibility_guard 白名单 77 条 theme 键 `presentation/theme/...` → `ui/presentation/theme/...`（ui 根批次 1 已铺，覆盖无断档）；两守卫总数仍 550。其余模式守卫（default_extension / export_format / shortcut_action / theme 重复枚举）均不扩。
+> - **五门禁实测**：fmt OK；check-arch OK；clippy OK；`--all-targets` **2143 passed / 0 failed / 4 ignored** + `--doc` 1 = 2144（theme 的 `mapper/tests.rs` 内联测试块 core→ui 总量守恒）；topology CI 式 diff CLEAN（本地边仍 6 条，theme 走既有 ui→core 边）。
+> - **release exe 10,489,856 B**：较批次 3（10,488,832 B）+1 KiB（1,024 B），新红线 11 MiB 下 size_gate exit 0（仅预警），距红线余 **1,044,480 B（~1.0 MiB）**，可容纳批次 5（rich）。
+> - **文档同步**：constraints §7（模块树 core 仅剩 rich / ui 含 widgets+state+shortcuts+theme）+ §10.1（crate 地图 core 195/33,693、ui 47/11,676、规模口径、演进图 2026-10-25 注记）+ R-13 表（rich 禁令 theme 已迁出说明）；metrics.md §2.8 + NFR-PERF-01 + TD-01；本 backlog 波次表与本节。
+>
+> **动作 2 批次 5 待续（rich，约 5,918 行）**：纯叶（自绘排版，零 egui 依赖，不引用 theme/state/shortcuts/widgets/views），顺序自由，零守卫扩展（rich 不携带被守模式）。V11-62 收官批次。
+
 ### V11-63 · infrastructure 去 egui 化 ｜ 优先级：低（触发式）｜ 2–3 人日 ｜ 并行组 D
 
 - **涉及**：`infrastructure/fonts.rs` + `fonts/discovery.rs` + `fonts/assembly.rs`（产 `egui::FontDefinitions`）、`infrastructure/export/viewport_capture.rs` + `viewport_capture/image.rs`（`egui::ViewportCommand::Screenshot` / `ColorImage`）；`shared/`（新端口）；`src/app/frame.rs` 组合根（装配点）。
@@ -302,7 +314,7 @@ V11-59 ─────────────────────┼──�
 
 | ID | 债务 | 证据 | 处置 | 关联任务 |
 |---|---|---|---|---|
-| TD-01 | release 体积吃紧（已越旧红线，红线上调后入预警窗口） | 2026-10-24 基线 10,485,248 B（旧红线 10 MiB 余 512 B）；2026-10-25 V11-62 批次 2（state 迁入 `rustmark-ui`）致 +2,560 B → 10,487,808 B，旧 10 MiB 红线越线；批次 3（shortcuts）致 +1 KiB → 10,488,832 B，新红线 11 MiB 内、超预警 10 MiB。worktree A/B 实证 +2,560 B 确由跨 crate LTO 边界成本产生，无针对性修法。**维护者决策：NFR 红线 10→11 MiB、预警 8→10 MiB（原红线降级为预警）**，见 `scripts/size_gate.sh`、metrics.md §2.8 | 任何加依赖动作先过 size_gate；批次 4–5（theme/rich，约 9,400 行）搬迁继续吃体积，需监控距新红线（11 MiB）余量（当前 1,045,504 B，批次 3 后） | V11-62 / 所有 |
+| TD-01 | release 体积吃紧（已越旧红线，红线上调后入预警窗口） | 2026-10-24 基线 10,485,248 B（旧红线 10 MiB 余 512 B）；2026-10-25 V11-62 批次 2（state 迁入 `rustmark-ui`）致 +2,560 B → 10,487,808 B，旧 10 MiB 红线越线；批次 3（shortcuts）致 +1 KiB → 10,488,832 B；批次 4（theme）致 +1 KiB → 10,489,856 B；新红线 11 MiB 内、超预警 10 MiB。worktree A/B 实证 +2,560 B 确由跨 crate LTO 边界成本产生，无针对性修法。**维护者决策：NFR 红线 10→11 MiB、预警 8→10 MiB（原红线降级为预警）**，见 `scripts/size_gate.sh`、metrics.md §2.8 | 任何加依赖动作先过 size_gate；批次 5（rich，~5,918 行）将再吃体积，需监控距新红线（11 MiB）余量（当前 1,044,480 B，批次 4 后） | V11-62 / 所有 |
 | TD-02 | `src/presentation/views/preview_view.rs` 1,421 行 | 上轮评估 | 600 行阈值入 check-arch；V11-62 搬迁窗口顺带拆 | V11-62 |
 | TD-03 | `domain.rs:3` 依赖注释宽于实际 | 允许 ropey/chrono，实测零使用 | 注释校正 | V11-67 |
 | TD-04 | shared 通用件 ≈900 行且可能继续长 | pattern 494 + lru + text | 阈值：合计 >1,500 行或第 4 个非领域通用模块 → 抽 crate | 监控 |

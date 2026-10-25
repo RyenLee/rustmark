@@ -51,8 +51,8 @@
 
 use egui::text::{LayoutJob, TextFormat, TextWrapping};
 
-use crate::application::dto::SpanView;
-use crate::shared::geometry::{clamp_to_char_boundaries, floor_char_boundary};
+use rustmark_core::application::dto::SpanView;
+use rustmark_core::shared::geometry::{clamp_to_char_boundaries, floor_char_boundary};
 
 use crate::presentation::theme::builtin::Theme;
 

@@ -10,7 +10,7 @@ use super::galley_cache::{
     atlas_token, build_line_job, editor_metrics_signature,
 };
 use super::*;
-use crate::application::dto::{RangeView, SpanView};
+use rustmark_core::application::dto::{RangeView, SpanView};
 use crate::presentation::theme::builtin::palette_signature;
 
 /// 构建语法高亮的 `Galley`（S6-04 增量版）。
