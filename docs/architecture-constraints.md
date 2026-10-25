@@ -544,7 +544,7 @@ core。同一子模块内两种结论，判据的粒度是**模块**，不是目
 | 动作 | 触发条件（任一满足即启动评估） | 度量方式 | 当前状态（2026-10-24） |
 |---|---|---|---|
 | presentation 非视图子模块 → `rustmark-ui`（V11-62） | ① UI 并行开发人数 ≥2；② core 增量编译 >10s；③ presentation 年变更 ≥80 提交**且**「views↔core state 跨 crate 摩擦」在 ≥3 个功能中复现 | `tools/onboard_cost.py` + `git log` 去重 | ② 未触发（增量 5.92s）。③ **提交数已去重实测**——表现层整体 **88**、含 `tests/presentation` **93**、仅待搬迁的非视图部分 **51**（阈值 80：整体口径满足、待搬迁部分不满足，口径差异如实保留）；**摩擦已取证：8 个功能复现**（state 字段白名单 169/548 条 + 22 个 `pub` setter + 桥接 6 行 / 21 个 view 文件经桥接访问）。**③ 判定：满足**（证据见 tasklist V11-62 节）。① 仍待维护者提供。**已开工**：动作 2 批次 1 已落地（widgets 538 行 → `rustmark-ui`，本地依赖边 4→6，门禁 2144 / release exe 10,485,248 B 与基线逐字节相同）；批次 2–5 待续（theme → shortcuts → state → rich） |
-| infrastructure → `rustmark-infra`（V11-63/64） | 出现真实非 UI 消费者（CLI / headless / 嵌入）**且**去 egui 化完成 | 需求事实 + `cargo tree -p rustmark-core \| grep egui` 为 0 | 未触发（无 headless 消费者；core 现引 egui） |
+| infrastructure → `rustmark-infra`（V11-63/64） | 出现真实非 UI 消费者（CLI / headless / 嵌入）**且**去 egui 化完成 | 需求事实 + `cargo tree -p rustmark-core \| grep egui` 为 0 | 未触发（无 headless 消费者；core 现引 egui。2026-10-25 复核仍成立：`grep -c egui` = 1；「egui 归零」是 V11-63 的验收而非触发门，触发门 = 首条需求事实，评估记录见 tasklist V11-64 节后） |
 | math / mermaid → `rustmark-render` | mermaid/math 年变更 ≥10 提交或合计 >8k 行（现 5.6k） | git log + wc -l | 未触发 |
 | 新 crate 合并回退（防过度拆分） | 新建 crate <1k 行且 12mo 变更 <5 提交 | git log | 不适用：actions（687 行）/ icons（613 行）均 <1k 行，但属零依赖契约 / 纯资源 crate，回退等于把契约塞回 core——判据本意防「为拆而拆的业务模块」（ADR-013 决策 5） |
 | shared 通用件再拆分 | pattern+lru+text 合计 >1,500 行或出现第 4 个非领域通用模块 | wc -l | 未触发 |

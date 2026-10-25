@@ -354,13 +354,28 @@ V11-59 ─────────────────────┼──�
 
 ### V11-64 · 抽 `rustmark-infra` ｜ 优先级：低（触发式）｜ 1–2 人日 ｜ 并行组 D
 
-- **涉及**：`crates/rustmark-core/src/infrastructure/` 全部 51 文件 / 10,824 行 → 新 crate `crates/rustmark-infra/`；root 组合根装配点；`tools/arch_check.rs`；`tests/infrastructure/`（302 条用例随迁）。
+- **涉及**：`crates/rustmark-core/src/infrastructure/` 全部 51 文件 / 10,859 行（2026-10-25 实测；`c08fd13` 后较原记录 10,824 行 +35）→ 新 crate `crates/rustmark-infra/`；root 组合根装配点；`tools/arch_check.rs`；`tests/infrastructure/`（302 条用例随迁）。
 - **现状问题**：infrastructure 层归属正确但 crate 粒度错配——复用 domain 的人被迫拉 syntect/ureq/rfd/pulldown/image。
-- **改造目标**：core = 纯六边形 16.7k；infra 独立成右侧适配器 crate。
+- **改造目标**：core = 纯六边形 ≈17.0k（27,892 − 10,859，2026-10-25 实测推算）；infra 独立成右侧适配器 crate。
 - **具体动作**：触发条件核验（出现真实非 UI 消费者 + V11-63 完成）；`git mv` 整体搬迁；infra crate 依赖 rustmark-core（端口在 core，实现在 infra——方向合法）；root members/dep 更新；arch_check 第三 roots + 层表；tests/infrastructure 随迁（显式 test 目标声明）。
 - **依赖与风险**：**强依赖 V11-63**。风险：装配链（20+ 测试使用的 `assemble_with_clock_and_dialogs` 类参数化装配）跨 crate 后 import 面变化——沿用项目既有模式（新增最深变体 + 旧链转发，调用点零改动）；rfd/syntect 等重依赖的编译缓存收益此时才兑现。
 - **验收标准**：`cargo tree -p rustmark-core` 无 syntect/ureq/rfd/pulldown/image/egui；拓扑与期望文件一致；2131；size_gate。
 - **回退**：revert。
+
+> **触发评估记录（2026-10-25，BLK-02 复核）**：两个前提今日实测仍成立——① 无真实非
+> UI 消费者：workspace 仅 `rustmark`（GUI）与 `check-arch`（构建工具，零 core 依赖）两个
+> bin，root 无任何命令行参数解析，`tests/` 不构成消费者；② `cargo tree -p
+> rustmark-core | grep -c egui` = 1（egui v0.37.0 为非 dev 依赖），引用点仍精确落在
+> V11-63 所列 5 个文件（fonts.rs 783 + discovery.rs 340 + assembly.rs 180 +
+> viewport_capture.rs 389 + image.rs 152 = 1,844 行；其余 10 个文件的 egui 字样均为
+> 注释）。
+> 判定细化：「egui 归零」是 V11-63 的**验收目标**而非 63/64 的触发前提——真正的触发门是
+> constraints §7 触表格首条「出现真实非 UI 消费者」的需求事实（= BLK-01 的 Q-01）。
+> 无消费者时 V11-63 的残余价值是修一处层内渗漏（§10.2 四问之④「egui 只应出现在表现
+> 适配器」，与 V11-17 打开器因分层合规迁 shared 同类）；但 check-arch 的
+> `INFRASTRUCTURE_FORBIDDEN` 当前不禁 egui（domain / application / shared 三层的清单
+> 都禁）——该渗漏目前无机械守卫，可作低成本棘轮守卫候选。V11-64 在 Q-01 回答「无计划」
+> 时应明确记为「永不触发」，避免作为低优先级项被反复重评。
 
 ---
 
@@ -383,7 +398,7 @@ V11-59 ─────────────────────┼──�
 | ID | 阻塞 | 影响 | 解除方式 |
 |---|---|---|---|
 | BLK-01 | 五项用户决策缺失（见 §5 Q-01~05） | V11-63/64 无法拍板是否启动（V11-62 已由维护者拍板启动并收官——Q-03 的实践答案：单人开发亦启动 ui crate；Q-02 取变体 A 见 ADR-013；Q-05 由 V11-62 摩擦取证回答） | 用户回答 §5 的 Q-01（headless 复用意图，决定 V11-63/64 是否升必做）与 Q-04（mermaid/math 路线图） |
-| BLK-02 | V11-62/63/64 触发条件未满足 | 提前启动 = 过早拆分，收益为负。V11-62 触发条件已核验满足（`c0aa194`，条件③）并收官；V11-63/64 仍未触发（core 仍引 egui、无 headless 消费者）——维持挂起 | V11-66 度量数据 / 触发核验达标后再启动（63/64 适用；62 的核验记录见 `c0aa194`） |
+| BLK-02 | V11-62/63/64 触发条件未满足 | 提前启动 = 过早拆分，收益为负。V11-62 触发条件已核验满足（`c0aa194`，条件③）并收官；V11-63/64 仍未触发（core 仍引 egui、无 headless 消费者）——维持挂起（2026-10-25 复核评估见 V11-64 节后记录：触发门 = Q-01 的需求事实，「egui 归零」是 63 的验收而非触发前提） | V11-66 度量数据 / 触发核验达标后再启动（63/64 适用；62 的核验记录见 `c0aa194`） |
 | BLK-03 | D-6/D-7 未合入，与 V11-57/58/62/63 同改 `tools/arch_check.rs` | 冲突/基线混乱 | **已解除**：`662536b`（D-6/D-7）已合入且实测为 HEAD 祖先；V11-57/58/62 各批次均在其后基线落地，无冲突 |
 
 ## 5. 前置澄清问题（按优先级）
