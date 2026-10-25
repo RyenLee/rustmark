@@ -417,6 +417,45 @@ fn crate_layer_paths_inside_strings_and_comments_are_not_violations_in_tests() {
     );
 }
 
+/// 转义字符字面量（`'\\'`）之后的 token **不得被吞**。
+///
+/// # 为什么必须单独一条
+///
+/// 这是 2026-10-25 守卫②（shared 无环守卫）变异验证意外挖出的**存量
+/// 词法 bug：`skip_char_or_lifetime` 的转义分支曾是「循环找闭合引号」，
+/// 对 `'\\'` 会在吃掉第二个反斜杠时连带吞掉闭合引号，循环找不到闭合
+/// 引号便不停，一路吃到文件里下一个 `'`——字符字面量之后的全部 token
+/// 静默丢失，藏在后面的跨层引用全部漏检。真实工程约 200 处转义字符
+/// 字面量（`path.rs` 的 `rsplit(['/', '\\'])` 即其一；crates 98 /
+/// src 17 / tests 85，剔注释与字符串实测）处于该路径，意味着这条
+/// 路径上的泄漏长期不可见。本用例把 `'\\'` 放在违规之前：旧实现下
+/// 违规被吞（0 处），修复后必须报 1 处。
+#[test]
+fn escaped_backslash_char_literal_does_not_swallow_later_tokens() {
+    let dir = tempfile::tempdir().unwrap();
+    let src_root = dir.path().join("src");
+    write_fixture(
+        &src_root,
+        "domain/probe.rs",
+        "//! x\nfn f() {\n    \
+         let bs = '\\\\';\n    \
+         let c = egui::Color32::WHITE;\n}\n",
+    );
+
+    let violations = arch_check::scan(&src_root);
+    assert_eq!(
+        violations.len(),
+        1,
+        "字符字面量之后的 token 不得被吞，实际：{:?}",
+        described(&violations)
+    );
+    assert!(
+        violations[0].detail.contains("egui"),
+        "违规说明应点名 egui，实际：{}",
+        violations[0].detail
+    );
+}
+
 /// `tests/` 下的帧预约规则**依然生效**（T11 / ADR-009 不因测试而豁免）。
 ///
 /// # 为什么测试也要守

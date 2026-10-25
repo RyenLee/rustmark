@@ -9,6 +9,7 @@ mod error_test;
 mod export_format_test;
 mod geometry_test;
 mod ids_test;
+mod internal_cycle_guard_test;
 mod path_test;
 mod theme_guard_test;
 mod theme_test;

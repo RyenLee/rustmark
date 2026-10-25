@@ -837,19 +837,21 @@ impl<'a> Lexer<'a> {
     fn skip_char_or_lifetime(&mut self) {
         match self.bytes.get(self.pos + 1).copied() {
             Some(b'\\') => {
-                self.pos += 1;
+                // 转义字符字面量（`'\\'` / `'\n'` / `'\''` / `'\0'`）：
+                // **定长消费**——引号 + 反斜杠 + 被转义的那一个字符 + 引号。
+                //
+                // 曾经的实现是「循环找闭合引号」，对 `'\\'` 会这样翻车：
+                // 吃掉第一个 `\` 后，循环把第二个 `\` 当成新的转义起始，
+                // bump 两次连闭合引号一起吞掉，循环找不到闭合引号便不停，
+                // 一路吃到文件里下一个 `'`——字符字面量之后的全部 token
+                // 静默丢失（跨层引用藏在后面就全漏检）。2026-10-25 由
+                // 守卫②的变异验证发现：`path.rs` 的
+                // `rsplit(['/', '\\'])` 正好触发该路径。
+                self.pos += 1; // 反斜杠
                 self.bump_char();
-                while let Some(c) = self.peek_char() {
-                    if c == '\'' {
-                        self.bump_char();
-                        break;
-                    }
-                    if c == '\\' {
-                        self.bump_char();
-                        self.bump_char();
-                        continue;
-                    }
-                    self.bump_char();
+                self.bump_char(); // 被转义的那一个字符
+                if self.peek_char() == Some('\'') {
+                    self.bump_char(); // 闭合引号
                 }
             }
             Some(_) => {

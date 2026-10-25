@@ -51,6 +51,17 @@
 > infrastructure 禁 egui 棘轮守卫三例：清单外必报 / 清单内放行 / 同目录新文件仍拦）。
 > release exe 不变（tools/ 与 tests/ 改动不进 release 产物）。下文「2150」及更早
 > 数字表述一律按 **2153** 执行。
+>
+> **基线再更新（2026-10-25，守卫加固包 · 守卫② + 词法器修复）：2164 passed / 0 failed / 4 ignored**
+> （`--all-targets` 2163 + `--doc` 1；净 +11 = `tests/shared/internal_cycle_guard_test.rs`
+> 十例（真实工程二例 + 合成牙口八例）+ `arch_violation_fixture.rs` 词法器回归一例）。
+> 守卫②内容：破除 `path` ↔ `text_format` 二环（`extension_index` 迁入 `path.rs`，
+> 公开路径零变化）+ shared 内部无环/边集钉死/绝对路径形态守卫。**变异验证顺带挖出
+> 并修复 `arch_check` 存量词法 bug**：`skip_char_or_lifetime` 的转义分支对 `'\\'`
+> 会吞到文件里下一个 `'`，字符字面量之后的 token 静默丢失（全仓约 200 处转义
+> 字符字面量处于该路径：crates 98 / src 17 / tests 85，剔注释与字符串实测；
+> 泄漏长期不可见）；修复后真实工程复扫仍零违规。release exe
+> **10,520,576 B** 逐字节不变。下文「2153」及更早数字表述一律按 **2164** 执行。
 
 **通用验收（每项必含）**：上表五项全绿 + `cargo fmt --check` 绿 + 所有命令带
 `--workspace`（root `Cargo.toml` 注释警告：否则 core 单测静默退出测试集，
@@ -422,8 +433,8 @@ V11-59 ─────────────────────┼──�
 cargo fmt --check
 cargo run --bin check-arch
 cargo clippy --workspace --all-targets --all-features -- -D warnings   # 0 告警
-cargo test --workspace --all-targets --no-fail-fast   # 2152 passed / 0 failed / 4 ignored
-cargo test --workspace --doc                          # +1 = 合计 2153
+cargo test --workspace --all-targets --no-fail-fast   # 2163 passed / 0 failed / 4 ignored
+cargo test --workspace --doc                          # +1 = 合计 2164
                                  # （grep '^test result:' | awk 逐行求和；命令必带 --workspace）
 bash scripts/size_gate.sh       # exe ≤ 11,534,336 B（11 MiB 红线；预警 11,010,048 B = 10.5 MiB）
 cargo tree --workspace --depth 1   # 拓扑对 docs/workspace-topology.expected.txt

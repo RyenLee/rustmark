@@ -268,6 +268,31 @@ rich / widgets ──► （不得回指 views / state / theme / widgets）
 > 表头行与分隔行不算登记项；文件列写 `shared/x.rs`、`src/shared/x.rs` 或
 > `crates/rustmark-core/src/shared/x.rs` 均可。
 
+### 4.6 `shared` 内部依赖无环（V11-55 附案②，机械守卫）
+
+`shared` 内部**不是**自由市场：模块图必须保持无环。Rust 允许 crate 内模块
+互相引用——环编译得过、编译器沉默，但环让模块无法单独理解与单独测试，
+且是日后拆 crate（如 V11-64）的硬墙。
+
+机械守卫 `tests/shared/internal_cycle_guard_test.rs`，三条判据：
+
+- **无环**：对真实工程跑 DFS，有环即报红并打出环路径；
+- **边集钉死**：内部依赖边（当前 **11 条**）登记为显式清单，新增边须先落
+  清单才能过——「shared 内部依赖面的任何变化都要落到清单上」；删边同样
+  报红（清单出现过期项）；
+- **形态唯一**：边只从 `crate::shared::<mod>` 绝对路径提取；
+  `super::<mod>`、glob 导入后的裸 `<mod>::`、`self::<mod>` 等形态让边
+  悄悄漏走（词法看不出 `super` 链的嵌套深度），一律报红要求改写。
+  守卫口径经 `arch_check::lex_dump` 剔注释与字符串——文档注释里的
+  intra-doc 链接不产生边。
+
+历史：V11-55（2026-10-21）破除 `text_format` ↔ `dialog` 环后，2026-10-25
+发现评审后又新生出 `path` ↔ `text_format` 二环（`FilePath::extension` 调
+`crate::shared::text_format::extension_index`，而 `extension_of` 调
+`crate::shared::path::file_name_of`）——环随即将 `extension_index` 迁入
+`path.rs`（规则放在被依赖侧，方向保持 `text_format → path` 单向），
+并立本守卫防复发。
+
 ## 5. 限界上下文与聚合根
 
 | 上下文 | 类型 | 聚合根 | 职责 |

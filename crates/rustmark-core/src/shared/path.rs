@@ -105,11 +105,11 @@ impl FilePath {
     /// 例：`a.md` → `Some("md")`；`Makefile` → `None`；`.gitignore` → `None`。
     ///
     /// 判定规则与 [`crate::shared::text_format::extension_of`] **同源**
-    /// （共用 `extension_index`）——那是「可打开格式白名单」的依据，
-    /// 两者若各写一份，白名单与实际扩展名识别迟早会给出不同答案。
+    /// （共用本文件末尾的 [`extension_index`]）——那是「可打开格式白名单」的
+    /// 依据，两者若各写一份，白名单与实际扩展名识别迟早会给出不同答案。
     pub fn extension(&self) -> Option<&str> {
         let name = self.file_name();
-        let start = crate::shared::text_format::extension_index(name)?;
+        let start = extension_index(name)?;
         Some(&name[start..])
     }
 
@@ -251,4 +251,28 @@ fn split_drive(path: &str) -> (&str, &str) {
 /// 在 Windows 上会把整条路径当文件名显示给用户。
 pub fn file_name_of(path: &str) -> &str {
     path.rsplit(['/', '\\']).next().unwrap_or(path)
+}
+
+/// 扩展名在**文件名**（末段）中的起始字节下标（点在 `index - 1`）。
+///
+/// 这是「什么算扩展名」这条规则的**唯一实现**，两处入口共用：
+/// - [`FilePath::extension`]：已归一化的值对象路径（本文件）；
+/// - [`crate::shared::text_format::extension_of`]：原始路径字符串
+///   （可能带 `\`、可能大小写混杂）。
+///
+/// 分开写两份的后果在 `FilePath` 上出现过：规则一致时看不出问题，
+/// 一旦有人改了一处（比如决定 `.tar.gz` 只算 `gz`、或 `.gitignore`
+/// 不算扩展名），另一处就会静默地给出不同答案。
+///
+/// 住在 `path.rs` 而不是 `text_format.rs`：本文件已有 `file_name_of`
+/// 取末段，`text_format` 取原始路径的扩展名时本就依赖本文件；规则放在
+/// 被依赖侧，`shared` 内部依赖方向保持 `text_format → path` 单向
+/// （内部环的破法见守卫测试 `internal_cycle_guard_test.rs`）。
+pub(crate) fn extension_index(name: &str) -> Option<usize> {
+    let dot = name.rfind('.')?;
+    // 前导点开头（`.gitignore`）与结尾点（`a.`）都不是扩展名。
+    if dot == 0 || dot + 1 >= name.len() {
+        return None;
+    }
+    Some(dot + 1)
 }

@@ -62,24 +62,6 @@ const DISPLAY_NAMES: &[(&str, &str)] = &[
     ("csv", "CSV"),
 ];
 
-/// 扩展名在**文件名**（末段）中的起始字节下标（点在 `index - 1`）。
-///
-/// 这是「什么算扩展名」这条规则的**唯一实现**，两处入口共用：
-/// - [`extension_of`]：原始路径字符串（可能带 `\`、可能大小写混杂）；
-/// - [`crate::shared::path::FilePath::extension`]：已归一化的值对象路径。
-///
-/// 分开写两份的后果在 `FilePath` 上出现过：规则一致时看不出问题，
-/// 一旦有人改了一处（比如决定 `.tar.gz` 只算 `gz`、或 `.gitignore`
-/// 不算扩展名），另一处就会静默地给出不同答案。
-pub(crate) fn extension_index(name: &str) -> Option<usize> {
-    let dot = name.rfind('.')?;
-    // 前导点开头（`.gitignore`）与结尾点（`a.`）都不是扩展名。
-    if dot == 0 || dot + 1 >= name.len() {
-        return None;
-    }
-    Some(dot + 1)
-}
-
 /// 取路径的**扩展名**（小写、不含点）。
 ///
 /// 语义与用户直觉一致：
@@ -94,7 +76,9 @@ pub(crate) fn extension_index(name: &str) -> Option<usize> {
 /// 归一化**之后**才保证 `/`，而本函数面对的正是归一化之前的原始输入）。
 pub fn extension_of(path: &str) -> Option<String> {
     let name = crate::shared::path::file_name_of(path);
-    let start = extension_index(name)?;
+    // 「什么算扩展名」的唯一实现住在 path.rs（与 `FilePath::extension` 共用），
+    // 经它调用而非在本文件另写一份——两处规则分家的后果见 path.rs 的文档。
+    let start = crate::shared::path::extension_index(name)?;
     Some(name[start..].to_ascii_lowercase())
 }
 
