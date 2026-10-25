@@ -14,7 +14,7 @@
 | 架构校验 | `cargo run --bin check-arch` OK；禁止方向 use 边全 0；R-12 字段直写零违规；548 字段白名单 |
 | Lint | `cargo clippy --workspace --all-targets --all-features -- -D warnings` 0 告警 |
 | 构建 | 冷构建 83 s（190 crate）；clippy 36 s；全量测试 81 s；release 121 s |
-| 体积 | release exe **10,485,248 B**；红线 10,485,760 B（`scripts/size_gate.sh` 默认）；预警线 8,388,608 B（**已处告警态，余量仅 512 B**） |
+| 体积 | release exe **10,485,248 B**；红线 10,485,760 B（`scripts/size_gate.sh` 默认）；预警线 8,388,608 B（**已处告警态，余量仅 512 B**）——快照口径，现行红线/预警与最新基线见下方勘误与 metrics §2.8 |
 | 工作区 | root `rustmark` + `crates/rustmark-core`；拆分落盘 `2f4fd07`（2026-10-23）；D-6/D-7 已合入（`662536b`） |
 
 > **基线勘误（2026-10-24 晚，执行中更新）**：D-6/D-7 已合入 `662536b`；V11-59 审计与
@@ -37,6 +37,14 @@
 > V11-59 已完成（`2880678`）；V11-60 已关闭（审计 V=0，转 V11-62）；V11-61 已降级为记录；
 > **V11-62 已开工——动作 2 批次 1（widgets）+ 批次 2（state）+ 批次 3（shortcuts）+ 批次 4（theme）+ 批次 5（rich）已落地，V11-62 收官**（见 V11-62 节末记录块）。
 > 状态表见 `docs/v1.1-backlog.md` §3 的波次登记。
+>
+> **基线再更新（2026-10-25，阈值整改 `c08fd13` 后）：2150 passed / 0 failed / 4 ignored**
+> （`--all-targets` 2149 + `--doc` 1；净 +6：撤销 64 MiB 字节预算、图片分层上限、
+> 纹理 128 MiB 预算、解码最长边与 2 条 NFR 断言等新增用例）；release exe
+> **10,520,576 B**（+33,280 B，功能常量变更），现行红线 11 MiB（11,534,336 B）/
+> 预警 10.5 MiB（11,010,048 B），size_gate exit 0 且低于预警线；字段白名单
+> 548 → **550**（V11-62 批次 2 跨 crate 可见性登记）。下文「2131 / 2136 / 2139 /
+> 2140 / 2144」表述一律按 **2150** 执行。
 
 **通用验收（每项必含）**：上表五项全绿 + `cargo fmt --check` 绿 + 所有命令带
 `--workspace`（root `Cargo.toml` 注释警告：否则 core 单测静默退出测试集，
@@ -116,6 +124,13 @@ V11-59 ─────────────────────┼──�
 - **验收标准**：`git diff Cargo.lock` 为空；clippy 0 告警；2131 基线；`cargo tree -p rustmark-core` 版本串与收敛前一致。
 - **回退**：revert 单 commit。
 
+> **完成注记（2026-10-24，`12e65bc`）**：已落地，`Cargo.lock` 零 diff（16 文件：两份 manifest、两个 lib.rs、12 个测试入口）。与方案的偏差及处置：
+> 1. **依赖收敛 5 项**（egui / image / syntect / log / tempfile）：root 新增 `[workspace.dependencies]`（版本进真源、选型理由注释留档），root 自身 dependencies 与 dev-dependencies 同规格项改 `{ workspace = true }`；core 同 5 项继承。
+> 2. **lint 单点真源**：`[workspace.lints.clippy]`（unwrap_used / expect_used / panic = warn）+ `[workspace.lints.rust]`（missing_docs = warn）；core manifest 加 `[lints] workspace = true`；两个 lib.rs 删重复 attribute。
+> 3. **方案未预见的连带面（坑）**：workspace lints 是**包级**声明，覆盖原先不受 lib.rs attribute 管辖的 12 个集成测试 crate——每个测试入口须补 `#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]`（规范 §七-20 允许测试代码 panic，同 lib.rs 惯例）。
+> 4. **`cfg_attr(test, allow)` 豁免保留在各 lib.rs**（方案动作 3 已预见）：cfg 形态无法进 lints 表；domain.rs / shared.rs 的更严 `deny` 保留（分层纪律不收敛）。
+> 5. **TD-06 随之闭环**（见 §3 登记簿）。
+
 ### V11-66 · CI 拓扑断言 + 接入成本度量脚本 ｜ 优先级：中 ｜ 0.5–1 人日 ｜ 并行组 A
 
 - **涉及**：`.github/workflows/ci.yml`、`docs/workspace-topology.expected.txt`（新）、`tools/onboard_cost.py`（新，沿用 `tools/mut_*.py` 风格）。
@@ -129,6 +144,13 @@ V11-59 ─────────────────────┼──�
 - **验收标准**：本地可复现 CI 新步骤（故意改期望文件验证会红）；脚本输出与本会话数字一致（误差 ≤1 提交）。
 - **回退**：revert；期望文件保留可作后续基线。
 
+> **完成注记（2026-10-24，`bb0b4b9`）**：已落地。与方案的偏差及处置：
+> 1. **`--no-dedupe` 必须带**（方案原命令未带，按实测修正）：默认去重模式下第二个 workspace 成员（rustmark-core）的直接依赖被 `(*)` 折叠隐藏，core 新增依赖边会逃过本断言。
+> 2. **归一化口径**：diff 前删除 `cargo tree` 输出中所有 ` (...)` 与 `(*)`（workspace 成员绝对路径随平台变化、去重标记随状态变化，均无评审价值）；**版本号保留**——体积红线余量仅 512 B 的年代，锁文件漂移同属拓扑事件。
+> 3. **`tools/onboard_cost.py` 口径修正**：`--no-renames` 字面记录（numstat 默认 rename 检测会把 `{old => new}` 合成路径落进垃圾模块桶，实测发现）；12mo 窗口、不含 merge、4a 拆分前后路径合并计数。
+> 4. **门禁有牙已实证**：当前树 diff 干净；故意篡改期望文件（anyhow 版本号）diff 即红，还原后恢复绿色。
+> 5. **度量校准**：views 69 / state 31 / theme 20 vs 评审报告 70/30/19（Δ −1/+1/+1 落入 ±1 容差）；含 merge / pathspec / 排除 4a 拆分 / 含 tests 四种变体均无法同时复现评审三个数，判定为评审一次性聚合的方法学噪声，热模块排序不变（metrics.md §7.4）；§7 接入成本基线已建。
+
 ### V11-67 · 过期文档校正 ｜ 优先级：低 ｜ 0.25 人日 ｜ 并行组 A
 
 - **涉及**：`crates/rustmark-core/src/domain.rs`（第 3 行注释）、`docs/metrics.md`。
@@ -138,6 +160,10 @@ V11-59 ─────────────────────┼──�
 - **风险**：纯注释/文档，零行为风险；domain.rs 是 `#![deny]` 门面文件，改注释不动属性。
 - **验收标准**：五查通过；`cargo run --bin check-arch` 仍 OK（注释改动不触规）。
 - **回退**：revert。
+
+> **完成注记（2026-10-24，`3cc4c42`）**：已落地。与方案的偏差及处置：
+> 1. **domain.rs:3 注释**改为「可依赖 shared / serde / thiserror（两者实测在用）；ropey / chrono 为历史上允许但当前零使用」——TD-03 闭环；domain.rs 是 `#![deny]` 门面文件，只改注释不动属性，check-arch 复跑 OK。
+> 2. **metrics.md §2.8 新建**（方案未点名、随动作 2 落地）：2026-10-24 体积基线 10,485,248 B（距旧红线 512 B），+18,432 B 差异未 bisect 列为低优先待办——该待办后被「批次 2 转红 → 上调红线」事件覆盖（TD-08 闭环，见 §3 登记簿）。
 
 ### V11-59 · UI state 字段审计 ｜ 优先级：中 ｜ 1 人日 ｜ 并行组 A
 
@@ -333,22 +359,22 @@ V11-59 ─────────────────────┼──�
 
 | ID | 债务 | 证据 | 处置 | 关联任务 |
 |---|---|---|---|---|
-| TD-01 | release 体积吃紧（已越旧红线，红线上调后入预警窗口） | 2026-10-24 基线 10,485,248 B（旧红线 10 MiB 余 512 B）；2026-10-25 V11-62 批次 2（state 迁入 `rustmark-ui`）致 +2,560 B → 10,487,808 B，旧 10 MiB 红线越线；批次 3（shortcuts）致 +1 KiB → 10,488,832 B；批次 4（theme）致 +1 KiB → 10,489,856 B；批次 5（rich，~5,918 行，V11-62 收官）致 -2,560 B → 10,487,296 B（非单调：rich 自绘排版零跨 crate 内联，迁移回吐批次 2 的 LTO 边界成本）；新红线 11 MiB 内、超预警 10 MiB。worktree A/B 实证 +2,560 B 确由跨 crate LTO 边界成本产生，无针对性修法。**维护者决策：NFR 红线 10→11 MiB、预警 8→10 MiB（原红线降级为预警）**，见 `scripts/size_gate.sh`、metrics.md §2.8 | V11-62 收官，体积窗口稳定（距新红线 11 MiB 余 1,047,040 B）；后续加依赖动作仍须过 size_gate | V11-62 / 所有 |
+| TD-01 | release 体积吃紧（已越旧红线，红线上调后入预警窗口） | 2026-10-24 基线 10,485,248 B（旧红线 10 MiB 余 512 B）；2026-10-25 V11-62 批次 2（state 迁入 `rustmark-ui`）致 +2,560 B → 10,487,808 B，旧 10 MiB 红线越线；批次 3（shortcuts）致 +1 KiB → 10,488,832 B；批次 4（theme）致 +1 KiB → 10,489,856 B；批次 5（rich，~5,918 行，V11-62 收官）致 -2,560 B → 10,487,296 B（非单调：rich 自绘排版零跨 crate 内联，迁移回吐批次 2 的 LTO 边界成本）；新红线 11 MiB 内、超预警 10 MiB。worktree A/B 实证 +2,560 B 确由跨 crate LTO 边界成本产生，无针对性修法。**维护者决策：NFR 红线 10→11 MiB、预警 8→10 MiB（原红线降级为预警）**，见 `scripts/size_gate.sh`、metrics.md §2.8 | V11-62 收官，体积窗口稳定（距新红线 11 MiB 余 1,047,040 B）；后续加依赖动作仍须过 size_gate。**2026-10-25 阈值整改（`c08fd13`）后 10,520,576 B（+33,280 B：撤销 64 MiB 字节预算、图片分层上限、纹理 128 MiB 预算等功能常量变更），size_gate exit 0 且低于预警线（现行红线 11,534,336 B / 预警 11,010,048 B = 10.5 MiB，`c08fd13` 统一 CI 与三个打包脚本口径），距红线余 1,013,760 B（~0.97 MiB），窗口仍稳定** | V11-62 / 所有 |
 | TD-02 | `src/presentation/views/preview_view.rs` 1,421 行 | 上轮评估 | **已闭环（2026-10-25，TD-02 专项，`999e63c`）**：按 §7 D-4 阈值拆为入口 458 行 + `preview_view/image_cache.rs`（图片纹理缓存簇 319 行）+ `preview_view/tests.rs`（外置单测 664 行）；`ImageEntry` 本体与字段转 `pub(super)`（消费者 media.rs 跨子模块）；公开路径 `preview_view::{show, image_cache_state, is_remote_url, ImageEntryState}` 经 `pub use` 零变化；四门禁绿（2144 守恒）、release 逐字节 10,487,296 B、topology CLEAN | TD-02 专项 |
-| TD-03 | `domain.rs:3` 依赖注释宽于实际 | 允许 ropey/chrono，实测零使用 | 注释校正 | V11-67 |
-| TD-04 | shared 通用件 ≈900 行且可能继续长 | pattern 494 + lru + text | 阈值：合计 >1,500 行或第 4 个非领域通用模块 → 抽 crate | 监控 |
-| TD-05 | D-6/D-7 六文件未提交合入 | git status | 先合入再动 arch_check 的任务 | BLK-03 |
-| TD-06 | 双 manifest 重复 | egui/image/syntect/log/tempfile | workspace 收敛 | V11-65 |
-| TD-07 | tests/presentation 43 文件将随 V11-62 拆分 | 622 条用例 | 按被测模块归属拆；保持总数 | V11-62 |
-| TD-08 | metrics.md 体积记录与实测差 +18,432 B 未 bisect | 上轮发现 | 补记当前基线；差异bisect列为低优先 | V11-67 |
+| TD-03 | `domain.rs:3` 依赖注释宽于实际 | 允许 ropey/chrono，实测零使用 | **已闭环（2026-10-24，`3cc4c42`，V11-67）**：注释改为「serde/thiserror 实测在用；ropey/chrono 历史上允许但当前零使用」，check-arch 复跑 OK | V11-67 |
+| TD-04 | shared 通用件 ≈900 行且可能继续长 | 2026-10-25 实测：shared **19 文件 / 3,016 行**；非领域通用件 6 个 = pattern 494 + text_format 326 + lru 291 + path 254 + geometry 248 + export_format 233，合计 **1,846 行** | 阈值：合计 >1,500 行或第 4 个非领域通用模块 → 抽 crate。**阈值已触发**（1,846 > 1,500 且通用模块 6 ≥ 4）：待立项评估——按 constraints §10.3 外移触发流程完成触发核验并由维护者拍板，不宜静默启动 | 监控（已触发） |
+| TD-05 | D-6/D-7 六文件未提交合入 | git status | **已闭环**：D-6/D-7 已合入（`662536b`，`git merge-base --is-ancestor 662536b HEAD` 实测成立） | BLK-03 |
+| TD-06 | 双 manifest 重复 | egui/image/syntect/log/tempfile | **已闭环（2026-10-24，`12e65bc`，V11-65）**：5 项依赖与 lint 收敛至 root `[workspace.dependencies]` / `[workspace.lints]`，两侧 `{ workspace = true }` 继承，Cargo.lock 零 diff | V11-65 |
+| TD-07 | tests/presentation 43 文件将随 V11-62 拆分 | 2026-10-25 实测：**未随迁**——43 文件仍在 root `tests/presentation/`，其中 38 个经 `rustmark::presentation::*` 公开桥接路径消费 ui 模块，零改动通过（2149+1 守恒） | 按被测模块归属拆；保持总数。**已复核决定维持 root 集成测试定位**：公开契约的测试保证属于应用 crate，随迁只增目标声明成本、零覆盖收益；仅当 ui crate 出现独立复用/发布需求时再评估 | V11-62 |
+| TD-08 | metrics.md 体积记录与实测差 +18,432 B 未 bisect | 上轮发现 | **已闭环（被事件覆盖）**：metrics §2.8 已补全基线链（2026-10-24 基线 → V11-62 五批次 → 阈值整改 10,520,576 B）；「下次转红 bisect」旧建议已被批次 2 转红事件覆盖——维护者决策上调红线，worktree A/B 实证 +2,560 B 为跨 crate LTO 边界成本；+18,432 B 历史差异的专项 bisect 无后续行动价值，归档 | V11-67 |
 
 ## 4. 阻塞项
 
 | ID | 阻塞 | 影响 | 解除方式 |
 |---|---|---|---|
-| BLK-01 | 五项用户决策缺失（见 §5 Q-01~05） | V11-62/63/64 无法拍板是否启动 | 用户回答 §5 |
-| BLK-02 | V11-62/63/64 触发条件未满足 | 提前启动 = 过早拆分，收益为负 | V11-66 度量数据达标后再启动 |
-| BLK-03 | D-6/D-7 未合入，与 V11-57/58/62/63 同改 `tools/arch_check.rs` | 冲突/基线混乱 | 先合入 D-6/D-7，或明确同分支携带并记入 commit message |
+| BLK-01 | 五项用户决策缺失（见 §5 Q-01~05） | V11-63/64 无法拍板是否启动（V11-62 已由维护者拍板启动并收官——Q-03 的实践答案：单人开发亦启动 ui crate；Q-02 取变体 A 见 ADR-013；Q-05 由 V11-62 摩擦取证回答） | 用户回答 §5 的 Q-01（headless 复用意图，决定 V11-63/64 是否升必做）与 Q-04（mermaid/math 路线图） |
+| BLK-02 | V11-62/63/64 触发条件未满足 | 提前启动 = 过早拆分，收益为负。V11-62 触发条件已核验满足（`c0aa194`，条件③）并收官；V11-63/64 仍未触发（core 仍引 egui、无 headless 消费者）——维持挂起 | V11-66 度量数据 / 触发核验达标后再启动（63/64 适用；62 的核验记录见 `c0aa194`） |
+| BLK-03 | D-6/D-7 未合入，与 V11-57/58/62/63 同改 `tools/arch_check.rs` | 冲突/基线混乱 | **已解除**：`662536b`（D-6/D-7）已合入且实测为 HEAD 祖先；V11-57/58/62 各批次均在其后基线落地，无冲突 |
 
 ## 5. 前置澄清问题（按优先级）
 
@@ -365,9 +391,10 @@ V11-59 ─────────────────────┼──�
 cargo fmt --check
 cargo run --bin check-arch
 cargo clippy --workspace --all-targets --all-features -- -D warnings   # 0 告警
-cargo test --all-targets        # 2131 passed / 0 failed / 4 ignored
-                                 # （grep '^test result:' | awk 逐行求和）
-bash scripts/size_gate.sh       # exe ≤ 10,485,760 B
+cargo test --workspace --all-targets --no-fail-fast   # 2149 passed / 0 failed / 4 ignored
+cargo test --workspace --doc                          # +1 = 合计 2150
+                                 # （grep '^test result:' | awk 逐行求和；命令必带 --workspace）
+bash scripts/size_gate.sh       # exe ≤ 11,534,336 B（11 MiB 红线；预警 11,010,048 B = 10.5 MiB）
 cargo tree --workspace --depth 1   # 拓扑对 docs/workspace-topology.expected.txt
 ```
 
