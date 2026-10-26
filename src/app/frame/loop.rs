@@ -114,6 +114,11 @@ impl eframe::App for EditorApp {
             if let Some(due_ms) = self.services.markdown.highlight_next_due_in() {
                 self.scheduler.arm(Deadline::HighlightDebounce, due_ms);
             }
+
+            // 3.9) 耗时归因的第一段边界（D-5）：从帧首到这里都算「状态更新」。
+            //      放在块尾是唯一没有遗漏的位置——块内每一步都可能 `arm`，
+            //      也都在绘制之前。
+            self.scheduler.lap(FramePhase::StateUpdate);
         }
 
         // 4) 绘制。视图层在 S6-02~S6-11 逐步接入。
@@ -122,10 +127,16 @@ impl eframe::App for EditorApp {
         // 那里才是「本帧所有点击都处理完」的位置。
         crate::presentation::views::main_view::show(self, ui);
 
+        // 4.05) 耗时归因的第二段边界（D-5）：`main_view::show` 整棵视图树 = 绘制。
+        //       下一行是 `flush`，两者之间的差就是本帧的「未归因」尾巴。
+        self.scheduler.lap(FramePhase::Draw);
+
         // 4.1) 帧末统一预约（T11）：本帧所有 `arm` 过的到期点在此换算成
         //      **一次** `request_repaint_after`。位置必须在 `main_view::show`
         //      之后——状态栏的统计防抖与消息 TTL 是在绘制阶段登记的。
-        self.scheduler.flush(ui.ctx());
+        // 返回值只在「本帧超预算且未被限流」时给出归因；告警已由调度器自己写日志，
+        // 组合根不需要再消费（`Option` 是 `must_use`，故显式丢弃）。
+        let _ = self.scheduler.flush(ui.ctx());
 
         // 4.5) 草稿恢复提示（DEF-02）：启动发现遗留草稿时居中提示。
         {

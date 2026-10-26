@@ -35,7 +35,7 @@ use crate::application::dto::{
     EditorSettingsView, RecentFileView, SettingsView, StatsView, TabSummary, ThemeView,
 };
 use crate::application::dto::{
-    ExportRequestView, ExportResultView, LintIssueView, OutlineItemView, SearchResultView,
+    ExportRequestView, ExportResultView, LintIssueView, OutlineItemView,
 };
 use crate::application::export::commands::{CreateExportJobCommand, RunExportCommand};
 use crate::application::markdown::queries::{LintQuery, RebuildOutlineQuery};
@@ -77,9 +77,7 @@ use crate::presentation::state::scroll_sync_state::Side;
 use crate::presentation::state::settings_ui_state::{SettingsTab, SettingsUiState, Snapshot};
 use crate::presentation::state::shortcut_overview_ui_state::ShortcutOverviewUiState;
 use crate::presentation::state::sidebar_ui_state::SidebarUiState;
-use crate::presentation::state::sidebar_ui_state::{
-    SearchGroup, SearchScope, group_hits, locate_in_snippet,
-};
+use crate::presentation::state::sidebar_ui_state::{SearchGroup, SearchScope, group_search_hits};
 use crate::presentation::state::status_bar_ui_state::StatusBarUiState;
 use crate::presentation::state::symbol_ui_state::SymbolUiState;
 use crate::presentation::theme::builtin::{self, Theme};
@@ -133,7 +131,7 @@ mod tabs;
 mod ui;
 mod workspace;
 pub(crate) use drag_drop::classify_dropped;
-pub(crate) use scheduler::{Deadline, FrameScheduler};
+pub(crate) use scheduler::{Deadline, FramePhase, FrameScheduler};
 
 /// V11-63 阶段 B：端口字体定义 → egui 字体定义的**唯一**适配器。
 ///

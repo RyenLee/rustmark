@@ -783,7 +783,7 @@ modules:
       window_min_width:
         value: 960
         unit: "pt"
-        source: "src/app/frame/loop.rs:158"
+        source: "src/app/frame/loop.rs:169"
         anchor: "with_min_inner_size([960.0, 600.0])"
         purpose: "主窗口最小宽度；小于该值布局无法保证编辑区可用（侧栏动态上界的下限由此兜底）。"
         recommended: "800-1024"
@@ -791,7 +791,7 @@ modules:
       window_min_height:
         value: 600
         unit: "pt"
-        source: "src/app/frame/loop.rs:158"
+        source: "src/app/frame/loop.rs:169"
         anchor: "with_min_inner_size([960.0, 600.0])"
         purpose: "主窗口最小高度；低于该值顶栏 + 状态栏 + 正文无法同时容纳。"
         recommended: "540-720"
@@ -905,7 +905,7 @@ modules:
       scheduler_min_delay_ms:
         value: 1
         unit: "ms"
-        source: "src/app/frame/scheduler.rs:130"
+        source: "src/app/frame/scheduler.rs:288"
         anchor: "ms.max(1)"
         purpose: "帧调度最小重绘延迟；已过期任务也至少等 1ms，避免 0ms 造成静止应用忙循环。"
         recommended: "1"

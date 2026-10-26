@@ -1,5 +1,6 @@
 //! 全局搜索的视图模型：三个开关、按文件分组的命中投影与片段定位。
 
+use rustmark_core::application::dto::SearchResultView;
 use rustmark_core::shared::path::file_name_of;
 
 /// 全局搜索选项（对齐原型 `searchOptions`）。
@@ -238,4 +239,36 @@ pub fn locate_in_snippet(
         })
     })?;
     Some((hit, hit + needle.len()))
+}
+
+/// 把领域命中直接转成展示用的分组结构（含每条命中的高亮区间）。
+///
+/// 这是 [`group_hits`] + [`locate_in_snippet`] 的组合入口，两个零件与组合
+/// **同住一处**（D-8）：此前组合函数留在组合根的 `app/frame/find.rs`，而两个
+/// 零件在 ui 的 state 里，`app/frame/outline.rs` 只好跨模块反向导入——纯函数
+/// 与其数据投影分居两个 crate，导航时要在两处之间跳。
+///
+/// 查询词与选项由调用方传入而不是从 `result` 里找：`SearchResultView`
+/// 本身不携带查询（它是领域 DTO，不该知道 UI 传了什么）。
+pub fn group_search_hits(
+    result: &SearchResultView,
+    query: &str,
+    case_sensitive: bool,
+) -> Vec<SearchGroup> {
+    let rows: Vec<(String, usize, String)> = result
+        .hits
+        .iter()
+        .map(|hit| (hit.path.as_str().to_string(), hit.line, hit.snippet.clone()))
+        .collect();
+    let mut groups = group_hits(&rows);
+    for group in &mut groups {
+        for hit in &mut group.hits {
+            // 高亮区间在**字符**坐标下算（理由见 `SearchHitRow::highlight`）：
+            // 片段要交给 egui 排版，按字节切中文会错位——「一」在 UTF-8 里
+            // 3 字节，字节 7 落在字符 9 的中间，切出来的两半都不是完整字符。
+            hit.highlight =
+                locate_in_snippet(&hit.snippet, query, case_sensitive).unwrap_or((0, 0));
+        }
+    }
+    groups
 }
