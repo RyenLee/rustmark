@@ -262,14 +262,23 @@ fn set_theme_custom_roundtrips_palette() {
 /// 拿到的配色取决于走哪条路径（领域聚合补齐的 vs 视图默认构造的）——
 /// 差几个色号肉眼几乎看不出来，是最难排查的那种不一致。
 ///
-/// 断言的是「两边逐字段相等」而不是具体色号：色号可以改，双源不行。
+/// 逐字段与**领域值**比较（而不是与 `From(domain)` 比）：后者两边都走同一个
+/// 映射，映射写错时会一起错、一起相等，等于没断言。色号可以改，双源不行。
 #[test]
 fn dto_default_palette_is_derived_from_the_domain_default() {
-    assert_eq!(
-        CustomThemePaletteView::default(),
-        CustomThemePaletteView::from(CustomThemePalette::default()),
-        "DTO 默认调色板必须与领域默认逐字段一致（不得各抄一份）"
-    );
+    let domain = CustomThemePalette::default();
+    let dto = CustomThemePaletteView::default();
+    assert_eq!(dto.bg_primary, domain.bg_primary, "bg_primary");
+    assert_eq!(dto.bg_secondary, domain.bg_secondary, "bg_secondary");
+    assert_eq!(dto.text_primary, domain.text_primary, "text_primary");
+    assert_eq!(dto.text_secondary, domain.text_secondary, "text_secondary");
+    assert_eq!(dto.accent, domain.accent, "accent");
+    assert_eq!(dto.code_bg, domain.code_bg, "code_bg");
+    assert_eq!(dto.border, domain.border, "border");
+    assert_eq!(dto.selection_bg, domain.selection_bg, "selection_bg");
+    // 语法色默认全部「跟随主题」——两侧同源。
+    assert_eq!(dto.syn_heading, domain.syn_heading);
+    assert_eq!(dto.syn_other, domain.syn_other);
 }
 
 #[test]
