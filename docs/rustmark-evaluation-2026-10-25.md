@@ -193,6 +193,7 @@ rustmark 是一套**工程纪律极强、文档与代码同源性很高**的成�
 - **问题描述**：`crates/rustmark-core/src/infrastructure/persistence/asset_loader.rs:223-238` 两次 IO 之间存在竞态窗口。
 - **改进建议**：乐观预检可保留，但注明是乐观判断；read 后已按 `bytes.len()` 统一 `asset.len() > limit` 兜底，风险低，可不处理。
 - **位置**：`crates/rustmark-core/src/infrastructure/persistence/asset_loader.rs:223-238`
+- **✅ 已收口（2026-10-26，仅注释、零行为变更）**：`load_local` 的 `metadata` 预检处补注「乐观判断」语义——TOCTOU 窗口客观存在，刻意不做「读完再二次 stat」的收紧（多一次 IO 且窗口只是变窄）；真正的上界由 `load()` 拿到字节后的 `asset.len() > limit` 再判一次兜底（内联 data URI 路径同理），竞态最坏只让一次超限分配漏到读后校验，不会放过超限内容。
 
 #### E-23 · 远程图片无跨会话磁盘缓存 ［代码质量｜低］
 - **问题描述**：`image_cache.rs` 仅缓存当前 UI 线程 `TextureHandle`（thread_local），每次启动/上下文重建都重新下载远程图。
@@ -211,6 +212,9 @@ rustmark 是一套**工程纪律极强、文档与代码同源性很高**的成�
 - **影响分析**：功能增长会持续向 `frame.rs` 与 `EditorApp` 累加，长期降低可导航性；属 egui 即时模式惯用法，非结构性错误。
 - **改进建议**：将 `frame.rs` 拆为 `frame/state.rs`（结构体+构造函数）与 `frame/loop.rs`（eframe impl+编排），并保持 facade 可阅读。
 - **位置**：`src/app/frame.rs:154-395, 438-538, 577-668`
+- **✅ 已收口（2026-10-26）**：拆为 `src/app/frame/state.rs`（`EditorApp` 字段表 + 构造函数 + `StatsPace`/`STATS_DEBOUNCE_MS`，434 行）与 `src/app/frame/loop.rs`（`eframe::App` 实现 + `run` 启动入口 + 字体装配 + IME 窗口常量，258 行）；`frame.rs` 839 → **193 行**，只留导入前奏、子模块声明/再导出与唯一字体适配器。路径零变化：`pub use state::EditorApp;` / `pub use r#loop::run;` 使 `crate::app::frame::EditorApp` 与 `rustmark::app::frame::run` 两条外部路径保持原样（模块名 `loop` 是关键字，用 raw identifier `r#loop`）。
+  两个必要连带改动：① **22 个原「模块私有」字段转 `pub(super)`**——同一批兄弟子模块（`editor.rs`/`tabs.rs`/`capture.rs` 等）仍在读写它们，而 `state` 与它们已是兄弟关系；`pub(super)` = `app::frame` 内可见，对外可见面零变化（root `src/` 不在 field-visibility 白名单口径内）。② 修正**三处被打乱的源码文档**：`LineIndexCache` 与 `StatsPace` 的文档里混入了 `EditorApp` 的「为什么 UI 状态与服务平铺」段落，已各自归位（该缺陷早于本次拆分，属顺带修复）。
+  门禁：fmt/check-arch/clippy 干净，`--all-targets` **2178 passed / 0 failed / 4 ignored** 与拆分前逐项守恒（纯重构）。
 
 #### E-26 · 测试金字塔倒置——presentation 测试最多，domain 最少 ［架构设计｜低］
 - **问题描述**：测试分布：presentation ≈43 文件、app ≈21、infrastructure 14、shared 7、integration 5、e2e ≈15，而核心纯逻辑层 domain 仅 8、application 仅 7。

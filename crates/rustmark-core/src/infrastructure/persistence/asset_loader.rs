@@ -223,6 +223,13 @@ impl AssetLoader {
 
         // 先看元数据再读：超限文件若先 `fs::read` 进内存再拒绝，
         // 一张数百 MB 的图会先造成内存尖峰（远程路径已是边读边判）。
+        //
+        // 这是**乐观预检**（评估报告 E-22）：`metadata` 与下面的 `fs::read`
+        // 之间存在 TOCTOU 窗口，文件可能在两次 IO 之间被换成超大文件。
+        // 这里刻意不做「读完再二次 stat」的收紧——那会多一次 IO 且窗口只是
+        // 变窄而非关闭。真正的上界由外层 `load()` 在拿到字节后按
+        // `asset.len() > limit` 再判一次（内联 data URI 路径同理），
+        // 故竞态最坏只让一次超限分配漏到读后校验，不会放过超限内容。
         if let Ok(meta) = std::fs::metadata(&path) {
             let too_large = usize::try_from(meta.len())
                 .map(|len| len > self.limits.max_local_bytes)
