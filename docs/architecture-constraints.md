@@ -551,6 +551,36 @@ rustmark-actions，由 `tests/workspace_topology_test.rs` 断言）。禁
 报告里 `tests/` 侧文件带 `tests/` 前缀，与 `src/presentation/…` 等同名路径
 可区分。与层无关的通用规则（帧预约唯一出口，见 4.3）照样罩住测试侧。
 
+### 9.1 测试归属口径与目标登记（D-6，机械守卫）
+
+根包设了 `autotests = false`：`tests/` 下的文件**只有被 `[[test]]` 点名才会编译**。
+好处是入口可命名、可按层分组；代价是漏登记时 cargo 不报错、测试静默不跑，
+而全量测试依旧全绿——「检查缺席却显示绿」正是本项目最忌讳的失效形态
+（同 `default-members`，见 §6：「跑了失败」是响的，「压根没跑」是哑的）。
+
+**归属口径**（三条，按「有没有自己的 `main`、会不会被别的目标 `mod` 进来」判，
+不按行数）：
+
+| 形态 | 归属 | 例子 |
+|---|---|---|
+| `tests/<dir>/main.rs` | **一个独立测试目标**，按被测层 / 场景分组 | `tests/domain/main.rs`、`tests/presentation/main.rs` |
+| `tests/<name>_test.rs`（顶层单文件） | **一个独立测试目标**，只装单主题守卫 | `tests/field_visibility_guard_test.rs`、`tests/workspace_topology_test.rs` |
+| `tests/support.rs` 与 `tests/{support,common,data}/` | **共享模块 / 数据**，永不登记为目标 | 各目标以 `#[path = "../support.rs"] mod support;` 引入 |
+
+**新增测试时**：先按上表定性；目录 / 单文件目标必须在根 `Cargo.toml` 补
+`[[test]] name = … / path = …`；共享模块必须进
+`tests/test_target_guard_test.rs` 的 `EXEMPT` 并写明理由。
+
+**机械守卫**（`tests/test_target_guard_test.rs`，五条双向断言）：
+① 每条 `[[test]]` 的 `path` 存在（防删文件忘删登记）；② 每个 `tests/**/main.rs` 已登记；
+③ 每个顶层 `tests/*.rs` 已登记或在 `EXEMPT`；④ 每个 `tests/` 顶层目录要么是目标
+要么在 `EXEMPT`；⑤ `name` / `path` 唯一。`EXEMPT` 自身也双向：条目必须真实存在，
+且不得与已登记目标重叠——过时豁免会长期掩盖一次改名或删除。
+变异验证：新增未登记目录 / 顶层文件 → ②③ 当场红。
+
+**现状（2026-10-26）**：13 个测试目标（8 个目录型 + 5 个单文件，含本守卫自身），
+共享模块 4 项（`support.rs` / `support/` / `common/` / `data/`）。
+
 ## 10. crate 地图与模块归属判据（V11-56，2026-10-24）
 
 > 本章回答两个问题：**workspace 里应该有哪些 crate**（地图 + 三阶段演进，

@@ -336,3 +336,9 @@ path = "tests/field_visibility_guard_test.rs"
 [[test]]
 name = "workspace_topology"
 path = "tests/workspace_topology_test.rs"
+
+# 测试归属口径（D-6）：`autotests = false` 下未写 `[[test]]` 的测试入口
+# **不会被编译**，全量测试照样全绿——本守卫把这种「静默缺席」变成红的。
+[[test]]
+name = "test_target_guard"
+path = "tests/test_target_guard_test.rs"
