@@ -648,8 +648,8 @@ modules:
       asset_download_timeout:
         value: 10
         unit: "seconds"
-        source: "crates/rustmark-core/src/infrastructure/persistence/asset_loader/policy.rs:31"
-        anchor: "download_timeout: Duration::from_secs(10)"
+        source: "crates/rustmark-core/src/infrastructure/persistence/asset_loader/policy.rs:33"
+        anchor: "DEFAULT_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(10)"
         purpose: "远程图片下载总超时（10s，全局 deadline 含 TLS 与重定向）；超时即报 DownloadFailed，预览显示占位。"
         recommended: "3-10"
         configurable: "硬编码字面量（AssetLimits::default）"
