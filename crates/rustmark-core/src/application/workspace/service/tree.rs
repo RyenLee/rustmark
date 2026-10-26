@@ -64,7 +64,18 @@ impl WorkspaceAppService {
         }
         {
             let mut ws = self.lock_write()?;
-            let _ = ws.add_entry(entry);
+            // 规则已在副本上验过、磁盘也已落盘，这一步按设计不会失败。
+            // 若仍然失败，说明「副本 → 落盘 → 真聚合」之间状态漂移了
+            // （并发改动，或副本与真身不一致）：此时磁盘已变更而聚合没有。
+            // 沿用「磁盘优先、不回滚」的取舍，但**不能静默丢弃**——
+            // 丢掉的后果是文件树长期与磁盘不一致且无人知晓。
+            if let Err(err) = ws.add_entry(entry) {
+                log::warn!(
+                    "工作区已落盘但聚合未同步（新建 {}）：{}",
+                    cmd.path.as_str(),
+                    err
+                );
+            }
         }
         self.publish_changed();
         Ok(())
@@ -76,7 +87,15 @@ impl WorkspaceAppService {
         self.repository.rename(&cmd.from, &cmd.to)?;
         {
             let mut ws = self.lock_write()?;
-            let _ = ws.move_entry(&cmd.from, &cmd.to);
+            // 同 `create_entry`：磁盘已改名而未落到聚合里，偏差必须可见。
+            if let Err(err) = ws.move_entry(&cmd.from, &cmd.to) {
+                log::warn!(
+                    "工作区已落盘但聚合未同步（移动 {} → {}）：{}",
+                    cmd.from.as_str(),
+                    cmd.to.as_str(),
+                    err
+                );
+            }
         }
         // 移动过的文件若在最近文件里，路径已失效——不清理的话
         // 欢迎页点它会报「文件不存在」，而用户会以为文件丢了。

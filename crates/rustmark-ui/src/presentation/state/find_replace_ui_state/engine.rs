@@ -36,12 +36,14 @@ impl Finder {
         // DEF-01 修复：大小写不敏感的字面量查找改为单次线性扫描（O(N)），
         // 不再「每命中一次重建全篇字符表再重新扫描」导致 O(N×M)。
         // 其余分支（正则 / 大小写敏感字面量）维持原逐命中扫描。
-        let is_ignore_case_literal =
-            matches!(&pattern, Pattern::Literal(_)) && !options.case_sensitive;
-        let matches = if is_ignore_case_literal {
-            let Pattern::Literal(literal) = &pattern else {
-                unreachable!("已确认是 Literal 分支")
-            };
+        // 大小写不敏感的字面量查找走 O(N) 单次线性扫描（见下）。
+        // 此处一次性把「忽略大小写 + 字面量」判定与绑定合并，避免后续 `unreachable!`
+        // （`panic = "abort"` 下会让整个进程退出，违反「非测试代码尽量不 panic」）。
+        let ignore_case_literal = match &pattern {
+            Pattern::Literal(l) if !options.case_sensitive => Some(l),
+            _ => None,
+        };
+        let matches = if let Some(literal) = ignore_case_literal {
             scan_literal_ignore_case_all(text, literal, options.whole_word, MAX_MATCHES)
         } else {
             let mut matches = Vec::new();
