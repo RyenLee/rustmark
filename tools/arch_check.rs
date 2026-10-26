@@ -1298,6 +1298,61 @@ fn collect_rs_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
     }
 }
 
+/// D-4 视图文件拆分阈值（docs/architecture-constraints.md:447）：`presentation/views/`
+/// 下单文件 **> 600 行须拆子目录**（入口 `foo.rs` + 子模块 `foo/bar.rs`，
+/// `pub use` 重导出零变化）。
+///
+/// 此前这是**评审纪律**（constraints.md:463「当前未机械校验」），现为机械校验，
+/// 由 [`scan_project`] 在 CI（`build.rs`）与本地门禁（`check-arch` bin）生效。
+/// 排除项：测试文件——`tests.rs` 与任何 `tests/` 目录。D-4 针对生产视图代码，
+/// 测试模块（含 `preview_view/tests.rs` 这种 600+ 行的单测外置文件）不受此限。
+const VIEW_FILE_LINE_LIMIT: usize = 600;
+
+fn check_view_file_sizes(views_root: &Path) -> Vec<Violation> {
+    let mut out = Vec::new();
+    if !views_root.is_dir() {
+        return out;
+    }
+    let mut files = Vec::new();
+    collect_rs_files(views_root, &mut files);
+    for path in &files {
+        // 排除测试文件：任意深度的 `tests.rs`（即 `#[cfg(test)] mod tests;`
+        // 约定文件）与任意深度的 `tests/` 目录。D-4 针对生产视图代码，
+        // 测试模块（含 `preview_view/tests.rs` 这种嵌套 600+ 行单测外置文件）
+        // 不受此限。注意 `tests.rs` 作为文件名不等于目录段 `tests`，须分别判定。
+        let rel = path
+            .strip_prefix(views_root)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        let is_tests_file = path
+            .file_name()
+            .map(|n| n == "tests.rs")
+            .unwrap_or(false);
+        let in_tests_dir = rel.split('/').any(|seg| seg == "tests");
+        if is_tests_file || in_tests_dir {
+            continue;
+        }
+        let Ok(bytes) = fs::read(path) else {
+            continue;
+        };
+        // 以 `\n` 计数（与 `wc -l` 口径一致；CRLF 下仍是逻辑行数）。
+        let lines = bytes.iter().filter(|&&b| b == b'\n').count();
+        if lines > VIEW_FILE_LINE_LIMIT {
+            out.push(Violation {
+                file: format!("src/presentation/views/{rel}"),
+                line: 1,
+                detail: format!(
+                    "D-4 视图文件拆分阈值：`{}` 共 {} 行 > 600 行上限 —— \
+                     须拆子目录（入口 `foo.rs` + 子模块 `foo/bar.rs`，`pub use` 重导出零变化）",
+                    rel, lines
+                ),
+            });
+        }
+    }
+    out
+}
+
 /// 扫描 `src_root` 下的全部 `.rs` 文件，返回违规列表（空表示通过）。
 ///
 /// **签名保持不变**（`build.rs` 与 `check-arch` bin 之外的调用点、以及
@@ -1491,6 +1546,12 @@ pub fn scan_project(manifest: &Path) -> Vec<Violation> {
         let lexed = Lexer::new(&content).run();
         violations.extend(check_file(&rel, Layer::Tests, &lexed, &registry));
     }
+
+    // D-4 视图文件拆分阈值（constraints.md:447）：`presentation/views/` 下生产视图
+    // 源文件 > 600 行须拆子目录。此前仅评审纪律，现机械校验（见 `check_view_file_sizes`）。
+    violations.extend(check_view_file_sizes(
+        &manifest.join("src").join("presentation").join("views"),
+    ));
 
     violations
 }
@@ -2082,5 +2143,49 @@ fn push_candidates(
             win_end,
             source,
         });
+    }
+}
+
+// 注：本测试模块须置于文件末尾——clippy `items_after_test_module` 禁止
+// `#[cfg(test)]` 模块后跟生产项；此前它位于 `check_view_file_sizes` 之后、
+// `scan`/`scan_project` 等生产函数之前，触发该 lint（在 `include!` 本文件的
+// 集成测试目标下尤其明显）。挪到末尾即符合「测试模块在文件尾」的惯用法。
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod view_size_tests {
+    use super::*;
+    use std::fs;
+
+    fn write_file(dir: &Path, rel: &str, lines: usize) {
+        let p = dir.join(rel);
+        if let Some(parent) = p.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        let content: String = (0..lines).map(|i| format!("// line {i}\n")).collect();
+        fs::write(&p, content).unwrap();
+    }
+
+    #[test]
+    fn oversized_view_file_is_flagged() {
+        let base = std::env::temp_dir().join("arch_check_d4_test");
+        let _ = fs::remove_dir_all(&base);
+        let views = base.join("views");
+        write_file(&views, "big.rs", 601);
+        write_file(&views, "small.rs", 599);
+        write_file(&views, "foo/sub.rs", 601);
+        write_file(&views, "tests.rs", 601);
+        write_file(&views, "tests/inner.rs", 601);
+        // 嵌套测试文件（真实工程形态：`preview_view/tests.rs`）。
+        write_file(&views, "preview_view/tests.rs", 601);
+        write_file(&views, "preview_view/tests/inner.rs", 601);
+        let v = check_view_file_sizes(&views);
+        let flagged: Vec<&str> = v.iter().map(|x| x.file.as_str()).collect();
+        assert!(flagged.iter().any(|f| f.ends_with("big.rs")), "big.rs 应被标记: {flagged:?}");
+        assert!(flagged.iter().any(|f| f.ends_with("foo/sub.rs")), "foo/sub.rs 应被标记: {flagged:?}");
+        assert!(!flagged.iter().any(|f| f.ends_with("small.rs")), "small.rs 不应被标记");
+        assert!(!flagged.iter().any(|f| f.ends_with("tests.rs")), "tests.rs 应豁免");
+        assert!(!flagged.iter().any(|f| f.contains("tests/inner")), "tests/ 应豁免");
+        assert!(!flagged.iter().any(|f| f.contains("preview_view/tests")), "嵌套 tests.rs/tests/ 应豁免");
+        let _ = fs::remove_dir_all(&base);
     }
 }
