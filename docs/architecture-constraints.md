@@ -187,7 +187,9 @@ rich / widgets ──► （不得回指 views / state / theme / widgets）
    `crates/rustmark-actions/src/`（V11-57，整根 Free）+
    `crates/rustmark-icons/src/`（V11-58，`lib.rs` 自然判 Free）+
    `crates/rustmark-ui/src/`（V11-62 批次 1，`presentation/` 前缀判子层）+
-   `tests/` 六个根，core 侧只在**报告**时补 `crates/rustmark-core/src/` 前缀
+   `crates/rustmark-shared/src/`（TD-04，`shared/` 前缀判 Shared）+
+   `crates/rustmark-infra/src/`（V11-64，`infrastructure/` 前缀判 Infrastructure）+
+   `tests/` **八个根**，core 侧只在**报告**时补 `crates/rustmark-core/src/` 前缀
    （层判定若吃这个前缀，首段 `crates` 会把整个 core 误判成「未知层」）。
 6. **子层叠加**：`presentation/state` 同时受父层与子层两组禁令约束（不是替换）。
 7. **`presentation` 内部细粒度**（R-13）：第二段为 `state` / `views` / `rich` /
@@ -278,7 +280,8 @@ rich / widgets ──► （不得回指 views / state / theme / widgets）
 
 ### 4.5 `shared` 准入三问与登记表（D-6，机械守卫）
 
-`shared` 是**共享内核**：依赖矩阵里每一层都允许依赖它，它自己几乎不依赖任何层。
+`shared` 是**共享内核**（crate `rustmark-shared`，TD-04 起独立；目录仍是
+`crates/rustmark-shared/src/shared/`）：依赖矩阵里每一层都允许依赖它，它自己几乎不依赖任何层。
 这既是它存在的理由，也是它最危险的地方——「不知道放哪就放 `shared`」会让它
 变成绕过依赖矩阵的杂物间。历史先例：`std::process` 曾以「不在禁止清单」为由
 落位 `shared/system.rs`（R-03 已把执行端移到 `infrastructure/system.rs`）。
@@ -320,8 +323,15 @@ rich / widgets ──► （不得回指 views / state / theme / widgets）
 <!-- /shared:registry -->
 
 > 新增文件的流程：**先答三问，再加一行**；答不出「≥2 层需要」就放回所属层。
-> 表头行与分隔行不算登记项；文件列写 `shared/x.rs`、`src/shared/x.rs` 或
-> `crates/rustmark-core/src/shared/x.rs` 均可。
+> 表头行与分隔行不算登记项；文件列写 `shared/x.rs`、`src/shared/x.rs`、
+> `crates/rustmark-shared/src/shared/x.rs`（现落点）或
+> `crates/rustmark-core/src/shared/x.rs`（TD-04 前的历史写法，保留兼容）均可。
+>
+> **TD-04（2026-10-26）后落点变更**：`shared/` 目录整体迁到
+> `crates/rustmark-shared/src/shared/`，本表键**不变**（`shared/x.rs`）——
+> 校验器按「根内相对路径」匹配，新 crate 保留了 `shared/` 前缀，登记表
+> 与 `build.rs` 的机械核对零改动。新增文件时若只在核心里写、忘了它其实住在
+> 另一个 crate，构建会报「未登记」——那是提醒，不是误报。
 
 ### 4.6 `shared` 内部依赖无环（V11-55 附案②，机械守卫）
 
@@ -388,8 +398,10 @@ cargo run --bin check-arch
 
 ## 7. 模块文件树（需求文档 §7.1，禁 `mod.rs`）
 
-D-3 阶段 4a（2026-10-23）起为 workspace 双 crate：**core 装四层与非视图
-子模块，shell（root）只留组合根、视图与两个 re-export 拼接点**；
+D-3 阶段 4a（2026-10-23）起为 workspace 多 crate：**core 只装六边形脊柱
+（domain / application）与非视图子模块的 doc-only 空壳，infrastructure 住
+`rustmark-infra`（V11-64）、shared 住 `rustmark-shared`（TD-04），
+shell（root）只留组合根、视图与 re-export 拼接点**；
 `core → shell` 的反向依赖被 cargo 锁死，`rustmark_core::X` 与 `crate::X`
 在校验器里按同一张禁令表判定（§4.1）。
 
@@ -398,7 +410,8 @@ D-3 阶段 4a（2026-10-23）起为 workspace 双 crate：**core 装四层与非
 
 ```
 src/                                    # shell（root crate `rustmark`）
-├─ main.rs / lib.rs                     # lib.rs 拼接点：pub use rustmark_core::{application, domain, infrastructure, shared}
+├─ main.rs / lib.rs                     # lib.rs 拼接点：pub use rustmark_core::{application, domain, shared};
+│                                       #                  pub use rustmark_infra::infrastructure（V11-64）
 ├─ app.rs / app/{bootstrap.rs,frame.rs,crash_log.rs,…}
 │                                       # 组合根；帧预约唯一出口 app/frame/scheduler.rs
 ├─ presentation.rs                      # 拼接点：pub mod views（唯一留 shell 的 presentation 子层）
@@ -408,14 +421,21 @@ src/                                    # shell（root crate `rustmark`）
 ├─ presentation/views/                  # 视图（唯一留在 shell 的 presentation 子层）
 └─ bin/check-arch.rs                    # 工具二进制
 
-crates/rustmark-core/src/               # core（crate `rustmark-core`）
-├─ lib.rs / {shared,domain,application,infrastructure,presentation}.rs
-├─ shared/{error.rs,result.rs,event.rs,ids.rs,geometry.rs}
+crates/rustmark-core/src/               # core（crate `rustmark-core`）—— 六边形脊柱
+├─ lib.rs / {domain,application}.rs
 ├─ domain/{document,markdown,workspace,preferences,export}/
 │    └─ 各含 {aggregate.rs,value_objects.rs,events.rs,services.rs,repository.rs,errors.rs}
 ├─ application/{document,markdown,workspace,preferences,export}/ + dto/
-├─ infrastructure/{persistence,text,parsing,highlighting,export,events,dialogs,…}/
-└─ presentation/                          # 无 views；rich（V11-62 批次 5 抽去 ui）、theme（批次 4）、state（批次 2）、shortcuts（批次 3）、widgets（批次 1）与 icons（V11-58）已抽出；core 的 presentation 退化为 doc-only 空壳
+├─ presentation.rs                      # doc-only 空壳（`pub mod presentation;` 保留公开路径）
+└─ （shared 于 TD-04 抽去 `crates/rustmark-shared`；infrastructure 于 V11-64
+     抽去 `crates/rustmark-infra`；两者的公开路径均经上面 lib.rs 的 re-export 不变）
+
+crates/rustmark-infra/src/              # infra（crate `rustmark-infra`，V11-64）
+├─ lib.rs
+└─ infrastructure/{persistence,text,parsing,highlighting,export,events,dialogs,fonts,spell}/  # 保 `infrastructure/` 前缀 → 层判定与禁令表零改动
+
+crates/rustmark-shared/src/             # shared（crate `rustmark-shared`，TD-04）
+└─ lib.rs / shared/{error.rs,result.rs,event.rs,ids.rs,geometry.rs,path.rs,text_format.rs,…}  # 保 `shared/` 前缀
 
 crates/rustmark-actions/src/            # actions（crate `rustmark-actions`，V11-57）
 └─ lib.rs / action.rs / action/{impls.rs,menu_group.rs}   # 零依赖词汇表，整根判 Free
@@ -528,42 +548,51 @@ rustmark-actions，由 `tests/workspace_topology_test.rs` 断言）。禁
 
 ### 10.1 crate 地图
 
-**当前拓扑**（2026-10-24 实测，`cargo tree --workspace --depth 1`；本地依赖边共 6 条）：
+**当前拓扑**（2026-10-26 实测，`cargo tree --workspace --depth 1`；本地依赖边共 9 条）：
 
 ```
 rustmark（root：组合根 + views + bin）
-├──► rustmark-core  ──► rustmark-actions
-├──► rustmark-icons ──► rustmark-actions
-└──► rustmark-ui    ──► rustmark-core ──► rustmark-actions
-                        （三条本地链在 rustmark-actions 汇合；actions 零依赖）
+├──► rustmark-core   ──► rustmark-actions
+│                     └► rustmark-shared
+├──► rustmark-infra  ──► rustmark-core ──► {rustmark-actions, rustmark-shared}
+├──► rustmark-icons  ──► rustmark-actions
+└──► rustmark-ui     ──► rustmark-core ──► rustmark-shared
+                        （五条本地链，无环；actions 与 shared 是叶）
 ```
 
 | crate | 角色 | 实测规模（2026-10-26，`src/` 口径） | 外部依赖面 |
 |---|---|---|---|
-| `rustmark`（root） | 组合根 + 视图层 + 工具 bin | 91 文件 / 21,443 行 | eframe / egui / image / rfd / anyhow / env_logger / log / wgpu(build) + 3 个本地 crate |
-| `rustmark-core` | 四层脊柱；表现层非视图子模块已全部于 V11-62 批次 1-5 抽去 `rustmark-ui`（core 的 `presentation` 退化为 doc-only 空壳）；**零 egui 依赖**（V11-63） | 172 文件 / 28,061 行 | 12 个直接外部依赖（`cargo tree -p rustmark-core`，V11-63 删 egui 后 13→12）+ 1 个本地（actions） |
+| `rustmark`（root） | 组合根 + 视图层 + 工具 bin | 91 文件 / 21,449 行 | eframe / egui / image / rfd / anyhow / env_logger / log / wgpu(build) + 4 个本地 crate（core / infra / icons / ui） |
+| `rustmark-core` | 六边形脊柱：domain / application（表现层非视图子模块已于 V11-62 全抽去 `rustmark-ui`，infrastructure 于 V11-64 全抽去 `rustmark-infra`；`presentation` 退化为 doc-only 空壳）；**零 egui 依赖**（V11-63） | **98 文件 / 13,991 行** | **4 个**直接外部依赖（serde / thiserror / log / ahash）+ 2 个本地（actions / shared） |
+| `rustmark-infra` | 基础设施层：外部库适配与 IO（解析 / 高亮 / 文本缓冲 / 对话框 / 远程图片 / 图片解码 / 导出 / 字体装配）。**端口与领域类型仍住 core**（V11-64） | 55 文件 / 11,005 行 | **11 个**直接外部依赖（pulldown-cmark / syntect / image / ropey / rfd / serde / toml / thiserror / ureq / rustls-native-certs / log）+ 1 个本地（core） |
 | `rustmark-actions` | 动作词汇表契约（V11-57） | 4 文件 / 687 行 | **零依赖** |
+| `rustmark-shared` | 共享内核：纯值 / 端口 / 唯一真源（TD-04） | 21 文件 / 3,153 行 | ahash + serde + thiserror（**零本地**） |
 | `rustmark-icons` | 16×16 图标规格 + Painter 渲染器（V11-58） | 1 文件 / 613 行 | egui + rustmark-actions |
 | `rustmark-ui` | 表现层非视图部分：widgets（批次 1）/ state（批次 2）/ shortcuts（批次 3）/ theme（批次 4）/ rich（批次 5，V11-62 收官） | 73 文件 / 17,653 行 | egui + rustmark-core |
 
-规模口径：`find <源码根> -name '*.rs' | xargs wc -l`，只含 `src/`、不含
-`tests/`，命令随文可复跑。core 与评审快照（46,375 行 / 238 文件）的差额 =
+规模口径：`find <源码根> -name '*.rs' -exec cat {} + | wc -l`（**不用 `xargs wc -l`**——超 ~100 文件会分批而 `tail -1` 只抓末批小计），只含 `src/`、
+不含 `tests/`，命令随文可复跑。core 与评审快照（46,375 行 / 238 文件）的差额 =
 V11-57/58/62 拆出的文件（actions 3 + icons 1 + ui 的 widgets 3 / state 24 /
-shortcuts 5，另 2 个为 ui 的新建骨架 lib.rs / presentation.rs）扣除期间
+shortcuts 5，另 2 个为 ui 的新建骨架 lib.rs / presentation.rs）、TD-04 抽出的
+shared 19 文件 / 3,061 行、V11-64 抽出的 infra 54 文件 / 10,976 行，扣除期间
 core 内的模块清单与文档增补；快照 238 与 git 树基线 `662536b` 的 244 文件
 之间存在未逐文件核对的口径差（评审当时工作区含 D-6/D-7 在途改动），
-**本节数字以今日实测为准**（2026-10-26：root 91 / 21,443，core 172 / 28,061，
-ui 73 / 17,653。构成变化：TD-02 拆分 `preview_view.rs` +2 文件 / +20 行；
-`c08fd13` 阈值整改在 core / ui / root 分别 +171 / +3 / +101 行（撤销字节
-预算、纹理缓存字节预算等）；`toolbar_view.rs` D-4 拆分 +1 文件 / +14 行；
-E-24 拆分 `inline.rs` 为 facade + 4 子模块 **+4 文件 / +208 行**（拆子目录的
-模块头与文档开销）；E-06 阶段 B 新增 `infrastructure/fonts/port.rs` **+1 文件**
-（同时从 `fonts.rs` 迁出 4 条 egui 渲染用例 ~130 行、补文档若干，行数净
-+7）；E-25 拆 `src/app/frame.rs`（839 行）为 facade 195 + `frame/state.rs` 434 +
-`frame/loop.rs` 257 = 886 行（**+2 文件 / +47 行**，模块头与文档注释开销，
-纯重构零行为变化）；rich 于批次 5 从 core 迁 ui，V11-62 收官）。
+**本节数字以今日实测为准**（2026-10-26：root 91 / 21,449，core 98 / 13,991，
+infra 55 / 11,005，shared 21 / 3,153，ui 73 / 17,653。构成变化：TD-02 拆分
+`preview_view.rs` +2 文件 / +20 行；`c08fd13` 阈值整改在 core / ui / root
+分别 +171 / +3 / +101 行（撤销字节预算、纹理缓存字节预算等）；
+`toolbar_view.rs` D-4 拆分 +1 文件 / +14 行；E-24 拆分 `inline.rs` 为
+facade + 4 子模块 **+4 文件 / +208 行**；E-06 阶段 B 新增
+`infrastructure/fonts/port.rs` **+1 文件**；E-25 拆 `src/app/frame.rs`
+（839 行）为 facade 195 + `frame/state.rs` 434 + `frame/loop.rs` 257 = 886 行
+（**+2 文件 / +47 行**）；rich 于批次 5 从 core 迁 ui，V11-62 收官；
+TD-04 / V11-64 为整目录搬迁，两侧行数守恒——infra 的 55 文件 / 11,005 行 =
+迁入 54 文件 / 10,976 行 + 新骨架 `lib.rs` 29 行）。
 
-**三阶段演进**（照评审报告 §4；阶段 1 已由 V11-57 / V11-58 落地，阶段 2/3 为计划值）：
+**三阶段演进**（照评审报告 §4；阶段 1 已由 V11-57 / V11-58 落地，阶段 2 已由
+V11-62 全落地，阶段 3 的 `rustmark-infra` 行已由 V11-64 提前兑现——**触发依据是
+维护者的消费者计划，不是消费者已存在**，这一点与评审原意（「真实非 UI 消费者
+出现后」）的差异如实保留）：
 
 ```
 阶段 0（评审时）            阶段 1（P1 首拆，已落地）    阶段 2（触发后）           阶段 3（真实非 UI 消费者出现后）
@@ -594,6 +623,15 @@ E-24 拆分 `inline.rs` 为 facade + 4 子模块 **+4 文件 / +208 行**（拆�
 `rustmark-core` 为 171 / 28,047（表现层非视图子模块全迁 ui，`presentation`
 退化为 doc-only 空壳；`c08fd13` 另 +1 文件 / +171 行）。阶段 2 列 ui 的
 18.1k 计划值（含 theme/rich）至此全落。
+
+**2026-10-26 更新（TD-04 + V11-64）**：演进图阶段 3 的两行提前兑现——
+`rustmark-shared` **21 文件 / 3,153 行**（TD-04，`2da434e`）、
+`rustmark-infra` **55 文件 / 11,005 行**（V11-64，`7b9b6ba`，含新骨架
+`lib.rs` 29 行；迁入量 54 文件 / 10,976 行与阶段 3 标注的 10.8k 吻合）。
+`rustmark-core` 降至 **98 文件 / 13,991 行**（阶段 3 计划 16.7k 的进一步
+收窄，差额来自 stage-3 估算未计入 shared 整体外移）；`rustmark-ui` 不变。
+阶段 3 尚未兑现的部分只剩「root 的 views 是否也外移」——评审未把它列入
+计划，本表不预设。
 
 方向规则不变的三条硬约束：
 
@@ -647,8 +685,8 @@ core。同一子模块内两种结论，判据的粒度是**模块**，不是目
 | 动作 | 触发条件（任一满足即启动评估） | 度量方式 | 当前状态（2026-10-26 复核） |
 |---|---|---|---|
 | presentation 非视图子模块 → `rustmark-ui`（V11-62） | ① UI 并行开发人数 ≥2；② core 增量编译 >10s；③ presentation 年变更 ≥80 提交**且**「views↔core state 跨 crate 摩擦」在 ≥3 个功能中复现 | `tools/onboard_cost.py` + `git log` 去重 | ② 未触发（增量 5.92s）。③ **提交数已去重实测**——表现层整体 **88**、含 `tests/presentation` **93**、仅待搬迁的非视图部分 **51**（阈值 80：整体口径满足、待搬迁部分不满足，口径差异如实保留）；**摩擦已取证：8 个功能复现**（state 字段白名单 169/548 条 + 22 个 `pub` setter + 桥接 6 行 / 21 个 view 文件经桥接访问）。**③ 判定：满足**（证据见 tasklist V11-62 节）。① 仍待维护者提供。**已收官（2026-10-25）**：五批次全部落地（widgets `9ab57ae` → state `c40235c` → shortcuts `6778f20` → theme `14f7d87` → rich `d8126a4`），`rustmark-ui` 收官态 73 文件 / 17,653 行（2026-10-26 实测）、本地依赖边 6 条、release 10,487,296 B；摩擦只搬迁不消除（views 留 root，白名单 169 条 + 22 个 `pub` setter 换 crate，保 R-11/R-12） |
-| infrastructure → `rustmark-infra`（V11-63/64） | 出现真实非 UI 消费者（CLI / headless / 嵌入）**且**去 egui 化完成 | 需求事实 + `cargo tree -p rustmark-core \| grep egui` 为 0 | **egui 侧已达标、消费者侧未触发**：V11-63 于 2026-10-26 收官，`cargo tree -p rustmark-core \| grep -c egui` **实测 0**（依赖已删，非仅无引用）；但触发门是首条需求事实（= BLK-01 的 Q-01），而 workspace 仍只有 `rustmark`（GUI）与 `check-arch`（零 core 依赖）两个 bin、无 CLI 参数解析——**V11-64 维持挂起**（Q-01 答「无计划」时应记「永不触发」，避免反复重评） |
+| infrastructure → `rustmark-infra`（V11-63/64） | 出现真实非 UI 消费者（CLI / headless / 嵌入）**且**去 egui 化完成 | 需求事实 + `cargo tree -p rustmark-core \| grep egui` 为 0 | **两分支均已满足，已收官（2026-10-26，`7b9b6ba`）**：egui 侧 V11-63 达标（`cargo tree -p rustmark-core \| grep -c egui` 实测 0，依赖已删非仅无引用）；消费者侧由维护者对 Q-01 答「有计划（CLI / headless / 嵌入）」。落地形态：54 文件 / 10,976 行迁入 `crates/rustmark-infra`（保 `infrastructure/` 前缀），core 依赖面收窄为 `rustmark-{actions,shared}` + serde/thiserror/log/ahash，本地依赖边 7→9（root→infra 与 infra→core 各一条）。**触发门保留**：若日后 Q-01 改答「无计划」，本行应记为「已落地但不再扩建」，不再重评 |
 | math / mermaid → `rustmark-render` | mermaid/math 年变更 ≥10 提交或合计 >8k 行（现 5.6k） | git log + wc -l | 未触发 |
 | 新 crate 合并回退（防过度拆分） | 新建 crate <1k 行且 12mo 变更 <5 提交 | git log | 不适用：actions（687 行）/ icons（613 行）均 <1k 行，但属零依赖契约 / 纯资源 crate，回退等于把契约塞回 core——判据本意防「为拆而拆的业务模块」（ADR-013 决策 5） |
-| shared 通用件再拆分 | pattern+lru+text 合计 >1,500 行或出现第 4 个非领域通用模块 | wc -l | **已触发、待拍板（2026-10-26 复核）**：模块计数分支满足——非领域通用件 **6 个**（pattern 531 / text_format 310 / lru 291 / path 278 / geometry 248 / export_format 233 = **1,891 行**，6 ≥ 阈值 4）；行数分支按本行初版具名清单（pattern+lru+text）算 **992 行**、未达 1,500。两分支口径不一致的根源是 1,500 行公式固化了初版三模块清单，而模块计数分支未绑定清单；按「任一满足即启动评估」判定**已触发**，评估登记见 tasklist TD-04，抽 crate 与否待维护者拍板 |
+| shared 通用件再拆分 | pattern+lru+text 合计 >1,500 行或出现第 4 个非领域通用模块 | wc -l | **已触发并落地（2026-10-26，`2da434e`）**：模块计数分支满足——非领域通用件 **6 个**（pattern 531 / text_format 310 / lru 291 / path 278 / geometry 248 / export_format 233 = **1,891 行**，6 ≥ 阈值 4）；行数分支按本行初版具名清单（pattern+lru+text）算 **992 行**、未达 1,500（两分支口径不一致已如实保留：1,500 行公式固化了初版三模块清单，模块计数分支未绑定清单）。维护者拍板**抽 crate**，TD-04 落地为 `rustmark-shared`（19 文件 / 3,061 行 + 骨架，依赖面 = ahash/serde/thiserror，零 workspace 成员）；**是否把整份 shared 抽走 vs 只抽 6 个通用件**选择了前者（前缀保留后两者代价相同，整抽避免「shared 一半在内一半在外」的判层歧义） |
 | state 瘦身叫停 | 审计发现纯帧内字段 <10%（收益不抵改动风险） | 字段清单 | **已触发并闭环**（V11-59 审计纯帧内字段远低于阈值 → V11-60 关闭，结论见 `docs/state-field-audit.md`） |

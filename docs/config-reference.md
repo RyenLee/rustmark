@@ -4,7 +4,7 @@
 > 字段、类型与默认值均取自代码真源，出处标注在各节；
 > 修改优先走应用内设置页，本文档用于了解结构、手改与排障。
 > 真源代码：`crates/rustmark-core/src/domain/preferences/`（结构与校验）、
-> `crates/rustmark-core/src/infrastructure/persistence/toml_preferences_repository.rs`（读写与回退）。
+> `crates/rustmark-infra/src/infrastructure/persistence/toml_preferences_repository.rs`（读写与回退）。
 
 ---
 

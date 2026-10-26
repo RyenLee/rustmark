@@ -48,13 +48,16 @@
 # 桥接。同批实测修正：V11-63 删 core 的 egui 依赖后，本文件曾漏更新（core 行
 # 仍列 egui），本次按实测重生成。
 #
-# 基线更新：2026-10-26，V11-64 抽出 rustmark-infra 后拓扑 = 五条本地链
-# （无环，本地依赖边 7 → 8 条）：
-#   root → rustmark-core → rustmark-shared
-#   root → rustmark-core → rustmark-actions
-#   root → rustmark-infra → rustmark-core → {rustmark-shared, rustmark-actions}
-#   root → rustmark-icons → rustmark-actions
-#   root → rustmark-ui → rustmark-core → rustmark-shared
+# 基线更新：2026-10-26，V11-64 抽出 rustmark-infra 后拓扑 = 本地依赖边
+# **7 → 9 条**（无环；root 直连四个成员，core / icons / ui / infra 再各出边）：
+#   root → {rustmark-core, rustmark-infra, rustmark-icons, rustmark-ui}   （4 条）
+#   rustmark-core   → {rustmark-actions, rustmark-shared}                  （2 条）
+#   rustmark-infra  → rustmark-core                                       （1 条）
+#   rustmark-icons  → rustmark-actions                                    （1 条）
+#   rustmark-ui     → rustmark-core                                       （1 条）
+# 计数口径：`cargo tree --workspace --depth 1 --no-dedupe` 输出里每一条
+# `rustmark-*` 子项 = 一条本地依赖边；不要目测「几条链」（transitive 路径
+# 会把 9 条边数成 7 条链，2026-10-26 首稿即因此误记为 8 条）。
 # infra 依赖面 = rustmark-core + 解析/高亮/对话框/网络等外部库（workspace 成员
 # 恰为 core 一条，由 tests/workspace_topology_test.rs 的
 # infra_crate_depends_on_core_only 断言）；root 直连 infra——与 core 同一层

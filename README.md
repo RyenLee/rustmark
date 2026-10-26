@@ -149,7 +149,7 @@ wgpu 通过系统图形栈渲染，无窗口管理器外的额外依赖。
 cargo build --release --bin rustmark   # 产物 target/release/rustmark*
 
 # 全量验证链（贡献者必过）——`--workspace` 必带：workspace 化（D-3 阶段 4a）后
-# 不带只跑默认成员（root 包），crates/rustmark-core 的检查与单测会静默缺席
+# 不带只跑默认成员（root 包），crates/* 七个成员 crate 的检查与单测会静默缺席
 cargo fmt --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test  --workspace --all-targets
