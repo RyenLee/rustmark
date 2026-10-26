@@ -105,6 +105,13 @@
 > `export_view` 1 = 对话框真帧提示）。既有 `set_editor_valid_persists` 只加断言、不计数。
 > release 同步实测 **10,550,272 B**（10.062 MiB，`size_gate` exit 0）。
 
+> **基线六更新（2026-10-26，V11-61 + D-6 后）：2217 passed / 0 failed / 4 ignored**
+> （`--all-targets` **2216** + `--doc` 1）。较 2204 的 **+13**：① `41d685f` 的 V11-61 上浮
+> 带来 8 条 core 内联单测（`application::document::find`：大小写字面量双向、正则字符类双折叠、
+> 零宽不卡死、全字边界、循环回卷、替换增生双向、空模式）；② `cc2dd1b` 的 D-6 测试目标登记
+> 守卫 5 条（`tests/test_target_guard_test.rs`）。release 仍 **10,550,272 B**（V11-61 是纯搬迁，
+> D-6 只加测试目标，均不进产物）。
+
 **通用验收（每项必含）**：上表五项全绿 + `cargo fmt --check` 绿 + 所有命令带
 `--workspace`（root `Cargo.toml` 注释警告：否则 core 单测静默退出测试集，
 测试数下降即事故信号）。
@@ -123,7 +130,7 @@
 | 6 | V11-57 | 抽 `rustmark-actions`（UiAction 词汇表） | **高** | 0.5–1 | 建议 V11-56 先行 | B | 立即 |
 | 7 | V11-58 | 抽 `rustmark-icons` | **高** | 0.5 | **V11-57** | B | 立即 |
 | 8 | V11-60 | state 瘦身（分批迁移纯帧内状态） | 中 | 1–2 | V11-59 | C | 立即 |
-| 9 | V11-61 | find/replace 引擎上浮 application | 低 | 1 | V11-59 结论（弱） | C | 立即 |
+| 9 | V11-61 | find/replace 引擎上浮 application | 低 | 1 | V11-59 结论（弱） | C | **已完成（2026-10-26，`41d685f`）** |
 | 10 | V11-62 | presentation 非视图子模块 → `rustmark-ui` | 中 | 2–3 | V11-56；弱依赖 V11-58 | D | **触发式** |
 | 11 | V11-63 | infrastructure 去 egui 化（端口化） | 低 | 2–3 | 无（V11-62 后更顺） | D | **已完成（2026-10-26）** |
 | 12 | V11-64 | 抽 `rustmark-infra` | 低 | 1–2 | **V11-63** | D | **触发式** |
@@ -298,6 +305,22 @@ V11-59 ─────────────────────┼──�
 - **依赖与风险**：弱依赖 V11-59（若审计已判 engine 留 core 则本项降级为记录）。风险：`Match` 移动触及 `find_replace_ui_state` 字段类型 → 548 白名单联动；替换预览语义不能变（零宽匹配/循环边界须有对拍）。
 - **验收标准**：engine.rs ≤100 行或删除；新用例有单测（零宽匹配、循环、大小写、正则子集边界）；查找替换全用例绿；2131。
 - **回退**：revert。
+
+> **完成注记（2026-10-26，`41d685f`）**：本项原按 V11-59 结论「降级为记录」——理由是「无 headless 需求时无痛」。
+> **该前提已消失**：维护者对 Q-01 答「有计划（CLI / headless / 嵌入）」，批量替换不能落在 UI crate。
+> 实际落地与方案的差别：
+> 1. **整体搬迁而非只搬扫描主体**：`FindOptions` / `Match` / `Finder` / `ReplaceSummary` 与字面量、词边界、
+>    零宽推进算法一起进 `application::document::find`；`find_replace_ui_state/pattern.rs`（21 行编译适配）
+>    随之删除——适配层存在的唯一理由是「选项类型在表现层」，类型上浮后它没有内容了。
+> 2. **验收判据「engine.rs ≤100 行」改为「engine.rs 不存在」**：ui 侧 `find_replace_ui_state.rs` 从 351+21 行
+>    降到 297 行，只剩面板状态与输入框常量。
+> 3. **新增用例入口** `find_matches(text, pattern, options) -> Result<Vec<Match>, _>`：headless 调用方不必
+>    构造 `Finder`；面板仍用 `Finder`（编译一次、循环定位不重扫）。
+> 4. **公开路径零变化**：ui 侧逐名重导出，`rustmark::presentation::state::find_replace_ui_state::Finder`
+>    等路径不变，`tests/e2e` / `tests/integration/large_file_test` 与 root 的 3 个调用点零改动。
+> 5. **测试**：新增 core 内联 8 条（零宽、循环回卷、大小写双向、正则字符类双折叠、全字边界、替换增生双向、
+>    空模式）；基线 2203 → **2211**（+8），doc 1 → 合计 2212；release 10,550,272 B **逐字节不变**
+>    （纯搬迁，`#[cfg(test)]` 不进产物）。
 
 ### V11-62 · presentation 非视图子模块 → `rustmark-ui` ｜ 优先级：中（触发式）｜ 2–3 人日 ｜ 并行组 D
 
@@ -549,8 +572,8 @@ V11-59 ─────────────────────┼──�
 cargo fmt --check
 cargo run --bin check-arch
 cargo clippy --workspace --all-targets --all-features -- -D warnings   # 0 告警
-cargo test --workspace --all-targets --no-fail-fast   # 2203 passed / 0 failed / 4 ignored
-cargo test --workspace --doc                          # +1 = 合计 2204
+cargo test --workspace --all-targets --no-fail-fast   # 2216 passed / 0 failed / 4 ignored
+cargo test --workspace --doc                          # +1 = 合计 2217
                                  # （grep '^test result:' | awk 逐行求和；`--workspace` 仍显式书写，漏带已由 default-members 兜底）
 python tools/check_thresholds.py # 121 阈值 / 9 模块 / 数值校验 110，OK
 bash scripts/size_gate.sh       # exe ≤ 11,534,336 B（11 MiB 红线；预警 11,010,048 B = 10.5 MiB）；现 10,550,272 B

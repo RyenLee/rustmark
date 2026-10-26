@@ -607,13 +607,13 @@ rustmark（root：组合根 + views + bin）
 
 | crate | 角色 | 实测规模（2026-10-26，`src/` 口径） | 外部依赖面 |
 |---|---|---|---|
-| `rustmark`（root） | 组合根 + 视图层 + 工具 bin | 91 文件 / 21,449 行 | eframe / egui / image / rfd / anyhow / env_logger / log / wgpu(build) + 4 个本地 crate（core / infra / icons / ui） |
-| `rustmark-core` | 六边形脊柱：domain / application（表现层非视图子模块已于 V11-62 全抽去 `rustmark-ui`，infrastructure 于 V11-64 全抽去 `rustmark-infra`；`presentation` 退化为 doc-only 空壳）；**零 egui 依赖**（V11-63） | **98 文件 / 13,991 行** | **4 个**直接外部依赖（serde / thiserror / log / ahash）+ 2 个本地（actions / shared） |
-| `rustmark-infra` | 基础设施层：外部库适配与 IO（解析 / 高亮 / 文本缓冲 / 对话框 / 远程图片 / 图片解码 / 导出 / 字体装配）。**端口与领域类型仍住 core**（V11-64） | 55 文件 / 11,005 行 | **11 个**直接外部依赖（pulldown-cmark / syntect / image / ropey / rfd / serde / toml / thiserror / ureq / rustls-native-certs / log）+ 1 个本地（core） |
+| `rustmark`（root） | 组合根 + 视图层 + 工具 bin | 91 文件 / 21,953 行 | eframe / egui / image / rfd / anyhow / env_logger / log / wgpu(build) + 4 个本地 crate（core / infra / icons / ui） |
+| `rustmark-core` | 六边形脊柱：domain / application（表现层非视图子模块已于 V11-62 全抽去 `rustmark-ui`，infrastructure 于 V11-64 全抽去 `rustmark-infra`；`presentation` 退化为 doc-only 空壳）；**零 egui 依赖**（V11-63） | **99 文件 / 14,576 行** | **4 个**直接外部依赖（serde / thiserror / log / ahash）+ 2 个本地（actions / shared） |
+| `rustmark-infra` | 基础设施层：外部库适配与 IO（解析 / 高亮 / 文本缓冲 / 对话框 / 远程图片 / 图片解码 / 导出 / 字体装配）。**端口与领域类型仍住 core**（V11-64） | 55 文件 / 11,011 行 | **11 个**直接外部依赖（pulldown-cmark / syntect / image / ropey / rfd / serde / toml / thiserror / ureq / rustls-native-certs / log）+ 1 个本地（core） |
 | `rustmark-actions` | 动作词汇表契约（V11-57） | 4 文件 / 687 行 | **零依赖** |
 | `rustmark-shared` | 共享内核：纯值 / 端口 / 唯一真源（TD-04） | 21 文件 / 3,153 行 | ahash + serde + thiserror（**零本地**） |
 | `rustmark-icons` | 16×16 图标规格 + Painter 渲染器（V11-58） | 1 文件 / 613 行 | egui + rustmark-actions |
-| `rustmark-ui` | 表现层非视图部分：widgets（批次 1）/ state（批次 2）/ shortcuts（批次 3）/ theme（批次 4）/ rich（批次 5，V11-62 收官） | 73 文件 / 17,653 行 | egui + rustmark-core |
+| `rustmark-ui` | 表现层非视图部分：widgets（批次 1）/ state（批次 2）/ shortcuts（批次 3）/ theme（批次 4）/ rich（批次 5，V11-62 收官） | 71 文件 / 17,301 行 | egui + rustmark-core |
 
 规模口径：`find <源码根> -name '*.rs' -exec cat {} + | wc -l`（**不用 `xargs wc -l`**——超 ~100 文件会分批而 `tail -1` 只抓末批小计），只含 `src/`、
 不含 `tests/`，命令随文可复跑。core 与评审快照（46,375 行 / 238 文件）的差额 =
@@ -622,8 +622,11 @@ shortcuts 5，另 2 个为 ui 的新建骨架 lib.rs / presentation.rs）、TD-0
 shared 19 文件 / 3,061 行、V11-64 抽出的 infra 54 文件 / 10,976 行，扣除期间
 core 内的模块清单与文档增补；快照 238 与 git 树基线 `662536b` 的 244 文件
 之间存在未逐文件核对的口径差（评审当时工作区含 D-6/D-7 在途改动），
-**本节数字以今日实测为准**（2026-10-26：root 91 / 21,449，core 98 / 13,991，
-infra 55 / 11,005，shared 21 / 3,153，ui 73 / 17,653。构成变化：TD-02 拆分
+**本节数字以今日实测为准**（2026-10-26 复测：root 91 / 21,953，core 99 / 14,576，
+infra 55 / 11,011，shared 21 / 3,153，ui 71 / 17,301。其中 V11-61 把
+`find_replace_ui_state/{engine,pattern}.rs`（353 + 21 = 374 行）上浮为 core 的
+`application/document/find.rs`（521 行，含 8 条内联用例），故 **ui −2 文件 / −352 行、
+core +1 文件**；表内数字此前未随 PRIV-01/02 与 D-5 刷新，本次一并复测。构成变化：TD-02 拆分
 `preview_view.rs` +2 文件 / +20 行；`c08fd13` 阈值整改在 core / ui / root
 分别 +171 / +3 / +101 行（撤销字节预算、纹理缓存字节预算等）；
 `toolbar_view.rs` D-4 拆分 +1 文件 / +14 行；E-24 拆分 `inline.rs` 为
@@ -631,8 +634,8 @@ facade + 4 子模块 **+4 文件 / +208 行**；E-06 阶段 B 新增
 `infrastructure/fonts/port.rs` **+1 文件**；E-25 拆 `src/app/frame.rs`
 （839 行）为 facade 195 + `frame/state.rs` 434 + `frame/loop.rs` 257 = 886 行
 （**+2 文件 / +47 行**）；rich 于批次 5 从 core 迁 ui，V11-62 收官；
-TD-04 / V11-64 为整目录搬迁，两侧行数守恒——infra 的 55 文件 / 11,005 行 =
-迁入 54 文件 / 10,976 行 + 新骨架 `lib.rs` 29 行）。
+TD-04 / V11-64 为整目录搬迁，两侧行数守恒——infra 的 55 文件 / 11,011 行 =
+迁入 54 文件 / 10,976 行 + 新骨架 `lib.rs` 29 行 + PRIV-02 的导出件 `<head>` 注释 6 行）。
 
 **三阶段演进**（照评审报告 §4；阶段 1 已由 V11-57 / V11-58 落地，阶段 2 已由
 V11-62 全落地，阶段 3 的 `rustmark-infra` 行已由 V11-64 提前兑现——**触发依据是
@@ -671,10 +674,13 @@ V11-62 全落地，阶段 3 的 `rustmark-infra` 行已由 V11-64 提前兑现�
 
 **2026-10-26 更新（TD-04 + V11-64）**：演进图阶段 3 的两行提前兑现——
 `rustmark-shared` **21 文件 / 3,153 行**（TD-04，`2da434e`）、
-`rustmark-infra` **55 文件 / 11,005 行**（V11-64，`7b9b6ba`，含新骨架
-`lib.rs` 29 行；迁入量 54 文件 / 10,976 行与阶段 3 标注的 10.8k 吻合）。
-`rustmark-core` 降至 **98 文件 / 13,991 行**（阶段 3 计划 16.7k 的进一步
-收窄，差额来自 stage-3 估算未计入 shared 整体外移）；`rustmark-ui` 不变。
+`rustmark-infra` **55 文件 / 11,011 行**（V11-64，`7b9b6ba`，含新骨架
+`lib.rs` 29 行；迁入量 54 文件 / 10,976 行与阶段 3 标注的 10.8k 吻合，
+另 + PRIV-02 的 6 行 `<head>` 注释）。
+`rustmark-core` 降至 **99 文件 / 14,576 行**（阶段 3 计划 16.7k 的进一步
+收窄，差额来自 stage-3 估算未计入 shared 整体外移；V11-61 又把 find 引擎
+上浮进来，+1 文件 / +585 行）；`rustmark-ui` **71 文件 / 17,301 行**（V11-61
+移出 `engine.rs` + `pattern.rs`，−2 文件 / −352 行）。
 阶段 3 尚未兑现的部分只剩「root 的 views 是否也外移」——评审未把它列入
 计划，本表不预设。
 

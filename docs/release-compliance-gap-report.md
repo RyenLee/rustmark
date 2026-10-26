@@ -8,8 +8,8 @@
 >
 > **2026-10-26 补记**：两项 P1 已落地——`PRIV-01`（远程图片开关，关闭即零外联）与
 > `PRIV-02`（导出 CDN 披露），提交 `ee8acfb`；`PRIVACY.md` 与 `docs/config-reference.md`
-> 同步修正（旧文「不勾选则不注入」的说法本身有误：注入是自动的）。剩余 P1 只有 `SEC-03`
-> （Release Notes 三段式），属发布时动作。
+> 同步修正（旧文「不勾选则不注入」的说法本身有误：注入是自动的）。最后一个 P1 `SEC-03`
+> （Release Notes 三段式）也**已于 2026-10-26 闭环**（`502ddf9`）——P1 清零。
 
 ---
 
@@ -25,7 +25,7 @@
 | 依赖安全公告 | **P0 未闭环** | ✅ 闭环 | `cargo deny --offline check advisories` → `advisories ok`（本机 RustSec 快照 **2026-10-21**；在线源 github.com 不可达，见 §3.2 说明） |
 | 二进制再分发合规 | **P0 不合格** | ✅ 闭环（Windows 已验；macOS/Linux 待产物重打） | 三个打包脚本均随附 `LICENSE-MIT` / `LICENSE-APACHE` / `NOTICE` / `THIRD-PARTY-LICENSES.md`；Windows 产物解压核对通过 |
 | 隐私 | 行为可控，披露已补齐 | ✅ 两项 P1 已闭环（2026-10-26） | 无遥测 / 无自动更新 / 崩溃报告本地（0 命中）；`PRIVACY.md` 披露三类联网行为与 PDF 进程间行为；**`PRIV-01` 远程图片开关**（关闭后零外联、状态栏常驻提示）与 **`PRIV-02` 导出 CDN 披露**（对话框常驻说明 + 导出件 `<head>` 注释）已落地，见 §4 |
-| 发布文档 | **P0 不合格** | ✅ 达标（rustdoc / SBOM / 模板未做，属 P2） | 版本 **0.2.0** 三处一致；CHANGELOG 有 `[0.2.0] · 2026-10-22`；`missing_docs` 实测 **0** 条 |
+| 发布文档 | **P0 不合格** | ✅ 达标（P2 只剩 rustdoc 发布方案与商标检索） | 版本 **0.2.0** 三处一致；CHANGELOG 有 `[0.2.0] · 2026-10-22`；`missing_docs` 实测 **0** 条 |
 | 体积门禁 | **P0 不合格（11.36 MiB）** | ✅ 闭环 | release 产物 **10,466,816 B = 9.98 MiB**，红线 10,485,760 B，**余量 18,944 B**（§5） |
 
 ### 上一版 5 项 P0 的处置结果
@@ -85,23 +85,28 @@ cargo build --release --bin rustmark && stat -c%s target/release/rustmark   # �
 `CONTRIBUTING.md` §2.1 已写明「提交即以与本仓库相同的 `MIT OR Apache-2.0` 双许可授权」，
 并要求每个 commit 带 `Signed-off-by`（`git commit -s`）。
 
-### LEG-03 【⬜ P2 待办】缺 `CODE_OF_CONDUCT.md`
+### LEG-03 【✅ 已闭环（2026-10-26，`2f00a6e`）】`CODE_OF_CONDUCT.md`
 
-建议采用 Contributor Covenant 2.1，并在 `CONTRIBUTING.md` / README 链接。属下一版本项，不阻断发布。
+已补 Contributor Covenant 2.1 中文版（注明英文原版为准），`CONTRIBUTING.md` §0 与 README §7 均已链接；
+「执行」一节把投诉渠道指到 `SECURITY.md` 的私密公告，避免安全类投诉走公开 Issue。
 
 ### LEG-04 【◐ 部分完成】名称 / 商标 / 图标权利
 
 - ✅ README §9「授权要点」第 4 条已声明：**许可不授予 `rustmark` 名称与 Logo 的商标使用权**（MIT / Apache-2.0 §7 保留商标权）；
 - ⬜ 「rustmark」名称的商标与包名冲突检索（GitHub / crates.io / 主要应用商店）仍需人工完成并留档。
 
-### LEG-05 【⬜ P2 待办】加密组件出口管制登记
+### LEG-05 【✅ 已闭环（2026-10-26，`2f00a6e`）】加密组件出口管制登记
 
-产物含 `rustls` + `ring`（TLS）。建议在 `docs/release.md` 登记「含加密组件 + 适用开源豁免」一句话说明。
+`docs/release.md` 新增 §7：逐项列出 `rustls` + `ring` 的用途（TLS 客户端 / 远程图片下载，可在设置关闭）、
+开源可获取性与开源豁免的一般适用，并明确「本登记不构成法律意见」与「组件或用途变化时本节必须同步」。
 `REL-03` 后根证书改为读平台信任库，但**加密实现未变**，本项结论不变。
 
-### LEG-06 【⬜ P2 待办】`words.txt` 来源与许可声明不充分
+### LEG-06 【✅ 已闭环（2026-10-26，`2f00a6e`）】`words.txt` 来源与许可
 
-`NOTICE` 现仅写「project-specific compilation of common words」，未给出具体来源与许可依据，需追溯后补全。
+`git log --follow` 实测：自初始提交 `338d333`（2026-10-10）即在仓内，无外部导入记录；内容 3,984 条 /
+去重 3,635，仅单词、无释义与例句。`NOTICE` 与 `THIRD-PARTY-LICENSES.md` §4.3 已登记为**项目自编编译物**
+（本项目双许可覆盖），并写明后续规则：替换为第三方词表前必须先登记来源与许可。
+顺带修正两个 `.bin` 数据文件的路径（V11-64 后已迁到 `crates/rustmark-infra/src/infrastructure/…`）。
 
 ### LEG-07 【✅ 已完成】`NOTICE` 曾漏列随包字体
 
@@ -160,9 +165,14 @@ CI 的 `deny` job 在有网环境运行，会使用最新快照；**发布前仍
 - `ureq` 行：`3.4.2 + ["rustls"]` → `3.5.0 + ["rustls-no-provider","_ring"]`，并新增 `rustls-native-certs` 行；
 - §6「保留 / 不引入」表：补 `rustls-webpki-roots` 与 `default_fonts` 两条「2026-10-22 改为不启」的定格说明。
 
-### DEP-06 【⬜ P2 待办】SBOM
+### DEP-06 【✅ 已闭环（2026-10-26，`2f00a6e`）】SBOM
 
-建议用 `cargo cyclonedx` 生成 CycloneDX，随 Release 资产发布。属下一版本项。
+未引入 `cargo cyclonedx`（要多装一个 cargo 子命令，版本漂移/装包失败都会让发布 job 变脆），改为
+`tools/sbom.py`：零第三方依赖，从 `cargo metadata --locked` 生成 **CycloneDX 1.5** JSON。
+范围取「发布二进制的实际依赖图」（从 `rustmark` 沿 resolve 可达），非整 workspace 的 dev 依赖；
+含 purl / licenses（缺失写 `NOASSERTION`）/ 依赖边；**不写时间戳**，同一依赖树两次生成逐字节一致。
+`release.yml` 已加生成步骤并把 `dist/sbom.cdx.json` 作为 Release 资产；`release_dryrun.py` 的 `check_sbom`
+断言结构 + 确定性。实测 **388 组件 / 389 条依赖边**。
 
 ---
 
@@ -223,14 +233,21 @@ Windows 调用本机 Edge / Chrome 无头模式，macOS 走系统打印链路；
 
 `SECURITY.md` 含私有披露渠道、响应时限、已实施安全措施、明确排除的威胁模型与校验和核对方式。
 
-### SEC-03 【◐ 部分完成】产物未签名
+### SEC-03 【✅ 已闭环（2026-10-26，`502ddf9`）】产物未签名 + 发布页三段式
 
-- ✅ README 已写明「未签名 + 各平台绕过方式 + 校验和核对」；
-- ⬜ Release 页面（Release Notes 模板）尚未固化这三段式说明，须在发布时写入。
+- ✅ README 写明「未签名 + 各平台绕过方式 + 校验和核对」；
+- ✅ **发布页机械固化**：`tools/gen_release_notes.py` 的 `render` 开头固定
+  「一、未签名 / 二、绕过方式（三平台）/ 三、校验和」三段，之后才是变更分组；
+  `tools/release_dryrun.py` 断言三段齐全**且顺序正确**（变异：改掉任一段标题 → 演练当场红）。
+- 产物仍**未签名**（证书成本见 §6 与 `docs/release.md` §6）；本项闭合的是「发布页必须说清」，
+  不是「已经签名」。
 
-### SEC-04 / DOC-05 【⬜ P2 待办】Issue / PR 模板
+### SEC-04 / DOC-05 【✅ 已闭环（2026-10-26，`2f00a6e`）】Issue / PR 模板
 
-`.github/` 下无 `ISSUE_TEMPLATE/` 与 `PULL_REQUEST_TEMPLATE.md`。建议 Issue 模板含「安全问题请走私密渠道」警示。
+`.github/ISSUE_TEMPLATE/` 增 `bug_report.yml`（版本平台 / 复现步骤 / 期望 vs 实际 / 最小复现文档 / 日志位置，
+含两条必勾确认：已搜过、**这不是安全问题**）、`feature_request.yml`（先问场景再问方案，附分层影响面下拉）、
+`config.yml`（关空 Issue + 安全私密渠道 + 讨论区）；`.github/PULL_REQUEST_TEMPLATE.md` 把仓库既有纪律前置到
+PR 表单：四道门禁实测数字、守卫改动的变异验证、新 `pub` 字段登记、新增测试入口补 `[[test]]`、阈值同步。
 
 ---
 
@@ -295,25 +312,25 @@ Windows 调用本机 Edge / Chrome 无头模式，macOS 走系统打印链路；
 > 说明：Windows 产物已在本轮复打（`7,486,958 B`，SHA256 见同名 `.sha256`），三平台 `SHA256SUMS`
 > 聚合文件尚未生成（当前为逐文件 `.sha256`）。**本项受本机条件限制**，需在 macOS / Linux 机器或 CI 上完成。
 
-### P1 · 发布前应处置（1 项；2 项已于 2026-10-26 闭环）
+### P1 · 发布前应处置（**0 项**；3 项已于 2026-10-26 全部闭环）
 
 | # | ID | 待办 | 验收判据 |
 |---|---|---|---|
 | ~~2~~ | ~~`PRIV-01`~~ | ~~「加载远程图片」开关（离线模式）~~ **已闭环（`ee8acfb`）**：设置页开关 + 拦截点前移到缓存查找之前 + 状态栏常驻提示 | 关闭后零外联请求（等价判据见 §4 PRIV-01） |
 | ~~3~~ | ~~`PRIV-02`~~ | ~~导出对话框与导出件明示 CDN 引用~~ **已闭环（`ee8acfb`）**：对话框常驻说明 + 导出件 `<head>` 注释 | 对话框可见提示（真帧用例双向断言） |
-| 4 | `SEC-03` | Release Notes 固化「未签名 + 绕过方式 + 校验和」三段式 | 发布页可见三段说明 |
+| ~~4~~ | ~~`SEC-03`~~ | ~~Release Notes 固化「未签名 + 绕过方式 + 校验和」三段式~~ **已闭环（`502ddf9`）**：生成器固定三段 + 演练断言（含顺序） | 发布页可见三段说明（删段即演练红） |
 
-### P2 · 下一版本（6 项）
+### P2 · 下一版本（剩 2 项；5 项已于 2026-10-26 闭环）
 
 | # | ID | 待办 |
 |---|---|---|
-| 5 | `LEG-03` | 新增 `CODE_OF_CONDUCT.md`（Contributor Covenant 2.1） |
-| 6 | `LEG-04` | `rustmark` 名称 / 包名冲突检索并留档（声明部分已做） |
-| 7 | `LEG-05` | `docs/release.md` 登记「产物含加密组件 rustls/ring」与适用豁免 |
-| 8 | `LEG-06` | 追溯 `words.txt` 来源与许可，更新 `NOTICE` |
-| 9 | `DEP-06` | 生成 SBOM（CycloneDX / SPDX）随 Release 发布 |
-| 10 | `SEC-04` / `DOC-05` | Issue / PR 模板（含安全披露警示） |
-| 11 | `DOC-04` | rustdoc 产物发布方案 |
+| ~~5~~ | ~~`LEG-03`~~ | ~~新增 `CODE_OF_CONDUCT.md`~~ **已闭环（`2f00a6e`）**：Contributor Covenant 2.1 + CONTRIBUTING §0 / README §7 链接 |
+| 6 | `LEG-04` | `rustmark` 名称 / 包名冲突检索并留档（**声明部分已做；检索需人工完成并留档**） |
+| ~~7~~ | ~~`LEG-05`~~ | ~~`docs/release.md` 登记加密组件~~ **已闭环（`2f00a6e`）**：§7 组件表 + 开源豁免说明 + 变更纪律 |
+| ~~8~~ | ~~`LEG-06`~~ | ~~追溯 `words.txt` 来源~~ **已闭环（`2f00a6e`）**：`git log --follow` 追溯 + NOTICE / 第三方清单登记 |
+| ~~9~~ | ~~`DEP-06`~~ | ~~生成 SBOM~~ **已闭环（`2f00a6e`）**：`tools/sbom.py`（CycloneDX 1.5，388 组件）+ 随 Release 发布 + 演练断言 |
+| ~~10~~ | ~~`SEC-04` / `DOC-05`~~ | ~~Issue / PR 模板~~ **已闭环（`2f00a6e`）**：两份 Issue 表单 + config + PR 模板（含安全披露警示） |
+| 11 | `DOC-04` | rustdoc 产物发布方案（需先定托管位置，属产品决定） |
 
 ---
 
@@ -351,7 +368,7 @@ Windows 调用本机 Edge / Chrome 无头模式，macOS 走系统打印链路；
 | 5 | 三平台手工回归清单执行完毕并写回结论 | ⬜ 受本机条件限制 |
 | 6 | 验证链四绿（fmt / check-arch / clippy -D warnings / test） | ✅ **2101 passed · 0 failed · 4 ignored** |
 | 7 | 体积门禁绿且口径统一 | ✅ Windows 9.98 MiB（余量 18,944 B）；口径已统一为未压缩 exe |
-| 8 | 发布页含「未签名 + 绕过方式 + 校验和」三段式 | ⬜ `SEC-03` |
+| 8 | 发布页含「未签名 + 绕过方式 + 校验和」三段式 | ✅ `SEC-03` 已闭环：生成器固定三段 + 演练断言顺序（`502ddf9`） |
 | 9 | `PRIVACY.md` / `SECURITY.md` / `NOTICE` / `THIRD-PARTY-LICENSES.md` 与实际行为、依赖一致 | ✅ 本轮已随依赖变动同步 |
 | 10 | `docs/release.md` §1 前置检查清单逐项可勾 | ✅（`LEG-05` 登记项仍属 P2） |
 
