@@ -76,8 +76,10 @@
 
 截至 2026-10-26 的状态摘要：
 
-- **功能项已全部完成**：V11-03~09、V11-12~26 均 ✅；测试基线 **2187 passed / 0 failed / 4 ignored**
-  （`--all-targets` 2186 + `--doc` 1，2026-10-26 实测；命令与构成见 backlog §3）。
+- **功能项已全部完成**：V11-03~09、V11-12~26 均 ✅；测试基线 **2195 passed / 0 failed / 4 ignored**
+  （`--all-targets` 2194 + `--doc` 1，2026-10-26 实测；命令与构成见 backlog §3）。
+  较 2187 的 +8 全部来自架构评审 D-5（帧耗时观测的 8 条单测，均在
+  `src/app/frame/scheduler.rs` 内联）。
 - **剩余仅环境前置项**：V11-02（macOS / Linux 真机回归，P0）、V11-01（远端发布演练）、
   V11-10 / V11-11（证书预算 / 痛点驱动）——见 backlog §3。
 - **架构改造已收官**：V11-54 / V11-54a（全库评估 + 21 条改造项）2026-10-21 完成；
@@ -87,7 +89,12 @@
   `rustmark-icons` / `rustmark-actions`，本地依赖边 9 条、无环（`docs/workspace-topology.expected.txt`）。
   两个新 crate 的直接收益是**依赖面收窄**：core 从 12 个外部依赖降为 4 个（serde/thiserror/log/ahash），
   复用 domain/application 的消费者不再被 syntect/ureq/rfd/image/pulldown 拖进编译图。
-- **体积**：`NFR-PERF-01` release exe **10,545,664 B = 10.057 MiB**（2026-10-26 实测），低于
+- **可观测性（D-5，2026-10-26，`1c58052`）**：`FrameScheduler` 兼作帧耗时观测点——超 16ms 的帧打一条
+  `warn`（状态更新 / 绘制 / 未归因三段归因 + 本帧到期任务，120 帧限流；**仅 release 构建输出**），
+  `RUST_LOG=…=debug`
+  时每 600 帧给平均 / 最大 / 超预算占比。`docs/architecture-review-2026-10-23.md` 的 12 项问题
+  至此**全部收口**（9 项闭合、2 项记录为不修、1 项持续纪律）。
+- **体积**：`NFR-PERF-01` release exe **10,548,736 B = 10.060 MiB**（2026-10-26 D-5 后实测），低于
   10.5 MiB 预警线与 11 MiB 红线（`size_gate` exit 0）。2026-10-20 的「11.36 MiB 超 10 MB 红线」
   已解除：V11-26 依赖裁剪先把 11.36 → 10.93 MiB（仍高于旧红线），随后维护者把红线 10 → 11 MiB
   （2026-10-24，`scripts/size_gate.sh` 与 metrics §2.8 同步），当前值再降至 10.05 MiB。

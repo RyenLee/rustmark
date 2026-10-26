@@ -89,6 +89,12 @@
 > 113 → 28。release exe 同步实测 **10,545,664 B**（10.057 MiB；较 10,540,544 的
 > **+3,072 B** 是第二个跨 crate LTO 边界成本），`size_gate` exit 0、仍低于 10.5 MiB
 > 预警线。**本清单的「当前基线」改为 2187 执行**；附录速查已同步为 2186 + 1。
+>
+> **基线四更新（2026-10-26，架构评审 D-5 闭合）：2195 passed / 0 failed / 4 ignored**
+> （`--all-targets` **2194** + `--doc` 1）。较 2187 的 **+8 全部来自 D-5**：帧耗时观测的
+> 八条内联用例（阈值边界 / 归因算术 / 墙钟打点 / 限流会计 / 输出开关 / 接线 / 清表顺序 / 未超预算静默），
+> 均在 `src/app/frame/scheduler.rs`。**本清单的「当前基线」改为 2195 执行**；
+> 附录速查已同步为 2194 + 1。
 
 **通用验收（每项必含）**：上表五项全绿 + `cargo fmt --check` 绿 + 所有命令带
 `--workspace`（root `Cargo.toml` 注释警告：否则 core 单测静默退出测试集，
@@ -501,7 +507,7 @@ V11-59 ─────────────────────┼──�
 
 | ID | 债务 | 证据 | 处置 | 关联任务 |
 |---|---|---|---|---|
-| TD-01 | release 体积吃紧（已越旧红线，红线上调后入预警窗口） | 2026-10-24 基线 10,485,248 B（旧红线 10 MiB 余 512 B）；2026-10-25 V11-62 批次 2（state 迁入 `rustmark-ui`）致 +2,560 B → 10,487,808 B，旧 10 MiB 红线越线；批次 3（shortcuts）致 +1 KiB → 10,488,832 B；批次 4（theme）致 +1 KiB → 10,489,856 B；批次 5（rich，~5,918 行，V11-62 收官）致 -2,560 B → 10,487,296 B（非单调：rich 自绘排版零跨 crate 内联，迁移回吐批次 2 的 LTO 边界成本）；新红线 11 MiB 内、超预警 10 MiB。worktree A/B 实证 +2,560 B 确由跨 crate LTO 边界成本产生，无针对性修法。**维护者决策：NFR 红线 10→11 MiB、预警 8→10 MiB（原红线降级为预警）**，见 `scripts/size_gate.sh`、metrics.md §2.8 | V11-62 收官，体积窗口稳定（距新红线 11 MiB 余 1,047,040 B）；后续加依赖动作仍须过 size_gate。**2026-10-25 阈值整改（`c08fd13`）后 10,520,576 B（+33,280 B：撤销 64 MiB 字节预算、图片分层上限、纹理 128 MiB 预算等功能常量变更），size_gate exit 0 且低于预警线（现行红线 11,534,336 B / 预警 11,010,048 B = 10.5 MiB，`c08fd13` 统一 CI 与三个打包脚本口径），距红线余 1,013,760 B（~0.97 MiB），窗口仍稳定**；**2026-10-26 V11-63 端口化后 10,540,544 B（10.052 MiB），size_gate exit 0、仍低于 10.5 MiB 预警线，距红线余 993,792 B；较 HEAD `ef7d5c2` 的 +18,432 B 已三次构建 A/B 归因（端口化代码 +17,408 / 删 egui 依赖边 +1,024），非功能增量，详见 metrics §2.8**；**2026-10-26 TD-04 + V11-64 两个新 crate 后 10,545,664 B（10.057 MiB），较 10,540,544 的 +3,072 B 是第二个跨 crate LTO 边界成本（shared 抽取先致 10,542,592 B / +2,048 B，infra 抽取再致 +3,072 B），size_gate exit 0、低于 10.5 MiB 预警线，距红线余 988,672 B** | V11-62 / 所有 |
+| TD-01 | release 体积吃紧（已越旧红线，红线上调后入预警窗口） | 2026-10-24 基线 10,485,248 B（旧红线 10 MiB 余 512 B）；2026-10-25 V11-62 批次 2（state 迁入 `rustmark-ui`）致 +2,560 B → 10,487,808 B，旧 10 MiB 红线越线；批次 3（shortcuts）致 +1 KiB → 10,488,832 B；批次 4（theme）致 +1 KiB → 10,489,856 B；批次 5（rich，~5,918 行，V11-62 收官）致 -2,560 B → 10,487,296 B（非单调：rich 自绘排版零跨 crate 内联，迁移回吐批次 2 的 LTO 边界成本）；新红线 11 MiB 内、超预警 10 MiB。worktree A/B 实证 +2,560 B 确由跨 crate LTO 边界成本产生，无针对性修法。**维护者决策：NFR 红线 10→11 MiB、预警 8→10 MiB（原红线降级为预警）**，见 `scripts/size_gate.sh`、metrics.md §2.8 | V11-62 收官，体积窗口稳定（距新红线 11 MiB 余 1,047,040 B）；后续加依赖动作仍须过 size_gate。**2026-10-25 阈值整改（`c08fd13`）后 10,520,576 B（+33,280 B：撤销 64 MiB 字节预算、图片分层上限、纹理 128 MiB 预算等功能常量变更），size_gate exit 0 且低于预警线（现行红线 11,534,336 B / 预警 11,010,048 B = 10.5 MiB，`c08fd13` 统一 CI 与三个打包脚本口径），距红线余 1,013,760 B（~0.97 MiB），窗口仍稳定**；**2026-10-26 V11-63 端口化后 10,540,544 B（10.052 MiB），size_gate exit 0、仍低于 10.5 MiB 预警线，距红线余 993,792 B；较 HEAD `ef7d5c2` 的 +18,432 B 已三次构建 A/B 归因（端口化代码 +17,408 / 删 egui 依赖边 +1,024），非功能增量，详见 metrics §2.8**；**2026-10-26 TD-04 + V11-64 两个新 crate 后 10,545,664 B（10.057 MiB），较 10,540,544 的 +3,072 B 是第二个跨 crate LTO 边界成本（shared 抽取先致 10,542,592 B / +2,048 B，infra 抽取再致 +3,072 B），size_gate exit 0、低于 10.5 MiB 预警线，距红线余 988,672 B**；**2026-10-26 架构评审 D-5（帧耗时观测）后 10,548,736 B（10.060 MiB），+3,072 B 为纯代码增量（Cargo.toml 未动，无 A/B 必要），size_gate exit 0、距红线余 985,600 B** | V11-62 / 所有 |
 | TD-02 | `src/presentation/views/preview_view.rs` 1,421 行 | 上轮评估 | **已闭环（2026-10-25，TD-02 专项，`999e63c`）**：按 §7 D-4 阈值拆为入口 458 行 + `preview_view/image_cache.rs`（图片纹理缓存簇 319 行）+ `preview_view/tests.rs`（外置单测 664 行）；`ImageEntry` 本体与字段转 `pub(super)`（消费者 media.rs 跨子模块）；公开路径 `preview_view::{show, image_cache_state, is_remote_url, ImageEntryState}` 经 `pub use` 零变化；四门禁绿（2144 守恒）、release 逐字节 10,487,296 B、topology CLEAN | TD-02 专项 |
 | TD-03 | `domain.rs:3` 依赖注释宽于实际 | 允许 ropey/chrono，实测零使用 | **已闭环（2026-10-24，`3cc4c42`，V11-67）**：注释改为「serde/thiserror 实测在用；ropey/chrono 历史上允许但当前零使用」，check-arch 复跑 OK | V11-67 |
 | TD-04 | shared 通用件 ≈900 行且可能继续长 | 2026-10-26 实测：shared **19 文件 / 3,061 行**；非领域通用件 6 个 = pattern 531 + text_format 310 + lru 291 + path 278 + geometry 248 + export_format 233，合计 **1,891 行**（若把 text 170 也计为通用件则为 7 个 / 2,061 行，结论不变） | **已落地（2026-10-26，`2da434e`）**：维护者拍板**整份 shared 抽 crate**（而非只抽 6 个通用件——前缀保留后两者代价相同，整抽避免「一半在内一半在外」的判层歧义）→ `crates/rustmark-shared`，19 文件 / 3,061 行保 `shared/` 前缀迁入，core 以 `pub use rustmark_shared::shared;` 桥接；crate 依赖面 = ahash + serde + thiserror（**零 workspace 成员**，新用例 `shared_crate_declares_no_workspace_dependency` 钉死）。跨 crate 可见性摩擦 1 处（`FileFilter::name` 加受控访问器，不升字段）。**附带发现**：`docs/thresholds.baseline.yaml` 的 8 处 `shared/` 路径未随迁更新，该提交后 thresholds 检查转红——已于 V11-64 提交一并修正 | 已闭环（`2da434e`） |
@@ -534,11 +540,11 @@ V11-59 ─────────────────────┼──�
 cargo fmt --check
 cargo run --bin check-arch
 cargo clippy --workspace --all-targets --all-features -- -D warnings   # 0 告警
-cargo test --workspace --all-targets --no-fail-fast   # 2186 passed / 0 failed / 4 ignored
-cargo test --workspace --doc                          # +1 = 合计 2187
+cargo test --workspace --all-targets --no-fail-fast   # 2194 passed / 0 failed / 4 ignored
+cargo test --workspace --doc                          # +1 = 合计 2195
                                  # （grep '^test result:' | awk 逐行求和；命令必带 --workspace）
 python tools/check_thresholds.py # 121 阈值 / 9 模块 / 数值校验 110，OK
-bash scripts/size_gate.sh       # exe ≤ 11,534,336 B（11 MiB 红线；预警 11,010,048 B = 10.5 MiB）；现 10,545,664 B
+bash scripts/size_gate.sh       # exe ≤ 11,534,336 B（11 MiB 红线；预警 11,010,048 B = 10.5 MiB）；现 10,548,736 B
 cargo tree --workspace --depth 1   # 拓扑对 docs/workspace-topology.expected.txt（本地依赖边 9 条）
 ```
 
