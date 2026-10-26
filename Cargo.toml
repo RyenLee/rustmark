@@ -16,6 +16,7 @@ members = [
     "crates/rustmark-actions",
     "crates/rustmark-core",
     "crates/rustmark-icons",
+    "crates/rustmark-shared",
     "crates/rustmark-ui",
 ]
 resolver = "3"

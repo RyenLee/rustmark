@@ -1374,9 +1374,10 @@ pub fn scan_with_tests(src_root: &Path, tests_root: &Path) -> Vec<Violation> {
 /// shell `src/` + `crates/rustmark-core/src/` +
 /// `crates/rustmark-actions/src/`（V11-57）+
 /// `crates/rustmark-icons/src/`（V11-58）+
-/// `crates/rustmark-ui/src/`（V11-62）+ `tests/`。
+/// `crates/rustmark-ui/src/`（V11-62）+
+/// `crates/rustmark-shared/src/`（TD-04，2026-10-26）+ `tests/`。
 ///
-/// # 六个根、两种记键
+/// # 七个根、两种记键
 ///
 /// - src 根**按各自根的层相对路径**判层、查豁免表
 ///   （core 的 `domain/x.rs` 与拆分前同键，登记表与既有禁令表零改动）；
@@ -1395,7 +1396,7 @@ pub fn scan_with_tests(src_root: &Path, tests_root: &Path) -> Vec<Violation> {
 /// - `tests/` 侧与 [`scan_with_tests`] 完全一致（全判 [`Layer::Tests`]、
 ///   rel 带 `tests/` 前缀）。
 ///
-/// # 登记表按 manifest 加载一次、五个 src 根共用
+/// # 登记表按 manifest 加载一次、六个 src 根共用
 ///
 /// core 根的 parent 是 `crates/rustmark-core`，那里没有 `docs/`——
 /// 沿用 [`load_registry`] 的「parent 即 manifest」推断会让 core 侧豁免
@@ -1464,6 +1465,15 @@ pub fn scan_project(manifest: &Path) -> Vec<Violation> {
             "crates/rustmark-ui/src/",
             None,
         ),
+        // 第六根（TD-04，2026-10-26）：共享内核抽为 `rustmark-shared`。
+        // 文件保留 `shared/` 路径前缀（与 ui 保留 `presentation/` 同理），
+        // `layer_of("shared/x.rs")` 自然判 [`Layer::Shared`]——不设强制层，
+        // §4.5 登记守卫的 `rel.starts_with("shared/")` 也随路径原样生效。
+        (
+            manifest.join("crates").join("rustmark-shared").join("src"),
+            "crates/rustmark-shared/src/",
+            None,
+        ),
     ] {
         let mut files = Vec::new();
         collect_rs_files(&root, &mut files);
@@ -1483,7 +1493,8 @@ pub fn scan_project(manifest: &Path) -> Vec<Violation> {
             // `scan` / `scan_with_tests` 的合成目录用例没有登记表语境，
             // 边界由 fixture 的「合成扫描不套用登记制」用例钉住。
             // 判据限定 `shared/` **目录内**的文件：层根 `shared.rs` 只有
-            // `pub mod` 声明（无实现内容），不属三问的对象。
+            // `pub mod` 声明（无实现内容），不属三问的对象。TD-04 抽出独立
+            // crate 后路径前缀保留，登记键与判定逐字不变。
             if rel.starts_with("shared/") && !shared_registry.contains(&rel) {
                 violations.push(Violation {
                     file: display.clone(),

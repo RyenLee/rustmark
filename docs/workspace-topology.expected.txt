@@ -35,6 +35,18 @@
 # 批次 2 复核：2026-10-25，V11-62 批次 2 搬入 state（UI State，24 文件）后
 # 拓扑不变——state 对 core 的引用走既有 ui→core 边，本地依赖边仍 6 条，
 # CI 式 diff CLEAN（非「忘记更新」，实测无变更）。
+#
+# 基线更新：2026-10-26，TD-04 抽出 rustmark-shared 后拓扑 = 四条本地链
+# （无环，本地依赖边 6 → 7 条）：
+#   root → rustmark-core → rustmark-shared
+#   root → rustmark-core → rustmark-actions
+#   root → rustmark-icons → rustmark-actions
+#   root → rustmark-ui → rustmark-core → rustmark-shared
+# shared 依赖面 = ahash + serde + thiserror（无任何 workspace 成员，由
+# tests/workspace_topology_test.rs 的 shared_crate_declares_no_workspace_dependency
+# 断言）；root 不直连 shared——公开路径经 core 的 `pub use rustmark_shared::shared;`
+# 桥接。同批实测修正：V11-63 删 core 的 egui 依赖后，本文件曾漏更新（core 行
+# 仍列 egui），本次按实测重生成。
 rustmark v0.2.0
 ├── anyhow v1.0.104
 ├── eframe v0.37.0
@@ -57,7 +69,6 @@ rustmark-actions v0.2.0
 rustmark-core v0.2.0
 ├── ahash v0.8.12
 │   [build-dependencies]
-├── egui v0.37.0
 ├── image v0.25.10
 ├── log v0.4.34
 ├── pulldown-cmark v0.13.4
@@ -65,6 +76,7 @@ rustmark-core v0.2.0
 ├── ropey v1.6.1
 ├── rustls-native-certs v0.8.5
 ├── rustmark-actions v0.2.0
+├── rustmark-shared v0.2.0
 ├── serde v1.0.229
 ├── syntect v5.3.0
 ├── thiserror v2.0.21
@@ -76,6 +88,12 @@ rustmark-core v0.2.0
 rustmark-icons v0.2.0
 ├── egui v0.37.0
 └── rustmark-actions v0.2.0
+
+rustmark-shared v0.2.0
+├── ahash v0.8.12
+│   [build-dependencies]
+├── serde v1.0.229
+└── thiserror v2.0.21
 
 rustmark-ui v0.2.0
 ├── egui v0.37.0

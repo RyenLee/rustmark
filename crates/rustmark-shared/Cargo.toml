@@ -1,0 +1,23 @@
+[package]
+# 独立 crate 版本号不随应用发版（publish = false，仅参与本地 workspace 构建）。
+name = "rustmark-shared"
+version = "0.2.0"
+edition = "2024"
+rust-version = "1.99"
+license = "MIT OR Apache-2.0"
+description = "rustmark 的共享内核：与层无关的纯值、端口与唯一真源（零 IO）"
+publish = false
+
+[dependencies]
+# 依赖面刻意保持极小：共享内核被每一层依赖，它自己不许再拉起重依赖
+# （无 egui / 无 IO / 无解析器）。三项均为纯数据结构所需：
+# - serde：导出格式与主题种类的 `serde` 派生（配置落盘与 DTO 共用）；
+# - thiserror：`AppError` / `FilePathError` 的错误派生；
+# - ahash：`lru` 缓存的哈希器（no-rng 免 getrandom，见 root [workspace.dependencies]）。
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+ahash = { version = "0.8", default-features = false, features = ["std", "no-rng"] }
+
+# V11-65：lint 经 [workspace.lints] 单点继承。
+[lints]
+workspace = true

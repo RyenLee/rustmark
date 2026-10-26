@@ -161,12 +161,18 @@ fn collect_rs_files(dir: &Path) -> Vec<PathBuf> {
     out
 }
 
-/// 两根扫描（D-3 阶段 4a workspace 化）：白名单真源 `shared/text_format.rs`
-/// 等四层在 `crates/rustmark-core/src`，组合根与视图在 `src`；两根都扫
-/// 才等价于拆分前对单一 `src` 的全量覆盖（豁免按层相对路径匹配，两根通用）。
+/// 三根扫描（D-3 阶段 4a workspace 化 + TD-04）：白名单真源
+/// `shared/text_format.rs` 在 `crates/rustmark-shared/src`，四层在
+/// `crates/rustmark-core/src`，组合根与视图在 `src`；三根都扫才等价于
+/// 拆分前对单一 `src` 的全量覆盖（豁免按层相对路径匹配，各根通用；
+/// `shared/` 前缀随目录保留，豁免键不需要改写）。
 fn src_roots() -> Vec<PathBuf> {
     let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    vec![base.join("src"), base.join("crates/rustmark-core/src")]
+    vec![
+        base.join("src"),
+        base.join("crates/rustmark-core/src"),
+        base.join("crates/rustmark-shared/src"),
+    ]
 }
 
 /// 现状守卫：真实工程里**零**处硬编码默认扩展名。

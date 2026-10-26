@@ -63,8 +63,8 @@ mod arch_check {
 ///   的路径>::<结构体>::<字段>`；
 /// - 抽出的叶子 crate 条目：`<crate 短名>/<相对该 crate src 的路径>::
 ///   <结构体>::<字段>`（当前 icons：`icons/lib.rs::…`；ui：
-///   `ui/presentation/state/…`——V11-62 批次 2 起 state 的 168 条
-///   从 core 裸路径改键迁入；批次 1 的 widgets 零结构体零字段）。前缀是**防碰撞**
+///   `ui/presentation/state/…`；**shared（TD-04）：`shared/dialog.rs::…`
+///   ——前缀恰好复现搬迁前的 core 相对路径，故 4 条 shared 键零改动**）。前缀是**防碰撞**
 ///   的键命名空间——core 与叶子 crate 各有一个 `lib.rs`，裸路径会把两边的
 ///   条目合并成同键，白名单 quietly 少算。
 ///
@@ -811,12 +811,13 @@ fn pub_fields_in(source: &str) -> Vec<String> {
 /// 叶子 crate 为 crate 短名 + `/`（防 `lib.rs` 同键碰撞）。
 fn scan_pub_fields() -> (BTreeSet<String>, Vec<String>) {
     let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let roots: [(&str, PathBuf); 3] = [
+    let roots: [(&str, PathBuf); 4] = [
         ("", base.join("crates").join("rustmark-core").join("src")),
         (
             "icons/",
             base.join("crates").join("rustmark-icons").join("src"),
         ),
+        ("", base.join("crates").join("rustmark-shared").join("src")),
         ("ui/", base.join("crates").join("rustmark-ui").join("src")),
     ];
 

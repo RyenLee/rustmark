@@ -1,7 +1,14 @@
-//! 共享内核（Shared Kernel）。
+//! 共享内核（Shared Kernel）的模块根——`rustmark_shared::shared`（TD-04 抽出）。
 //!
 //! 可被任意层依赖，但自身**不得依赖** `domain` / `application` /
 //! `infrastructure` / `presentation`（见 `docs/architecture-constraints.md`）。
+//! 这一条不再只靠词法守卫：crate 的 `Cargo.toml` 只有 serde / thiserror /
+//! ahash 三个纯数据依赖，反向依赖任何层都会在 Cargo 解析期成环报错。
+//!
+//! `rustmark-core` 以 `pub use rustmark_shared::shared;` 桥接，公开路径
+//! `rustmark_core::shared::…` 与拆分前逐字一致（V11-58 / V11-62 同款桥接）。
+//! 共享内核的准入门槛仍是 §4.5 三问 + 登记表，守卫在 `check-arch` 的
+//! `scan_project`——登记键沿用 `shared/<文件名>`，搬迁不改变登记口径。
 //!
 //! - [`error`] / [`result`]：统一错误与结果类型
 //! - [`ids`]：强类型标识符
@@ -22,7 +29,9 @@
 //! - [`lru`]：有界 LRU 映射（D-4；高亮 / 拼写 / 渲染 / 图片四缓存共用）
 //! - [`constants`]：跨层共用的阈值常量（大文件 / 防抖 / 滚动容差，单一真源）
 
-#![deny(clippy::unwrap_used, clippy::expect_used)]
+// 测试代码允许 unwrap / expect（规范 §七-20）；生产代码保持 deny。
+// lint 级别声明在 crate 根 `lib.rs`（模块级重复声明会与 crate 级 cfg_attr
+// 叠加出歧义，且 clippy 只认最外层配置）。
 
 pub mod constants;
 pub mod dialog;

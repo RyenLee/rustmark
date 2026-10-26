@@ -2433,6 +2433,7 @@ dependencies = [
  "ropey",
  "rustls-native-certs",
  "rustmark-actions",
+ "rustmark-shared",
  "serde",
  "syntect",
  "tempfile",
@@ -2447,6 +2448,15 @@ version = "0.2.0"
 dependencies = [
  "egui",
  "rustmark-actions",
+]
+
+[[package]]
+name = "rustmark-shared"
+version = "0.2.0"
+dependencies = [
+ "ahash",
+ "serde",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

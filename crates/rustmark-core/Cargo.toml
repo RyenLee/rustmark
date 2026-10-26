@@ -19,6 +19,13 @@ publish = false
 # （docs/workspace-topology.expected.txt）——零依赖是本 crate 的设计约束。
 rustmark-actions = { path = "../rustmark-actions" }
 
+# --- 本地 crate（TD-04：共享内核，2026-10-26 抽出）---
+# 零 IO 的纯值 / 端口 / 唯一真源（error / ids / geometry / path / pattern /
+# text_format / theme / lru …）。抽取动机是「共享内核有自己的准入与登记规则
+# （§4.5）+ 可被非 UI 消费者单独复用」；反向依赖由 Cargo 锁死（shared 不依赖
+# core）。core 以 `pub use rustmark_shared as shared;` 桥接，公开路径零变化。
+rustmark-shared = { path = "../rustmark-shared" }
+
 # --- UI 绘制原语 ---
 # V11-63 收口（2026-10-26）：**core 已零 egui 依赖**。
 # 原先这里挂着 `egui = { workspace = true }`，理由是「core 只画 egui

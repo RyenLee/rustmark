@@ -33,7 +33,12 @@ pub mod application;
 pub mod domain;
 pub mod infrastructure;
 pub mod presentation;
-pub mod shared;
+
+// TD-04（2026-10-26）：共享内核抽为独立 crate `rustmark-shared`，此处把它的
+// `shared` 模块拼回原位——`crate::shared::…`（core 内 100+ 处）与
+// `rustmark_core::shared::…`（root / ui / tests）公开路径逐字不变。
+// 反向依赖由 Cargo 结构性挡死：shared 不依赖 core，core 依赖 shared。
+pub use rustmark_shared::shared;
 
 // V11-62 批次 3：`shortcuts` 迁入 `rustmark-ui` 后，其 `registry` 仍需 actions crate 的
 // 类型（MenuGroup / UiAction / action）。ui crate 不直接依赖 `rustmark-actions`（保持

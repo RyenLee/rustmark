@@ -162,3 +162,49 @@ fn ui_crate_dependency_face_is_egui_plus_core() {
         );
     }
 }
+
+/// `rustmark-shared` 不得依赖任何 workspace 成员（TD-04 验收第 1 条的机械化）。
+///
+/// 共享内核被 core / ui / root 依赖；它一旦反向依赖任一成员，Cargo 会以
+/// 循环依赖报错——但那条错误只在具体边成环时出现，**「shared 获得本地依赖」
+/// 这件事本身**应当是显式评审事件。本条把判据前移到 manifest：任何
+/// `rustmark-*` 出现在依赖段（normal / dev / build 均算）即红。
+///
+/// 外部纯数据依赖（serde / thiserror / ahash）不受此限——它们正是
+/// 「纯值 / 端口 / 唯一真源」定位的实现手段；要新增，仍应同步本测试的
+/// 注释与 §10.1 的依赖面记录。
+#[test]
+fn shared_crate_declares_no_workspace_dependency() {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("crates")
+        .join("rustmark-shared")
+        .join("Cargo.toml");
+    let text = std::fs::read_to_string(&path).expect("shared crate 的 Cargo.toml 应可读");
+
+    let mut offenders = Vec::new();
+    let mut section = String::new();
+    for raw in text.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if line.starts_with('[') {
+            section = line.to_string();
+            continue;
+        }
+        if !section.contains("dependencies") {
+            continue;
+        }
+        if let Some((name, _)) = line.split_once('=') {
+            let name = name.trim();
+            if name.starts_with("rustmark") {
+                offenders.push(format!("{section} → {name}"));
+            }
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "rustmark-shared 是共享内核，不得依赖任何 workspace 成员\
+         （否则与 core→shared 成环，或让「共享」变成「某层的下游」）：{offenders:?}"
+    );
+}

@@ -42,7 +42,7 @@ impl RfdDialogAdapter {
     fn apply_filters(dialog: FileDialog, filters: &[FileFilter]) -> FileDialog {
         filters.iter().fold(dialog, |acc, filter| {
             acc.add_filter(
-                filter.name.clone(),
+                filter.name().to_string(),
                 &filter
                     .extensions
                     .iter()

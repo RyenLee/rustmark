@@ -46,6 +46,16 @@ impl FileFilter {
             extensions: extensions.iter().map(|e| (*e).to_string()).collect(),
         }
     }
+
+    /// 显示名（如 `Markdown`）。
+    ///
+    /// TD-04 抽出独立 crate 后，实现侧（`infrastructure/dialogs/rfd_adapter`）
+    /// 与端口不再同 crate，读 `pub(crate)` 字段变成 E0616——这里给受控访问器，
+    /// 而不是把字段升 `pub`：名字是构造后不可变的展示文本，没有放开写入口的
+    /// 理由，也避免白名单为纯读点增长。
+    pub fn name(&self) -> &str {
+        &self.name
+    }
 }
 
 /// 原生对话框端口。

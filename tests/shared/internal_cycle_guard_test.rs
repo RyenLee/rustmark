@@ -88,9 +88,14 @@ const EXPECTED_EDGES: &[(&str, &str)] = &[
 ];
 
 /// shared 源码目录（相对本测试 crate 的 manifest，即仓库根）。
+///
+/// TD-04（2026-10-26）抽出 `rustmark-shared` crate 后目录从
+/// `crates/rustmark-core/src/shared` 迁到 `crates/rustmark-shared/src/shared`
+/// ——路径前缀 `shared/` 保留（模块树不变），故边提取的 `crate::shared::<mod>`
+/// 口径与全部合成用例零改动，只换扫描根。
 fn shared_dir() -> PathBuf {
     // `shared` 测试目标属根包，`CARGO_MANIFEST_DIR` 就是仓库根。
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/rustmark-core/src/shared")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/rustmark-shared/src/shared")
 }
 
 use std::path::Path;
