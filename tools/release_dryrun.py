@@ -226,6 +226,19 @@ def check_release_notes(rep: Report, tag: str) -> None:
     else:
         rep.bad("Release Notes 渲染", "渲染输出缺少标题 / 阶段 10 分组 / 校验和提示")
 
+    # SEC-03：发布页三段式（未签名 / 绕过方式 / 校验和）是固定开头，缺一即红。
+    # 判据只认小标题字面量：这正是发布页对用户的承诺，措辞漂移等于承诺漂移。
+    required = ["### 一、未签名", "### 二、绕过方式", "### 三、校验和"]
+    missing = [marker for marker in required if marker not in rendered]
+    if missing:
+        rep.bad("Release Notes 三段式", f"缺少段落 {missing}（SEC-03：发布页必须固定三段）")
+    else:
+        positions = [rendered.index(marker) for marker in required]
+        if positions != sorted(positions):
+            rep.bad("Release Notes 三段式", f"三段顺序错乱，期望按 未签名→绕过→校验和：{positions}")
+        else:
+            rep.ok("Release Notes 三段式", "未签名 / 绕过方式 / 校验和 齐备且顺序正确")
+
 
 def check_no_secrets(rep: Report) -> None:
     hits: list[str] = []

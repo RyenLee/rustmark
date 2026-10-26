@@ -10,6 +10,10 @@
 - [ ] 全量验证链本地通过：`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo run --bin check-arch`、`cargo test --all-targets`
 - [ ] CI 主线（三平台 check + 体积门禁 + perf smoke + deny）绿
 - [ ] `CHANGELOG.md` 已补本版本条目（状态、日期）
+- [ ] **Release Notes 三段式齐备**（`SEC-03`）：发布页正文由
+      `tools/gen_release_notes.py` 生成，开头固定「一、未签名 / 二、绕过方式 /
+      三、校验和」；`python tools/release_dryrun.py` 会断言三段齐全且顺序正确
+      （删段即演练红）。**不要手工改写这三段**——它是发布页对用户的合规承诺。
 - [ ] `Cargo.toml` 版本号已按语义化版本递增
 - [ ] **无私钥/证书入仓**：`git grep -iE '\.p12|\.pfx|\.cer|BEGIN.*PRIVATE'` 为空（CI 的 deny 步骤也会拦）
 - [ ] **依赖安全公告通过**：`cargo deny check licenses advisories bans sources` 全绿
@@ -126,3 +130,8 @@ git tag -d v1.0.0
 CI secrets 注入 `MACOS_CERT_IDENTITY` + 证书（p12 转 base64），
 macOS job 的脚本分支自动切换；Windows 需另购 EV 证书并补 signtool 步骤。
 **证书只进 secrets，绝不入仓**（`.gitignore` 已排除 `*.p12`、`*.pfx`、`*.cer`）。
+
+> **发布页口径（`SEC-03`，机械固化）**：上表的「用户看到的提示 / 绕过方式」不是
+> 只写在本文档里——`tools/gen_release_notes.py` 把「未签名 / 绕过方式 / 校验和」
+> 三段直接渲染进每次 Release 的正文开头，`tools/release_dryrun.py` 断言三段齐全
+> 且顺序正确。签名状态一旦变化（真的买了证书），改的是**模板**，不是每次手写。
