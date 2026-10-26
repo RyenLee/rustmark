@@ -22,10 +22,10 @@
 
 use std::sync::Arc;
 
-use egui::epaint::{Color32, ColorImage, Primitive};
+use egui::epaint::{Color32, Primitive};
 use egui::{Pos2, Rect};
 use rustmark::infrastructure::export::viewport_capture::{
-    CaptureError, MAX_DIMENSION, capture_region_to_png, crop, write_png,
+    CaptureError, MAX_DIMENSION, PortFrame, capture_region_to_png, crop, write_png,
 };
 
 /// 画在帧里的两块色块（与 [`modeled_frame`] 严格对应）。
@@ -73,24 +73,28 @@ fn real_frame() -> (Vec<egui::ClippedPrimitive>, [usize; 2], f32) {
     (prims, size, ppp)
 }
 
-/// 按真实帧的几何**建模**出一张与之一致的整帧图像。
+/// 按真实帧的几何**建模**出一张与之一致的整帧图像（端口表示）。
 ///
 /// 逐像素判断点落在哪块色块内——正是 GPU 会做的事（对这两块纯色矩形而言，
-/// 软件填充的结果与光栅化结果逐字节相同）。
-fn modeled_frame(size: [usize; 2], ppp: f32) -> Arc<ColorImage> {
+/// 软件填充的结果与光栅化结果逐字节相同）。输出为 `PortFrame`：
+/// 行优先 RGBA8，与 egui 无关（V11-63 端口化后 `crop` 只认端口字节）。
+fn modeled_frame(size: [usize; 2], ppp: f32) -> PortFrame {
     let [w, h] = size;
     let a = accent_rect();
-    let mut img = ColorImage::new([w, h], vec![BASE; w * h]);
+    let mut pixels = vec![BASE.to_array(); w * h];
     for y in 0..h {
         for x in 0..w {
             // 像素中心（与光栅化的采样点约定一致）。
             let p = Pos2::new((x as f32 + 0.5) / ppp, (y as f32 + 0.5) / ppp);
             if a.contains(p) {
-                img.pixels[y * w + x] = ACCENT;
+                pixels[y * w + x] = ACCENT.to_array();
             }
         }
     }
-    Arc::new(img)
+    PortFrame {
+        size: [w, h],
+        pixels,
+    }
 }
 
 /// 断言真实帧的几何里确实出现了预期颜色的顶点，且落在预期区域内。
@@ -222,7 +226,10 @@ fn realistic_png_round_trips_through_disk() {
 #[test]
 fn transparent_source_regions_stay_transparent_in_the_png() {
     // 全透明来源：裁剪结果必须保持透明（不能被填成黑或白）。
-    let frame = Arc::new(ColorImage::new([16, 16], vec![Color32::TRANSPARENT; 256]));
+    let frame = Arc::new(PortFrame {
+        size: [16, 16],
+        pixels: vec![[0, 0, 0, 0]; 256],
+    });
     let out = crop(&frame, [4, 4, 12, 12]).expect("裁剪应成功");
     assert!(
         out.pixels().all(|p| p.0[3] == 0),
@@ -236,7 +243,10 @@ fn premultiplied_alpha_is_preserved_verbatim() {
     // 若这里做了转换，PNG 在半透明区域会明显发亮（经典 bug）。
     // 用一个预乘了 50% alpha 的红色验证通道值原样透传。
     let premul = Color32::from_rgba_premultiplied(128, 0, 0, 128);
-    let frame = ColorImage::new([4, 4], vec![premul; 16]);
+    let frame = PortFrame {
+        size: [4, 4],
+        pixels: vec![premul.to_array(); 16],
+    };
     let out = crop(&frame, [0, 0, 4, 4]).expect("裁剪应成功");
     let p = out.get_pixel(2, 2);
     assert_eq!(p.0, [128, 0, 0, 128], "预乘值应逐字节透传");
@@ -246,7 +256,10 @@ fn premultiplied_alpha_is_preserved_verbatim() {
 fn crop_result_is_independent_of_source_ownership() {
     // `frame` 被交出所有权后仍应能裁剪——真机上它是 `Arc<ColorImage>`，
     // 存的是上一帧的引用，生命周期比本次调用长。
-    let frame = Arc::new(ColorImage::new([8, 8], vec![Color32::from_gray(90); 64]));
+    let frame = Arc::new(PortFrame {
+        size: [8, 8],
+        pixels: vec![[90, 90, 90, 255]; 64],
+    });
     let held = Arc::clone(&frame);
     let first = crop(&held, [0, 0, 4, 4]).unwrap();
     drop(held);
@@ -257,7 +270,10 @@ fn crop_result_is_independent_of_source_ownership() {
 #[test]
 fn write_png_reports_the_byte_count_actually_written() {
     // 返回值会显示在「已导出 N 字节」里，必须是**文件真实大小**。
-    let frame = ColorImage::new([32, 32], vec![Color32::from_rgb(9, 8, 7); 1024]);
+    let frame = PortFrame {
+        size: [32, 32],
+        pixels: vec![[9, 8, 7, 255]; 1024],
+    };
     let img = crop(&frame, [0, 0, 32, 32]).unwrap();
     let path = std::env::temp_dir()
         .join("rustmark-viewport-capture-it")
@@ -273,7 +289,10 @@ fn large_but_legal_clips_are_not_rejected() {
     // 上限是 8192，贴近它的合法尺寸必须放行——否则上限就成了
     // 「4K 屏用户永远导不出图」的暗坑。
     let w = MAX_DIMENSION as usize - 2;
-    let frame = ColorImage::new([w, 1], vec![Color32::from_gray(128); w]);
+    let frame = PortFrame {
+        size: [w, 1],
+        pixels: vec![[128, 128, 128, 255]; w],
+    };
     let out = crop(&frame, [0, 0, w as i64, 1]).expect("贴近上限的合法尺寸应放行");
     assert_eq!(out.width(), w as u32);
 }

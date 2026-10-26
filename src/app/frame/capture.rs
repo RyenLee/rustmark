@@ -1,6 +1,8 @@
 //! 图片导出：视口截图、整篇长图、GPU 回传兑现、take_screenshot_event。
 use super::*;
 
+use crate::infrastructure::export::viewport_capture::PortFrame;
+
 /// 一次等待回传的截图任务。
 ///
 /// 只存**裁剪所需的矩形**与落盘目标，不存像素：像素由 egui 在下一帧
@@ -302,6 +304,22 @@ impl EditorApp {
         // 任务已兑现，无论成败都不再占用「等待中」——
         // 放在函数开头，保证下面任何 early return 都不会把它漏掉。
         self.export_ui.awaiting_capture = false;
+
+        // 视口截图来自 egui 的 `ColorImage`；基础设施的 `capture_region_to_png` /
+        // `crop` 只认端口字节（V11-63 端口化），故在此把 `ColorImage` 转换一次
+        // 为纯 RGBA8 的 `PortFrame`（直 alpha）。转换只在回传这一刻做，
+        // 不影响 egui 的渲染时序。
+        let port_frame = {
+            let (w, h) = (frame.size[0], frame.size[1]);
+            let mut pixels = Vec::with_capacity(w * h);
+            for px in &frame.pixels {
+                pixels.push([px.r(), px.g(), px.b(), px.a()]);
+            }
+            PortFrame {
+                size: [w, h],
+                pixels,
+            }
+        };
         // 逻辑点 → 物理像素。必须在**回传时刻**换算：`pixels_per_point`
         // 此刻才能从 ctx 读到，而矩形是上一帧布局定的。
         let ppp = ctx.input(|i| i.pixels_per_point);
@@ -315,7 +333,7 @@ impl EditorApp {
         let Some(mut long) = pending.long else {
             // 视口截图：一帧闭环。
             let result = crate::infrastructure::export::viewport_capture::capture_region_to_png(
-                frame,
+                &port_frame,
                 clip,
                 std::path::Path::new(&pending.path),
             )
@@ -337,7 +355,7 @@ impl EditorApp {
         };
 
         // ---- 整篇长图：本帧像素是第 `long.next` 段 ----
-        let cropped = crate::infrastructure::export::viewport_capture::crop(frame, clip);
+        let cropped = crate::infrastructure::export::viewport_capture::crop(&port_frame, clip);
         match cropped {
             Ok(part) => long.parts.push(part),
             Err(e) => {

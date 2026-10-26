@@ -631,9 +631,10 @@ fn std_process_is_allowed_in_infrastructure() {
 /// # 为什么需要这条
 ///
 /// §10.2 四问之④规定「egui 只应出现在表现适配器」，但 infrastructure 有
-/// 5 个 V11-63 待端口化的已知泄漏文件（fonts 系 3 + viewport_capture 系
-/// 2，见 checker 的 `V11_63_KNOWN_EGUI_LEAKS`）。一刀切禁会让那 5 个文件
-/// 同时报错、规则无法遵守；放之不管则渗漏会扩大。棘轮方案：清单内文件
+/// 3 个 V11-63 待端口化的已知泄漏文件（现仅 fonts 系 3；viewport_capture
+/// 系已于阶段 A 端口化移出，见 checker 的 `V11_63_KNOWN_EGUI_LEAKS`）。
+/// 一刀切禁会让那 3 个文件同时报错、规则无法遵守；放之不管则渗漏会扩大。
+/// 棘轮方案：清单内文件
 /// 文件级放行（见下一条），**清单外**文件照常拦截——渗漏只能缩小不能
 /// 扩大。用例故意取 `highlighting/` 下的真实兄弟文件：它与泄漏清单同层
 /// 不同目录，是最像「漏网新文件」的形状。
@@ -667,9 +668,9 @@ fn egui_is_forbidden_in_infrastructure() {
 /// 放行清单内的已知泄漏文件不报——棘轮≠一刀切。
 ///
 /// 与上一条是同一枚硬币的两面：这条证明放行通道真实存在（否则真实工程
-/// 里那 5 个文件的 35 处存量引用会让 `current_project_has_no_violations`
-/// 常红，规则将无法落地）。取 fonts 簇与 viewport_capture 簇各一个文件，
-/// 覆盖两条链。
+/// 里那 3 个 fonts 文件的存量引用会让 `current_project_has_no_violations`
+/// 常红，规则将无法落地）。取 fonts 簇的文件（现仅该簇在放行清单中；
+/// viewport_capture 簇已于阶段 A 端口化移出，故不再出现在此用例）。
 #[test]
 fn known_v11_63_leak_files_are_grandfathered() {
     let dir = tempfile::tempdir().unwrap();
@@ -678,11 +679,6 @@ fn known_v11_63_leak_files_are_grandfathered() {
         &root,
         "infrastructure/fonts.rs",
         "//! x\nuse egui::FontDefinitions;\npub fn f(d: &FontDefinitions) {}\n",
-    );
-    write_fixture(
-        &root,
-        "infrastructure/export/viewport_capture/image.rs",
-        "//! x\nuse egui::epaint::ColorImage;\npub fn g(i: &ColorImage) {}\n",
     );
 
     let violations = arch_check::scan(&root);

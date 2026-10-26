@@ -2,10 +2,9 @@
 
 use std::path::Path;
 
-use egui::epaint::ColorImage;
 use image::RgbaImage;
 
-use super::{CaptureError, MAX_DIMENSION, MAX_LONG_IMAGE_HEIGHT};
+use super::{CaptureError, MAX_DIMENSION, MAX_LONG_IMAGE_HEIGHT, PortFrame};
 
 /// 从整帧截图里裁出指定区域。
 ///
@@ -19,7 +18,7 @@ use super::{CaptureError, MAX_DIMENSION, MAX_LONG_IMAGE_HEIGHT};
 /// 窗口在发命令与回传之间可能被缩小，此时矩形右边界会超出画面。
 /// 夹紧会**静默产出一张裁掉一半的图**，用户以为导出成功；
 /// 这里选择明确报错——宁可让用户重试一次，也不要给一张残缺的成品。
-pub fn crop(frame: &ColorImage, clip: [i64; 4]) -> Result<RgbaImage, CaptureError> {
+pub fn crop(frame: &PortFrame, clip: [i64; 4]) -> Result<RgbaImage, CaptureError> {
     let (w, h) = (frame.size[0] as i64, frame.size[1] as i64);
     let [left, top, right, bottom] = clip;
     if right > w || bottom > h || left < 0 || top < 0 || right <= left || bottom <= top {
@@ -44,12 +43,13 @@ pub fn crop(frame: &ColorImage, clip: [i64; 4]) -> Result<RgbaImage, CaptureErro
 
     // 直接铺平为 RGBA8 字节缓冲再 `from_raw`。
     // 逐像素 `put_pixel` 会做四次边界检查，1920×1080 的裁剪要多花几百毫秒；
-    // 而 `Color32` 是 `#[repr(C)] [u8; 4]`，重解释成字节是安全的。
+    // `PortFrame::pixels` 是行优先的 RGBA8（`[u8; 4]`），逐像素 `extend_from_slice`
+    // 即铺平，无需逐分量读取。
     let mut buf = Vec::with_capacity(cw as usize * ch as usize * 4);
     for y in 0..ch as i64 {
         let src_start = ((top + y) * w + left) as usize;
         for px in &frame.pixels[src_start..src_start + cw as usize] {
-            buf.extend_from_slice(&[px.r(), px.g(), px.b(), px.a()]);
+            buf.extend_from_slice(px);
         }
     }
     RgbaImage::from_raw(cw, ch, buf).ok_or(CaptureError::EmptyClip { requested: clip })

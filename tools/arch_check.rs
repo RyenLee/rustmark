@@ -87,14 +87,15 @@ const APPLICATION_FORBIDDEN: &[&str] = &[
 ///
 /// # 为什么是棘轮而不是一刀切
 ///
-/// 存量泄漏精确落在 5 个文件（fonts 系 3 + viewport_capture 系 2，即
-/// V11-63 的任务清单，见 [`V11_63_KNOWN_EGUI_LEAKS`]）。一刀切禁 = 5 文件
-/// 同时报错，规则无法遵守；文件级放行后，**未登记**文件的新增引用照常
-/// 拦截——渗漏只能缩小不能扩大。V11-63 端口化落地后放行清单清空，本条
+/// 存量泄漏最初落在 5 个文件（fonts 系 3 + viewport_capture 系 2，即
+/// V11-63 的任务清单，见 [`V11_63_KNOWN_EGUI_LEAKS`]）。viewport_capture 系 2
+/// 已于阶段 A 端口化移出；现仅余 fonts 系 3。一刀切禁 = 文件同时报错，
+/// 规则无法遵守；文件级放行后，**未登记**文件（及同目录新文件）的新增引用
+/// 照常拦截——渗漏只能缩小不能扩大。V11-63 端口化落地后放行清单清空，本条
 /// 升级为无条件生效。
 ///
-/// 已知取舍：放行是文件级的，5 个文件内部新增 egui 引用不会被本条捕获——
-/// 它们本就是 V11-63 的重写对象，边界由任务时间盒控制。
+/// 已知取舍：放行是文件级的，3 个 fonts 文件内部新增 egui 引用不会被本条
+/// 捕获——它们本就是 V11-63 的重写对象，边界由任务时间盒控制。
 const INFRASTRUCTURE_FORBIDDEN: &[&str] = &[
     "crate::app",
     "crate::application",
@@ -104,10 +105,10 @@ const INFRASTRUCTURE_FORBIDDEN: &[&str] = &[
 
 /// [`INFRASTRUCTURE_FORBIDDEN`] 的 `egui` 项的文件级放行清单（V11-63）。
 ///
-/// 5 个文件 = V11-63 任务清单全集：`fonts.rs` / `fonts/discovery.rs` /
-/// `fonts/assembly.rs`（产 `egui::FontDefinitions` 一条链）+
-/// `export/viewport_capture.rs` / `viewport_capture/image.rs`
-/// （`egui::ViewportCommand::Screenshot` / `ColorImage` 一条链）。
+/// 文件清单 = V11-63 端口化的存量泄漏全集：`fonts.rs` / `fonts/discovery.rs` /
+/// `fonts/assembly.rs`（产 `egui::FontDefinitions` 一条链）。
+/// `export/viewport_capture.rs` / `viewport_capture/image.rs` 已于阶段 A 端口化
+/// （`ColorImage` → 端口类型 `PortFrame`），移出本清单。
 ///
 /// 为什么不做成行内 `// arch-allow: egui`：两簇合计 35 处候选（含
 /// `#[cfg(test)]` 里的 `egui::Context` 用法），行内注释会在即将被 V11-63
@@ -122,8 +123,9 @@ const V11_63_KNOWN_EGUI_LEAKS: &[&str] = &[
     "infrastructure/fonts.rs",
     "infrastructure/fonts/discovery.rs",
     "infrastructure/fonts/assembly.rs",
-    "infrastructure/export/viewport_capture.rs",
-    "infrastructure/export/viewport_capture/image.rs",
+    // `infrastructure/export/viewport_capture.rs` 与 `.../viewport_capture/image.rs`
+    // 已于 V11-63 阶段 A 端口化（ColorImage → 端口类型 `PortFrame`，裁剪 / 拼接 /
+    // 写盘只认 RGBA8 字节），不再含 egui 代码，故移出放行清单。
 ];
 
 const PRESENTATION_FORBIDDEN: &[&str] = &["crate::app", "crate::domain", "crate::infrastructure"];

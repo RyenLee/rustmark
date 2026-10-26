@@ -34,13 +34,24 @@
 mod image;
 
 use std::path::Path;
-use std::sync::Arc;
-
-use egui::epaint::ColorImage;
 
 use crate::shared::error::AppError;
 
 pub use image::{crop, stitch, write_png};
+
+/// 截图像素的端口表示：纯 RGBA8 字节，与 egui / GPU 无关。
+///
+/// 视口截图在消费者（`src/app/frame/capture.rs`）处由 egui 的 `ColorImage`
+/// 转换而来；基础设施只处理端口字节，不认识任何渲染后端类型。这样
+/// `viewport_capture` 簇可在无头单测里锁住裁剪 / 拼接 / 写盘逻辑，
+/// 而不必引入 egui（V11-63 端口化目标之一）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PortFrame {
+    /// `[宽, 高]`（像素）。
+    pub size: [usize; 2],
+    /// 行优先的 RGBA8 像素（`[r, g, b, a]`，直 alpha）。
+    pub pixels: Vec<[u8; 4]>,
+}
 
 /// 截图处理失败（转成 [`AppError::io`] 上报）。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -118,7 +129,7 @@ pub const MAX_LONG_IMAGE_HEIGHT: u32 = 16_384;
 
 /// 一步到位：整帧截图 → 裁剪 → 写 PNG。
 pub fn capture_region_to_png(
-    frame: &Arc<ColorImage>,
+    frame: &PortFrame,
     clip: [i64; 4],
     path: &Path,
 ) -> Result<usize, CaptureError> {
@@ -132,18 +143,20 @@ mod tests {
     // 本模块的私有子模块也叫 `image`，glob 会把它带进来遮蔽外部 crate；
     // 显式导入让 `image::open` 等路径仍指向 image crate。
     use ::image;
-    use egui::epaint::Color32;
 
     /// 构造 `w`×`h` 的测试图，像素值由坐标唯一确定（便于断言位置）。
-    fn gradient(w: usize, h: usize) -> ColorImage {
-        let mut img = ColorImage::new([w, h], vec![Color32::BLACK; w * h]);
+    /// 输出为 `PortFrame`：行优先 RGBA8，与 egui 无关。
+    fn gradient(w: usize, h: usize) -> PortFrame {
+        let mut pixels = Vec::with_capacity(w * h);
         for y in 0..h {
             for x in 0..w {
-                img.pixels[y * w + x] =
-                    Color32::from_rgba_unmultiplied((x % 256) as u8, (y % 256) as u8, 128, 255);
+                pixels.push([(x % 256) as u8, (y % 256) as u8, 128, 255]);
             }
         }
-        img
+        PortFrame {
+            size: [w, h],
+            pixels,
+        }
     }
 
     #[test]
@@ -166,10 +179,7 @@ mod tests {
         assert_eq!(out.dimensions(), (12, 9));
         for y in 0..9u32 {
             for x in 0..12u32 {
-                assert_eq!(
-                    out.get_pixel(x, y).0,
-                    frame.pixels[(y * 12 + x) as usize].to_array()
-                );
+                assert_eq!(out.get_pixel(x, y).0, frame.pixels[(y * 12 + x) as usize]);
             }
         }
     }
@@ -223,7 +233,10 @@ mod tests {
         // 若先分配再检查，会先吃掉数 GB 内存再报错。
         let w = MAX_DIMENSION as usize + 8;
         // 只分配一行像素元数据（内存可控），靠 `size[0]` 让 clip 越界 → 走 TooLarge 分支。
-        let frame = ColorImage::new([w, 1], vec![Color32::BLACK; w]);
+        let frame = PortFrame {
+            size: [w, 1],
+            pixels: vec![[0, 0, 0, 255]; w],
+        };
         let err = crop(&frame, [0, 0, w as i64, 1]).expect_err("超上限应报错");
         match err {
             CaptureError::TooLarge { width, limit, .. } => {
@@ -279,7 +292,7 @@ mod tests {
 
     #[test]
     fn end_to_end_from_arc_frame_to_png() {
-        let frame = Arc::new(gradient(16, 16));
+        let frame = gradient(16, 16);
         let dir = std::env::temp_dir().join("rustmark-capture-test");
         let path = dir.join("e2e.png");
         let n = capture_region_to_png(&frame, [4, 4, 12, 12], &path).expect("应成功");

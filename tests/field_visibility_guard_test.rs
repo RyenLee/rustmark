@@ -81,7 +81,7 @@ mod arch_check {
 /// - **删除条目** = 字段已收紧 / 已删：编译器保证外部没有读点，清单
 ///   同步移除，双向断言会把忘了删的情况报红。
 const APPROVED_PUB_FIELDS: &[&str] = &[
-    // total: 550
+    // total: 552
     "application/document/commands.rs::CloseCommand::force",
     "application/document/commands.rs::CloseCommand::id",
     "application/document/commands.rs::FormatCommand::id",
@@ -355,6 +355,11 @@ const APPROVED_PUB_FIELDS: &[&str] = &[
     "infrastructure/export/system_pdf_exporter/backend.rs::PdfBackend::command",
     "infrastructure/export/system_pdf_exporter/backend.rs::PdfBackend::reason",
     "infrastructure/export/system_pdf_exporter/backend.rs::PdfBackend::writes_pdf",
+    // V11-63 阶段 A 端口化：viewport_capture 产 `PortFrame`（RGBA8 字节，
+    // egui 无关）替代 `egui::ColorImage`；两字段是核心外（app/frame/capture.rs
+    // 消费者）合法读点——接口增长留痕，正是本守卫本意。
+    "infrastructure/export/viewport_capture.rs::PortFrame::size",
+    "infrastructure/export/viewport_capture.rs::PortFrame::pixels",
     "infrastructure/fonts.rs::FontSetup::cjk_source",
     "infrastructure/fonts.rs::FontSetup::definitions",
     "infrastructure/fonts.rs::FontSetup::editor_fonts",
