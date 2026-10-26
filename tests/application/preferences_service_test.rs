@@ -84,6 +84,7 @@ fn set_editor_valid_persists() {
             auto_save_interval: Some(10),
             spell_check: true,
             show_line_numbers: false,
+            load_remote_images: false,
             split_ratio: 0.5,
             sidebar_visible: Some(false),
             sidebar_width: None,
@@ -96,6 +97,10 @@ fn set_editor_valid_persists() {
     let settings: SettingsView = svc.get_settings(GetSettingsQuery).unwrap();
     assert_eq!(settings.editor.tab_size, 2);
     assert_eq!(settings.editor.writing_goal, 500, "写作目标应随设置持久化");
+    assert!(
+        !settings.editor.load_remote_images,
+        "远程图片开关必须经 DTO → 领域 → DTO 往返（PRIV-01）：只写一半会\n         让用户关掉开关、重启后又开始联网"
+    );
 }
 
 #[test]
@@ -108,6 +113,7 @@ fn set_editor_goal_beyond_max_saturates_instead_of_failing() {
             auto_save_interval: None,
             spell_check: false,
             show_line_numbers: false,
+            load_remote_images: true,
             split_ratio: 0.5,
             sidebar_visible: Some(false),
             sidebar_width: None,
@@ -135,6 +141,7 @@ fn set_editor_invalid_tab_size_fails() {
             auto_save_interval: Some(10),
             spell_check: true,
             show_line_numbers: false,
+            load_remote_images: true,
             split_ratio: 0.5,
             sidebar_visible: Some(false),
             sidebar_width: None,

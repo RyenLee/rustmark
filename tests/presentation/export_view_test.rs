@@ -998,3 +998,59 @@ fn unchecking_pdf_toc_leaves_pagination_alone() {
         "取消目录不该把分页又勾回来——联动只在勾上时生效"
     );
 }
+
+// ============================================================================
+// PRIV-02 · HTML 导出的 CDN 依赖披露
+// ============================================================================
+
+/// 收集一帧里画出的全部文字（判据走真帧，不看源码字面量）。
+fn frame_texts(ctx: &egui::Context, app: &mut EditorApp) -> Vec<String> {
+    let out = crate::support::run_ui(ctx, frame_input(), |ui| {
+        rustmark::presentation::theme::mapper::apply(ui.ctx(), &app.ui.theme);
+        main_view::show(app, ui);
+    });
+    fn walk(shape: &egui::epaint::Shape, out: &mut Vec<String>) {
+        match shape {
+            egui::epaint::Shape::Text(t) => out.push(t.galley.text().to_string()),
+            egui::epaint::Shape::Vec(v) => v.iter().for_each(|s| walk(s, out)),
+            _ => {}
+        }
+    }
+    let mut texts = Vec::new();
+    for clipped in &out.shapes {
+        walk(&clipped.shape, &mut texts);
+    }
+    texts
+}
+
+/// HTML 导出必须在对话框里明示「导出件会向 jsdelivr 取渲染资源」。
+///
+/// 注入是**自动**的（正文含公式 / 图表才注入），没有开关可挂——所以提示常驻
+/// 在选项下方。用真帧收集文字而不是断言源码字面量：`colored_label` 在窄窗口
+/// 会被裁掉，字面量测试看不出来。
+#[test]
+fn html_export_discloses_the_cdn_dependency() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = out_dir(&dir);
+    let (_cfg, mut app) = app_with_out(&out);
+    let ctx = egui::Context::default();
+
+    open_export(&ctx, &mut app);
+    assert_eq!(
+        app.export_ui.format,
+        ExportFormat::Html,
+        "默认格式应为 HTML"
+    );
+    let html_texts = frame_texts(&ctx, &mut app);
+    assert!(
+        html_texts.iter().any(|t| t.contains("cdn.jsdelivr.net")),
+        "HTML 导出应明示 CDN 依赖，实际文字：{html_texts:?}"
+    );
+
+    app.export_ui.set_format(ExportFormat::Markdown);
+    let md_texts = frame_texts(&ctx, &mut app);
+    assert!(
+        !md_texts.iter().any(|t| t.contains("cdn.jsdelivr.net")),
+        "Markdown 导出不注入资源，不该出现这条提示：{md_texts:?}"
+    );
+}

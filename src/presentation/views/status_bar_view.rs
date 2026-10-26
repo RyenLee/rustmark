@@ -128,6 +128,12 @@ pub struct StatusBarModel {
     pub word_wrap: String,
     /// 自动换行是否开启。
     pub wrap_on: bool,
+    /// 远程图片加载是否已关闭（PRIV-01）；关闭时状态栏给出常驻提示。
+    ///
+    /// 只在**关闭**时出现（默认开启，画出来只会是噪声）：它是「当前处于
+    /// 零外联状态」的可见凭证——用户关掉开关后，除了看图裂了，还需要一个
+    /// 不必打开设置页就能确认的地方。
+    pub remote_images_off: bool,
     /// 写作目标进度（V11-05）；`None` 表示未设置目标（整项不画）。
     pub goal: Option<GoalProgressView>,
     /// 写作目标项文案（`目标 62%` / `目标达成`）。
@@ -189,6 +195,7 @@ pub fn build_model(app: &EditorApp, stats: Option<StatsView>) -> StatusBarModel 
         spell_on,
         word_wrap: format!("自动换行 {}", if wrap_on { "开" } else { "关" }),
         wrap_on,
+        remote_images_off: !app.editor.load_remote_images,
         theme_label,
         theme_hint,
         line_count: format!("{} 行", thousands(index.count())),
@@ -306,6 +313,12 @@ fn draw(
             Some(IntentKind::Spell),
             &mut intents,
         );
+        // 远程图片已关闭（PRIV-01）：常驻提示，仅关闭时出现。静态项——
+        // 开关入口在设置页，这里画成可点样式只会让人去找「点了会怎样」。
+        if model.remote_images_off {
+            separator(ui, &theme);
+            static_text(ui, &theme, "远程图片已禁用");
+        }
 
         // —— 右段 ——
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {

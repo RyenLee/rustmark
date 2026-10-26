@@ -64,6 +64,7 @@ fn customized() -> Preferences {
         Some(60),
         true,
         false,
+        true,
         800,
         0.5,
         Some(false),
@@ -253,6 +254,7 @@ fn concurrent_style_repeated_saves_keep_file_valid() {
             Some(30 + i),
             false,
             false,
+            true,
             400,
             0.5,
             Some(false),
@@ -404,6 +406,7 @@ fn lint_rule_choices_survive_a_toml_round_trip() {
         None,
         false,
         true,
+        true,
         400,
         0.5,
         Some(false),
@@ -480,6 +483,7 @@ fn prefs_with_custom_syntax(syn_heading: Option<&str>) -> Preferences {
         true,
         None,
         false,
+        true,
         true,
         400,
         0.5,
@@ -593,4 +597,68 @@ fn an_old_config_without_max_open_documents_uses_the_default() {
     );
     assert_eq!(loaded.theme().font_size(), 16.0, "其余字段应照常读出");
     assert!(dir.backups().is_empty(), "缺字段不构成损坏，不应产生备份");
+}
+
+/// 旧配置缺 `load_remote_images` 字段时按「加载」读出（PRIV-01）。
+///
+/// 隐私开关的缺省值必须**向后兼容**：升级不该静默改变已有文档的呈现。
+/// 反过来（缺字段读成 `false`）会让所有老用户升级后突然看不到远程图，
+/// 而界面上没有任何解释。
+#[test]
+fn an_old_config_without_load_remote_images_keeps_loading() {
+    let dir = TempDir::new("remote-images-missing");
+    let repo = repo_in(&dir);
+    repo.save(&customized()).expect("先写一份合法配置");
+
+    let raw = fs::read_to_string(repo.path()).expect("应能读回");
+    let stripped: String = raw
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("load_remote_images"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert_ne!(stripped, raw, "应确实删掉了 load_remote_images 那一行");
+    fs::write(repo.path(), stripped).expect("写回旧格式配置");
+
+    let loaded = repo.load().expect("旧配置必须能加载");
+    assert!(
+        loaded.editor().load_remote_images(),
+        "缺字段必须按「加载」读出——否则升级本身会静默改变已有文档的呈现"
+    );
+    assert_eq!(loaded.theme().font_size(), 16.0, "其余字段应照常读出");
+    assert!(dir.backups().is_empty(), "缺字段不构成损坏，不应产生备份");
+}
+
+/// 关掉开关必须**写进配置文件**（不只是内存）——隐私承诺跨会话成立。
+#[test]
+fn load_remote_images_false_survives_a_toml_round_trip() {
+    let dir = TempDir::new("remote-images-off");
+    let repo = repo_in(&dir);
+
+    let mut prefs = customized();
+    let editor = EditorSettings::new(
+        rustmark::domain::preferences::value_objects::TabSize::Two,
+        false,
+        Some(60),
+        true,
+        false,
+        // 唯一被本条关心的一项。
+        false,
+        800,
+        0.5,
+        Some(false),
+        Some(420.0),
+        WritingGoal::new(1200),
+        rustmark::domain::preferences::value_objects::LintSettings::all_enabled(),
+        9,
+    );
+    prefs.set_editor(editor).expect("构造合法偏好设置应成功");
+    repo.save(&prefs).expect("保存应成功");
+
+    let raw = fs::read_to_string(repo.path()).expect("应能读回");
+    assert!(
+        raw.contains("load_remote_images = false"),
+        "开关必须落盘（否则重启后自动恢复联网）：{raw}"
+    );
+    let loaded = repo.load().expect("应能加载");
+    assert!(!loaded.editor().load_remote_images(), "往返后必须仍是关闭");
 }

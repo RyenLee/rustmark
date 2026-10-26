@@ -416,6 +416,20 @@ fn math_in_export_injects_katex_resources() {
         html.contains("querySelectorAll('.math-inline, .math-display')"),
         "渲染脚本应按 pulldown 的类名定位公式元素"
     );
+    // PRIV-02：注入 CDN 时必须在导出件里留下说明注释——导出件会被转发，
+    // 读者打开前无从得知「要联网」，注释让这件事在查看源码 / 审计时也留痕。
+    assert!(
+        html.contains("<!-- 本文件的公式 / 图表渲染资源来自 cdn.jsdelivr.net"),
+        "注入 CDN 的导出件应带一行说明注释：{html}"
+    );
+    let comment_at = html
+        .find("公式 / 图表渲染资源来自")
+        .expect("说明注释应存在");
+    let link_at = html.find("katex.min.css").expect("应注入 KaTeX 样式");
+    assert!(
+        comment_at < link_at,
+        "说明注释应排在资源引用之前（读取顺序即解释顺序）"
+    );
     assert!(
         html.contains("throwOnError: false"),
         "公式渲染失败不得中断整页脚本"

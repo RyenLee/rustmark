@@ -105,6 +105,8 @@ pub struct Snapshot {
     pub spell_check: bool,
     /// 是否显示行号栏。
     pub show_line_numbers: bool,
+    /// 是否加载远程图片（PRIV-01）。
+    pub load_remote_images: bool,
     /// 格式检查规则开关（V11-08）。
     pub lint: LintRulesView,
     /// 打开文档数量上限（问题 038）。
@@ -301,6 +303,7 @@ mod tests {
             auto_save_interval: Some(2),
             spell_check: false,
             show_line_numbers: false,
+            load_remote_images: true,
             lint: LintRulesView::default(),
             max_open_documents: 12,
             writing_goal: 0,

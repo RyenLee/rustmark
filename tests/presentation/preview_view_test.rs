@@ -1722,3 +1722,46 @@ fn the_first_table_overflow_does_not_infect_later_tables() {
         "开启自动换行时任何文字都不得画到视口（1280）之外：{overflow2:?}"
     );
 }
+
+// ============================================================================
+// PRIV-01 · 远程图片开关
+// ============================================================================
+
+/// 关闭「远程图片」后，远程地址**一次外联都不发起**。
+///
+/// 判据用缓存表而不是抓包：被拦截的图片不进缓存（重新打开开关必须立刻恢复
+/// 加载），而正常路径会先写入一条 `loading` 占位——两者在缓存表上区分得开。
+/// `.invalid` 是保留顶级域（RFC 2606），即便真的发请求也解析不到，测试不碰
+/// 真实网络。
+#[test]
+fn disabled_remote_images_never_start_a_load() {
+    let url = "https://example.invalid/priv-01-disabled.png";
+    let (_dir, mut app) = app_with(&format!("![x]({url})\n"));
+    app.set_load_remote_images(false);
+    let ctx = egui::Context::default();
+    render(&mut app, &ctx, 2);
+
+    assert!(
+        rustmark::presentation::views::preview_view::image_cache_state(url).is_none(),
+        "关闭后不得进入加载路径——缓存里连占位都不该有（占位一旦入缓存，\
+         重新打开开关也不会再加载）"
+    );
+}
+
+/// 反向对照：开关开着时，同一份文档**会**进入加载路径。
+///
+/// 没有这一条，上一条可能因为「图片块压根没画」而假绿——拦截与不渲染在
+/// 「缓存为空」上是同一个结果。
+#[test]
+fn enabled_remote_images_enter_the_loading_path() {
+    let url = "https://example.invalid/priv-01-enabled.png";
+    let (_dir, mut app) = app_with(&format!("![x]({url})\n"));
+    assert!(app.editor.load_remote_images, "默认应为加载");
+    let ctx = egui::Context::default();
+    render(&mut app, &ctx, 2);
+
+    assert!(
+        rustmark::presentation::views::preview_view::image_cache_state(url).is_some(),
+        "默认开启时远程图应进入加载路径（占位或结果二者必有其一）"
+    );
+}

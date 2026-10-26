@@ -16,6 +16,7 @@ impl EditorApp {
             auto_save_interval: view.editor.auto_save_interval,
             spell_check: view.editor.spell_check,
             show_line_numbers: view.editor.show_line_numbers,
+            load_remote_images: view.editor.load_remote_images,
             lint: view.editor.lint,
             max_open_documents: view.editor.max_open_documents,
             writing_goal: view.editor.writing_goal,
@@ -153,6 +154,7 @@ impl EditorApp {
             auto_save_interval: snapshot.auto_save_interval,
             spell_check: snapshot.spell_check,
             show_line_numbers: snapshot.show_line_numbers,
+            load_remote_images: snapshot.load_remote_images,
             split_ratio: self.settings().editor.split_ratio,
             // 侧栏开合同理沿用当前值（问题 062）：「取消」回滚的是**设置页里
             // 改过的字段**，而开合是在界面上随手切的、不经过设置页，
@@ -205,6 +207,9 @@ impl EditorApp {
         self.reload_shortcut_registry();
         // 行号栏的会话开关同样回到回滚基准（与主题/快捷键同理由：取消即还原）。
         self.editor.line_numbers = self.settings().editor.show_line_numbers;
+        // 远程图片开关同理（PRIV-01）：取消设置必须把**是否外联**也还原——
+        // 只回滚领域值会让本会话的预览继续按取消前的决定联网 / 不联网。
+        self.editor.load_remote_images = self.settings().editor.load_remote_images;
         // 自动换行 / 拼写检查是「会话 + 领域」双份值，取消时两份一起回滚（F-1）：
         // 只回滚领域会把编辑区留在取消前的行为上，与设置页复选框显示的值矛盾。
         self.editor.word_wrap = self.settings().editor.word_wrap;

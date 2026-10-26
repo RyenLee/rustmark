@@ -158,6 +158,14 @@ fn default_show_line_numbers() -> bool {
     true
 }
 
+/// `EditorSettingsView::load_remote_images` 的 serde 缺省值（加载）。
+///
+/// 与领域默认一致：旧配置文件没有这个字段时按「加载」读出——升级不该静默
+/// 改变已有文档的呈现（PRIV-01 关闭时才零外联）。
+fn default_load_remote_images() -> bool {
+    true
+}
+
 /// `EditorSettingsView::max_open_documents` 的 serde 缺省值（与领域默认一致）。
 ///
 /// 旧配置文件没有这个字段时按默认上限读出，而不是让配置加载失败。
@@ -179,6 +187,11 @@ pub struct EditorSettingsView {
     /// 是否显示行号栏；与领域默认一致（显示），旧配置缺省同样按显示处理。
     #[serde(default = "default_show_line_numbers")]
     pub show_line_numbers: bool,
+    /// 是否加载文档里的远程图片（PRIV-01）；关闭后预览区不再发起任何图片请求。
+    ///
+    /// 与领域默认一致（加载），旧配置缺省同样按加载处理。
+    #[serde(default = "default_load_remote_images")]
+    pub load_remote_images: bool,
     /// 编辑区 / 预览区分割比例（0.2 ~ 0.8）；旧配置缺省时按 `0.5` 处理。
     #[serde(default)]
     pub split_ratio: f32,
@@ -342,6 +355,7 @@ impl SettingsView {
                 auto_save_interval: Some(30),
                 spell_check: false,
                 show_line_numbers: true,
+                load_remote_images: true,
                 split_ratio: 0.5,
                 sidebar_visible: None,
                 sidebar_width: None,

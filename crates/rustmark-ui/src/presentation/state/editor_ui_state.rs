@@ -38,6 +38,12 @@ pub struct EditorUiState {
     pub line_numbers: bool,
     /// 拼写检查开关（P2）。
     pub spell_check: bool,
+    /// 是否加载文档里的远程图片（PRIV-01）。
+    ///
+    /// 默认 `true`；持久化开关在领域 `EditorSettings::load_remote_images`，
+    /// 启动时由 `EditorApp::new` 播种、设置页改动经 `set_load_remote_images`
+    /// 双写（会话 + 领域）。预览区逐图读本字段而不是每图克隆一份设置视图。
+    pub load_remote_images: bool,
     /// 拼写建议菜单（V11-07：右键错词时的「你可能想输入」）。
     ///
     /// `None` = 菜单关闭。放在 UI 状态而非让视图用局部变量：菜单要跨帧存在
@@ -94,6 +100,7 @@ impl EditorUiState {
         Self {
             word_wrap: true,
             line_numbers: true,
+            load_remote_images: true,
             ..Default::default()
         }
     }

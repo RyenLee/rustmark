@@ -201,6 +201,13 @@ pub fn is_remote_url(url: &str) -> bool {
     trimmed.starts_with("http://") || trimmed.starts_with("https://")
 }
 
+/// 关闭「远程图片」后占位里显示的原因（PRIV-01）。
+///
+/// 与断网 / 主机不可达共用同一套占位版式，只换这句原因——用户要能一眼区分
+/// 「网络不通」和「我自己关了它」，否则会去查网络而不是查设置。
+/// 常量而非就地字面量：测试按它断言，文案改动必须有编译期牵引。
+pub(super) const REMOTE_DISABLED_REASON: &str = "远程图片加载已在设置中关闭（设置 → 编辑器）";
+
 /// 后台任务的实际活儿：下载 + 解码，或只解码（已在 UI 线程读到的本地大图）。
 ///
 /// 装箱是因为两类作业的闭包类型不同（捕获的上下文不一样），而回执通道只有
@@ -311,6 +318,19 @@ fn drain_remote_results(ctx: &egui::Context) -> bool {
 pub(super) fn image_entry(ui: &Ui, app: &EditorApp, url: &str) -> ImageEntry {
     // 回执先入账：后台线程在本帧之前完成的加载，此刻就能当缓存命中返回。
     drain_remote_results(ui.ctx());
+    // 远程图片开关（PRIV-01）**在缓存查找之前**判：关闭后这张图在本会话里
+    // 一律按「不可加载」呈现，既不发请求、也不复用此前已缓存的纹理——
+    // 「关了还看得见」会让用户无法确认自己是否真的断开了外联。
+    // 占位不进缓存：重新打开开关时下一帧就会重新走正常加载路径。
+    if is_remote_url(url) && !app.editor.load_remote_images {
+        return ImageEntry {
+            texture: None,
+            size: [0.0, 0.0],
+            error: Some(REMOTE_DISABLED_REASON.to_string()),
+            loading: false,
+            bytes: 0,
+        };
+    }
     if let Some(cached) = IMAGE_CACHE.with(|c| c.borrow_mut().get(url)) {
         return cached;
     }

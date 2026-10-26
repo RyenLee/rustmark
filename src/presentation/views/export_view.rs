@@ -256,6 +256,16 @@ fn common_options(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
             app.set_export_embed_images(embed);
         }
     });
+    // PRIV-02：HTML 的 CDN 注入是**自动**的（正文含公式 / 图表才注入），没有
+    // 给用户一个「别注入」的勾选框——所以提示只能常驻在选项下方，而不是挂在
+    // 某个开关旁边。导出件是会被转发出去的：读者打开时才发现「要联网」太晚。
+    if format == ExportFormat::Html {
+        ui.colored_label(
+            theme.text_secondary,
+            "含公式或图表的文档，导出件会引用 cdn.jsdelivr.net 的 KaTeX / Mermaid：\
+             首次打开需联网；断网时公式与图表保留源码形态，正文照常可读。",
+        );
+    }
 }
 
 /// 图片格式的说明（视口截图 / 整篇长图的能力边界）。

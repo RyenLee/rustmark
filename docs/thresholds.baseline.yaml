@@ -387,7 +387,7 @@ modules:
       autosave_interval_default:
         value: 30
         unit: "seconds"
-        source: "crates/rustmark-core/src/domain/preferences/value_objects/editor.rs:258"
+        source: "crates/rustmark-core/src/domain/preferences/value_objects/editor.rs:280"
         anchor: "auto_save_interval: Some(30)"
         purpose: "自动保存默认间隔；None 关闭自动保存，0 被 is_valid 拒绝。间隔过短会频繁落盘，过长丢失窗口变大。"
         recommended: "10-60"
@@ -420,7 +420,7 @@ modules:
       max_open_documents_default:
         value: 12
         unit: "documents"
-        source: "crates/rustmark-core/src/domain/preferences/value_objects/editor.rs:151"
+        source: "crates/rustmark-core/src/domain/preferences/value_objects/editor.rs:159"
         anchor: "MAX_OPEN_DOCUMENTS_DEFAULT: u32 = 12"
         purpose: "同时打开文档数默认上限；达到上限后打开新文件需先关闭。低于 12 会碍事，高于 30 标签条已无法辨认。"
         recommended: "8-16"
@@ -428,7 +428,7 @@ modules:
       max_open_documents_max:
         value: 30
         unit: "documents"
-        source: "crates/rustmark-core/src/domain/preferences/value_objects/editor.rs:157"
+        source: "crates/rustmark-core/src/domain/preferences/value_objects/editor.rs:165"
         anchor: "MAX_OPEN_DOCUMENTS_MAX: u32 = 30"
         purpose: "打开文档数可选上限（设置页滑块量程上端）；超过 30 无实际收益。"
         recommended: "40（整帧 smoke）；NFR 另测服务层 ≤10ms"
@@ -988,7 +988,7 @@ modules:
       tab_size_default:
         value: 4
         unit: "spaces"
-        source: "crates/rustmark-core/src/domain/preferences/value_objects/editor.rs:256"
+        source: "crates/rustmark-core/src/domain/preferences/value_objects/editor.rs:278"
         anchor: "tab_size: TabSize::Four"
         purpose: "默认缩进宽度；枚举只允许 2/4/8，其它值无法表示。"
         recommended: "2/4/8"
@@ -996,7 +996,7 @@ modules:
       split_ratio_default:
         value: 0.5
         unit: "ratio"
-        source: "crates/rustmark-core/src/domain/preferences/value_objects/editor.rs:262"
+        source: "crates/rustmark-core/src/domain/preferences/value_objects/editor.rs:285"
         anchor: "split_ratio: 0.5"
         purpose: "默认分栏比例（编辑区:预览区 = 1:1）；渲染时再夹紧到 SPLIT_MIN-SPLIT_MAX。"
         recommended: "0.4-0.6"

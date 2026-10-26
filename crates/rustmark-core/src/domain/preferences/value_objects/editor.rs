@@ -106,6 +106,14 @@ fn default_show_line_numbers() -> bool {
     true
 }
 
+/// `EditorSettings::load_remote_images` 的 serde 缺省值（加载）。
+///
+/// 隐私开关的缺省值必须是**向后兼容**的那个：升级本身不该静默改变已有文档
+/// 的呈现。旧配置没有这个字段时按「加载」读出（与 `default_settings()` 一致）。
+fn default_load_remote_images() -> bool {
+    true
+}
+
 /// `EditorSettings::max_open_documents` 的 serde 缺省值（与默认设置一致）。
 ///
 /// 旧配置文件里没有这个字段，缺了按默认上限读出，而不是让配置加载失败
@@ -180,6 +188,20 @@ pub struct EditorSettings {
     /// 字段，缺了按「显示」读出（与默认设置一致），而不是让配置加载失败。
     #[serde(default = "default_show_line_numbers")]
     show_line_numbers: bool,
+    /// 是否加载文档里的远程（http / https）图片（PRIV-01）。
+    ///
+    /// 默认**开启**：图片是 Markdown 的常规内容，首次使用就被一个没被告知的
+    /// 开关挡住更糟；`PRIVACY.md` 已披露「打开含远程图片的文档会向图片主机
+    /// 发起请求」，需要零外联的场景由用户显式关闭。
+    ///
+    /// 关闭后的语义是**一次请求都不发**（不是「先请求再丢弃」）：预览区对远程
+    /// 地址直接给占位，后台下载线程、连接池、TLS 握手都不进入。占位文案与
+    /// 断网时一致，只多一句「已在设置中关闭」。
+    ///
+    /// `#[serde(default = "default_load_remote_images")]`：旧配置缺字段按
+    /// 「开启」读出（同 `show_line_numbers` 的处理）。
+    #[serde(default = "default_load_remote_images")]
+    load_remote_images: bool,
     /// 撤销合并窗口（毫秒），供 [`crate::document::undo::UndoPolicy`] 使用。
     undo_merge_window_ms: u64,
     /// 编辑区 / 预览区分割比例（0.2 ~ 0.8），持久化以记住用户拖拽结果。
@@ -250,7 +272,7 @@ pub struct EditorSettings {
 
 impl EditorSettings {
     /// 默认设置：4 空格缩进、自动换行、30 秒自动保存、不开拼写检查、
-    /// 显示行号栏、400ms 撤销窗口、未设写作目标。
+    /// 显示行号栏、加载远程图片、400ms 撤销窗口、未设写作目标。
     pub fn default_settings() -> Self {
         Self {
             tab_size: TabSize::Four,
@@ -258,6 +280,7 @@ impl EditorSettings {
             auto_save_interval: Some(30),
             spell_check: false,
             show_line_numbers: true,
+            load_remote_images: true,
             undo_merge_window_ms: 400,
             split_ratio: 0.5,
             sidebar_visible: None,
@@ -278,6 +301,7 @@ impl EditorSettings {
         auto_save_interval: Option<u32>,
         spell_check: bool,
         show_line_numbers: bool,
+        load_remote_images: bool,
         undo_merge_window_ms: u64,
         split_ratio: f32,
         sidebar_visible: Option<bool>,
@@ -292,6 +316,7 @@ impl EditorSettings {
             auto_save_interval,
             spell_check,
             show_line_numbers,
+            load_remote_images,
             undo_merge_window_ms,
             split_ratio,
             sidebar_visible,
@@ -327,6 +352,14 @@ impl EditorSettings {
     /// 是否显示行号栏。
     pub(crate) const fn show_line_numbers(&self) -> bool {
         self.show_line_numbers
+    }
+
+    /// 是否加载文档里的远程图片（PRIV-01）；关闭即零外联。
+    ///
+    /// `pub`（与 [`Self::spell_check`] 同级）：集成测试要断言「旧配置缺字段
+    /// 读出的是加载」，而 DTO 只在服务层可见——值对象自己给出读口更直接。
+    pub const fn load_remote_images(&self) -> bool {
+        self.load_remote_images
     }
 
     /// 撤销合并窗口（毫秒）。

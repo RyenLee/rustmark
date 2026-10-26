@@ -241,3 +241,52 @@ fn cancel_settings_rolls_back_word_wrap_and_spell_check() {
     assert_eq!(app.settings().editor.word_wrap, wrap, "领域侧也应回滚");
     assert_eq!(app.settings().editor.spell_check, spell, "领域侧也应回滚");
 }
+
+/// 远程图片开关（PRIV-01）：会话立即生效 + 领域同时写入 + 重启回读。
+///
+/// 三处缺一处的症状分别是「关了还联网」/「重启自动恢复联网」/「设置页显示
+/// 关闭但实际在联网」——隐私承诺不能只靠内存里那个 bool。
+#[test]
+fn set_load_remote_images_writes_session_and_domain() {
+    let dir = tempfile::tempdir().expect("工作区");
+    let mut app = app_in(dir.path());
+    assert!(app.editor.load_remote_images, "默认应为加载");
+
+    app.set_load_remote_images(false);
+
+    assert!(
+        !app.editor.load_remote_images,
+        "当前会话应立即生效（否则本帧照旧联网）"
+    );
+    assert!(
+        !app.settings().editor.load_remote_images,
+        "领域应同时写入（否则重启丢）"
+    );
+    let app = app_in(dir.path());
+    assert!(!app.editor.load_remote_images, "重启后应回读");
+}
+
+/// 「取消」必须把**是否外联**也还原：只回滚领域会让本会话继续按取消前的
+/// 决定联网（或继续断网），与设置页复选框显示的值矛盾。
+#[test]
+fn cancel_settings_rolls_back_remote_images() {
+    let dir = tempfile::tempdir().expect("工作区");
+    let mut app = app_in(dir.path());
+    let before = app.editor.load_remote_images;
+
+    app.execute(UiAction::OpenSettings);
+    app.set_load_remote_images(!before);
+    assert_ne!(app.editor.load_remote_images, before, "前置：设置期间已改");
+
+    app.cancel_settings();
+
+    assert_eq!(
+        app.editor.load_remote_images, before,
+        "会话侧远程图片开关应回滚"
+    );
+    assert_eq!(
+        app.settings().editor.load_remote_images,
+        before,
+        "领域侧也应回滚"
+    );
+}

@@ -666,6 +666,16 @@ impl EditorApp {
         self.editor.line_numbers = on;
     }
 
+    /// 远程图片开关（PRIV-01）：会话状态与领域设置**一起写**（F-1，理由同
+    /// [`Self::set_word_wrap`]）。
+    ///
+    /// 预览区按会话值决定是否外联，落盘值决定重启后是否还外联——**隐私承诺
+    /// 必须跨会话成立**，所以这两半只能有一个入口。
+    pub fn set_load_remote_images(&mut self, on: bool) {
+        self.editor.load_remote_images = on;
+        self.persist_editor_toggle("远程图片", |e| e.load_remote_images = on);
+    }
+
     /// 自动换行开关：会话状态与领域设置**一起写**（F-1）。
     ///
     /// 设置页复选框与状态栏点击是同一个偏好的两个入口，任一处只写一半都会

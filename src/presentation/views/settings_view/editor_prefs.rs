@@ -43,6 +43,21 @@ pub(super) fn editor(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
             app.apply_editor_field(|e| e.show_line_numbers = on);
         }
     });
+    // 远程图片（PRIV-01）：与行号栏同一手法读**会话**值——预览区逐图读它
+    // 决定是否外联，读 `app.settings()` 会每图克隆一次设置视图。写入走
+    // `set_load_remote_images`（会话 + 领域一起写），故不必再调
+    // `apply_editor_field`。
+    field(ui, theme, "远程图片", |ui| {
+        let mut on = app.editor.load_remote_images;
+        if ui.checkbox(&mut on, "加载文档中的远程图片").changed() {
+            app.set_load_remote_images(on);
+        }
+    });
+    ui.colored_label(
+        theme.text_secondary,
+        "关闭后预览区不再向图片主机发起任何请求（离线 / 隐私场景）；\
+         文档里的远程图显示为占位，本地图片与 data URI 不受影响。",
+    );
     field(ui, theme, "自动保存", |ui| {
         let mut interval = view.auto_save_interval.unwrap_or(0);
         if ui

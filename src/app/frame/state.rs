@@ -425,6 +425,9 @@ impl EditorApp {
         // 「设了没保存」；而状态栏的切换更是每次都丢。
         app.editor.word_wrap = settings.editor.word_wrap;
         app.editor.spell_check = settings.editor.spell_check;
+        // 远程图片开关（PRIV-01）：预览区按会话值决定是否外联，启动必须回读，
+        // 否则用户关了开关、重启后又开始联网（隐私承诺变成「只管本次会话」）。
+        app.editor.load_remote_images = settings.editor.load_remote_images;
         app
     }
 }

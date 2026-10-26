@@ -285,6 +285,7 @@ fn to_editor(view: &EditorSettingsView) -> AppResult<EditorSettings> {
         view.auto_save_interval,
         view.spell_check,
         view.show_line_numbers,
+        view.load_remote_images,
         400,
         view.split_ratio,
         view.sidebar_visible,
@@ -335,6 +336,7 @@ fn to_editor_view(editor: &EditorSettings) -> EditorSettingsView {
         auto_save_interval: editor.auto_save_interval(),
         spell_check: editor.spell_check(),
         show_line_numbers: editor.show_line_numbers(),
+        load_remote_images: editor.load_remote_images(),
         split_ratio: editor.split_ratio(),
         // 透传三态（问题 064）：`None`（未决定）不能被折叠成 `false`，
         // 否则「打开文件夹时自动展开」永远看不到未决定的状态。

@@ -503,6 +503,7 @@ fn set_writing_goal(app: &mut EditorApp, goal: u32) {
                 auto_save_interval: view.auto_save_interval,
                 spell_check: view.spell_check,
                 show_line_numbers: view.show_line_numbers,
+                load_remote_images: view.load_remote_images,
                 split_ratio: view.split_ratio,
                 sidebar_visible: Some(false),
                 sidebar_width: None,
@@ -884,4 +885,30 @@ fn status_bar_stats_debounce_recomputes_on_document_switch() {
     app.open_workspace_file(&path_str).expect("打开应成功");
     let b = app.current_stats_for_status_bar().expect("应有统计");
     assert_eq!(b.words, 1, "切到新文档应立刻重算其字数");
+}
+
+// ===========================================================================
+// PRIV-01 · 远程图片开关的可见凭证
+// ===========================================================================
+
+/// 关闭远程图片后状态栏给出常驻提示；开启时不画（默认态不该有噪声）。
+///
+/// 提示的意义是「不必打开设置页就能确认自己处于零外联状态」——用户关掉开关
+/// 后除了图裂了，还需要一个可见凭证。
+#[test]
+fn remote_images_hint_appears_only_when_disabled() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_cfg, mut app) = app_with_file(dir.path(), "remote-hint.md", "abc");
+
+    assert!(
+        !status_bar_view::build_model(&app, None).remote_images_off,
+        "默认开启时状态栏不得画「远程图片已禁用」"
+    );
+
+    app.set_load_remote_images(false);
+
+    assert!(
+        status_bar_view::build_model(&app, None).remote_images_off,
+        "关闭后状态栏必须给出常驻提示"
+    );
 }

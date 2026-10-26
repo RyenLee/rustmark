@@ -178,6 +178,12 @@ fn runtime_resources(body: &str) -> String {
         return String::new();
     }
     let mut out = String::new();
+    // PRIV-02：导出件会被转发给别人，读者打开时才知道「要联网」已经太晚。
+    // 这条注释让「资源来自公共 CDN」在查看源码 / 审计时也留痕，且不影响渲染。
+    out.push_str(
+        "<!-- 本文件的公式 / 图表渲染资源来自 cdn.jsdelivr.net（KaTeX / Mermaid）：\
+首次打开需联网，断网时公式与图表保留源码形态、正文照常可读。 -->\n",
+    );
     if has_math {
         out.push_str(&format!(
             "<link rel=\"stylesheet\" href=\"https://cdn.jsdelivr.net/npm/katex@{v}/dist/katex.min.css\">\n\
