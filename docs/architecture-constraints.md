@@ -540,8 +540,8 @@ rustmark（root：组合根 + views + bin）
 
 | crate | 角色 | 实测规模（2026-10-26，`src/` 口径） | 外部依赖面 |
 |---|---|---|---|
-| `rustmark`（root） | 组合根 + 视图层 + 工具 bin | 89 文件 / 21,396 行 | eframe / egui / image / rfd / anyhow / env_logger / log / wgpu(build) + 3 个本地 crate |
-| `rustmark-core` | 四层脊柱；表现层非视图子模块已全部于 V11-62 批次 1-5 抽去 `rustmark-ui`（core 的 `presentation` 退化为 doc-only 空壳）；**零 egui 依赖**（V11-63） | 172 文件 / 28,054 行 | 12 个直接外部依赖（`cargo tree -p rustmark-core`，V11-63 删 egui 后 13→12）+ 1 个本地（actions） |
+| `rustmark`（root） | 组合根 + 视图层 + 工具 bin | 91 文件 / 21,443 行 | eframe / egui / image / rfd / anyhow / env_logger / log / wgpu(build) + 3 个本地 crate |
+| `rustmark-core` | 四层脊柱；表现层非视图子模块已全部于 V11-62 批次 1-5 抽去 `rustmark-ui`（core 的 `presentation` 退化为 doc-only 空壳）；**零 egui 依赖**（V11-63） | 172 文件 / 28,061 行 | 12 个直接外部依赖（`cargo tree -p rustmark-core`，V11-63 删 egui 后 13→12）+ 1 个本地（actions） |
 | `rustmark-actions` | 动作词汇表契约（V11-57） | 4 文件 / 687 行 | **零依赖** |
 | `rustmark-icons` | 16×16 图标规格 + Painter 渲染器（V11-58） | 1 文件 / 613 行 | egui + rustmark-actions |
 | `rustmark-ui` | 表现层非视图部分：widgets（批次 1）/ state（批次 2）/ shortcuts（批次 3）/ theme（批次 4）/ rich（批次 5，V11-62 收官） | 73 文件 / 17,653 行 | egui + rustmark-core |
