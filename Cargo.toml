@@ -9,10 +9,24 @@
 # root 直接依赖（presentation.rs 把 crate 的 widgets 模块 re-export 回原路径），
 # ui 反向依赖 core（row 封装读 Theme 配色），root → ui → core 与
 # root → core 两条边并存，无环。
-# **命令面必须带 `--workspace`**（clippy/check/test/llvm-cov），否则 core 的
-# 单测会静默退出测试集（测试数下降即事故信号）。
+# 命令面仍**显式带 `--workspace`**（clippy/check/test/llvm-cov）以自明意图；
+# 漏带不再静默缺席——`default-members` 兜底（见下），不带 flag 也覆盖全部成员。
+# 两处清单必须同步：新增成员只改 `members` 会让该 crate 重新对裸命令隐身，
+# `tests/workspace_topology_test.rs::default_members_cover_every_workspace_member`
+# 会当场报红（多 crate 评审 §4.1 / 债务 D-2 的机械化落地）。
 [workspace]
 members = [
+    "crates/rustmark-actions",
+    "crates/rustmark-core",
+    "crates/rustmark-icons",
+    "crates/rustmark-infra",
+    "crates/rustmark-shared",
+    "crates/rustmark-ui",
+]
+# `.` 是 root 包（隐式成员，不在 `members` 里）；写进来才是「裸 cargo 命令
+# 也编 root」。顺序与 members 对齐无强制，但保持一致便于人工对账。
+default-members = [
+    ".",
     "crates/rustmark-actions",
     "crates/rustmark-core",
     "crates/rustmark-icons",

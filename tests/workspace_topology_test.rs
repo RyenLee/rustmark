@@ -15,6 +15,84 @@
 
 use std::collections::BTreeSet;
 
+/// 从根 manifest 里读某个「字符串数组」键（`members` / `default-members`）。
+///
+/// 只解析本项目用到的形态——`key = [` 换行、逐行一个带引号的路径、`]` 收尾，
+/// 允许行内 `#` 注释（本条只取引号内的内容，注释文字不影响）。刻意不引入
+/// `toml` 依赖：这是门禁测试，判据越少依赖越好，解析失败也要能一眼看懂。
+fn manifest_array_values(text: &str, key: &str) -> BTreeSet<String> {
+    let mut values = BTreeSet::new();
+    let mut buffer = String::new();
+    let mut in_array = false;
+    for raw in text.lines() {
+        let line = raw.trim();
+        if !in_array {
+            if line.starts_with('#') {
+                continue;
+            }
+            let Some(rest) = line.strip_prefix(key) else {
+                continue;
+            };
+            let Some(rest) = rest.trim_start().strip_prefix('=') else {
+                continue;
+            };
+            let Some(rest) = rest.trim_start().strip_prefix('[') else {
+                continue;
+            };
+            in_array = true;
+            buffer.push_str(rest);
+        } else {
+            buffer.push_str(line);
+        }
+        if buffer.contains(']') {
+            let body = buffer.split(']').next().unwrap_or_default();
+            for piece in body.split('"').skip(1).step_by(2) {
+                let value = piece.trim();
+                if !value.is_empty() {
+                    values.insert(value.to_string());
+                }
+            }
+            break; // 本键解析完即止，后面的 `[package]` / `[dependencies]` 不再看
+        }
+        buffer.push(' ');
+    }
+    values
+}
+
+/// `default-members` 必须覆盖**全部** workspace 成员（多 crate 评审 §4.1 的机械化）。
+///
+/// 背景：`--workspace` 一直靠人记。漏带时 cargo 只跑默认成员（root 包），
+/// core / ui / infra 的单测**静默缺席**——本地全绿、CI 才红，正是本项目最忌讳的
+/// 「检查缺席却显示绿」。`default-members` 把这个纪律变成 cargo 自己的默认行为，
+/// 但它自身有个同型失效模式：**新增 crate 只改 `members`、忘了改 `default-members`**，
+/// 新 crate 重新对裸命令隐身，而且没有任何报错。本条把两份清单一对一钉死。
+#[test]
+fn default_members_cover_every_workspace_member() {
+    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+    let text = std::fs::read_to_string(&manifest).expect("根 Cargo.toml 应可读");
+
+    let members = manifest_array_values(&text, "members");
+    let defaults = manifest_array_values(&text, "default-members");
+    assert!(
+        !defaults.is_empty(),
+        "根 Cargo.toml 的 [workspace] 缺少 default-members——裸 `cargo test` 会只跑 root，\
+         其余成员的单测静默缺席"
+    );
+
+    let mut expected = members;
+    // root 包（`.`）是隐式成员，不写进 `members`；有 [package] 就必须写进默认成员，
+    // 否则裸命令连组合根自己都不编。
+    if text.lines().any(|line| line.trim() == "[package]") {
+        expected.insert(".".to_string());
+    }
+    assert_eq!(
+        defaults, expected,
+        "default-members 必须与「全部 workspace 成员」逐一对应（`members` + 隐式 root 的 \".\"）——\
+         新增 crate 只改 members 会让它对裸 cargo 命令隐身，这类漏改不会报错，只会在某天\
+         「本地全绿但 CI 红」时暴露"
+    );
+}
+
 /// `rustmark-actions` 必须零依赖（V11-57 验收第 1 条的机械化）。
 ///
 /// 契约 crate 一旦获得任何依赖（normal / dev / build / target-specific），
