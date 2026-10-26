@@ -1699,7 +1699,7 @@ fn check_file(rel: &str, layer: Layer, lexed: &Lexed, registry: &Registry) -> Ve
     let mut used_allow = vec![false; lexed.allows.len()];
     let forbidden = forbidden_for(layer);
     if !forbidden.is_empty() {
-        let candidates = collect_candidates(tokens, &forbidden, allowed_for(layer));
+        let candidates = collect_candidates(tokens, &module_path_of(rel), &forbidden, allowed_for(layer));
         for cand in &candidates {
             // V11-63 棘轮的文件级放行：只放行 [`V11_63_KNOWN_EGUI_LEAKS`]
             // 登记的 5 个存量泄漏文件，未登记文件（含同目录新文件）照常
@@ -1804,9 +1804,83 @@ fn check_file(rel: &str, layer: Layer, lexed: &Lexed, registry: &Registry) -> Ve
     violations
 }
 
+/// 该文件对应的**模块路径**（含开头的 `crate`）。
+///
+/// # 为什么这条路走得通
+///
+/// 本工程**禁 `mod.rs`**（[`check_mod_rs`]），于是「文件路径 → 模块路径」
+/// 是一一对应：`domain/document/aggregate.rs` 就是
+/// `crate::domain::document::aggregate`。有 `mod.rs` 就得先把 `mod x;`
+/// 声明表建起来才能数 `super` 跳几层，而声明表只有解析器看得见——
+/// 词法器看不到。禁 `mod.rs` 顺带让这道门变得可算，属于规则复用。
+fn module_path_of(rel: &str) -> Vec<String> {
+    let stem = rel.strip_suffix(".rs").unwrap_or(rel);
+    // crate 入口文件自身就是 `crate`（`lib.rs` / `main.rs`）。
+    if !stem.contains('/') && matches!(stem, "lib" | "main") {
+        return vec!["crate".to_string()];
+    }
+    let mut segs = vec!["crate".to_string()];
+    segs.extend(stem.split('/').map(|s| s.to_string()));
+    segs
+}
+
+/// 内联模块的最大假定嵌套层数。
+///
+/// `#[cfg(test)] mod tests { use super::…; }` 里 `super` 相对的是那个内联
+/// 模块，比文件本身深一层。词法器不知道自己在第几层内联模块里，故每个文件
+/// 深度都往深了多试几层。
+///
+/// **宁深勿浅**：多试一层顶多在极端嵌套下多报一次（且报的两条指向同一行的
+/// 同一条禁令，去重后仍是一条），少试一层就让跨层写法溜过去了——漏报才是
+/// 这道门要防的事。取 2 是因为三层内联模块在 Rust 里已属罕见写法。
+const MAX_INLINE_MODULE_DEPTH: usize = 2;
+
+/// 相对路径（`super::…` / `self::…`）是否成立。
+fn is_relative_path(path: &str) -> bool {
+    path.starts_with("super::") || path.starts_with("self::") || path == "super" || path == "self"
+}
+
+/// 把相对路径解析成绝对路径；无法解析（弹出到 `crate` 之上）返回 `None`。
+///
+/// `inline_depth`：假定该处位于文件模块之下第几层内联模块。
+fn relative_to_absolute(module: &[String], path: &str, inline_depth: usize) -> Option<String> {
+    let mut base: Vec<String> = module.to_vec();
+    // 内联模块的层级名不可知，用占位段占位（只参与 `super` 的弹出计数）。
+    base.resize(base.len() + inline_depth, "<inline>".to_string());
+
+    let segs: Vec<&str> = path.split("::").collect();
+    let mut i = 0usize;
+    while i < segs.len() {
+        match segs[i] {
+            // `super` 弹出一层；已经到 `crate` 就说明这行源码本身编译不过，
+            // 交编译器管，这里不把它当成依赖。
+            "super" => {
+                if base.len() <= 1 {
+                    return None;
+                }
+                base.pop();
+                i += 1;
+            }
+            // `self` 不改变当前模块。
+            "self" => i += 1,
+            _ => break,
+        }
+    }
+    // 全是 `super`/`self` 或压根不相对：前者不成依赖，后者 caller 不该调用本函数。
+    if i == 0 || i >= segs.len() {
+        return None;
+    }
+    // 还剩占位段说明没能弹出真实的位置（模块树比假定浅），这条猜测作废。
+    if base.iter().any(|s| s == "<inline>") {
+        return None;
+    }
+    Some(format!("{}::{}", base.join("::"), segs[i..].join("::")))
+}
+
 /// 收集全部「疑似违规」候选。
 fn collect_candidates(
     tokens: &[Token],
+    module: &[String],
     forbidden: &[&'static str],
     allowed: &[&'static str],
 ) -> Vec<Candidate> {
@@ -1823,8 +1897,16 @@ fn collect_candidates(
                 .map(|x| x.line)
                 .unwrap_or(t.line);
             for (path, line) in paths {
-                push_candidates(
-                    &mut out, &path, line, t.line, stmt_end, "use", forbidden, allowed,
+                push_path_candidates(
+                    &mut out,
+                    &path,
+                    line,
+                    t.line,
+                    stmt_end,
+                    "use",
+                    module,
+                    forbidden,
+                    allowed,
                 );
             }
             i = if end > i { end } else { i + 1 };
@@ -1846,8 +1928,16 @@ fn collect_candidates(
                 .map(|x| x.line)
                 .unwrap_or(t.line);
             for (path, line) in paths {
-                push_candidates(
-                    &mut out, &path, line, t.line, stmt_end, "extern crate", forbidden, allowed,
+                push_path_candidates(
+                    &mut out,
+                    &path,
+                    line,
+                    t.line,
+                    stmt_end,
+                    "extern crate",
+                    module,
+                    forbidden,
+                    allowed,
                 );
             }
             i = if end > i { end } else { i + 1 };
@@ -1876,8 +1966,8 @@ fn collect_candidates(
                 .map(|x| x.text.clone())
                 .collect();
             let path = segs.join("::");
-            push_candidates(
-                &mut out, &path, t.line, t.line, t.line, "引用", forbidden, allowed,
+            push_path_candidates(
+                &mut out, &path, t.line, t.line, t.line, "引用", module, forbidden, allowed,
             );
             i = j;
             continue;
@@ -1885,6 +1975,66 @@ fn collect_candidates(
         i += 1;
     }
     out
+}
+
+/// 一条依赖路径的候选分发：相对路径先**解析成绝对路径**再判，其余照原样判。
+///
+/// # 为什么相对路径必须单独走一遍
+///
+/// 禁令表全是**绝对**词条（`crate::infrastructure`），而 Rust 允许用
+/// `super::super::super::infrastructure::x` 表达同一条边——语义完全相同，
+/// 字面第一段却是 `super`，任何绝对词条都匹配不上。那等于「换个拼写就能绕过
+/// 全部层禁令」，且编译照过、单测照绿：层禁令从一道门变成一个门帘。
+///
+/// 故判定前先归一到绝对形态（[`relative_to_absolute`]）；报告里保留源码拼写
+/// 并附解析结果，读者要能对着自己写的那一行看懂为什么它被判违规。
+#[allow(clippy::too_many_arguments)]
+fn push_path_candidates(
+    out: &mut Vec<Candidate>,
+    path: &str,
+    line: usize,
+    win_start: usize,
+    win_end: usize,
+    source: &'static str,
+    module: &[String],
+    forbidden: &[&'static str],
+    allowed: &[&'static str],
+) {
+    if !is_relative_path(path) {
+        push_candidates(out, path, line, win_start, win_end, source, forbidden, allowed);
+        return;
+    }
+    // 同一行同一条禁令只报一次：多个假定深度可能都落在同一条例令上，
+    // 取**最浅**的那次（最贴近源码直觉的那种写法）。
+    let mut emitted: Vec<&'static str> = Vec::new();
+    for depth in 0..=MAX_INLINE_MODULE_DEPTH {
+        let Some(abs) = relative_to_absolute(module, path, depth) else {
+            continue;
+        };
+        let mut staged = Vec::new();
+        push_candidates(
+            &mut staged,
+            &abs,
+            line,
+            win_start,
+            win_end,
+            source,
+            forbidden,
+            allowed,
+        );
+        for cand in staged {
+            if emitted.contains(&cand.banned) {
+                continue;
+            }
+            emitted.push(cand.banned);
+            out.push(Candidate {
+                // 报告里保留源码拼写，同时给出解析结果——读者要能对着自己
+                // 写的那一行看懂「为什么这条算法上算违规」。
+                path: format!("{path}（解析为 {abs}）"),
+                ..cand
+            });
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

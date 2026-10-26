@@ -2928,3 +2928,154 @@ fn views_misplaced_in_ui_root_still_trip_the_bans() {
         v.detail
     );
 }
+
+// ============================================================================
+// 十八、`super::` 相对路径与 glob 导入（E-04 / E-05）
+// ============================================================================
+
+/// `super::` 链跨层必须拦——相对路径不是「换个写法就绕开门禁」的后门。
+///
+/// # 这条为什么必须钉
+///
+/// 禁令表是**绝对路径**词条（`crate::infrastructure`），而 Rust 允许用
+/// `super::super::…` 表达同一条边。旧实现只在意第一段的字面 expect，于是
+/// 「domain 里写 `use super::super::super::infrastructure::x`」编译照过、
+/// 门禁照绿——层禁令从窗口悄悄变成门帘。
+#[test]
+fn super_chain_reaching_another_layer_is_detected() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "domain/document/aggregate.rs",
+        "//! x\nuse super::super::super::infrastructure::cache::Entry;\npub fn f() {}\n",
+    );
+
+    let violations = arch_check::scan(&root);
+    assert_eq!(
+        violations.len(),
+        1,
+        "domain 经 super 链引 infrastructure 应报 1 处，实际：{:?}",
+        described(&violations)
+    );
+    assert!(
+        violations[0].detail.contains("infrastructure"),
+        "{:?}",
+        violations[0]
+    );
+}
+
+/// glob 导入不得成为绕过全局禁令的通道。
+#[test]
+fn glob_import_of_a_forbidden_layer_is_detected() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "domain/document/aggregate.rs",
+        "//! x\nuse crate::infrastructure::*;\npub fn f() {}\n",
+    );
+
+    let violations = arch_check::scan(&root);
+    assert_eq!(
+        violations.len(),
+        1,
+        "domain 用 glob 拉入 infrastructure 应报 1 处，实际：{:?}",
+        described(&violations)
+    );
+}
+
+/// 同层的 `super::` 链**不**是违规——判据区分的是「是否越过层界」，不是「是否用了相对路径」。
+///
+/// # 为什么必须有一条反向放行
+///
+/// 只测「跨层报」的守卫可以被一条粗暴实现骗过去：把所有 `super::` 一律判违规。
+/// 那会让工程里几十处同层兄弟引用全部告警，规则当即不可遵守。
+/// 这条钉住「禁的是**越层**，不是**相对写法**」。
+#[test]
+fn same_layer_super_chain_is_not_a_violation() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "application/document/service/drafts.rs",
+        "//! x\nuse super::super::queries::Draft;\npub fn f(d: Draft) {}\n",
+    );
+
+    let violations = arch_check::scan(&root);
+    assert!(
+        violations.is_empty(),
+        "同层兄弟引用不该报，实际：{:?}",
+        described(&violations)
+    );
+}
+
+/// 内联测试模块里的 `super::` 链同样要拦。
+///
+/// # 为什么这条单独成例
+///
+/// `#[cfg(test)] mod tests { use super::super::…; }` 里的 `super` 相对的是
+/// **那个内联模块**，比文件本身深一层。若解析器只按文件模块深度算，这一整类
+/// 「躲进测试模块里跨层」的写法会被漏掉——而这恰好是「写测试时图省事」最常
+/// 走的路。故要做多深度猜测（[:arch_check::MAX_INLINE_MODULE_DEPTH]）。
+#[test]
+fn super_chain_inside_an_inline_test_module_is_detected() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "domain/document/aggregate.rs",
+        "//! x\n#[cfg(test)]\nmod tests {\n    use super::super::super::super::infrastructure::cache::Entry;\n}\n",
+    );
+
+    let violations = arch_check::scan(&root);
+    assert_eq!(
+        violations.len(),
+        1,
+        "内联测试模块里的跨层 super 链应报 1 处，实际：{:?}",
+        described(&violations)
+    );
+    assert!(
+        violations[0]
+            .detail
+            .contains("解析为 crate::infrastructure"),
+        "文案须给出解析后的绝对路径：{}",
+        violations[0].detail
+    );
+}
+
+/// glob 导入的三种形态都必须拦：裸 glob、组内 glob、重导出 glob。
+///
+/// # 为什么留着这条（以及为什么它不是新增规则）
+///
+/// 评估阶段曾怀疑 glob 会绕过禁令；实测三种形态**都已被现有段前缀匹配命中**。
+/// 用例保留下来是为了把这桩已查证的事实钉住：日后若有人把 `matches_ban`
+/// 改成全字面相等（看 glob 的 `::*` 尾巴不顺眼），这里立刻红。
+#[test]
+fn glob_import_shapes_are_all_detected() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("src");
+    write_fixture(
+        &root,
+        "domain/a.rs",
+        "//! x\nuse crate::infrastructure::*;\npub fn f() {}\n",
+    );
+    write_fixture(
+        &root,
+        "domain/b.rs",
+        "//! x\nuse crate::{infrastructure::*, shared::lru};\npub fn f() {}\n",
+    );
+    write_fixture(
+        &root,
+        "domain/c.rs",
+        "//! x\npub use crate::infrastructure::*;\n",
+    );
+
+    let violations = arch_check::scan(&root);
+    let detail = described(&violations);
+    assert_eq!(violations.len(), 3, "三种 glob 形态各报 1 处：{detail:?}");
+    assert!(
+        detail.iter().all(|d| d.contains("infrastructure")),
+        "每条都应点名 infrastructure：{detail:?}"
+    );
+}
