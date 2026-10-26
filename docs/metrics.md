@@ -29,7 +29,7 @@
 | `shared` 内部依赖边 | 11 | `architecture-constraints.md` §4.6 清单 | 新增边未登记 → 内部环风险 |
 | 跨 crate 字段白名单条目（守卫总数 / 其中 `views` 经桥接读点） | **559**（2026-10-26 实测，与守卫 `// total:` 注释同值）/ **169**（2026-10-25 快照，含 22 个 `pub` setter）；守卫现扫 **5 个 src 根**（core / icons / shared / infra / ui），shared 与 infra 的键前缀为空——两者保留 `shared/` `infrastructure/` 子目录，裸相对路径恰好复现搬迁前的 core 键，故总数不变 | `tests/field_visibility_guard_test.rs` 集合相等双向断言 | 随功能增长显著加速 → 重评 `state` 与 `views` 是否应同留 root |
 | 帧耗时超预算告警（D-5，2026-10-26） | 门槛 16ms（`NFR-PERF-04` 的一帧口径）；限流 120 帧/条；常态指标 600 帧/条 | `src/app/frame/scheduler.rs` 的 `FRAME_BUDGET` + `log::warn!`（分阶段归因）/ `log::debug!`（趋势），**输出仅 release 构建**（`observability_enabled`；debug 帧耗时不可比）；判据见该文件 8 条单测 | 连续多条且 `绘制` 占比高 → 排版层回归，对照 §3.2；`状态更新` 占比高 → 查同一行的到期任务 |
-| 测试分布（**用例数**口径，2026-10-26） | domain 200｜application 169｜shared 81｜infrastructure 304｜presentation 626｜app 158｜integration 81｜e2e 16（另有 domain 内联 17） | `grep -c '#\[test\]' tests/<layer>/*.rs`；内联为 `src/**` 内 `#[cfg(test)] mod` | **单看文件数会误判**：domain 只有 11 个测试文件但 200 例（18.2 例/文件），密度高于 presentation 的 14.2；只有「用例数与文件数同时下降」才视为覆盖退化 |
+| 测试分布（**用例数**口径，2026-10-26） | domain 200｜application 170｜shared 81｜infrastructure 306｜presentation 630｜app 160｜integration 81｜e2e 16（另有内联：domain 17，及「去双源」批次新增 9 条——shared 2 / application 4 / views 3） | `grep -c '#\[test\]' tests/<layer>/*.rs`；内联为 `src/**` 内 `#[cfg(test)] mod` | **单看文件数会误判**：domain 只有 11 个测试文件但 200 例（18.2 例/文件），密度高于 presentation 的 14.2；只有「用例数与文件数同时下降」才视为覆盖退化 |
 
 > 口径说明：`shared` 文件数已用 `find crates/rustmark-shared/src/shared -name '*.rs' | wc -l` 复核为 **19**；
 > 白名单**总数**取 2026-10-26 实测（559，守卫常量注释同值），`views` 侧读点 **169** 仍是
@@ -38,7 +38,7 @@
 > 测试分布按**用例数**统计，不按文件数：评估报告 E-26 的「金字塔倒置」是文件数口径的产物
 > （领域层模块少 → 文件少，但每个文件的用例密度最高）；补测后 domain 200 例，见报告 E-26 收口记录。
 > 表内 `app 158` 是 `tests/app/*.rs` 口径；`src/app/frame/scheduler.rs` 的 8 条内联单测（D-5）
-> 不在此列——内联用例只在统计「源码级 `#[test]` 总数」时才计入（当前 `--all-targets` **2216** + doc 1 = **2217**，2026-10-26 V11-61 + D-6 后实测；其中 `application::document::find` 有 8 条内联用例）。
+> 不在此列——内联用例只在统计「源码级 `#[test]` 总数」时才计入（当前 `--all-targets` **2226** + doc 1 = **2227**，2026-10-26「去双源」批次后实测；其中 `application::document::find` 有 8 条内联用例、`search::LineCursor` 4 条、`diff_view::gutter_numbers` 3 条、`shared::text` 2 条）。
 
 ## 2. 体积预算分解（预估 vs 实测）
 

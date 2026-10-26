@@ -112,6 +112,13 @@
 > 守卫 5 条（`tests/test_target_guard_test.rs`）。release 仍 **10,550,272 B**（V11-61 是纯搬迁，
 > D-6 只加测试目标，均不进产物）。
 
+> **基线七更新（2026-10-26，「去双源」批次后）：2227 passed / 0 failed / 4 ignored**
+> （`--all-targets` **2226** + `--doc` 1）。较 2217 的 **+10** 全部来自 `8036a0d` 的
+> 不变量断言：`shared::text::thousands` 2 条、`diff_view::gutter_numbers` 3 条、
+> `search::LineCursor` 4 条（与 `shared::text::line_index_at` 对拍）、
+> `dto_default_palette_is_derived_from_the_domain_default` 1 条。
+> release **10,550,272 B 逐字节不变**（纯重构）。
+
 **通用验收（每项必含）**：上表五项全绿 + `cargo fmt --check` 绿 + 所有命令带
 `--workspace`（root `Cargo.toml` 注释警告：否则 core 单测静默退出测试集，
 测试数下降即事故信号）。
@@ -572,8 +579,8 @@ V11-59 ─────────────────────┼──�
 cargo fmt --check
 cargo run --bin check-arch
 cargo clippy --workspace --all-targets --all-features -- -D warnings   # 0 告警
-cargo test --workspace --all-targets --no-fail-fast   # 2216 passed / 0 failed / 4 ignored
-cargo test --workspace --doc                          # +1 = 合计 2217
+cargo test --workspace --all-targets --no-fail-fast   # 2226 passed / 0 failed / 4 ignored
+cargo test --workspace --doc                          # +1 = 合计 2227
                                  # （grep '^test result:' | awk 逐行求和；`--workspace` 仍显式书写，漏带已由 default-members 兜底）
 python tools/check_thresholds.py # 121 阈值 / 9 模块 / 数值校验 110，OK
 bash scripts/size_gate.sh       # exe ≤ 11,534,336 B（11 MiB 红线；预警 11,010,048 B = 10.5 MiB）；现 10,550,272 B
