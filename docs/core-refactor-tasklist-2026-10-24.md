@@ -95,6 +95,15 @@
 > 八条内联用例（阈值边界 / 归因算术 / 墙钟打点 / 限流会计 / 输出开关 / 接线 / 清表顺序 / 未超预算静默），
 > 均在 `src/app/frame/scheduler.rs`。**本清单的「当前基线」改为 2195 执行**；
 > 附录速查已同步为 2194 + 1。
+>
+> **基线五更新（2026-10-26，`default-members` + PRIV-01/02 后）：2204 passed / 0 failed / 4 ignored**
+> （`--all-targets` **2203** + `--doc` 1）。较 2195 的 **+9** = `9c85129` 的
+> `default_members_cover_every_workspace_member`（拓扑守卫，+1）+ `ee8acfb` 的 **+8**：
+> 远程图片开关与导出披露（`tests/infrastructure` 2 = 旧配置缺字段读 `true` / 关闭值 TOML
+> 往返；`tests/app` 2 = 双写 + 重启回读 / 取消回滚；`tests/presentation/preview_view` 2 =
+> 关闭后不进加载路径 + 开启态反向对照；`status_bar_view` 1 = 提示只在关闭时出现；
+> `export_view` 1 = 对话框真帧提示）。既有 `set_editor_valid_persists` 只加断言、不计数。
+> release 同步实测 **10,550,272 B**（10.062 MiB，`size_gate` exit 0）。
 
 **通用验收（每项必含）**：上表五项全绿 + `cargo fmt --check` 绿 + 所有命令带
 `--workspace`（root `Cargo.toml` 注释警告：否则 core 单测静默退出测试集，
@@ -540,11 +549,11 @@ V11-59 ─────────────────────┼──�
 cargo fmt --check
 cargo run --bin check-arch
 cargo clippy --workspace --all-targets --all-features -- -D warnings   # 0 告警
-cargo test --workspace --all-targets --no-fail-fast   # 2194 passed / 0 failed / 4 ignored
-cargo test --workspace --doc                          # +1 = 合计 2195
-                                 # （grep '^test result:' | awk 逐行求和；命令必带 --workspace）
+cargo test --workspace --all-targets --no-fail-fast   # 2203 passed / 0 failed / 4 ignored
+cargo test --workspace --doc                          # +1 = 合计 2204
+                                 # （grep '^test result:' | awk 逐行求和；`--workspace` 仍显式书写，漏带已由 default-members 兜底）
 python tools/check_thresholds.py # 121 阈值 / 9 模块 / 数值校验 110，OK
-bash scripts/size_gate.sh       # exe ≤ 11,534,336 B（11 MiB 红线；预警 11,010,048 B = 10.5 MiB）；现 10,548,736 B
+bash scripts/size_gate.sh       # exe ≤ 11,534,336 B（11 MiB 红线；预警 11,010,048 B = 10.5 MiB）；现 10,550,272 B
 cargo tree --workspace --depth 1   # 拓扑对 docs/workspace-topology.expected.txt（本地依赖边 9 条）
 ```
 

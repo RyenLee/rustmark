@@ -387,9 +387,17 @@ cargo test --workspace
 cargo run --bin check-arch
 ```
 
-`--workspace` **必带**（D-3 阶段 4a workspace 化后）：不带时 cargo 只跑默认成员
-（root 包），`crates/rustmark-core` 的检查与单测会**静默缺席**——CI 同口径
-（`ci.yml` 的 clippy / check / test / llvm-cov 四处均已加）。
+`--workspace` 仍**显式书写**（自明意图、与 CI 同口径），但不再是正确性的依赖：
+2026-10-26 起根 manifest 的 `[workspace] default-members` 已覆盖全部成员
+（root `.` + 6 个 crate），漏带 flag 时 cargo 也跑全量——原先「忘带 → core 单测
+**静默缺席**、本地全绿 CI 才红」的失效模式（多 crate 评审债务 D-2）已由 cargo
+自身兜底。两份清单的同步同样被机械钉死：
+`tests/workspace_topology_test.rs::default_members_cover_every_workspace_member`
+对 `members` + 隐式 root 做**集合相等**断言——新增 crate 只改一处即红。
+
+> 边界：`default-members` 只影响「不带 `-p`/`--workspace` 的命令跑哪些包」。
+> `cargo test --doc` 仍单独跑（`--all-targets` 不含 doc 测试），命令面见
+> `docs/testing.md`。
 
 违规注入自检：在 `crates/rustmark-core/src/domain/**` 临时加入 `use egui;`
 → `check-arch` 必须退出码非 0 并打印带 `crates/rustmark-core/src/` 前缀的

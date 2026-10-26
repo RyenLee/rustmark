@@ -102,7 +102,7 @@ schema_version = 1        # 配置 schema 版本（ADR-003），结构变更时�
 
 ## 5. `[editor]` 编辑器设置
 
-出处：`theme.rs` / `editor.rs::EditorSettings`（L159–L269）。
+出处：`theme.rs` / `editor.rs::EditorSettings`（L169–L446）。
 
 | 键 | 类型 | 默认 | 说明与约束 |
 |---|---|---|---|
@@ -111,6 +111,7 @@ schema_version = 1        # 配置 schema 版本（ADR-003），结构变更时�
 | `auto_save_interval` | 整数或省略 | `30` | 自动保存间隔（秒）；**`0` 非法**（保存被拒）；键省略 = 关闭自动保存 |
 | `spell_check` | 布尔 | `false` | 拼写检查（内置 3779 词英文词表，演示级） |
 | `show_line_numbers` | 布尔 | `true` | 行号栏（缺省按 `true` 读出） |
+| `load_remote_images` | 布尔 | `true` | 是否加载文档里的远程（http/https）图片，**隐私开关**（PRIV-01）；缺省按 `true` 读出。关闭后预览区对这些地址**一次请求都不发**（占位文案与断网一致，只多一句「已在设置中关闭」），状态栏常驻「远程图片已禁用」；本地图片与 data URI 不受影响。改动即时落盘 |
 | `undo_merge_window_ms` | 整数 | `400` | 撤销合并窗口（毫秒）——连续输入在此窗口内合并为一步 |
 | `split_ratio` | 浮点 | `0.5` | 编辑区 / 预览区分割比例，合法区间 **0.2–0.8**（缺省按 `0.5`） |
 | `sidebar_visible` | 布尔或省略 | 省略 | **三态**：键省略 = 用户从未决定过（按收起渲染，打开文件夹时可自动展开）；`true/false` = 用户的明确决定，此后一律尊重。省略时不写盘 |
@@ -210,6 +211,7 @@ word_wrap = true
 auto_save_interval = 30    # 秒；删除本键 = 关闭自动保存（0 非法）
 spell_check = false
 show_line_numbers = true
+load_remote_images = true   # false = 预览区不再请求远程图片（零外联）
 undo_merge_window_ms = 400
 split_ratio = 0.5          # 0.2 – 0.8
 writing_goal = 0           # 0 = 未设置；上限 1_000_000
