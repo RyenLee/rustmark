@@ -141,6 +141,15 @@ rich / widgets ──► （不得回指 views / state / theme / widgets）
 `views/` 与其余子层同样享有 4.2 的 `crate::app::frame` 窄豁免——豁免跟着
 子层细化走，窄前缀本身不变。
 
+> **分工澄清（E-08，2026-10-26）**：`views` 在 root（`src/presentation/views/`）、
+> `state/theme/shortcuts/rich/widgets` 在 `rustmark-ui` crate。因此 ui 内写
+> `crate::presentation::views` **无法解析**，本表里的 `crate::presentation::views` 词条在 ui crate
+> 内实为 **no-op**；「叶子不得依赖视图编排者」这一 R-13 核心意图，在 *views 方向* 上改由
+> **Cargo 禁止 `rustmark-ui → root`** 兜底（crate 拓扑保证）。*兄弟子层方向*（如 `rich → state`）
+> 仍由本表词法守卫生效。若某子层将来搬回 core，`views` 方向词法禁令会**自动重生**
+> （`icons` 同款先例：V11-58 抽去 `rustmark-icons` 后 `icons.rs` 词条休眠，搬回即生效）。结论：
+> 不要误以为词法守卫仍在管 views 方向——回迁子层前务必确认 crate 拓扑约束仍在。
+
 ### 4.1 判定口径（校验器怎么判）
 
 校验器是**词法级**的（不解析 AST，不引入额外依赖）。判定口径即规则的一部分：
@@ -178,6 +187,25 @@ rich / widgets ──► （不得回指 views / state / theme / widgets）
 8. **`tests/` 全部文件判 `tests` 层**（R-02）：测试是**消费者**不是层，
    `tests/domain/`、`tests/presentation/` 是测试目标的划分，与 `src/` 的层
    毫无关系——按目录名判层会误套禁令。
+9. **相对路径先归一再判**（2026-10-25 补齐）：`super::…` / `self::…` 开头的
+   `use` 与限定路径，先按「文件→模块路径」解析成绝对路径，再套同一张禁令表。
+   `super::super::super::infrastructure::x` 与 `crate::infrastructure::x`
+   是同一条边，只认后者等于给禁令留了一扇侧门。
+
+   之所以能精确算出 `super` 跳几层：本工程**禁 `mod.rs`**（§7），于是
+   「文件路径 → 模块路径」一一对应（`domain/document/aggregate.rs` 就是
+   `crate::domain::document::aggregate`）；有 `mod.rs` 就得先把 `mod x;`
+   声明表建起来，那是词法器看不见的东西。
+
+   内联模块（`#[cfg(test)] mod tests { use super::…; }`）里的 `super` 相对的
+   是**那个内联模块**，比文件本身深。词法器不知自己在第几层，故按文件深度与
+   「多嵌 1~2 层」三种可能各算一次，任一候选越层即报（同一条例令只报一次）。
+   报告保留源码拼写并附「解析为 …」，让读者能对着自己写的那一行看懂判据。
+
+   glob 形态（`use crate::X::*`）无需专门处理：第 4 条的段前缀匹配对
+   `crate::X::*` 同样成立。`tests/arch_violation_fixture.rs` 用三种 glob 形态
+   （裸 glob / 组内 glob / `pub use` glob）把这件已查证的事实钉住——评估阶段
+   曾误判 glob 可绕过禁令，实测三种形态均已被拦。
 
 ### 4.2 表现层的唯一例外：`crate::app::frame`
 
@@ -447,6 +475,10 @@ rustmark-actions，由 `tests/workspace_topology_test.rs` 断言）。禁
 | 应用代码 | 0.5–1 MB |
 | **总计** | **5–7 MB（红线 11 MB）** |
 
+> 注：上表「5–7 MB」为**早期需求预算估算**，非实测。当前实测见
+> `docs/metrics.md` §2.8（release 产物 ≈10.5 MiB）；红线本身已于 2026-10-24
+> 由 10 MiB 上调至 **11 MiB（预警 10.5 MiB）**，与 `scripts/size_gate.sh` 默认口径一致。
+
 新增依赖必须登记体积贡献（`docs/dependencies.md`）并经 ADR 追加评审。
 
 ## 9. 集成测试的库内部视角禁令（R-02）
@@ -500,7 +532,7 @@ rustmark（root：组合根 + views + bin）
 | crate | 角色 | 实测规模（2026-10-24，`src/` 口径） | 外部依赖面 |
 |---|---|---|---|
 | `rustmark`（root） | 组合根 + 视图层 + 工具 bin | 85 文件 / 21,188 行 | eframe / egui / image / rfd / anyhow / env_logger / log / wgpu(build) + 3 个本地 crate |
-| `rustmark-core` | 四层脊柱；表现层非视图子模块已全部于 V11-62 批次 1-5 抽去 `rustmark-ui`（core 的 `presentation` 退化为 doc-only 空壳） | 170 文件 / 27,892 行 | 13 个直接外部依赖（`cargo tree -p rustmark-core`）+ 1 个本地（actions） |
+| `rustmark-core` | 四层脊柱；表现层非视图子模块已全部于 V11-62 批次 1-5 抽去 `rustmark-ui`（core 的 `presentation` 退化为 doc-only 空壳） | 171 文件 / 28,047 行 | 13 个直接外部依赖（`cargo tree -p rustmark-core`）+ 1 个本地（actions） |
 | `rustmark-actions` | 动作词汇表契约（V11-57） | 4 文件 / 687 行 | **零依赖** |
 | `rustmark-icons` | 16×16 图标规格 + Painter 渲染器（V11-58） | 1 文件 / 613 行 | egui + rustmark-actions |
 | `rustmark-ui` | 表现层非视图部分：widgets（批次 1）/ state（批次 2）/ shortcuts（批次 3）/ theme（批次 4）/ rich（批次 5，V11-62 收官） | 73 文件 / 17,651 行 | egui + rustmark-core |
@@ -511,7 +543,7 @@ V11-57/58/62 拆出的文件（actions 3 + icons 1 + ui 的 widgets 3 / state 24
 shortcuts 5，另 2 个为 ui 的新建骨架 lib.rs / presentation.rs）扣除期间
 core 内的模块清单与文档增补；快照 238 与 git 树基线 `662536b` 的 244 文件
 之间存在未逐文件核对的口径差（评审当时工作区含 D-6/D-7 在途改动），
-**本节数字以今日实测为准**（2026-10-25：core 170 / 27,892，ui 73 / 17,651，
+**本节数字以今日实测为准**（2026-10-26：core 171 / 28,047，ui 73 / 17,651，
 root 85 / 21,188——TD-02 拆分 `preview_view.rs` 后 +2 文件 / +20 行；
 `c08fd13` 阈值整改在 core / ui / root 分别 +171 / +3 / +101 行（撤销字节
 预算、纹理缓存字节预算等）；`toolbar_view.rs` D-4 拆分再 +1 文件 / +14 行；
@@ -545,7 +577,7 @@ rich 于批次 5 从 core 迁 ui，V11-62 收官）。
 **2026-10-25 更新（V11-62 批次 1–5 收官）**：`rustmark-ui` 实测
 **73 文件 / 17,651 行**（widgets 0.6k + state 6.7k + shortcuts 0.9k + theme 3.5k + rich 5.9k，
 另含 `c08fd13` 阈值整改 +3 行），属演进图阶段 2「触发后」列的部分落地；
-`rustmark-core` 为 170 / 27,892（表现层非视图子模块全迁 ui，`presentation`
+`rustmark-core` 为 171 / 28,047（表现层非视图子模块全迁 ui，`presentation`
 退化为 doc-only 空壳；`c08fd13` 另 +1 文件 / +171 行）。阶段 2 列 ui 的
 18.1k 计划值（含 theme/rich）至此全落。
 

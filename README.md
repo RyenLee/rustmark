@@ -177,6 +177,7 @@ python tools/release_dryrun.py            # 离线发布演练：版本守卫 / 
 - 开发计划与阶段进度：[docs/PROGRESS.md](docs/PROGRESS.md)（原 README 索引）
 - 下一阶段（v1.1）任务规划：[docs/v1.1-backlog.md](docs/v1.1-backlog.md)
 - 编码规范：`.agent/conventions.md`；架构与分层：`docs/adr/`
+- 架构决策记录（ADR-001~013 索引与摘要）：[docs/README.md](docs/README.md)
 - 测试体系与覆盖率门禁：[docs/testing.md](docs/testing.md)
 - 配置与主题格式参考（`preferences.toml` 全字段）：[docs/config-reference.md](docs/config-reference.md)
 - 需求基线：[REQUIREMENTS.md](REQUIREMENTS.md)

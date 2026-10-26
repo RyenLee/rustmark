@@ -3,8 +3,8 @@
 > 面向用户与维护者的**配置面 API 文档**（发布合规项 DOC-03）。
 > 字段、类型与默认值均取自代码真源，出处标注在各节；
 > 修改优先走应用内设置页，本文档用于了解结构、手改与排障。
-> 真源代码：`src/domain/preferences/`（结构与校验）、
-> `src/infrastructure/persistence/toml_preferences_repository.rs`（读写与回退）。
+> 真源代码：`crates/rustmark-core/src/domain/preferences/`（结构与校验）、
+> `crates/rustmark-core/src/infrastructure/persistence/toml_preferences_repository.rs`（读写与回退）。
 
 ---
 
@@ -41,7 +41,7 @@
 
 ## 3. 顶层结构
 
-出处：`src/domain/preferences/aggregate.rs`（`PREFERENCES_SCHEMA_VERSION = 1`）。
+出处：`crates/rustmark-core/src/domain/preferences/aggregate.rs`（`PREFERENCES_SCHEMA_VERSION = 1`）。
 
 ```toml
 schema_version = 1        # 配置 schema 版本（ADR-003），结构变更时递增
@@ -52,7 +52,7 @@ schema_version = 1        # 配置 schema 版本（ADR-003），结构变更时�
 
 ## 4. `[theme]` 主题与字体
 
-出处：`src/domain/preferences/value_objects/theme.rs`（L175–L201）。
+出处：`crates/rustmark-core/src/domain/preferences/value_objects/theme.rs`（L175–L201）。
 校验：字体族非空；字号 8–48；行高 1.0–3.0（越界即整份配置回退默认）。
 
 | 键 | 类型 | 默认 | 说明 |
@@ -170,6 +170,14 @@ document_stats  insert_symbol  compare_diff  next_tab  prev_tab
 
 > 「可持久化动作」与「有默认键位的动作」不同：如 `toggle_statusbar`
 > 可录制改键但默认不占键位（`action.rs::all()` 的说明）。
+
+> **动作全集口径（代码实证，2026-10-26 复核）**：`UiAction` 共 **57** 个变体，其中
+> 上表 **38** 个进入快捷键持久化（`UiAction::persisted_key()` 返回 `Some`）。
+> 另有 **19** 个为仅 UI / 菜单动作不持久化（`persisted_key()` 返回 `None`）：
+> `open_folder`、`revert`、`insert_image`、`toggle_list`、`toggle_ordered_list`、
+> `move_line_up`、`move_line_down`、`goto_tab1`–`goto_tab9`、
+> `shortcut_overview`、`about`、`toggle_theme`。
+> 二者由 `action/impls.rs` 的 `persisted_key` 单一 `match` 守门，新增变体时编译即强制补全。
 
 ### 6.3 默认键位表
 

@@ -43,6 +43,39 @@
 > 任务状态仍只在 [`v1.1-backlog.md`](./v1.1-backlog.md) 的 V11-54 / V11-54a 登记。
 > 具体文件路径与行号以基线 `e09ad2b` 为准，**行号漂移时以符号名为准**。
 
+## 近期评审与评估（2026-10-24/25）
+
+> V11 系列改造期间的专项复盘与审计快照，结论仍有效、可交叉印证；与上文「架构评估与改造」
+> 章节互补（那组偏 2026-10-20 的总评估，这组偏 10-24/25 的拆分与阈值治理）。
+
+| 文档 | 定位 | 读者 | 什么时候读 |
+|---|---|---|---|
+| [`core-structure-review-2026-10-24.md`](./core-structure-review-2026-10-24.md) | core 拆分后的结构复审 | 维护者 | 查 core crate 内部边界与规模 |
+| [`core-refactor-tasklist-2026-10-24.md`](./core-refactor-tasklist-2026-10-24.md) | core 重构逐项任务清单（含完成记录） | 维护者 | 领 core 改造任务、查状态 |
+| [`workspace-split-assessment-2026-10-24.md`](./workspace-split-assessment-2026-10-24.md) | **workspace 拆分专项评估**（D-3 阶段 4a 延续） | 维护者 | 评审拆分、决策「是否再拆」 |
+| [`state-field-audit.md`](./state-field-audit.md) | 跨 crate 字段可见性白名单审计 | 维护者 | 评估 R-11/R-12 字段保护摩擦（E-07） |
+| [`release-compliance-gap-report.md`](./release-compliance-gap-report.md) | 发布合规差距登记（含 PRIV-01 等未闭环项） | 维护者 | 发版前查未闭环合规项 |
+| [`threshold-audit-2026-10-25.md`](./threshold-audit-2026-10-25.md) | 体积 / 性能阈值审计 | 维护者 | 评审阈值口径与实测一致性 |
+| [`threshold-review-2026-10-25.md`](./threshold-review-2026-10-25.md) | 阈值复审（审计的裁定结论） | 维护者 | 阈值口径的最终裁定 |
+| [`shared-internal-cycle-review.md`](./shared-internal-cycle-review.md) | `shared` 内部环评审（E-27 / V11-55） | 维护者 | 查 shared 内部依赖无环守卫 |
+| [`python-cleanup-report.md`](./python-cleanup-report.md) | Python 工具清理报告（`tools/*.py` 26 → 5） | 维护者 | 追 `tools/mut_*.py` 等脚本去向 |
+| [`cache-design.md`](./cache-design.md) | 图片 / 高亮 / 拼写 / 渲染缓存统一设计（D-4 收敛） | 维护者 | 查 LruMap 共用与淘汰策略 |
+| [`rustmark-evaluation-2026-10-25.md`](./rustmark-evaluation-2026-10-25.md) | **全方位评估报告**（架构 / 代码 / 文档三维度，34 项清单） | 全体 | 想看「当前问题全景与优先级」 |
+
+## 扩展三个新 crate（贡献者指南）
+
+> 拆解出的 `rustmark-actions` / `rustmark-icons` / `rustmark-ui` 有各自的契约，扩展时请先读对应
+> ADR（[ADR-011](./adr/ADR-011-action-routing-and-dual-intent.md) / [ADR-012](./adr/ADR-012-icon-system-and-resource-layout.md) / [ADR-013](./adr/ADR-013-core-adapter-residency-and-leaf-extraction.md)）。实操清单：
+
+- **新增可持久化动作（`rustmark-actions`）**：必须在 `UiAction` 与领域 `ActionId` **两侧同步加**变体；
+  快捷键若要持久化，必须显式声明 `persisted_key`，**不得用 `_` 兜底**（`rustmark-actions/src/action/impls.rs`
+  要求两侧 `ActionId::all()` 与本表逐项比对，缺一项即构建失败）。
+- **新增图标（`rustmark-icons`）**：规格即数据——按 16×16 栅格手绘向量，草稿旁车协议随包分发；
+  不要引入字体字形或位图。
+- **新增 UI 模块（`rustmark-ui`）**：按 constraints §10 四问判据判断模块归属；`views` 留 root、
+  子层（`state/theme/shortcuts/rich/widgets`）在 ui crate；跨 crate 可见字段须进白名单 +
+  对应 `pub` setter（见 `tests/field_visibility_guard_test.rs`）。
+
 ## 阶段文档（01–11）
 
 | 文档 | 内容 |

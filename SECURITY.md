@@ -45,6 +45,13 @@
 | 构建安全 | `panic = "abort"`、发布流程含「无私钥/证书入仓」检查（`tools/release_dryrun.py`） |
 | 隐私 | 无遥测、无自动更新、无崩溃自动上传；崩溃报告只写本地且不含文档内容（见 `PRIVACY.md`） |
 
+> **SVG 防护口径（隐式，非硬规则）**：本地 `.svg` 不被渲染的真实原因是
+> `image` crate 的 `svg` 解码 feature **未启用**（`Cargo.toml` 仅开
+> `png/jpeg/gif/webp/bmp`），属隐式防护而非显式白名单拒绝；`mime_from_extension`
+> 仍会把 `.svg` 映射为 `image/svg+xml`，但 `ALLOWED_IMAGE_MIME` 白名单不含它，
+> 故仅 data-URI / 远程分支据此拒绝。**若将来启用 `image` 的 svg feature，必须同步
+> 在 `ALLOWED_IMAGE_MIME` 之外显式拒绝 svg，否则会打开脚本执行敞口**（见 `PRIVACY.md` §2、E-31）。
+
 ## 4. 已知的非目标（Out of Scope）
 
 - **本机恶意文档的任意代码执行不在威胁模型内**：本应用会按用户意图打开本地文件、

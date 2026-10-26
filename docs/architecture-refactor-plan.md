@@ -12,6 +12,11 @@
 > 逐文件清单与备份位置见 [`python-cleanup-report.md`](./python-cleanup-report.md)。
 > 正文保留当时的验证结论与轮次，只在脚本引用后标注「已清理」——它们是**当时的证据**，
 > 不是可再执行的工具（锚点写死当年的源码片段，复跑只会得到「锚点漂移」的失败）。
+>
+> **文档说明（2026-10-26，E-18）**：本文写于 V11-62（`rustmark-ui` 拆分）之前，文中多次引用的
+> `src/presentation/{state,theme,shortcuts,rich}` 路径现已迁入 `crates/rustmark-ui/src/presentation/`；
+> `views` 仍留 root（`src/presentation/views/`）。溯源请以现行布局为准（见
+> [`architecture-constraints.md`](./architecture-constraints.md) §10 与 [`docs/README.md`](./README.md)）。
 
 ---
 
