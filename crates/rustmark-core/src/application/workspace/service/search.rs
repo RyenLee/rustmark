@@ -359,6 +359,54 @@ fn char_eq_ignore_case(a: char, b: char) -> bool {
     a.to_lowercase().eq(b.to_lowercase())
 }
 
+/// 增量行号游标：把命中的字节偏移换算成 0-based 行号与列偏移。
+///
+/// # 为什么是游标而不是每次从头数
+///
+/// 命中位置在单文件内**单调递增**，跨命中累计扫过的字节只需 O(n) 一遍。
+/// 若每条命中都重新 `text[..start]` 数换行再 `rfind`，单文件 50 条命中
+/// 就是 50 遍全文扫描（问题 048 的原始形态）。
+///
+/// # 为什么抽出来
+///
+/// 字面量路径与正则路径各写过一遍这三行推进逻辑。两处的行号口径必须
+/// **完全一致**——同一个文件用不同搜索模式显示不同行号是明确的 bug——
+/// 此前靠「改一处记得改另一处」维持。抽出后只有一处，并由
+/// [`tests::cursor_agrees_with_the_single_source_line_index`] 与
+/// [`crate::shared::text::line_index_at`]（全仓行号口径的唯一出处）对拍。
+#[derive(Default)]
+struct LineCursor {
+    /// 已数到的行号（0-based）。
+    line: usize,
+    /// [`Self::counted_to`] 所在行的行首字节偏移。
+    line_start: usize,
+    /// 已数过换行的右边界（恒为字符边界）。
+    counted_to: usize,
+}
+
+impl LineCursor {
+    /// 把 `[counted_to, to)` 之间的新字节数进去。
+    ///
+    /// `to` 必须是字符边界且 ≥ 已计边界；不满足时（命中位置回退）不做任何事，
+    /// 保证游标只前进不后退——回退会让行号变小，比不精确更糟。
+    fn advance_to(&mut self, text: &str, to: usize) {
+        if to <= self.counted_to {
+            return;
+        }
+        let chunk = &text[self.counted_to..to];
+        self.line += chunk.bytes().filter(|&b| b == b'\n').count();
+        if let Some(pos) = chunk.rfind('\n') {
+            self.line_start = self.counted_to + pos + 1;
+        }
+        self.counted_to = to;
+    }
+
+    /// 命中起点在当前行内的列偏移（字节）。
+    fn col_at(&self, start: usize) -> usize {
+        start - self.line_start
+    }
+}
+
 /// 在文本中搜索：`regex` 为 `Some` 走正则分支，否则按字面量
 /// （支持大小写不敏感与整词匹配）。
 ///
@@ -384,11 +432,8 @@ fn search_text(
 
     let mut hits = Vec::new();
     // 行号与行首**增量**维护：命中位置按 `i` 单调递增，跨命中累计扫过的
-    // 字节只需 O(n) 一遍。原实现每条命中都重新 `text[..start_off]` 数换行
-    // 再 `rfind`，单文件 50 条命中就是 50 遍全文扫描。
-    let mut line = 0usize;
-    let mut line_start = 0usize;
-    let mut counted_to = 0usize;
+    // 字节只需 O(n) 一遍（见 [`LineCursor`]）。
+    let mut cursor = LineCursor::default();
     for i in 0..=(chars.len() - pat.len()) {
         let mut matched = true;
         for (j, &pc) in pat.iter().enumerate() {
@@ -419,22 +464,15 @@ fn search_text(
         let (end_off, end_char) = chars[i + pat.len() - 1];
         let end_off = end_off + end_char.len_utf8();
 
-        // 把 [counted_to, start_off) 这段新字节数进去（两端都是字符边界）。
-        if start_off > counted_to {
-            let chunk = &text[counted_to..start_off];
-            line += chunk.bytes().filter(|&b| b == b'\n').count();
-            if let Some(pos) = chunk.rfind('\n') {
-                line_start = counted_to + pos + 1;
-            }
-            counted_to = start_off;
-        }
-        let col = start_off - line_start;
-        let snippet = snippet_window(text, line_start, start_off, end_off);
+        // 把到命中起点为止的新字节数进游标（两端都是字符边界）。
+        cursor.advance_to(text, start_off);
+        let col = cursor.col_at(start_off);
+        let snippet = snippet_window(text, cursor.line_start, start_off, end_off);
 
         hits.push(RawHit {
             start: start_off,
             end: end_off,
-            line,
+            line: cursor.line,
             col,
             snippet,
         });
@@ -453,30 +491,21 @@ fn search_text(
 /// 整词开关不参与（理由见 [`WorkspaceAppService::search`] 的文档）。
 fn search_text_regex(text: &str, regex: &Regex, max_per_file: usize) -> Vec<RawHit> {
     let mut hits = Vec::new();
-    let mut line = 0usize;
-    let mut line_start = 0usize;
-    let mut counted_to = 0usize;
+    let mut cursor = LineCursor::default();
     let mut from = 0usize;
     while hits.len() < max_per_file {
         let Some((start_off, end_off)) = regex.find_in(text, from, text.len()) else {
             break;
         };
-        // 与字面量路径同一段增量行号逻辑（两端都是字符边界）。
-        if start_off > counted_to {
-            let chunk = &text[counted_to..start_off];
-            line += chunk.bytes().filter(|&b| b == b'\n').count();
-            if let Some(pos) = chunk.rfind('\n') {
-                line_start = counted_to + pos + 1;
-            }
-            counted_to = start_off;
-        }
-        let col = start_off - line_start;
-        let snippet = snippet_window(text, line_start, start_off, end_off);
+        // 与字面量路径同一段增量行号逻辑（同一个 [`LineCursor`]）。
+        cursor.advance_to(text, start_off);
+        let col = cursor.col_at(start_off);
+        let snippet = snippet_window(text, cursor.line_start, start_off, end_off);
 
         hits.push(RawHit {
             start: start_off,
             end: end_off,
-            line,
+            line: cursor.line,
             col,
             snippet,
         });
@@ -515,4 +544,83 @@ fn snippet_window(text: &str, line_start: usize, start_off: usize, end_off: usiz
         .min(end_off + 40),
     );
     text[snippet_start..snippet_end].to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 游标与全仓行号真源 [`crate::shared::text::line_index_at`] 逐点相等。
+    ///
+    /// 交叉对拍而不是自设期望值：`line_index_at` 是编辑区行号栏、状态栏与
+    /// 文档统计共用的唯一口径（[`crate::shared::text::line_count`] 的姊妹函数）。
+    /// 搜索结果的「行号」若与它分家，用户点搜索结果就会跳到别处。
+    #[test]
+    fn cursor_agrees_with_the_single_source_line_index() {
+        let text = "第一行\nsecond line\n\n第四行\nlast";
+        let mut cursor = LineCursor::default();
+        for (offset, ch) in text.char_indices() {
+            // 逐字符推进（含行首、换行符本身、文末）。
+            cursor.advance_to(text, offset);
+            assert_eq!(
+                cursor.line,
+                crate::shared::text::line_index_at(text, offset),
+                "offset {offset}（{ch:?}）行号不一致"
+            );
+            assert_eq!(
+                cursor.col_at(offset),
+                offset - text[..offset].rfind('\n').map_or(0, |p| p + 1),
+                "offset {offset} 列偏移不一致"
+            );
+        }
+        // 文末也算一次（`char_indices` 不含 `text.len()` 之后的位置）。
+        cursor.advance_to(text, text.len());
+        assert_eq!(
+            cursor.line,
+            crate::shared::text::line_index_at(text, text.len())
+        );
+    }
+
+    /// 同一行多次命中：列偏移按行首算，不累计。
+    #[test]
+    fn repeated_hits_stay_on_the_same_line() {
+        let text = "aa aa aa\nbb";
+        let mut cursor = LineCursor::default();
+        let mut cols = Vec::new();
+        for start in [0usize, 3, 6] {
+            cursor.advance_to(text, start);
+            cols.push((cursor.line, cursor.col_at(start)));
+        }
+        assert_eq!(cols, vec![(0, 0), (0, 3), (0, 6)]);
+    }
+
+    /// 游标只前进不后退：回退的偏移不得让行号变小。
+    ///
+    /// 正则分支的零宽命中会原地重配（`from` 前推一个字符），若哪天有调用点
+    /// 传了更小的偏移，宁可保持当前位置也不能把行号倒回去。
+    #[test]
+    fn cursor_never_moves_backwards() {
+        let text = "a\nb\nc";
+        let mut cursor = LineCursor::default();
+        cursor.advance_to(text, 4); // 第 2 行（0-based）的 'c'
+        assert_eq!(cursor.line, 2);
+        cursor.advance_to(text, 1); // 回退请求
+        assert_eq!(cursor.line, 2, "回退请求必须被忽略");
+        assert_eq!(cursor.line_start, 4);
+    }
+
+    /// 两条分支共用同一游标：同一个文件、同一种模式，行号必须一致。
+    ///
+    /// 字面量分支与正则分支此前各写一遍推进逻辑——这条用例直接比较两条
+    /// 路径的产出，任何一处偏移口径改动都会立刻在这里分叉。
+    #[test]
+    fn literal_and_regex_paths_report_the_same_lines() {
+        let text = "alpha\nbeta\nalpha beta\nalpha";
+        let literal = search_text(text, "alpha", true, false, None, 100);
+        let regex = Regex::compile("alpha", true).expect("编译正则");
+        let via_regex = search_text(text, "alpha", true, false, Some(&regex), 100);
+        let lines = |hits: &[RawHit]| hits.iter().map(|h| (h.line, h.col)).collect::<Vec<_>>();
+        assert_eq!(lines(&literal), lines(&via_regex));
+        assert_eq!(lines(&literal), vec![(0, 0), (2, 0), (3, 0)]);
+    }
 }

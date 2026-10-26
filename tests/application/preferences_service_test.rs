@@ -12,7 +12,7 @@ use rustmark::application::preferences::commands::*;
 use rustmark::application::preferences::queries::*;
 use rustmark::application::preferences::service::PreferencesAppService;
 use rustmark::domain::preferences::aggregate::Preferences;
-use rustmark::domain::preferences::value_objects::{ActionId, KeyCombo};
+use rustmark::domain::preferences::value_objects::{ActionId, CustomThemePalette, KeyCombo};
 
 use super::fakes::*;
 
@@ -254,6 +254,22 @@ fn set_theme_custom_roundtrips_palette() {
         "语法色覆盖应原样回读"
     );
     assert_eq!(got.syn_link, None, "未覆盖的语法色应保持 None（跟随主题）");
+}
+
+/// DTO 的默认调色板**派生自**领域默认，不是另抄一份。
+///
+/// 两边各写 8 个 hex 字面量时，「改一处忘另一处」会让「首次切到自定义」
+/// 拿到的配色取决于走哪条路径（领域聚合补齐的 vs 视图默认构造的）——
+/// 差几个色号肉眼几乎看不出来，是最难排查的那种不一致。
+///
+/// 断言的是「两边逐字段相等」而不是具体色号：色号可以改，双源不行。
+#[test]
+fn dto_default_palette_is_derived_from_the_domain_default() {
+    assert_eq!(
+        CustomThemePaletteView::default(),
+        CustomThemePaletteView::from(CustomThemePalette::default()),
+        "DTO 默认调色板必须与领域默认逐字段一致（不得各抄一份）"
+    );
 }
 
 #[test]

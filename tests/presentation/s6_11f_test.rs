@@ -235,12 +235,22 @@ fn stats_dialog_shows_exactly_what_the_status_bar_counts() {
     }
 }
 
-/// 千分位分隔：四位以上才加逗号。
+/// 千分位分隔：四位以上才加逗号，且**经视图**生效。
+///
+/// 断言走 `rows_of` 而不是直接调工具函数：分隔实现在 `shared::text`，
+/// 但「统计浮层用不用它」是另一件事——这三处历史上各写过一份实现。
+/// 只测工具函数的话，视图哪天又自己拼一遍数字也照样绿。
 #[test]
 fn large_numbers_are_grouped() {
-    assert_eq!(stats_view::thousands(999), "999");
-    assert_eq!(stats_view::thousands(1_000), "1,000");
-    assert_eq!(stats_view::thousands(1_234_567), "1,234,567");
+    let (_dir, app) = app_with(&"行\n".repeat(12_345));
+    let stats = app.current_stats().expect("应有文档");
+    let rows = stats_view::rows_of(&stats);
+    let lines = rows
+        .iter()
+        .find(|(label, _)| *label == "行数")
+        .map(|(_, value)| value.as_str())
+        .expect("统计浮层必须有「行数」行");
+    assert_eq!(lines, "12,346", "12,345 个换行 + 最后一行");
 }
 
 // ============================================================================

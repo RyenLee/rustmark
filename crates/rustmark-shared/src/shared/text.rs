@@ -89,6 +89,39 @@ fn byte_line_breaks(bytes: &[u8]) -> usize {
     bytes.iter().filter(|&&b| b == b'\n').count()
 }
 
+/// 千分位分隔（`12345` → `12,345`）。
+///
+/// 四位以上才加逗号：`999` 保持原样（`999` 比 `999` 好读，而 `0,999` 是错的）。
+///
+/// # 为什么在 `shared`
+///
+/// 状态栏、统计浮层、写作目标进度三处都要显示「一万二千三百」，此前**各写
+/// 一份**：`stats_view` 的 `pub fn`、`status_bar_view` 的私有副本、UI 状态层
+/// 的第三份（后者的注释还写着「视图层那份是私有函数够不到」——它其实是
+/// `pub`）。三份的分隔规则一旦分家，同一份文档在状态栏与统计浮层会显示成
+/// 两个数，用户不知道该信哪个。放在 `shared` 是各层唯一共用的依赖点
+/// （同 [`line_count`]）。
+///
+/// # 为什么固定三位分组
+///
+/// 界面语言只有简体中文，三位分组是中文排版惯例。真要做本地化，正确落点是
+/// 「按当前 locale 取分组规则」，而不是在调用点各挑一种写法——那正是本函数
+/// 存在的理由。
+pub fn thousands(n: usize) -> String {
+    let digits = n.to_string();
+    if digits.len() <= 3 {
+        return digits;
+    }
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (i, ch) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -166,5 +199,45 @@ mod tests {
         }
         // 越界夹紧，不 panic。
         assert_eq!(line_index_at(text, 9999), 2);
+    }
+
+    /// 千分位：三位以内原样，四位起每三位一个逗号。
+    ///
+    /// 用例同时钉住两组边界——**分组起点**（3/4 位之间）与**分组整除**
+    /// （6 位恰好两组、7 位余一位）：后者是「从右往左数三位」最容易被写成
+    /// 「从左往右数三位」的地方（那会把 `123456` 写成 `123,456` 却把
+    /// `1234567` 写成 `1234,567`）。
+    #[test]
+    fn thousands_groups_by_three_from_the_right() {
+        for (value, want) in [
+            (0, "0"),
+            (7, "7"),
+            (999, "999"),
+            (1_000, "1,000"),
+            (12_345, "12,345"),
+            (123_456, "123,456"),
+            (1_234_567, "1,234,567"),
+            (12_345_678, "12,345,678"),
+            (1_000_000_000, "1,000,000,000"),
+        ] {
+            assert_eq!(thousands(value), want, "{value} 的千分位写法");
+        }
+    }
+
+    /// 去掉逗号必须还原成原数字——分隔只是**显示**变换，不得丢位或补零。
+    #[test]
+    fn thousands_round_trips_to_the_original_digits() {
+        for value in [0usize, 1, 999, 1_000, 12_345, 999_999_999, 1_234_567_890] {
+            let grouped = thousands(value);
+            assert_eq!(
+                grouped.replace(',', ""),
+                value.to_string(),
+                "{value} 去掉分隔符后必须等于原值"
+            );
+            assert!(
+                !grouped.starts_with(','),
+                "不得以逗号开头：{grouped}（{value}）"
+            );
+        }
     }
 }

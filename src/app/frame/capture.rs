@@ -162,6 +162,15 @@ impl EditorApp {
     /// 截图裁的是预览区那一块。预览区被折叠（专注模式 / 关闭预览）时
     /// 根本没有这块像素，与其导出一张空白图，不如当场说清原因。
     pub fn begin_viewport_capture(&mut self, path: &str) -> AppResult<()> {
+        let (doc_id, clip) = self.capture_target()?;
+        self.begin_capture_job(doc_id, path, clip, None)
+    }
+
+    /// 截图任务的共同前置：必须有活动文档，且预览区**当前可见**。
+    ///
+    /// 视口截图与长图共用这一段——分头写两份的话，改了「预览区不可见」
+    /// 的判定或文案，另一条路会静默保留旧行为。
+    fn capture_target(&self) -> AppResult<(DocumentId, egui::Rect)> {
         let doc_id = self
             .active_doc
             .ok_or_else(|| AppError::domain("没有可导出的文档"))?;
@@ -171,9 +180,22 @@ impl EditorApp {
             .ok_or_else(|| {
                 AppError::io("预览区当前不可见，无法截图（请关闭专注模式或打开预览面板）")
             })?;
+        Ok((doc_id, clip))
+    }
 
-        // 任务仍走应用层创建：选项校验（扩展名匹配等）与状态机是领域的事，
-        // 不该因为「像素晚一帧到」就在视图层另起一套。
+    /// 登记一次截图导出任务（两条截图路径共用的后半段）。
+    ///
+    /// 任务仍走应用层创建：选项校验（扩展名匹配等）与状态机是领域的事，
+    /// 不该因为「像素晚一帧到」就在视图层另起一套。图片导出的
+    /// [`ExportRequestView`] 也因此只有**这一处**构造——两条路径的
+    /// 选项若各写一份，长图与视口截图会悄悄用上不同的主题或页码设置。
+    fn begin_capture_job(
+        &mut self,
+        doc_id: DocumentId,
+        path: &str,
+        clip: egui::Rect,
+        long: Option<LongImageState>,
+    ) -> AppResult<()> {
         let destination = FilePath::new(path).map_err(|e| AppError::io(e.to_string()))?;
         let request = ExportRequestView {
             format: ExportFormat::Image.as_str().to_string(),
@@ -193,7 +215,7 @@ impl EditorApp {
             clip,
             path: path.to_string(),
             requested: false,
-            long: None,
+            long,
         });
         self.export_ui.awaiting_capture = true;
         Ok(())
@@ -213,15 +235,7 @@ impl EditorApp {
     /// `pixels_per_point` 用于在**登记时刻**估算成品高度并提前拦截
     /// 超限请求——否则用户要等整个滚动流程跑完才被告知失败。
     pub fn begin_long_capture(&mut self, path: &str, pixels_per_point: f32) -> AppResult<()> {
-        let doc_id = self
-            .active_doc
-            .ok_or_else(|| AppError::domain("没有可导出的文档"))?;
-        let clip = self
-            .preview_rect
-            .filter(|r| r.width() > 0.0 && r.height() > 0.0)
-            .ok_or_else(|| {
-                AppError::io("预览区当前不可见，无法截图（请关闭专注模式或打开预览面板）")
-            })?;
+        let (doc_id, clip) = self.capture_target()?;
 
         // 内容几何量来自上一帧的预览布局（同步状态里存的就是它）。
         let geometry = self.ui.sync.geometry(Side::Preview);
@@ -261,35 +275,18 @@ impl EditorApp {
             )));
         }
 
-        let destination = FilePath::new(path).map_err(|e| AppError::io(e.to_string()))?;
-        let request = ExportRequestView {
-            format: ExportFormat::Image.as_str().to_string(),
-            include_toc: false,
-            embed_images: false,
-            theme: self.export_ui.theme.clone(),
-            page_size: PageSize::A4.as_str().to_string(),
-            paginate: false,
-        };
-        let job_id = self.services.export.create_job(CreateExportJobCommand {
+        self.begin_capture_job(
             doc_id,
-            destination,
-            request,
-        })?;
-        self.pending_capture = Some(PendingCapture {
-            job_id,
+            path,
             clip,
-            path: path.to_string(),
-            requested: false,
-            long: Some(LongImageState {
+            Some(LongImageState {
                 offsets,
                 next: 0,
                 parts: Vec::new(),
                 viewport_h,
                 armed: false,
             }),
-        });
-        self.export_ui.awaiting_capture = true;
-        Ok(())
+        )
     }
 
     /// 兑现一次截图：裁剪 →（长图：继续下一段或拼接落盘）→ 推进领域任务状态。

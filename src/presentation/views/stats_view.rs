@@ -22,27 +22,11 @@ use crate::app::frame::EditorApp;
 use crate::application::dto::StatsView;
 use crate::presentation::state::dialog_ui_state::Overlay;
 use crate::presentation::theme::builtin::Theme;
+use crate::shared::text::thousands;
 
 /// 对话框默认尺寸（对齐原型 `BaseModal :width="420" :height="400"`）。
 const WIDTH: f32 = 420.0;
 const HEIGHT: f32 = 400.0;
-
-/// 千分位分隔（四位以上才加，否则「8,123」比「8123」更难读）。
-pub fn thousands(value: usize) -> String {
-    let raw = value.to_string();
-    if raw.len() <= 3 {
-        return raw;
-    }
-    let mut out = String::with_capacity(raw.len() + raw.len() / 3);
-    let bytes = raw.as_bytes();
-    for (i, ch) in raw.chars().enumerate() {
-        if i > 0 && (bytes.len() - i).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(ch);
-    }
-    out
-}
 
 /// 一行统计项。
 fn row(ui: &mut Ui, theme: &Theme, label: &str, value: &str, hint: Option<&str>) {

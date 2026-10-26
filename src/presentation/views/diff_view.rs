@@ -257,30 +257,50 @@ fn draw_row(ui: &mut Ui, theme: &Theme, row: &DisplayRow) {
     }
 }
 
-/// 行号 + 标记列 + 整行底色。返回正文可用区域。
-fn gutter_row(
+/// 行号栏的两列编号串（旧 | 新），缺哪一侧就留等宽空格。
+///
+/// # 为什么单独一个纯函数
+///
+/// 「两列各宽 4、中间一个空格」是**一条**排版约定，此前在
+/// [`gutter_row`] 与 [`segs_row`] 里各写了一遍。两处必须逐字一致：
+/// 一旦宽度分家，同一行在「整行替换」与「字符级替换」两种画法下行号
+/// 会左右错位，看上去像行号栏在抖。抽成纯函数后这条约定只有一处，
+/// 且能在没有窗口的环境里直接断言。
+///
+/// # 四种情形必须**等宽**
+///
+/// 左侧缺号（纯新增行）与右侧缺号（纯删除行）都要留出对方的格子：
+/// 四个分支一律 9 个字符（`4 + 空格 + 4`）。原先「左侧缺号」那条少写
+/// 一个空格（8 字符），纯新增行的**新行号整体左移一格**，与上下文行
+/// 对不齐——行号栏看着在抖。回归用例 [`tests::every_arm_is_the_same_width`]
+/// 钉死这条不变量。
+fn gutter_numbers(old_no: Option<usize>, new_no: Option<usize>) -> String {
+    match (old_no, new_no) {
+        (Some(o), Some(n)) => format!("{o:>4} {n:>4}"),
+        (Some(o), None) => format!("{o:>4}     "),
+        (None, Some(n)) => format!("     {n:>4}"),
+        (None, None) => "         ".to_string(),
+    }
+}
+
+/// 在已分配的行矩形里画行号与 `+` / `−` 标记。
+///
+/// 底色由调用方先画（整行底色在分配矩形后立刻铺满），这里只管文字：
+/// 两处调用点的底色策略不同（`gutter_row` 可无底色、`segs_row` 必有），
+/// 而文字位置与字号必须完全一致。
+fn paint_gutter(
     ui: &mut Ui,
     theme: &Theme,
+    rect: egui::Rect,
     old_no: Option<usize>,
     new_no: Option<usize>,
     sign: &str,
-    fill: Option<egui::Color32>,
-) -> egui::Rect {
-    let width = ui.available_width();
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, ROW_H), egui::Sense::hover());
-    if let Some(fill) = fill {
-        ui.painter()
-            .rect_filled(rect, egui::CornerRadius::ZERO, fill);
-    }
-    let nos = match (old_no, new_no) {
-        (Some(o), Some(n)) => format!("{o:>4} {n:>4}"),
-        (Some(o), None) => format!("{o:>4}     "),
-        (None, Some(n)) => format!("    {n:>4}"),
-        (None, None) => "        ".to_string(),
-    };
-    let galley =
-        ui.painter()
-            .layout_no_wrap(nos, egui::FontId::monospace(11.0), theme.text_secondary);
+) {
+    let galley = ui.painter().layout_no_wrap(
+        gutter_numbers(old_no, new_no),
+        egui::FontId::monospace(11.0),
+        theme.text_secondary,
+    );
     ui.painter().galley(
         rect.left_top() + egui::vec2(4.0, (rect.height() - galley.size().y) / 2.0),
         galley,
@@ -298,6 +318,24 @@ fn gutter_row(
             theme.text_primary,
         );
     }
+}
+
+/// 行号 + 标记列 + 整行底色。返回正文可用区域。
+fn gutter_row(
+    ui: &mut Ui,
+    theme: &Theme,
+    old_no: Option<usize>,
+    new_no: Option<usize>,
+    sign: &str,
+    fill: Option<egui::Color32>,
+) -> egui::Rect {
+    let width = ui.available_width();
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, ROW_H), egui::Sense::hover());
+    if let Some(fill) = fill {
+        ui.painter()
+            .rect_filled(rect, egui::CornerRadius::ZERO, fill);
+    }
+    paint_gutter(ui, theme, rect, old_no, new_no, sign);
     let body = egui::Rect::from_min_max(
         rect.left_top() + egui::vec2(GUTTER + SIGN_W, rect.top()),
         rect.right_bottom(),
@@ -324,30 +362,7 @@ fn segs_row(
     let (rect, _) = ui.allocate_exact_size(Vec2::new(width, ROW_H), egui::Sense::hover());
     ui.painter()
         .rect_filled(rect, egui::CornerRadius::ZERO, fill);
-    let nos = match (old_no, new_no) {
-        (Some(o), Some(n)) => format!("{o:>4} {n:>4}"),
-        (Some(o), None) => format!("{o:>4}     "),
-        (None, Some(n)) => format!("    {n:>4}"),
-        (None, None) => "        ".to_string(),
-    };
-    let galley =
-        ui.painter()
-            .layout_no_wrap(nos, egui::FontId::monospace(11.0), theme.text_secondary);
-    ui.painter().galley(
-        rect.left_top() + egui::vec2(4.0, (rect.height() - galley.size().y) / 2.0),
-        galley,
-        theme.text_secondary,
-    );
-    let sign_galley = ui.painter().layout_no_wrap(
-        sign.to_string(),
-        egui::FontId::monospace(12.0),
-        theme.text_primary,
-    );
-    ui.painter().galley(
-        rect.left_top() + egui::vec2(GUTTER, (rect.height() - sign_galley.size().y) / 2.0),
-        sign_galley,
-        theme.text_primary,
-    );
+    paint_gutter(ui, theme, rect, old_no, new_no, sign);
     // 逐段绘制：变化段用强调色，其余用普通文本色。
     // 不能用单个 `monospace` Label——那样就没有段级着色。
     let mut x = rect.left() + GUTTER + SIGN_W + 4.0;
@@ -376,5 +391,56 @@ fn segs_row(
     if text.is_empty() && segs.is_empty() {
         // 空行也占位，否则连续空行会「塌掉」——行号与内容错位。
         let _ = ui.allocate_exact_size(Vec2::new(1.0, 1.0), egui::Sense::hover());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 四种情形一律 `4 + 1 + 4` 个字符——宽度不同就会让行号左右抖。
+    ///
+    /// 这是一条**像素级**不变量：`layout_no_wrap` 用等宽字体排版，
+    /// 字符数不同 ⇒ 起点不同。纯新增行曾经少一个空格（8 字符），
+    /// 新行号整体左移一格，与上下文行对不齐。
+    #[test]
+    fn every_arm_is_the_same_width() {
+        let arms = [
+            gutter_numbers(Some(1), Some(1)),
+            gutter_numbers(Some(1), None),
+            gutter_numbers(None, Some(1)),
+            gutter_numbers(None, None),
+        ];
+        for s in &arms {
+            assert_eq!(s.chars().count(), 9, "{s:?} 必须是 9 个字符");
+        }
+    }
+
+    /// 左侧缺号时，新行号仍落在**第二列**（与两侧都有号时同一位置）。
+    #[test]
+    fn missing_left_number_keeps_the_right_column_aligned() {
+        // 同一个「42」在两种画法下必须落在同一列。
+        let both = gutter_numbers(Some(9), Some(42));
+        let only_new = gutter_numbers(None, Some(42));
+        assert_eq!(
+            both.find("42"),
+            only_new.find("42"),
+            "新行号必须与「两列都有」时同一列：both={both:?} only_new={only_new:?}"
+        );
+        // 同理：右侧缺号时旧行号仍在第一列。
+        let both = gutter_numbers(Some(42), Some(7));
+        let only_old = gutter_numbers(Some(42), None);
+        assert_eq!(
+            both.find("42"),
+            only_old.find("42"),
+            "旧行号必须与「两列都有」时同一列：both={both:?} only_old={only_old:?}"
+        );
+    }
+
+    /// 三位数不补零、四位数占满：右对齐是「位宽固定」而不是「补零」。
+    #[test]
+    fn numbers_are_right_aligned_not_zero_padded() {
+        assert_eq!(gutter_numbers(Some(7), Some(8)), "   7    8");
+        assert_eq!(gutter_numbers(Some(1234), Some(5678)), "1234 5678");
     }
 }

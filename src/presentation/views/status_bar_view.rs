@@ -23,6 +23,7 @@ use crate::app::frame::EditorApp;
 use crate::application::dto::{GoalProgressView, StatsView};
 use crate::presentation::shortcuts::registry::UiAction;
 use crate::presentation::theme::builtin::Theme;
+use crate::shared::text::thousands;
 
 /// 一项的固定高度（与原型的 `--statusbar-h` 内边距一致）。
 const ITEM_HEIGHT: f32 = 18.0;
@@ -213,19 +214,6 @@ fn theme_label(app: &EditorApp) -> (String, String) {
     } else {
         ("浅色主题".to_string(), "点击切换为深色主题".to_string())
     }
-}
-
-/// 千分位分隔（`12345` → `12,345`）。
-fn thousands(n: usize) -> String {
-    let digits = n.to_string();
-    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
-    for (i, ch) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(ch);
-    }
-    out
 }
 
 fn draw(

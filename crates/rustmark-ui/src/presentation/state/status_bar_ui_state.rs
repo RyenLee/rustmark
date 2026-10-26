@@ -20,6 +20,7 @@
 
 use rustmark_core::application::dto::GoalProgressView;
 use rustmark_core::shared::encoding::TextEncoding;
+use rustmark_core::shared::text::thousands;
 
 /// 状态栏消息的默认存活时长（毫秒）。
 ///
@@ -230,22 +231,6 @@ impl StatusBarUiState {
     pub fn clear_message(&mut self) {
         self.message = None;
     }
-}
-
-/// 千分位分隔（`12345` → `12,345`）。
-///
-/// 状态层需要用它拼提示文案，而视图层那份是私有函数够不到。
-/// 不抽到共享模块：两处各自 8 行、语义稳定，为它新增一个模块不划算。
-fn thousands(n: usize) -> String {
-    let digits = n.to_string();
-    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
-    for (i, ch) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(ch);
-    }
-    out
 }
 
 #[cfg(test)]

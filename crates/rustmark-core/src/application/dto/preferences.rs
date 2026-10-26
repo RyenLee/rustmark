@@ -59,28 +59,14 @@ pub struct CustomThemePaletteView {
 
 impl Default for CustomThemePaletteView {
     fn default() -> Self {
-        // 以内置深色主题的核心色作为起点，保证首次切换到「自定义」时配色协调。
-        // 语法色一律 `None`（跟随主题）。
-        Self {
-            bg_primary: "#14161B".to_string(),
-            bg_secondary: "#1A1D24".to_string(),
-            text_primary: "#E8EAF0".to_string(),
-            text_secondary: "#9AA4B4".to_string(),
-            accent: "#6AA9FF".to_string(),
-            code_bg: "#1C212B".to_string(),
-            border: "#2B323D".to_string(),
-            selection_bg: "#6AA9FF".to_string(),
-            syn_heading: None,
-            syn_bold: None,
-            syn_italic: None,
-            syn_code: None,
-            syn_link: None,
-            syn_quote: None,
-            syn_marker: None,
-            syn_meta: None,
-            syn_table: None,
-            syn_other: None,
-        }
+        // 唯一真源是领域默认配色（[`CustomThemePalette::default`]）。
+        //
+        // 这里**派生**而不是手抄：此前两边各写一份同样的 8 个 hex 字面量，
+        // 「改一处忘另一处」的后果是「首次切到自定义」拿到的配色取决于走
+        // 哪条路径（领域聚合读出的 vs 视图默认构造的），而两者相差几个
+        // 色号肉眼几乎看不出来——正是最难排查的那种不一致。
+        // 语法色一律 `None`（跟随主题），由领域的默认值一并决定。
+        Self::from(CustomThemePalette::default())
     }
 }
 
