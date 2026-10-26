@@ -1,5 +1,7 @@
 //! 清洗策略：标签 / 属性 / URL 白名单与空元素判定。
 
+use crate::infrastructure::image_policy::is_allowed_image_subtype;
+
 /// 允许保留的标签集合。
 pub(super) const ALLOWED_TAGS: &[&str] = &[
     "p",
@@ -65,9 +67,6 @@ pub(super) const ALLOWED_ATTRS: &[&str] = &[
 /// 注意 `data:text/html` **不在**此列——它是 XSS 向量，必须剥除。
 const SAFE_DATA_IMAGE: &str = "data:image/";
 
-/// 内联图片允许的 MIME 子类型。
-const SAFE_DATA_IMAGE_TYPES: &[&str] = &["png", "jpeg", "jpg", "gif", "webp", "bmp"];
-
 /// 允许的 URL 协议前缀。
 const SAFE_URL_SCHEMES: &[&str] = &["http:", "https:", "mailto:", "tel:"];
 
@@ -132,5 +131,7 @@ fn is_safe_data_image(lower: &str) -> bool {
         return false;
     };
     // 必须精确等于某个白名单类型（`image/png` 不能匹配 `image/pngx`）。
-    SAFE_DATA_IMAGE_TYPES.contains(&mime) && !payload.trim().is_empty()
+    // 白名单取 `image_policy` 的真源，与预览侧的加载器共用同一张表——
+    // 各持一份时，同一张图会在「预览放行 / 导出被剥」之间悄悄不一致。
+    is_allowed_image_subtype(mime) && !payload.trim().is_empty()
 }

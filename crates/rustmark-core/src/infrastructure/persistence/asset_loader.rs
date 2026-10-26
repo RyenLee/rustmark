@@ -12,7 +12,9 @@
 //! `data:text/html;base64,…` 是 XSS 向量——它能在页面里执行脚本。
 //! 故白名单**精确到 MIME 子类型**，只放行 `png / jpeg / jpg / gif / webp / bmp`，
 //! 且**排除 `svg+xml`**（SVG 内部可以携带 `<script>`）。
-//! 这条规则与 `html_sanitize::is_safe_url` 保持一致，两处必须同源。
+//! 这条规则的真源是 `infrastructure::image_policy`，导出消毒器
+//! （`html_sanitize::is_safe_url`）与之**共用同一张表**——各持一份时，
+//! 同一张图会在「预览放行 / 导出被剥」之间悄悄不一致，且两边都不报错。
 //!
 //! # 体积：硬约束而非提示（原型缺陷 2.1 的根治）
 //!
@@ -39,6 +41,7 @@ mod policy;
 
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use coding::{decode_base64, percent_decode};
@@ -65,7 +68,7 @@ impl AssetLoader {
             limits: AssetLimits {
                 max_inline_bytes: 512 * 1024,
                 max_local_bytes: 8 * 1024 * 1024,
-                download_timeout: Duration::from_secs(10),
+                download_timeout: AssetLimits::DEFAULT_DOWNLOAD_TIMEOUT,
             },
         }
     }
@@ -259,19 +262,7 @@ impl AssetLoader {
     /// chunked 等 HTTP 细节全部交出去；本函数只保留三条
     /// **安全与资源边界**——超时、体积硬上限、MIME 白名单。
     fn load_remote(&self, url: &str) -> Result<LoadedAsset, AssetError> {
-        let agent = ureq::Agent::new_with_config(
-            ureq::Agent::config_builder()
-                // REL-03：exe 不再内置 Mozilla 根包，根证书改由平台信任库提供
-                // （见 [`platform_root_certs`]）。不显式注入会走 ureq 的
-                // `RootCerts::WebPki` 默认值——该 feature 已关，运行期 panic。
-                .tls_config(
-                    ureq::tls::TlsConfig::builder()
-                        .root_certs(platform_root_certs())
-                        .build(),
-                )
-                .timeout_global(Some(self.limits.download_timeout))
-                .build(),
-        );
+        let agent = http_agent(self.limits.download_timeout);
         let response = agent
             .get(url)
             .header("User-Agent", "rustmark")
@@ -343,6 +334,55 @@ impl AssetLoader {
             alt: alt_of(&final_path),
         })
     }
+}
+
+/// 进程级共享的 HTTP agent（默认超时那一份）。
+///
+/// 见 [`http_agent`]。
+static DEFAULT_AGENT: OnceLock<ureq::Agent> = OnceLock::new();
+
+/// 取用于下载的 HTTP agent。
+///
+/// # 为什么要复用
+///
+/// 早先每次下载都 `Agent::new_with_config`：连接池、DNS 缓存、TLS 会话
+/// 一律从头开始，一张远程图一次完整握手。含 N 张远程图的文档要付 N 次
+/// 握手成本——而它们指向的常常是同一个图床主机。`ureq::Agent` 内部是
+/// 连接池 + 引用计数，`clone` 极廉价且可跨线程共享（后台下载线程人手一份
+/// 也不会互相打架），故缓存一份复用。
+///
+/// # 为什么只对默认超时复用
+///
+/// 超时是烧进 agent 配置的，而 agent 是进程级共享的：若把任意超时都塞进
+/// 同一个单例，A 处配的 30 秒会悄悄作用到 B 处那张本该 10 秒就放弃的图上。
+/// 故只有超时等于 [`AssetLimits::DEFAULT_DOWNLOAD_TIMEOUT`] 的加载器共用
+/// 单例（生产路径全部如此）；自定义超时退回按次构造——宁可少一次复用，
+/// 也不能让限额配置互相串味。
+fn http_agent(timeout: Duration) -> ureq::Agent {
+    if timeout != AssetLimits::DEFAULT_DOWNLOAD_TIMEOUT {
+        return build_agent(timeout);
+    }
+    DEFAULT_AGENT
+        .get_or_init(|| build_agent(AssetLimits::DEFAULT_DOWNLOAD_TIMEOUT))
+        // Agent 的 clone 是廉价的句柄复制（内部引用计数），连接仍在池里。
+        .clone()
+}
+
+/// 按给定超时新建一个 agent（含平台根证书与 TLS 配置）。
+fn build_agent(timeout: Duration) -> ureq::Agent {
+    ureq::Agent::new_with_config(
+        ureq::Agent::config_builder()
+            // REL-03：exe 不再内置 Mozilla 根包，根证书改由平台信任库提供
+            // （见 [`platform_root_certs`]）。不显式注入会走 ureq 的
+            // `RootCerts::WebPki` 默认值——该 feature 已关，运行期 panic。
+            .tls_config(
+                ureq::tls::TlsConfig::builder()
+                    .root_certs(platform_root_certs())
+                    .build(),
+            )
+            .timeout_global(Some(timeout))
+            .build(),
+    )
 }
 
 /// 进程级缓存：平台信任库只读一次。

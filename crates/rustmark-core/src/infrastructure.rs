@@ -5,6 +5,7 @@ pub mod events;
 pub mod export;
 pub mod fonts;
 pub mod highlighting;
+pub(crate) mod image_policy;
 pub mod parsing;
 pub mod persistence;
 pub mod spell;

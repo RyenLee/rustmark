@@ -3,6 +3,7 @@
 use std::path::Path;
 use std::time::Duration;
 
+use crate::infrastructure::image_policy::ALLOWED_IMAGE_MIME;
 use crate::shared::error::AppError;
 
 /// 资源加载的限制参数。
@@ -23,28 +24,35 @@ pub struct AssetLimits {
     pub download_timeout: Duration,
 }
 
+impl AssetLimits {
+    /// 默认下载超时（10 秒）。
+    ///
+    /// 单独成常量是为了让 HTTP agent 的复用有一个**可判定的锚点**：
+    /// agent 是进程级共享的，只有超时恰好等于该值的加载器才能共用同一份
+    /// （见 [`crate::infrastructure::persistence::asset_loader::http_agent`]）。
+    pub const DEFAULT_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(10);
+}
+
 impl Default for AssetLimits {
     fn default() -> Self {
         Self {
             max_inline_bytes: 512 * 1024,
             max_local_bytes: 8 * 1024 * 1024,
-            download_timeout: Duration::from_secs(10),
+            download_timeout: Self::DEFAULT_DOWNLOAD_TIMEOUT,
         }
     }
 }
 
 /// 允许内联的图片 MIME 白名单。
 ///
-/// **不含 `svg+xml`**：SVG 是 XML，可以内嵌`<script>`，
-/// 内联进预览等于直接执行脚本。
-pub(super) const ALLOWED_MIME: &[&str] = &[
-    "image/png",
-    "image/jpeg",
-    "image/jpg",
-    "image/gif",
-    "image/webp",
-    "image/bmp",
-];
+/// 真源在 [`crate::infrastructure::image_policy::ALLOWED_IMAGE_MIME`]：预览加载
+/// 与导出消毒必须**共用同一张表**（若各持一份，改一处漏一处就会让同一张图
+/// 在两处得到相反结论，而两边都不报错）。此处仅做本地别名，方便预览侧沿用旧名。
+///
+/// 注意：本表**不含 `image/svg+xml`**。本地 `.svg` 不被渲染的真实原因是 `image`
+/// crate 的 `svg` 解码 feature 未启用（隐式防护）；若将来启用该 feature，必须在此表之外
+/// 显式拒绝 svg，否则会打开脚本执行敞口（见 `SECURITY.md` §3 / `PRIVACY.md` §2 / E-31）。
+pub(super) const ALLOWED_MIME: &[&str] = ALLOWED_IMAGE_MIME;
 
 /// 资源加载错误。
 #[derive(Debug, thiserror::Error)]
