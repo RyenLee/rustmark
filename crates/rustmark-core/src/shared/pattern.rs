@@ -136,10 +136,11 @@ impl Regex {
         let slice = text.get(from..to)?;
         for start_byte in slice.char_indices() {
             if let Some(end_byte) = self.match_at(slice, start_byte.0) {
+                // `slice` 是 `text[from..to]`，`match_at` 在 `slice` 内从 `start_byte.0`
+                // 起匹配并返回相对字节长度，故 `from + start_byte.0 + end_byte`
+                // 必 ≤ `to`，原先 `if end <= to` 是恒真死代码（E-21），移除。
                 let end = from + start_byte.0 + end_byte;
-                if end <= to {
-                    return Some((from + start_byte.0, end));
-                }
+                return Some((from + start_byte.0, end));
             }
         }
         None
@@ -148,7 +149,9 @@ impl Regex {
     /// 尝试在 `slice` 的 `at` 字节位置匹配任一分支；成功返回**相对字节长度**。
     fn match_at(&self, slice: &str, at: usize) -> Option<usize> {
         for alternative in &self.alternatives {
-            if let Some(len) = match_seq(alternative, slice, at, self.case_sensitive) {
+            // 每个分支各领一份预算，互不挤占；预算耗尽则判该分支未命中。
+            let mut budget = MATCH_STEP_BUDGET;
+            if let Some(len) = match_seq(alternative, slice, at, self.case_sensitive, &mut budget) {
                 return Some(len);
             }
         }
@@ -170,8 +173,36 @@ fn chars_eq(left: char, right: char, case_sensitive: bool) -> bool {
     }
 }
 
+/// 单次匹配尝试允许处理的**最大节点步数**（ReDoS 护栏）。
+///
+/// 回溯引擎对 `(a+)+$`、`(a*)*b` 这类嵌套量词是**指数级**的。触发门槛低到
+/// 只是「用户在查找框里敲出、或从文档里粘来这样一个模式」，而它既不会编译
+/// 报错、常规单测也覆盖不到，唯一的症状是 UI 线程直接冻结（本引擎在查找
+/// 替换面板键入时同步执行，侧栏跨文件搜索同理）。
+///
+/// 故给每次尝试一份步数预算：耗尽即判为**未命中**并降级——宁可漏一次匹配，
+/// 不可冻住界面。
+///
+/// 取值原则：需远大于「一行文本 × 肉眼可见的模式」的合理开销（典型行远不足
+/// 10 KB，即便退化到二次也只在百万量级），又能让指数级路径在毫秒级退出。
+const MATCH_STEP_BUDGET: usize = 1_000_000;
+
+/// 消耗一步预算；返回 `false` 表示已耗尽，应当放弃本次尝试。
+fn spend(budget: &mut usize) -> bool {
+    match budget.checked_sub(1) {
+        Some(left) => {
+            *budget = left;
+            true
+        }
+        None => false,
+    }
+}
+
 /// 在 `seq` 上匹配 `slice[at..]`；成功返回消耗的字节数。
-fn match_seq(seq: &[Node], slice: &str, at: usize, cs: bool) -> Option<usize> {
+fn match_seq(seq: &[Node], slice: &str, at: usize, cs: bool, budget: &mut usize) -> Option<usize> {
+    if !spend(budget) {
+        return None;
+    }
     let Some((first, rest)) = seq.split_first() else {
         // 空分支：匹配空串。
         return Some(0);
@@ -182,38 +213,39 @@ fn match_seq(seq: &[Node], slice: &str, at: usize, cs: bool) -> Option<usize> {
             min,
             max,
             greedy,
-        } => match_repeat(node, *min, *max, *greedy, rest, slice, at, cs),
+        } => match_repeat(node, *min, *max, *greedy, rest, slice, at, cs, budget),
         Node::StartAnchor => {
             // 行首：`at == 0` 或前一字符是换行。
             if at == 0 || slice[..at].ends_with('\n') {
-                match_seq(rest, slice, at, cs)
+                match_seq(rest, slice, at, cs, budget)
             } else {
                 None
             }
         }
         Node::EndAnchor => {
             if at == slice.len() || slice[at..].starts_with('\n') {
-                match_seq(rest, slice, at, cs)
+                match_seq(rest, slice, at, cs, budget)
             } else {
                 None
             }
         }
         Node::Group(inner) => {
             // 分组不额外消耗字符（无捕获组需求），直接进内容再接后续。
-            match_seq(inner, slice, at, cs)
-                .and_then(|len| match_seq(rest, slice, at + len, cs).map(|tail| len + tail))
+            match_seq(inner, slice, at, cs, budget)
+                .and_then(|len| match_seq(rest, slice, at + len, cs, budget).map(|tail| len + tail))
         }
         Node::Any => {
             let ch = slice[at..].chars().next()?;
             if ch == '\n' {
                 return None;
             }
-            match_seq(rest, slice, at + ch.len_utf8(), cs).map(|tail| ch.len_utf8() + tail)
+            match_seq(rest, slice, at + ch.len_utf8(), cs, budget).map(|tail| ch.len_utf8() + tail)
         }
         Node::Char(expected) => {
             let ch = slice[at..].chars().next()?;
             if chars_eq(ch, *expected, cs) {
-                match_seq(rest, slice, at + ch.len_utf8(), cs).map(|tail| ch.len_utf8() + tail)
+                match_seq(rest, slice, at + ch.len_utf8(), cs, budget)
+                    .map(|tail| ch.len_utf8() + tail)
             } else {
                 None
             }
@@ -222,7 +254,8 @@ fn match_seq(seq: &[Node], slice: &str, at: usize, cs: bool) -> Option<usize> {
             let ch = slice[at..].chars().next()?;
             let hit = items.iter().any(|item| class_matches(item, ch, cs));
             if hit != *negated {
-                match_seq(rest, slice, at + ch.len_utf8(), cs).map(|tail| ch.len_utf8() + tail)
+                match_seq(rest, slice, at + ch.len_utf8(), cs, budget)
+                    .map(|tail| ch.len_utf8() + tail)
             } else {
                 None
             }
@@ -241,13 +274,14 @@ fn match_repeat(
     slice: &str,
     at: usize,
     cs: bool,
+    budget: &mut usize,
 ) -> Option<usize> {
     // 先收集各次重复的结束位置，再按贪心/非贪心决定回退点。
     let mut ends = vec![at];
     let mut current = at;
     let limit = max.unwrap_or(usize::MAX);
     while ends.len() - 1 < limit {
-        match match_seq(node, slice, current, cs) {
+        match match_seq(node, slice, current, cs, budget) {
             // 必须严格消耗，否则 `a*` 会无限循环。
             Some(len) if len > 0 => {
                 current += len;
@@ -262,7 +296,7 @@ fn match_repeat(
             if count < min {
                 break;
             }
-            if let Some(tail) = match_seq(rest, slice, *end, cs) {
+            if let Some(tail) = match_seq(rest, slice, *end, cs, budget) {
                 return Some(tail + (end - at));
             }
         }
@@ -272,7 +306,7 @@ fn match_repeat(
             if count < min {
                 continue;
             }
-            if let Some(tail) = match_seq(rest, slice, *end, cs) {
+            if let Some(tail) = match_seq(rest, slice, *end, cs, budget) {
                 return Some(tail + (end - at));
             }
         }
@@ -284,19 +318,22 @@ fn match_repeat(
 fn class_matches(item: &ClassItem, ch: char, cs: bool) -> bool {
     match item {
         ClassItem::One(expected) => chars_eq(*expected, ch, cs),
-        // 范围的两端**各自**折叠成小写后再比。
+        // 范围比较：两端与**待匹配字符**都各自折叠到小写区后再比。
         //
-        // 不能整体折叠再比区间：`[A-Z]` 折叠成 `[a-z]` 恰好等价，
-        // 但 `[A-z]`（含 `[ \ ] ^ _ ` `）折叠后端点会**互换**
-        // （`Z`→`z` 是 0x7A，`a`→`a` 是 0x61），区间方向反了，
-        // 结果是「本该匹配一大段字符的类什么都不匹配」。
-        // 逐端折叠不会出现这个问题：`low <= ch && ch <= high`
-        // 在两端都被映射到同一侧时仍然有序。
+        // 逐端（而非整体）折叠是为了躲开端点互换：`[a-Z]` 这类跨大小写边界
+        // 的区间，折叠后可能出现 `low > high`；用「同一侧」比较时它只是恒假，
+        // 不会让整个字符类反向吞掉本该命中的字符。
+        //
+        // `ch` 必须与端点走**同一套**折叠——这是修 bug 的关键。早先只折叠
+        // 端点而拿原始字符去比，于是 `[A-Z]` 在忽略大小写时被折成
+        // `'a' <= ch <= 'z'`，而大写字母（0x41..0x5A）恒小于 `'a'`，
+        // 表现为「勾了忽略大小写、搜 `[A-Z]`，却一个大写都搜不到」。
+        // 区间两侧语义必须同源，否则折叠端点的那半套规则等于没生效。
         ClassItem::Range(low, high) => {
-            let (low, high) = if cs {
-                (*low, *high)
+            let (low, high, ch) = if cs {
+                (*low, *high, ch)
             } else {
-                (fold_lower(*low), fold_lower(*high))
+                (fold_lower(*low), fold_lower(*high), fold_lower(ch))
             };
             low <= ch && ch <= high
         }

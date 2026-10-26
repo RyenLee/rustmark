@@ -11,6 +11,7 @@ mod geometry_test;
 mod ids_test;
 mod internal_cycle_guard_test;
 mod path_test;
+mod pattern_test;
 mod theme_guard_test;
 mod theme_test;
 mod time_test;
