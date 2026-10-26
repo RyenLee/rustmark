@@ -6,8 +6,8 @@
 //! 侧栏跨文件搜索（应用层 `application::workspace`）。分层依赖严格单向
 //! （`presentation → application → domain`，见 `docs/architecture-constraints.md`，
 //! `check-arch` 机械校验），应用层不能反向引用表现层——引擎本体因此
-//! 下沉到所有层都能用的 [`crate::shared`]；表现层只留依赖 `FindOptions`
-//! 类型的编译适配（见 `presentation::state::find_replace_ui_state::pattern`）。
+//! 下沉到所有层都能用的 [`crate::shared`]；编译与扫描的**用例**住在
+//! `application::document::find`（V11-61 上浮），表现层只留面板状态。
 //!
 //! # 为什么自己实现而不用 `regex` crate
 //!

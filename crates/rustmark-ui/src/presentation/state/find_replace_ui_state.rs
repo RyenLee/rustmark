@@ -22,42 +22,21 @@
 //!
 //! # 模块结构
 //!
-//! facade 保留查找选项、错误类型、输入框常量与面板状态 `FindReplaceUiState`；
-//! 迷你正则引擎（AST / 编译 / 回溯）本体在 [`rustmark_core::shared::pattern`]——
-//! 它同时服务侧栏跨文件搜索（应用层），下沉是分层依赖的硬要求；
-//! 本目录的 `pattern` 只留依赖 [`FindOptions`] 的编译适配，
-//! 扫描、循环定位与字面量匹配算法在 `engine`。
+//! 本模块只保留**面板状态**（输入框内容、选项、当前命中、错误提示、跨文档
+//! 保留策略）与输入框常量。匹配本体——选项 `FindOptions`、扫描 `Finder`、
+//! 命中 `Match`、替换预览 `ReplaceSummary`——已上浮到
+//! [`rustmark_core::application::document::find`]（V11-61）：它是用例不是表现层
+//! 职责，计划中的 CLI / headless 批量替换要用同一套语义，而那条路径不能
+//! 依赖本 crate。此处**逐名重导出**，`crate::presentation::state::find_replace_ui_state::Finder`
+//! 这类既有路径一字不变。
 
-mod engine;
-mod pattern;
-
-pub use engine::{Finder, Match, ReplaceSummary};
+/// 匹配本体在 application 层（V11-61），重导出保持公开路径不变。
+pub use rustmark_core::application::document::find::{
+    FindOptions, Finder, Match, ReplaceSummary, find_matches,
+};
 /// 模式校验结果：引擎本体移入 [`rustmark_core::shared::pattern`]（侧栏跨文件搜索
 /// 同样要报它），此处重导出以保持原引用路径不变。
 pub use rustmark_core::shared::pattern::PatternError;
-
-/// 查找选项。
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub struct FindOptions {
-    /// 区分大小写（`Aa`）。
-    pub case_sensitive: bool,
-    /// 正则模式（`.*`）。
-    pub regex: bool,
-    /// 全字匹配。
-    pub whole_word: bool,
-}
-
-impl FindOptions {
-    /// 是否处于「纯字面量、不区分大小写」（默认状态）。
-    pub const fn is_plain(&self) -> bool {
-        !self.case_sensitive && !self.regex && !self.whole_word
-    }
-
-    /// 活跃开关数（UI 显示成角标）。
-    pub const fn active_count(&self) -> usize {
-        self.case_sensitive as usize + self.regex as usize + self.whole_word as usize
-    }
-}
 
 /// 查找输入框的 egui `Id` 源串。
 ///
