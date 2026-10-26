@@ -28,9 +28,9 @@ mod render;
 mod table;
 
 pub use block::{BlockId, BlockKind, ImageAlign, ImageDisplay, InlineImage};
-pub(crate) use inline::InlineSpan;
-pub use inline::{InlineStyle, SpanStyle, SyntaxSpan};
+// `InlineSpan` / `DefinitionBody` / `DefinitionEntry` 原本是 `pub(crate)` 复用，
+// TD-04 / V11-64 抽出 crate 后 `rustmark-infra` 需要跨 crate 读，统一并入 `pub use`。
+pub use inline::{InlineSpan, InlineStyle, SpanStyle, SyntaxSpan};
 pub(crate) use outline::OutlineItem;
 pub use render::{Misspelling, RenderedBlock};
-pub use table::{CellAlignment, ListItem, TableData};
-pub(crate) use table::{DefinitionBody, DefinitionEntry};
+pub use table::{CellAlignment, DefinitionBody, DefinitionEntry, ListItem, TableData};

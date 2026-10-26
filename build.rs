@@ -5,8 +5,9 @@
 //! `crates/rustmark-actions/src/`（V11-57，整根判 Free）、
 //! `crates/rustmark-icons/src/`（V11-58，`lib.rs` 自然判 Free）、
 //! `crates/rustmark-ui/src/`（V11-62，`presentation/` 前缀判子层）、
-//! `crates/rustmark-shared/src/`（TD-04，`shared/` 前缀判共享内核）与 `tests/`
-//! 的 `use` 语句，违反分层依赖即 `panic!` 使构建失败。
+//! `crates/rustmark-shared/src/`（TD-04，`shared/` 前缀判共享内核）、
+//! `crates/rustmark-infra/src/`（V11-64，`infrastructure/` 前缀判基础设施层）
+//! 与 `tests/` 的 `use` 语句，违反分层依赖即 `panic!` 使构建失败。
 //!
 //! `tests/` 自 R-02 起纳入扫描：测试是**消费者**不是层，可以引用任何层的
 //! 公开 API（`rustmark::…`），但禁止以 `crate::<层名>::…` 的库内部视角书写
@@ -45,6 +46,8 @@ fn main() {
     println!("cargo:rerun-if-changed=crates/rustmark-ui/src");
     // TD-04（2026-10-26）：shared 共享内核 crate 进扫描（scan_project 第六根）。
     println!("cargo:rerun-if-changed=crates/rustmark-shared/src");
+    // V11-64（2026-10-26）：infra 基础设施 crate 进扫描（scan_project 第七根）。
+    println!("cargo:rerun-if-changed=crates/rustmark-infra/src");
     println!("cargo:rerun-if-changed=tests");
 
     if std::env::var("SKIP_ARCH_CHECK").is_ok() {

@@ -71,7 +71,7 @@ impl ExportOptions {
     }
 
     /// 页面尺寸。
-    pub(crate) const fn page_size(&self) -> PageSize {
+    pub const fn page_size(&self) -> PageSize {
         self.page_size
     }
 

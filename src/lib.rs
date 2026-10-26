@@ -41,4 +41,10 @@ pub mod presentation;
 // D-3 阶段 4a：四层住在 `rustmark-core`，此处 re-export 拼回原 `crate::<层>` 路径，
 // 存量源码与测试的 `crate::domain::…` 等引用零改动（反向依赖由 cargo 锁死：
 // core 无法引用 root 的 `crate::app`，根 crate 的私有项也无法渗入 core）。
-pub use rustmark_core::{application, domain, infrastructure, shared};
+// TD-04（2026-10-26）：shared 已抽为 rustmark-shared，core 以
+// `pub use rustmark_shared::shared;` 原样转发，这里继续经 core 取用。
+// V11-64（2026-10-26）：infrastructure 已抽为 rustmark-infra，此处拼回
+// `crate::infrastructure` —— 组合根 `src/app/**` 的装配代码与
+// `tests/infrastructure/` 的 `rustmark::infrastructure::…` 引用零改动。
+pub use rustmark_core::{application, domain, shared};
+pub use rustmark_infra::infrastructure;

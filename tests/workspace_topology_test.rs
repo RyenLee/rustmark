@@ -208,3 +208,57 @@ fn shared_crate_declares_no_workspace_dependency() {
          （否则与 core→shared 成环，或让「共享」变成「某层的下游」）：{offenders:?}"
     );
 }
+
+/// `rustmark-infra` 的 workspace 依赖面必须**恰为** `rustmark-core`
+/// （V11-64 验收第 1 条的机械化）。
+///
+/// 基础设施是「端口在 core、实现在此」——它**必须**看得到端口与领域类型
+/// （故 core 一条是刚需，不是可选项），又**只能**看得到这些：
+///
+/// - 反向边（infra → ui / actions）会与「core ← ui」一起绕出环，Cargo 只
+///   在成环时才报，本断言把「infra 拿到了新的一方」前移成显式评审事件；
+/// - infra → root（`rustmark`）会让基础设施依赖组合根，层级彻底倒置；
+/// - 第三个本地依赖出现即说明 infra 在替某一层干活，「只是换住处、没换职责」
+///   的迁移纪律失守。
+///
+/// 外部依赖（pulldown-cmark / syntect / rfd / ureq 等）不受此限——它们正是
+/// 「适配外部库」的实现手段；要新增，仍应同步本测试注释与 §10.1 记录。
+#[test]
+fn infra_crate_depends_on_core_only() {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("crates")
+        .join("rustmark-infra")
+        .join("Cargo.toml");
+    let text = std::fs::read_to_string(&path).expect("infra crate 的 Cargo.toml 应可读");
+
+    let mut workspace_deps = BTreeSet::new();
+    let mut section = String::new();
+    for raw in text.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if line.starts_with('[') {
+            section = line.to_string();
+            continue;
+        }
+        // normal / dev / build / target-specific 一律算——dev 边同样是
+        // 「infra 能看见某人」的事实，只是不进产物。
+        if !section.contains("dependencies") {
+            continue;
+        }
+        if let Some((name, _)) = line.split_once('=') {
+            let name = name.trim();
+            if name.starts_with("rustmark") {
+                workspace_deps.insert(name.to_string());
+            }
+        }
+    }
+
+    let expected: BTreeSet<String> = ["rustmark-core"].iter().map(|s| s.to_string()).collect();
+    assert_eq!(
+        workspace_deps, expected,
+        "rustmark-infra 的 workspace 依赖面必须恰为 rustmark-core（端口与领域类型在 core）；\
+         多一条即层级倒置或成环，少一条则端口不可见"
+    );
+}

@@ -2411,6 +2411,7 @@ dependencies = [
  "log",
  "rustmark-core",
  "rustmark-icons",
+ "rustmark-infra",
  "rustmark-ui",
  "syntect",
  "tempfile",
@@ -2426,20 +2427,11 @@ name = "rustmark-core"
 version = "0.2.0"
 dependencies = [
  "ahash",
- "image",
  "log",
- "pulldown-cmark",
- "rfd",
- "ropey",
- "rustls-native-certs",
  "rustmark-actions",
  "rustmark-shared",
  "serde",
- "syntect",
- "tempfile",
  "thiserror 2.0.21",
- "toml",
- "ureq",
 ]
 
 [[package]]
@@ -2448,6 +2440,25 @@ version = "0.2.0"
 dependencies = [
  "egui",
  "rustmark-actions",
+]
+
+[[package]]
+name = "rustmark-infra"
+version = "0.2.0"
+dependencies = [
+ "image",
+ "log",
+ "pulldown-cmark",
+ "rfd",
+ "ropey",
+ "rustls-native-certs",
+ "rustmark-core",
+ "serde",
+ "syntect",
+ "tempfile",
+ "thiserror 2.0.21",
+ "toml",
+ "ureq",
 ]
 
 [[package]]

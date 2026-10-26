@@ -51,7 +51,7 @@ impl ExportJob {
     }
 
     /// 目标文件路径。
-    pub(crate) const fn destination(&self) -> &FilePath {
+    pub const fn destination(&self) -> &FilePath {
         &self.destination
     }
 

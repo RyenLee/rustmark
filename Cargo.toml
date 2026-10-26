@@ -16,6 +16,7 @@ members = [
     "crates/rustmark-actions",
     "crates/rustmark-core",
     "crates/rustmark-icons",
+    "crates/rustmark-infra",
     "crates/rustmark-shared",
     "crates/rustmark-ui",
 ]
@@ -145,14 +146,24 @@ eframe = { version = "0.37.0", default-features = false, features = [
 ] }
 
 # --- 本地 crate（D-3 阶段 4a：核心库）---
-# domain / application / infrastructure / shared 与 presentation 的
-# state / theme / rich / shortcuts 都在 core；widgets 在 V11-62 批次 1
-# 抽去的 rustmark-ui、icons 在 V11-58 抽去的 rustmark-icons；
+# domain / application 与 presentation 的 doc-only 空壳在 core；shared 在
+# TD-04 抽出的 rustmark-shared（core 经 re-export 拼回 `crate::shared`）；
+# infrastructure 在 V11-64 抽出的 rustmark-infra（root 经 re-export 拼回
+# `crate::infrastructure`）；state / theme / rich / shortcuts / widgets 在
+# V11-62 抽出的 rustmark-ui；icons 在 V11-58 抽出的 rustmark-icons；
 # root 只留组合根 app 与 presentation::views。
 # V11-57：rustmark-actions（UiAction 词汇表）是 workspace 成员，但 root **不
 # 直接依赖**它——UiAction 经 core 的 registry re-export 访问（root→actions
 # 直连会让「词汇表只服务 core 契约」的边界多出一条边）。
 rustmark-core = { path = "crates/rustmark-core" }
+
+# --- 本地 crate（V11-64：基础设施层，2026-10-26 抽出）---
+# 外部库适配与 IO（syntect / ureq / rfd / image / ropey / pulldown-cmark）。
+# 端口与领域类型在 core，实现在此（infra → core 单向）；core 不再依赖这些
+# 重库，复用 domain/application 的消费者不必被拖进编译图。经
+# `pub use rustmark_infra::infrastructure;` 拼回 `crate::infrastructure`
+# 原路径，组合根装配与 tests/infrastructure 零改动。
+rustmark-infra = { path = "crates/rustmark-infra" }
 
 # --- 本地 crate（V11-58：向量图标资源）---
 # 16×16 设计栅格规格数据 + Painter 渲染器；core 内零消费者，只被 root 视图

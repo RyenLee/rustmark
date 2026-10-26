@@ -1,0 +1,54 @@
+[package]
+# 独立 crate 版本号不随应用发版（publish = false，仅参与本地 workspace 构建）。
+name = "rustmark-infra"
+version = "0.2.0"
+edition = "2024"
+rust-version = "1.99"
+license = "MIT OR Apache-2.0"
+description = "rustmark 的基础设施层：外部库适配与 IO 实现（端口在 core）"
+publish = false
+
+[dependencies]
+# --- 本地 crate（端口与领域类型在 core，实现在此）---
+rustmark-core = { path = "../rustmark-core" }
+
+# --- 解析与高亮（ADR-002）---
+# 与 core 时期同规格声明；V11-65 起版本继承 root [workspace.dependencies]。
+pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
+syntect = { workspace = true }
+
+# --- 图片解码（S6-05 预览区显示图片；落盘与缩放在 persistence）---
+image = { workspace = true }
+
+# --- 文本缓冲（rope_text_buffer）---
+ropey = "1.6.1"
+
+# --- 对话框（dialogs/rfd_adapter）---
+rfd = "0.17.2"
+
+# --- 配置与序列化（preferences / recent_files 落盘）---
+serde = { version = "1", features = ["derive"] }
+toml = "1.1.8"
+
+# --- 错误处理（asset_loader 的限额错误等）---
+thiserror = "2"
+
+# --- 远程图片下载（缺陷 025：https 图片此前因「未内置 TLS」全部失败）---
+# 纯 Rust TLS（rustls + ring）；REL-03 体积缓解：不启 rustls-webpki-roots，
+# 根证书运行期从平台信任库读取（见 asset_loader.rs 的 platform_root_certs）。
+ureq = { version = "3.5.0", default-features = false, features = [
+    "rustls-no-provider",
+    "_ring",
+] }
+rustls-native-certs = "0.8"
+
+# --- 日志（越界告警用）---
+log = { workspace = true }
+
+[dev-dependencies]
+# 内联测试用临时目录（字体发现 / 图片落盘 / 编码探测）。
+tempfile = { workspace = true }
+
+# V11-65：lint 经 [workspace.lints] 单点继承。
+[lints]
+workspace = true

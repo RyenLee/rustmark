@@ -287,16 +287,19 @@ fn collect_rs_files(dir: &Path) -> Vec<PathBuf> {
     out
 }
 
-/// 三根扫描（D-3 阶段 4a workspace 化 + V11-57 抽 actions crate）：
-/// 四层与非视图子模块在 `crates/rustmark-core/src`，组合根与视图在
-/// `src`，UiAction 词汇表在 `crates/rustmark-actions/src`；三根都扫才
-/// 等价于拆分前对单一 `src` 的全量覆盖（各根内按层相对路径记键）。
+/// 四根扫描（D-3 阶段 4a workspace 化 + V11-57 抽 actions crate + V11-64 抽
+/// infra crate）：四层与非视图子模块在 `crates/rustmark-core/src`，组合根与
+/// 视图在 `src`，UiAction 词汇表在 `crates/rustmark-actions/src`，
+/// 基础设施在 `crates/rustmark-infra/src`（当前无 `persisted_key` 定义，
+/// 但扫描面与拆分前的单一 `src` 保持一致——搬迁不该静默收窄守卫范围）；
+/// 四根都扫才等价于拆分前对单一 `src` 的全量覆盖（各根内按层相对路径记键）。
 fn src_roots() -> Vec<PathBuf> {
     let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     vec![
         base.join("src"),
         base.join("crates/rustmark-core/src"),
         base.join("crates/rustmark-actions/src"),
+        base.join("crates/rustmark-infra/src"),
     ]
 }
 

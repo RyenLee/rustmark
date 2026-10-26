@@ -45,7 +45,7 @@ modules:
       rust_msrv:
         value: 1.99
         unit: "Rust version"
-        source: "Cargo.toml:78"
+        source: "Cargo.toml:80"
         anchor: "rust-version = \"1.99\""
         purpose: "包级最低 Rust 版本声明，cargo 解析依赖时据此拒绝过低版本。与 toolchain_channel 须同步。"
         recommended: "1.99（与工具链同步）"
@@ -468,7 +468,7 @@ modules:
       tree_max_entries:
         value: 10000
         unit: "entries"
-        source: "crates/rustmark-core/src/infrastructure/persistence/fs_workspace_repository.rs:60"
+        source: "crates/rustmark-infra/src/infrastructure/persistence/fs_workspace_repository.rs:60"
         anchor: "max_entries: 10_000"
         purpose: "单次文件树遍历条目数硬上限；超出即停止扫描，表现为树不完整而非卡死。"
         recommended: "10000（并透出 truncated）"
@@ -521,7 +521,7 @@ modules:
         unit: "bytes"
         source: "crates/rustmark-core/src/application/markdown/service.rs:61"
         anchor: "TRUNCATE_THRESHOLD_BYTES: usize = crate::shared::constants::LARGE_FILE_BYTES"
-        via: "crates/rustmark-core/src/shared/constants.rs"
+        via: "crates/rustmark-shared/src/shared/constants.rs"
         purpose: "源文档超过 500 KiB 即标记截断预览（FR-06），不调用解析器；用户看到的是降级纯文本。"
         recommended: "524288（data URI）/ 8388608（本地与远程，需配合解码降采样）"
         configurable: "硬编码 const"
@@ -544,7 +544,7 @@ modules:
       highlight_checkpoint_lines:
         value: 25
         unit: "lines"
-        source: "crates/rustmark-core/src/infrastructure/highlighting/incremental.rs:55"
+        source: "crates/rustmark-infra/src/infrastructure/highlighting/incremental.rs:55"
         anchor: "CHECKPOINT_INTERVAL_LINES: usize = 25"
         purpose: "增量高亮检查点间隔；越小恢复点越近但检查点内存越大，越大则增量收益下降。"
         recommended: "16-64"
@@ -552,9 +552,9 @@ modules:
       max_incremental_bytes:
         value: 512000
         unit: "bytes"
-        source: "crates/rustmark-core/src/infrastructure/highlighting/incremental.rs:58"
-        anchor: "MAX_INCREMENTAL_BYTES: usize = crate::shared::constants::LARGE_FILE_BYTES"
-        via: "crates/rustmark-core/src/shared/constants.rs"
+        source: "crates/rustmark-infra/src/infrastructure/highlighting/incremental.rs:58"
+        anchor: "MAX_INCREMENTAL_BYTES: usize = rustmark_core::shared::constants::LARGE_FILE_BYTES"
+        via: "crates/rustmark-shared/src/shared/constants.rs"
         purpose: "超过该字节数不做增量高亮（降级纯文本）；与截断阈值、排版阈值共用同一常量。"
         recommended: "512000（与 LARGE_FILE_BYTES 同源）"
         configurable: "硬编码 const"
@@ -563,7 +563,7 @@ modules:
         unit: "bytes"
         source: "crates/rustmark-ui/src/presentation/theme/mapper/galley_cache.rs:83"
         anchor: "LARGE_FILE_BYTES: usize = rustmark_core::shared::constants::LARGE_FILE_BYTES"
-        via: "crates/rustmark-core/src/shared/constants.rs"
+        via: "crates/rustmark-shared/src/shared/constants.rs"
         purpose: "UI 排版侧的大文件阈值：超过后停止 span 着色，只做纯文本排版（FR-06）。"
         recommended: "512000（与 truncate 阈值同源）"
         configurable: "硬编码 const"
@@ -572,7 +572,7 @@ modules:
         unit: "ms"
         source: "src/app/bootstrap.rs:65"
         anchor: "PREVIEW_DEBOUNCE_MS: u64 = crate::shared::constants::DEBOUNCE_MS"
-        via: "crates/rustmark-core/src/shared/constants.rs"
+        via: "crates/rustmark-shared/src/shared/constants.rs"
         purpose: "预览防抖窗口（FR-01），装配 DebouncePolicy 时传入；打字期不重排，停手 150ms 后渲染。"
         recommended: "100-250"
         configurable: "硬编码 const"
@@ -581,7 +581,7 @@ modules:
         unit: "ms"
         source: "crates/rustmark-ui/src/presentation/state/preview_ui_state.rs:22"
         anchor: "PREVIEW_DEBOUNCE_MS: u64 = rustmark_core::shared::constants::DEBOUNCE_MS"
-        via: "crates/rustmark-core/src/shared/constants.rs"
+        via: "crates/rustmark-shared/src/shared/constants.rs"
         purpose: "表现层另一份预览防抖常量，用于判断预览是否到期；与装配层同名同值但独立定义。"
         recommended: "150（合并为单一真源）"
         configurable: "硬编码 const"
@@ -590,7 +590,7 @@ modules:
         unit: "ms"
         source: "src/app/frame/state.rs:67"
         anchor: "STATS_DEBOUNCE_MS: u64 = crate::shared::constants::DEBOUNCE_MS"
-        via: "crates/rustmark-core/src/shared/constants.rs"
+        via: "crates/rustmark-shared/src/shared/constants.rs"
         purpose: "状态栏字数统计防抖窗口；1MB 文档 compute_stats 约 9.5ms，故等停手后算一次。"
         recommended: "100-250"
         configurable: "硬编码 const"
@@ -632,7 +632,7 @@ modules:
       asset_max_inline_bytes:
         value: 524288
         unit: "bytes"
-        source: "crates/rustmark-core/src/infrastructure/persistence/asset_loader/policy.rs:39"
+        source: "crates/rustmark-infra/src/infrastructure/persistence/asset_loader/policy.rs:39"
         anchor: "max_inline_bytes: 512 * 1024"
         purpose: "data URI 内联体积硬上限：写进 Markdown 文本的数据过大既撑爆文档也拖慢解析；超限返回 TooLarge。"
         recommended: "524288（data URI）"
@@ -640,7 +640,7 @@ modules:
       asset_max_local_bytes:
         value: 8388608
         unit: "bytes"
-        source: "crates/rustmark-core/src/infrastructure/persistence/asset_loader/policy.rs:40"
+        source: "crates/rustmark-infra/src/infrastructure/persistence/asset_loader/policy.rs:40"
         anchor: "max_local_bytes: 8 * 1024 * 1024"
         purpose: "本地文件与远程下载的体积上限（8 MiB）；本地在读盘前按元数据预检，远程边读边判。超限返回 TooLarge 并显示占位。"
         recommended: "8388608（本地/远程）"
@@ -648,7 +648,7 @@ modules:
       asset_download_timeout:
         value: 10
         unit: "seconds"
-        source: "crates/rustmark-core/src/infrastructure/persistence/asset_loader/policy.rs:33"
+        source: "crates/rustmark-infra/src/infrastructure/persistence/asset_loader/policy.rs:33"
         anchor: "DEFAULT_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(10)"
         purpose: "远程图片下载总超时（10s，全局 deadline 含 TLS 与重定向）；超时即报 DownloadFailed，预览显示占位。"
         recommended: "3-10"
@@ -656,16 +656,16 @@ modules:
       asset_remote_stream_cap:
         value: 8388608
         unit: "bytes"
-        source: "crates/rustmark-core/src/infrastructure/persistence/asset_loader.rs:315"
+        source: "crates/rustmark-infra/src/infrastructure/persistence/asset_loader.rs:315"
         anchor: "bytes.len() > self.limits.max_local_bytes"
-        via: "crates/rustmark-core/src/infrastructure/persistence/asset_loader/policy.rs"
+        via: "crates/rustmark-infra/src/infrastructure/persistence/asset_loader/policy.rs"
         purpose: "远程下载边读边判的瞬时上限（= 本地上限 8 MiB），超过即中止，不再先读到 2× 再拒绝。"
         recommended: "8388608"
         configurable: "硬编码字面量（复用 max_local_bytes）"
       image_dedupe_attempts:
         value: 1000
         unit: "attempts"
-        source: "crates/rustmark-core/src/infrastructure/persistence/image_store.rs:31"
+        source: "crates/rustmark-infra/src/infrastructure/persistence/image_store.rs:31"
         anchor: "MAX_DEDUPE_ATTEMPTS: u32 = 1000"
         purpose: "同名图片落盘的序号去重上限；1000 次仍冲突则返回可读错误，避免无限循环。"
         recommended: "100-10000"
@@ -673,7 +673,7 @@ modules:
       capture_max_dimension:
         value: 8192
         unit: "px"
-        source: "crates/rustmark-core/src/infrastructure/export/viewport_capture.rs:121"
+        source: "crates/rustmark-infra/src/infrastructure/export/viewport_capture.rs:121"
         anchor: "MAX_DIMENSION: u32 = 8192"
         purpose: "截图单轴边长上限（约 A4@300dpi）；超限拒绝导出，避免单张图先吃数百 MB 再失败。"
         recommended: "4096-16384"
@@ -681,7 +681,7 @@ modules:
       capture_max_long_height:
         value: 16384
         unit: "px"
-        source: "crates/rustmark-core/src/infrastructure/export/viewport_capture.rs:128"
+        source: "crates/rustmark-infra/src/infrastructure/export/viewport_capture.rs:128"
         anchor: "MAX_LONG_IMAGE_HEIGHT: u32 = 16_384"
         purpose: "长图拼接成品高度上限（约 131MB 内存峰值）；超限建议改用 HTML/PDF 导出。"
         recommended: "8192-32768"
@@ -708,7 +708,7 @@ modules:
       spell_min_check_len:
         value: 3
         unit: "chars"
-        source: "crates/rustmark-core/src/infrastructure/spell/simple_checker.rs:32"
+        source: "crates/rustmark-infra/src/infrastructure/spell/simple_checker.rs:32"
         anchor: "MIN_CHECK_LEN: usize = 3"
         purpose: "短于该长度的词不判错；阈值过低会把缩写与噪声全部标红。"
         recommended: "3-4"
@@ -716,7 +716,7 @@ modules:
       spell_max_edit_dist:
         value: 1
         unit: "edit distance"
-        source: "crates/rustmark-core/src/infrastructure/spell/simple_checker.rs:35"
+        source: "crates/rustmark-infra/src/infrastructure/spell/simple_checker.rs:35"
         anchor: "MAX_EDIT_DIST: usize = 1"
         purpose: "判错时的最大编辑距离；放宽会把整篇技术文档标红（误报优先收紧）。"
         recommended: "1"
@@ -724,7 +724,7 @@ modules:
       spell_max_suggest_dist:
         value: 2
         unit: "edit distance"
-        source: "crates/rustmark-core/src/infrastructure/spell/simple_checker.rs:42"
+        source: "crates/rustmark-infra/src/infrastructure/spell/simple_checker.rs:42"
         anchor: "MAX_SUGGEST_DIST: usize = 2"
         purpose: "建议候选的最大编辑距离，比判错阈值宽一档；放宽只增加候选，不会误标红。"
         recommended: "2-3"
@@ -873,7 +873,7 @@ modules:
         unit: "pt"
         source: "crates/rustmark-ui/src/presentation/state/scroll_sync_state.rs:42"
         anchor: "MOVE_EPS: f32 = rustmark_core::shared::constants::SCROLL_MOVE_EPS"
-        via: "crates/rustmark-core/src/shared/constants.rs"
+        via: "crates/rustmark-shared/src/shared/constants.rs"
         purpose: "判定「偏移真的变了」的容差；取 0 会把静止帧的像素取整抖动误判为用户滚动。"
         recommended: "0.5-1.0"
         configurable: "硬编码 const"
@@ -882,7 +882,7 @@ modules:
         unit: "pt"
         source: "src/app/frame/find.rs:114"
         anchor: "abs() > crate::shared::constants::SCROLL_MOVE_EPS"
-        via: "crates/rustmark-core/src/shared/constants.rs"
+        via: "crates/rustmark-shared/src/shared/constants.rs"
         purpose: "查找跳转时「需要改滚动位置」的容差；与 MOVE_EPS 同值但独立定义。"
         recommended: "0.5（复用 MOVE_EPS）"
         configurable: "硬编码字面量"
@@ -1015,7 +1015,7 @@ modules:
       env_skip_arch_check:
         value: "任意值"
         unit: "switch"
-        source: "build.rs:47"
+        source: "build.rs:53"
         anchor: "std::env::var(\"SKIP_ARCH_CHECK\")"
         purpose: "设置后跳过构建期架构边界校验（逃生口）；CI 不得设置，否则分层违规不再拦截构建。"
         recommended: "仅本地排障临时使用"

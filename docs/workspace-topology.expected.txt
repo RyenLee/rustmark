@@ -47,6 +47,21 @@
 # 断言）；root 不直连 shared——公开路径经 core 的 `pub use rustmark_shared::shared;`
 # 桥接。同批实测修正：V11-63 删 core 的 egui 依赖后，本文件曾漏更新（core 行
 # 仍列 egui），本次按实测重生成。
+#
+# 基线更新：2026-10-26，V11-64 抽出 rustmark-infra 后拓扑 = 五条本地链
+# （无环，本地依赖边 7 → 8 条）：
+#   root → rustmark-core → rustmark-shared
+#   root → rustmark-core → rustmark-actions
+#   root → rustmark-infra → rustmark-core → {rustmark-shared, rustmark-actions}
+#   root → rustmark-icons → rustmark-actions
+#   root → rustmark-ui → rustmark-core → rustmark-shared
+# infra 依赖面 = rustmark-core + 解析/高亮/对话框/网络等外部库（workspace 成员
+# 恰为 core 一条，由 tests/workspace_topology_test.rs 的
+# infra_crate_depends_on_core_only 断言）；root 直连 infra——与 core 同一层
+# 待遇（基础设施层是组合根要装配的东西），公开路径经 `pub use
+# rustmark_infra::infrastructure;` 桥接后对视图零改动。
+# 同批：core 的依赖面从「四层 + 全部外部适配库」收窄为
+# rustmark-{actions,shared} + ahash/log/serde/thiserror，infra 承接原有外部库。
 rustmark v0.2.0
 ├── anyhow v1.0.104
 ├── eframe v0.37.0
@@ -55,8 +70,9 @@ rustmark v0.2.0
 ├── image v0.25.10
 ├── log v0.4.34
 ├── rustmark-core v0.2.0
-│   [dev-dependencies]
 ├── rustmark-icons v0.2.0
+├── rustmark-infra v0.2.0
+│   [dev-dependencies]
 ├── rustmark-ui v0.2.0
 └── wgpu v30.0.1
     [build-dependencies]
@@ -69,14 +85,24 @@ rustmark-actions v0.2.0
 rustmark-core v0.2.0
 ├── ahash v0.8.12
 │   [build-dependencies]
+├── log v0.4.34
+├── rustmark-actions v0.2.0
+├── rustmark-shared v0.2.0
+├── serde v1.0.229
+└── thiserror v2.0.21
+
+rustmark-icons v0.2.0
+├── egui v0.37.0
+└── rustmark-actions v0.2.0
+
+rustmark-infra v0.2.0
 ├── image v0.25.10
 ├── log v0.4.34
 ├── pulldown-cmark v0.13.4
 ├── rfd v0.17.2
 ├── ropey v1.6.1
 ├── rustls-native-certs v0.8.5
-├── rustmark-actions v0.2.0
-├── rustmark-shared v0.2.0
+├── rustmark-core v0.2.0
 ├── serde v1.0.229
 ├── syntect v5.3.0
 ├── thiserror v2.0.21
@@ -84,10 +110,6 @@ rustmark-core v0.2.0
 └── ureq v3.5.0
 [dev-dependencies]
 └── tempfile v3.27.0
-
-rustmark-icons v0.2.0
-├── egui v0.37.0
-└── rustmark-actions v0.2.0
 
 rustmark-shared v0.2.0
 ├── ahash v0.8.12
@@ -98,4 +120,3 @@ rustmark-shared v0.2.0
 rustmark-ui v0.2.0
 ├── egui v0.37.0
 └── rustmark-core v0.2.0
-    [dev-dependencies]

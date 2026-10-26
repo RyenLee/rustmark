@@ -8,9 +8,12 @@ license = "MIT OR Apache-2.0"
 publish = false
 
 [dependencies]
-# 依赖切分原则（D-3 阶段 4a）：四层 + 表现层非视图子模块编译所需的全部外部库
-# 下沉到 core；eframe / env_logger / anyhow 等「只被组合根与视图使用」的留在 root。
-# 每项的选型理由与 root Cargo.toml 同源（原先同一份清单），此处保留核心约束注释。
+# 依赖切分原则（D-3 阶段 4a，V11-64 后重述）：core 只剩**纯六边形脊柱**——
+# domain / application 与 presentation 的 doc-only 空壳。基础设施实现
+# （syntect / ureq / rfd / image / ropey / pulldown-cmark）自 2026-10-26 起
+# 住在 `rustmark-infra`，复用 domain/application 的消费者不必再被它们拖进
+# 编译图；egui 自 V11-63 起也不在 core（端口化）。
+# eframe / env_logger / anyhow 等「只被组合根与视图使用」的留在 root。
 
 # --- 本地 crate（V11-57：UI 动作词汇表契约 crate）---
 # UiAction / MenuGroup 是菜单 / 工具栏 / 命令面板 / 快捷键共用的词汇表，
@@ -23,68 +26,21 @@ rustmark-actions = { path = "../rustmark-actions" }
 # 零 IO 的纯值 / 端口 / 唯一真源（error / ids / geometry / path / pattern /
 # text_format / theme / lru …）。抽取动机是「共享内核有自己的准入与登记规则
 # （§4.5）+ 可被非 UI 消费者单独复用」；反向依赖由 Cargo 锁死（shared 不依赖
-# core）。core 以 `pub use rustmark_shared as shared;` 桥接，公开路径零变化。
+# core）。core 以 `pub use rustmark_shared::shared;` 桥接，公开路径零变化。
 rustmark-shared = { path = "../rustmark-shared" }
 
-# --- UI 绘制原语 ---
-# V11-63 收口（2026-10-26）：**core 已零 egui 依赖**。
-# 原先这里挂着 `egui = { workspace = true }`，理由是「core 只画 egui
-# （TextFormat / LayoutJob / Galley 等），不接触渲染后端」。V11-62 把
-# widgets / state / shortcuts / theme / rich 五个子模块迁到 `rustmark-ui`
-# 之后，core 侧只剩字体簇与截图簇两处真实引用；V11-63 阶段 A/B 把它们
-# 分别端口化为 `PortFrame` 与 `PortFontDefinitions` 一族纯数据类型，
-# egui 类型只在组合根 `src/app/frame.rs` 的适配器里出现。
-#
-# 这条依赖的移除就是 V11-63 的验收判据本身：`cargo tree -p rustmark-core
-# | grep -c egui` 从 1 变 0，「core 可 headless 复用」不再是纸面声明。
-# 谁要把它加回来，等于同时推翻 `INFRASTRUCTURE_FORBIDDEN` 的 egui 项
-# （现为无条件生效）与 `tests/workspace_topology_test.rs` 的依赖边期望。
-
-# --- 解析与高亮（ADR-002）---
-pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
-# syntect 只保留「解析 + 语法集」：不启 default-themes / yaml-load / plist-load，
-# 保留 regex-fancy（纯 Rust，避开 onig）。
-# V11-65：版本/规格继承 root [workspace.dependencies]（与 root 集成测试同源）。
-syntect = { workspace = true }
-
-# --- 图片解码（S6-05 预览区显示图片）---
-# 与 root 同规格声明（预览区解码在 views、落盘与缩放在 infrastructure），
-# 只启用白名单位图格式，不启 svg、关 default。
-# V11-65：版本/规格继承 root [workspace.dependencies]。
-image = { workspace = true }
-
-# --- 文本缓冲 ---
-ropey = "1.6.1"
-
-# --- 对话框（infrastructure/dialogs/rfd_adapter）---
-rfd = "0.17.2"
-
-# --- 配置与序列化 ---
+# --- 配置与序列化（DTO / 偏好值对象的 serde）---
 serde = { version = "1", features = ["derive"] }
-toml = "1.1.8"
 
 # --- 错误处理（领域/应用层错误用 thiserror；anyhow 只允许在组合根入口）---
 thiserror = "2"
 
-# --- 远程图片下载（缺陷 025：https 图片此前因「未内置 TLS」全部失败）---
-# 纯 Rust TLS（rustls + ring）；REL-03 体积缓解：不启 rustls-webpki-roots，
-# 根证书运行期从平台信任库读取（见 asset_loader.rs 的 platform_root_certs）。
-ureq = { version = "3.5.0", default-features = false, features = [
-    "rustls-no-provider",
-    "_ring",
-] }
-rustls-native-certs = "0.8"
-
-# --- 日志（基础设施层越界告警用）---
+# --- 日志（应用层毒锁恢复等越界告警）---
 # V11-65：版本继承 root [workspace.dependencies]。
 log = { workspace = true }
 
-# --- 缓存哈希器（预览/高亮/拼写缓存的 u64 键；no-rng 免 getrandom）---
+# --- 缓存哈希器（跨文件搜索 span 缓存；no-rng 免 getrandom）---
 ahash = { version = "0.8", default-features = false, features = ["std", "no-rng"] }
-
-[dev-dependencies]
-# V11-65：版本继承 root [workspace.dependencies]（两侧 dev-dependencies 同规格）。
-tempfile = { workspace = true }
 
 # V11-65：lint 经 [workspace.lints] 单点继承（原为 src/lib.rs 顶部的 attribute）。
 [lints]

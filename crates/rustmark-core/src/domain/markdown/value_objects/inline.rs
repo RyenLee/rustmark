@@ -65,7 +65,10 @@ pub struct InlineSpan {
 
 impl InlineSpan {
     /// 构造行内片段（无链接目标）。
-    pub(crate) const fn new(start: usize, end: usize, style: InlineStyle) -> Self {
+    ///
+    /// V11-64 把解析器抽到 `rustmark-infra` 后，构造点跨 crate，
+    /// 由 `pub(crate)` 放宽到 `pub`；写入方仍只有解析器一处。
+    pub const fn new(start: usize, end: usize, style: InlineStyle) -> Self {
         Self {
             start,
             end,
@@ -75,7 +78,9 @@ impl InlineSpan {
     }
 
     /// 构造带链接目标的行内片段（`style` 应为 `Link`）。
-    pub(crate) fn new_link(start: usize, end: usize, style: InlineStyle, dest: String) -> Self {
+    ///
+    /// 可见性同 [`InlineSpan::new`]：解析器搬到 `rustmark-infra` 后需要跨 crate 调用。
+    pub fn new_link(start: usize, end: usize, style: InlineStyle, dest: String) -> Self {
         Self {
             start,
             end,

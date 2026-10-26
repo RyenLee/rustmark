@@ -52,7 +52,7 @@ impl RenderedBlock {
     }
 
     /// 附带行内样式片段（构造链）。
-    pub(crate) fn with_spans(mut self, spans: Vec<InlineSpan>) -> Self {
+    pub fn with_spans(mut self, spans: Vec<InlineSpan>) -> Self {
         self.spans = spans;
         self
     }

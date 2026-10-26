@@ -234,17 +234,20 @@ fn collect_rs_files(dir: &Path) -> Vec<PathBuf> {
     out
 }
 
-/// 四根扫描（D-3 阶段 4a workspace 化 + V11-62 + TD-04）：四层在
+/// 五根扫描（D-3 阶段 4a workspace 化 + V11-62 + TD-04 + V11-64）：四层在
 /// `crates/rustmark-core/src`，组合根与视图在 `src`，从 core 抽出的
 /// `rustmark-ui` 非视图子模块（widgets / state / shortcuts / theme）在
 /// `crates/rustmark-ui/src`，主题真源 `shared/theme.rs` 在
-/// `crates/rustmark-shared/src`（TD-04）。四根都扫，才等价于拆分前对单一
-/// `src` 的全量覆盖；各根内均按层相对路径记键，`shared/` 前缀随目录保留。
+/// `crates/rustmark-shared/src`（TD-04），基础设施（syntect 配色等最易
+/// 另写一份主题枚举的地方）在 `crates/rustmark-infra/src`（V11-64）。
+/// 五根都扫，才等价于拆分前对单一 `src` 的全量覆盖；各根内均按层相对
+/// 路径记键，`shared/` `infrastructure/` 前缀随目录保留。
 fn src_roots() -> Vec<PathBuf> {
     let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     vec![
         base.join("src"),
         base.join("crates/rustmark-core/src"),
+        base.join("crates/rustmark-infra/src"),
         base.join("crates/rustmark-ui/src"),
         base.join("crates/rustmark-shared/src"),
     ]

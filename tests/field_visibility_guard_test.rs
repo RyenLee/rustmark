@@ -64,7 +64,8 @@ mod arch_check {
 /// - 抽出的叶子 crate 条目：`<crate 短名>/<相对该 crate src 的路径>::
 ///   <结构体>::<字段>`（当前 icons：`icons/lib.rs::…`；ui：
 ///   `ui/presentation/state/…`；**shared（TD-04）：`shared/dialog.rs::…`
-///   ——前缀恰好复现搬迁前的 core 相对路径，故 4 条 shared 键零改动**）。前缀是**防碰撞**
+///   ——前缀恰好复现搬迁前的 core 相对路径，故 4 条 shared 键零改动**；
+///   **infra（V11-64）：`infrastructure/…::…`——同理零改键**）。前缀是**防碰撞**
 ///   的键命名空间——core 与叶子 crate 各有一个 `lib.rs`，裸路径会把两边的
 ///   条目合并成同键，白名单 quietly 少算。
 ///
@@ -807,17 +808,19 @@ fn pub_fields_in(source: &str) -> Vec<String> {
 /// 扫描 core 与抽出的叶子 crate 的全部 `.rs`，返回 `<键>::<结构体>::<字段>`
 /// 集合与未能归属到任何结构体体的命中（正常应为空，非空 = 匹配逻辑有洞）。
 ///
-/// 键前缀见 [`APPROVED_PUB_FIELDS`]：core 为 `""`（历史口径，548 条不动），
-/// 叶子 crate 为 crate 短名 + `/`（防 `lib.rs` 同键碰撞）。
+/// 键前缀见 [`APPROVED_PUB_FIELDS`]：core / shared / infra 为 `""`（历史口径，
+/// 559 条不动；后两者保留 `shared/` `infrastructure/` 子目录，裸相对路径恰好
+/// 复现搬迁前的 core 键），icons / ui 为 crate 短名 + `/`（防 `lib.rs` 同键碰撞）。
 fn scan_pub_fields() -> (BTreeSet<String>, Vec<String>) {
     let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let roots: [(&str, PathBuf); 4] = [
+    let roots: [(&str, PathBuf); 5] = [
         ("", base.join("crates").join("rustmark-core").join("src")),
         (
             "icons/",
             base.join("crates").join("rustmark-icons").join("src"),
         ),
         ("", base.join("crates").join("rustmark-shared").join("src")),
+        ("", base.join("crates").join("rustmark-infra").join("src")),
         ("ui/", base.join("crates").join("rustmark-ui").join("src")),
     ];
 

@@ -31,7 +31,6 @@
 
 pub mod application;
 pub mod domain;
-pub mod infrastructure;
 pub mod presentation;
 
 // TD-04（2026-10-26）：共享内核抽为独立 crate `rustmark-shared`，此处把它的

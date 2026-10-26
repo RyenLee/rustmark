@@ -78,19 +78,22 @@ impl ListItem {
     }
 
     /// 设置缩进层级。
-    pub(crate) fn with_depth(mut self, depth: u8) -> Self {
+    pub fn with_depth(mut self, depth: u8) -> Self {
         self.depth = depth;
         self
     }
 
     /// 设置有序列表序号。
-    pub(crate) fn with_ordinal(mut self, ordinal: u64) -> Self {
+    ///
+    /// V11-64 把解析器抽到 `rustmark-infra` 后，调用点跨 crate，
+    /// 由 `pub(crate)` 放宽到 `pub`；与 [`ListItem::with_depth`] 同一套构造风格。
+    pub fn with_ordinal(mut self, ordinal: u64) -> Self {
         self.ordinal = Some(ordinal);
         self
     }
 
     /// 设置行内样式片段。
-    pub(crate) fn with_spans(mut self, spans: Vec<InlineSpan>) -> Self {
+    pub fn with_spans(mut self, spans: Vec<InlineSpan>) -> Self {
         self.spans = spans;
         self
     }
@@ -188,7 +191,7 @@ impl DefinitionEntry {
     }
 
     /// 追加一条定义。
-    pub(crate) fn push_definition(&mut self, body: DefinitionBody) {
+    pub fn push_definition(&mut self, body: DefinitionBody) {
         self.definitions.push(body);
     }
 
@@ -247,7 +250,7 @@ impl TableData {
     }
 
     /// 附带单元格行内样式（构造链）。
-    pub(crate) fn with_cell_spans(
+    pub fn with_cell_spans(
         mut self,
         header_spans: Vec<Vec<InlineSpan>>,
         rows_spans: Vec<Vec<Vec<InlineSpan>>>,

@@ -9,7 +9,7 @@ use super::errors::PreferencesError;
 use super::value_objects::{ActionId, Conflict, EditorSettings, KeyCombo, ShortcutTable, Theme};
 
 /// 配置文件 schema 版本（ADR-003）：随结构变更递增，用于读取时迁移。
-pub(crate) const PREFERENCES_SCHEMA_VERSION: u32 = 1;
+pub const PREFERENCES_SCHEMA_VERSION: u32 = 1;
 
 /// 偏好设置聚合根。
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
@@ -53,7 +53,7 @@ impl Preferences {
     }
 
     /// schema 版本。
-    pub(crate) const fn schema_version(&self) -> u32 {
+    pub const fn schema_version(&self) -> u32 {
         self.schema_version
     }
 

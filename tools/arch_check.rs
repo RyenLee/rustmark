@@ -1375,9 +1375,10 @@ pub fn scan_with_tests(src_root: &Path, tests_root: &Path) -> Vec<Violation> {
 /// `crates/rustmark-actions/src/`（V11-57）+
 /// `crates/rustmark-icons/src/`（V11-58）+
 /// `crates/rustmark-ui/src/`（V11-62）+
-/// `crates/rustmark-shared/src/`（TD-04，2026-10-26）+ `tests/`。
+/// `crates/rustmark-shared/src/`（TD-04，2026-10-26）+
+/// `crates/rustmark-infra/src/`（V11-64，2026-10-26）+ `tests/`。
 ///
-/// # 七个根、两种记键
+/// # 八个根、两种记键
 ///
 /// - src 根**按各自根的层相对路径**判层、查豁免表
 ///   （core 的 `domain/x.rs` 与拆分前同键，登记表与既有禁令表零改动）；
@@ -1390,13 +1391,16 @@ pub fn scan_with_tests(src_root: &Path, tests_root: &Path) -> Vec<Violation> {
 ///   `layer_of` 按前缀判对应子层（`presentation/widgets.rs` →
 ///   [`Layer::PresentationWidgets`]），层禁令表零改动，views 若被误搬进
 ///   ui 会落在 `presentation/views` 子层自动触发既有禁令（fixture 第十七节）；
+///   shared / infra 两根同理（保留 `shared/` 与 `infrastructure/` 前缀）——
+///   尤其 infra **不能**强制 Free：那样会连 [`Layer::Infrastructure`] 的
+///   层禁令一起抹掉，把搬迁变成净损失（fixture 第十八节钉住这条）；
 /// - core 侧违规只在**报告**时补 `crates/rustmark-core/src/` 前缀——
 ///   层判定绝不能看该前缀，否则首段 `crates` 会把整个 core 判成
 ///   「未知层」而全量误报；
 /// - `tests/` 侧与 [`scan_with_tests`] 完全一致（全判 [`Layer::Tests`]、
 ///   rel 带 `tests/` 前缀）。
 ///
-/// # 登记表按 manifest 加载一次、六个 src 根共用
+/// # 登记表按 manifest 加载一次、七个 src 根共用
 ///
 /// core 根的 parent 是 `crates/rustmark-core`，那里没有 `docs/`——
 /// 沿用 [`load_registry`] 的「parent 即 manifest」推断会让 core 侧豁免
@@ -1472,6 +1476,16 @@ pub fn scan_project(manifest: &Path) -> Vec<Violation> {
         (
             manifest.join("crates").join("rustmark-shared").join("src"),
             "crates/rustmark-shared/src/",
+            None,
+        ),
+        // 第七根（V11-64，2026-10-26）：基础设施层抽为 `rustmark-infra`。
+        // 同样保留 `infrastructure/` 路径前缀，`layer_of("infrastructure/x.rs")`
+        // 自然判 [`Layer::Infrastructure`]，`INFRASTRUCTURE_FORBIDDEN` 与
+        // 所有既有登记键零改动；不设强制层——强制 Free 会**抹掉**层禁令，
+        // 而这里恰恰要靠层禁令继续挡住「基础设施反向依赖 domain/application」。
+        (
+            manifest.join("crates").join("rustmark-infra").join("src"),
+            "crates/rustmark-infra/src/",
             None,
         ),
     ] {
