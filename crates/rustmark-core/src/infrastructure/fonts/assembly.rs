@@ -1,17 +1,18 @@
-//! 字体装配：把发现的字体字节组装成 egui `FontDefinitions`。
+//! 字体装配：把发现的字体字节组装成 egui 无关的 `PortFontDefinitions`。
 //!
 //! 本模块负责「读字节 → 挂进族」的纯逻辑，不关心字体从哪发现
 //! （发现见 `discovery.rs`，门面组装见 `fonts.rs`）。核心函数
 //! [`extend_with_cjk`] / [`prepend_selected_to_monospace`] 接受已加载的字节或
 //! 字体数据，可在无真实字体文件的单测中直接用占位字节验证族顺序。
-
-use std::sync::Arc;
-
-use egui::{FontData, FontDefinitions, FontFamily};
+//!
+//! V11-63 阶段 B：产物是 [`super::port::PortFontDefinitions`]（egui 无关的
+//! 纯数据镜像），由组合根 `rustmark::app::frame` 的适配器转成
+//! `egui::FontDefinitions`。本模块因此**零 egui 依赖**。
 
 use crate::shared::fonts::DEFAULT_EDITOR_FONT_KEY;
 
 use super::discovery::builtin_font_path;
+use super::port::{PortFontData, PortFontDefinitions, PortFontFamily};
 
 /// CJK 字体在 `font_data` 中的键名。
 pub(crate) const CJK_KEY: &str = "cjk";
@@ -33,7 +34,7 @@ pub(crate) const BUILTIN_CJK_KEY: &str = "builtin-cjk";
 /// # 为什么是「置顶进内置族」而不是「自建一个族」
 ///
 /// 自建族要求每一处排版前该族都已注册；而 egui 对未注册的
-/// `FontFamily::Name` 是 **panic**（`epaint fonts.rs:808`），
+/// `PortFontFamily::Name` 是 **panic**（`epaint fonts.rs:808`），
 /// 在 `panic = "abort"` 下即窗口消失。内置族永远有绑定，没有这个风险。
 /// 完整说明见 `crate::shared::fonts` 模块文档。
 ///
@@ -50,7 +51,7 @@ pub(crate) const BUILTIN_CJK_KEY: &str = "builtin-cjk";
 /// **默认**装配（中文兜底不能抢西文）；本条是用户**显式**选择后的覆写，
 /// 选中字体的拉丁字形优先正是用户意图。
 pub(crate) fn prepend_selected_to_monospace(
-    definitions: &mut FontDefinitions,
+    definitions: &mut PortFontDefinitions,
     selected_family: Option<&str>,
 ) {
     let Some(sel) = selected_family.filter(|s| {
@@ -60,13 +61,13 @@ pub(crate) fn prepend_selected_to_monospace(
     }) else {
         return;
     };
-    let mono = definitions.families.get_mut(&FontFamily::Monospace);
+    let mono = definitions.families.get_mut(&PortFontFamily::Monospace);
     let Some(mono) = mono else {
         // egui 默认定义必然含 Monospace 族；真丢了也不慌——自建一个只含
         // 选中字体的族，比让用户的选择静默失效好。
         definitions
             .families
-            .insert(FontFamily::Monospace, vec![sel.to_string()]);
+            .insert(PortFontFamily::Monospace, vec![sel.to_string()]);
         return;
     };
     mono.retain(|k| k != sel);
@@ -114,14 +115,14 @@ pub(crate) fn load_cjk_font() -> Option<(String, Vec<u8>)> {
 /// 内置 CJK 子集必须**排在系统 CJK 之后**：系统字体（雅黑 / 苹方）观感更好
 /// 且字重齐全，内置子集只是「一台机器上什么中文字体都没有」时的保险。
 /// 顺序反了会让有中文字体的用户也被迫用子集（生僻字反而变方框）。
-pub(crate) fn extend_with_cjk(definitions: &mut FontDefinitions, bytes: Vec<u8>) {
+pub(crate) fn extend_with_cjk(definitions: &mut PortFontDefinitions, bytes: Vec<u8>) {
     definitions
         .font_data
-        .insert(CJK_KEY.to_owned(), Arc::new(FontData::from_owned(bytes)));
+        .insert(CJK_KEY.to_owned(), PortFontData::from_owned(bytes));
 
     // 比例族与等宽族都要挂：正文用比例族，编辑区与代码块用等宽族，
     // 漏掉任一族都会让那一处的中文变成方框。
-    for family in [FontFamily::Proportional, FontFamily::Monospace] {
+    for family in [PortFontFamily::Proportional, PortFontFamily::Monospace] {
         definitions
             .families
             .entry(family)
@@ -134,7 +135,7 @@ pub(crate) fn extend_with_cjk(definitions: &mut FontDefinitions, bytes: Vec<u8>)
 ///
 /// 字体随发行包以文件分发（体积红线）：找不到或读不通时**跳过**——数学符号
 /// 缺字形只影响公式观感，不阻断启动（`font_definitions` 的调用方不因此报错）。
-pub(crate) fn extend_with_math_fallback(definitions: &mut FontDefinitions) {
+pub(crate) fn extend_with_math_fallback(definitions: &mut PortFontDefinitions) {
     let Some(path) = builtin_font_path(MATH_FALLBACK_FILE) else {
         return;
     };
@@ -143,9 +144,9 @@ pub(crate) fn extend_with_math_fallback(definitions: &mut FontDefinitions) {
     };
     definitions.font_data.insert(
         MATH_FALLBACK_KEY.to_owned(),
-        Arc::new(FontData::from_owned(bytes)),
+        PortFontData::from_owned(bytes),
     );
-    for family in [FontFamily::Proportional, FontFamily::Monospace] {
+    for family in [PortFontFamily::Proportional, PortFontFamily::Monospace] {
         definitions
             .families
             .entry(family)
@@ -159,18 +160,17 @@ pub(crate) fn extend_with_math_fallback(definitions: &mut FontDefinitions) {
 /// 无条件挂载（文件可解析时）：它轻量、只服务「系统什么中文字体都没有」
 /// 的场景，有系统字体时永远排在后排，不抢渲染。字体随发行包以文件分发
 /// （体积红线），缺失时跳过——此时裸机中文回落到系统 CJK。
-pub(crate) fn extend_with_builtin_cjk(definitions: &mut FontDefinitions) {
+pub fn extend_with_builtin_cjk(definitions: &mut PortFontDefinitions) {
     let Some(path) = builtin_font_path(BUILTIN_CJK_FILE) else {
         return;
     };
     let Ok(bytes) = std::fs::read(path) else {
         return;
     };
-    definitions.font_data.insert(
-        BUILTIN_CJK_KEY.to_owned(),
-        Arc::new(FontData::from_owned(bytes)),
-    );
-    for family in [FontFamily::Proportional, FontFamily::Monospace] {
+    definitions
+        .font_data
+        .insert(BUILTIN_CJK_KEY.to_owned(), PortFontData::from_owned(bytes));
+    for family in [PortFontFamily::Proportional, PortFontFamily::Monospace] {
         definitions
             .families
             .entry(family)

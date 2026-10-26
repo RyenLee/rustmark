@@ -1,18 +1,22 @@
-//! 系统字体的发现、读取与 egui 字体定义组装。
+//! 系统字体的发现、读取与字体定义组装（egui 无关）。
 //!
 //! # 为什么这个模块在基础设施层
 //!
-//! 本模块的产物是 `egui::FontDefinitions`——一个**外部库类型**。
-//! `presentation` 层按约定不得依赖 `crate::infrastructure`
-//! （见 `tools/arch_check.rs` 的 `PRESENTATION_FORBIDDEN`），
-//! 而「把系统字体文件适配成 egui 能消化的形状」恰是基础设施层的本职
+//! 本模块的产物是 [`PortFontDefinitions`]——一个**纯数据端口类型**，不是 egui
+//! 类型（V11-63 阶段 B 端口化的结果，见 `port` 模块文档）。它之所以留在基础设施层，
+//! 是因为「把系统字体文件适配成 egui 能消化的形状」正是基础设施层的本职
 //! （与 `export` 适配渲染后端、`persistence` 适配文件系统同理）。
-//! 组装放在这里，由组合根（`app::frame`）取走后交给 egui。
+//! 由组合根（`app::frame`）取走后经适配器转成 `egui::FontDefinitions` 再交给 egui。
+//!
+//! 这层间接也解掉了原先的结构性矛盾：`presentation` 层按约定不得依赖
+//! `crate::infrastructure`（见 `tools/arch_check.rs` 的 `PRESENTATION_FORBIDDEN`），
+//! 而基础设施此前直接产出 `egui::FontDefinitions`——一边禁 egui、一边把 egui
+//! 类型交给表现层。端口化后基础设施零 egui 依赖，该矛盾消失。
 //!
 //! # 背景：基础族从哪来、为什么还要加载中文字体
 //!
 //! REL-03 体积缓解后（egui 的 `default_fonts` / `monochrome_emoji_fonts`
-//! 已关闭，见 `Cargo.toml` 注释），`FontDefinitions::default()` 返回的是
+//! 已关闭，见 `Cargo.toml` 注释），`PortFontDefinitions::default()` 返回的是
 //! **空族**——界面基础字形改由 [`install_egui_base_fonts`] 从随包分发的
 //! 字体文件（`assets/fonts/` → 发行包 `fonts/`）装回，族构成与 egui
 //! 内嵌时代逐项一致（唯一差异是不再挂 `egui-icons`，本项目零引用）：
@@ -41,21 +45,31 @@
 //! # 分层
 //!
 //! - `discovery`：路径与存在性发现（可注入根目录，可单测）；
-//! - `assembly`：字节 → `FontDefinitions` 的纯装配逻辑；
-//! - 本门面：组装两层并产出 [`FontSetup`]。
+//! - `assembly`：字节 → [`PortFontDefinitions`] 的纯装配逻辑；
+//! - `port`：egui 无关的端口类型（[`PortFontDefinitions`] / [`PortFontFamily`] /
+//!   [`PortFontData`]）；
+//! - 本门面：组装各层并产出 [`FontSetup`]。
 
 pub(crate) mod assembly;
 pub(crate) mod discovery;
+/// egui 无关的字体定义端口类型（V11-63 阶段 B）。由组合根经适配器转成
+/// `egui::FontDefinitions`。`pub` 以便根 crate 测试与适配器引用。
+pub mod port;
 
-use egui::FontDefinitions;
+pub use port::*;
 
 use crate::shared::fonts::EditorFontChoice;
 
+// 以下三项 `pub`：V11-63 阶段 B 把 4 个「字形真的能渲染」类测试迁到根 crate 的
+// `tests/presentation/font_glyph_test.rs`（那里才有 egui 与适配器），迁移后它们
+// 仍需要「只装内置 CJK 子集」「按真实根目录发现字体」这两个能力——
+// `font_definitions` 做不到（它必然混入系统 CJK），故开放为受支持接口。
+pub use assembly::extend_with_builtin_cjk;
 pub(crate) use assembly::{
-    extend_with_builtin_cjk, extend_with_cjk, extend_with_math_fallback, load_cjk_font,
-    prepend_selected_to_monospace,
+    extend_with_cjk, extend_with_math_fallback, load_cjk_font, prepend_selected_to_monospace,
 };
-pub(crate) use discovery::{builtin_font_path, default_roots, discover_font_sources, to_choices};
+pub use discovery::{FontSource, default_roots, discover_font_sources};
+pub(crate) use discovery::{builtin_font_path, to_choices};
 
 // 以下名称仅 `#[cfg(test)] mod tests` 使用：非测试编译里保持不可见，
 // 避免 dead_code 警告；测试编译经 `use super::*` 照常拿到。
@@ -66,8 +80,9 @@ use discovery::{BUILTIN_EDITOR_FONTS, candidate_paths, system_mono_candidates};
 
 /// 字体装配结果。
 pub struct FontSetup {
-    /// 可直接交给 `Context::set_fonts` 的字体定义。
-    pub definitions: FontDefinitions,
+    /// egui 无关的端口字体定义；组合根经适配器转成 `egui::FontDefinitions`
+    /// 后交给 `Context::set_fonts`（V11-63 阶段 B：基础设施不得依赖 egui）。
+    pub definitions: PortFontDefinitions,
     /// 实际加载的 CJK 字体路径；`None` 表示本机未找到（中文将显示为方框）。
     pub cjk_source: Option<String>,
     /// 设置页「字体」下拉可用的选项（含默认的「系统等宽」）。
@@ -95,7 +110,7 @@ pub struct FontSetup {
 /// 这样旧配置里残留的非法字体名（如 `sans-serif`）也能安全回退，
 /// 而不是让设置页「改了没生效」。
 pub fn font_definitions(selected_family: Option<&str>) -> FontSetup {
-    let mut definitions = FontDefinitions::default();
+    let mut definitions = PortFontDefinitions::default();
     // REL-03：两个字体 feature 关闭后 `default()` 是空族——先装回基础族
     // （首选字形 + emoji 兜底），后续数学 / CJK 追加才有「西文优先」的链头。
     install_egui_base_fonts(&mut definitions);
@@ -150,7 +165,7 @@ pub fn editor_font_choices() -> Vec<EditorFontChoice> {
 /// REL-03：把 egui 的默认字体（如今随发行包以文件分发）装回基础族。
 ///
 /// `default_fonts` / `monochrome_emoji_fonts` 两个 feature 关闭后，
-/// `FontDefinitions::default()` 等价于 egui 的 `FontDefinitions::empty()`——
+/// `PortFontDefinitions::default()` 等价于 egui 的 `FontDefinitions::empty()`——
 /// Proportional / Monospace 两个族都是空列表，界面没有任何首选字形。
 /// 本函数按 egui 内嵌时代的族顺序，把 `epaint_default_fonts` 0.37.0 的
 /// 同名同源字体文件（`assets/fonts/`，许可证见同目录 Fonts-LICENSE.txt）
@@ -166,31 +181,31 @@ pub fn editor_font_choices() -> Vec<EditorFontChoice> {
 /// 绝不留悬空键——`FontProvider` 见到族里引用了 `font_data` 没有的键
 /// 会 panic（`panic = "abort"` 下即进程终止）。`assets/fonts/` 被删的
 /// 干净克隆与字体目录缺失的安装态都依赖这条退化路径。
-fn install_egui_base_fonts(definitions: &mut FontDefinitions) {
+fn install_egui_base_fonts(definitions: &mut PortFontDefinitions) {
     /// （文件名，egui 键，挂入的族，缩放微调）——顺序即族内追加顺序。
-    const BASE: &[(&str, &str, &[egui::FontFamily], f32)] = &[
+    const BASE: &[(&str, &str, &[PortFontFamily], f32)] = &[
         (
             "Hack-Regular.ttf",
             "Hack",
-            &[egui::FontFamily::Monospace],
+            &[PortFontFamily::Monospace],
             1.0,
         ),
         (
             "Ubuntu-Light.ttf",
             "Ubuntu-Light",
-            &[egui::FontFamily::Monospace, egui::FontFamily::Proportional],
+            &[PortFontFamily::Monospace, PortFontFamily::Proportional],
             1.0,
         ),
         (
             "NotoEmoji-Regular.ttf",
             "NotoEmoji-Regular",
-            &[egui::FontFamily::Monospace, egui::FontFamily::Proportional],
+            &[PortFontFamily::Monospace, PortFontFamily::Proportional],
             0.81,
         ),
         (
             "emoji-icon-font.ttf",
             "emoji-icon-font",
-            &[egui::FontFamily::Monospace, egui::FontFamily::Proportional],
+            &[PortFontFamily::Monospace, PortFontFamily::Proportional],
             0.90,
         ),
     ];
@@ -202,16 +217,11 @@ fn install_egui_base_fonts(definitions: &mut FontDefinitions) {
         let Ok(bytes) = std::fs::read(path) else {
             continue;
         };
-        let mut data = egui::FontData::from_owned(bytes);
+        let mut data = PortFontData::from_owned(bytes);
         if *scale != 1.0 {
-            data = data.tweak(egui::FontTweak {
-                scale: *scale,
-                ..Default::default()
-            });
+            data = data.with_scale(*scale);
         }
-        definitions
-            .font_data
-            .insert((*key).to_owned(), std::sync::Arc::new(data));
+        definitions.font_data.insert((*key).to_owned(), data);
         for family in *families {
             if let Some(list) = definitions.families.get_mut(family) {
                 list.push((*key).to_owned());
@@ -225,7 +235,6 @@ mod tests {
     use super::*;
 
     use crate::shared::fonts::DEFAULT_EDITOR_FONT_KEY;
-    use egui::{FontData, FontFamily};
 
     /// 内置字体资产（`assets/fonts/`）是否随仓库存在。
     ///
@@ -263,7 +272,7 @@ mod tests {
         let mut defs = base_defs();
         let before: Vec<_> = defs
             .families
-            .get(&FontFamily::Proportional)
+            .get(&PortFontFamily::Proportional)
             .expect("默认应有比例族")
             .clone();
 
@@ -271,7 +280,7 @@ mod tests {
 
         let after = defs
             .families
-            .get(&FontFamily::Proportional)
+            .get(&PortFontFamily::Proportional)
             .expect("追加后仍应有比例族");
         assert_eq!(
             &after[..before.len()],
@@ -284,10 +293,10 @@ mod tests {
     /// 比例族与等宽族都要挂上 CJK，漏一族则那一处的中文仍是方框。
     #[test]
     fn both_families_receive_cjk() {
-        let mut defs = FontDefinitions::default();
+        let mut defs = PortFontDefinitions::default();
         extend_with_cjk(&mut defs, vec![0u8; 8]);
 
-        for family in [FontFamily::Proportional, FontFamily::Monospace] {
+        for family in [PortFontFamily::Proportional, PortFontFamily::Monospace] {
             let list = defs.families.get(&family).expect("该族应存在");
             assert!(
                 list.iter().any(|k| k == CJK_KEY),
@@ -303,9 +312,9 @@ mod tests {
     /// 因为界面靠它渲染所有西文与 emoji。
     #[test]
     fn definitions_stay_usable_when_no_cjk_font_exists() {
-        let defs = FontDefinitions::default();
+        let defs = PortFontDefinitions::default();
         assert!(
-            defs.families.contains_key(&FontFamily::Proportional),
+            defs.families.contains_key(&PortFontFamily::Proportional),
             "缺字体时默认族必须仍在，否则界面完全无法渲染"
         );
         // 组装函数本身不应 panic（该函数内部可能走到"没找到字体"分支）。
@@ -314,60 +323,17 @@ mod tests {
             setup
                 .definitions
                 .families
-                .contains_key(&FontFamily::Monospace)
+                .contains_key(&PortFontFamily::Monospace)
         );
-    }
-
-    /// **决定性验证**：加载系统 CJK 字体后，中文确实有字形了。
-    ///
-    /// 这是本次修复最核心的断言——前面几条只验证"字体被挂进了族里"，
-    /// 而这条验证"egui 真的能据此渲染出中文字形"。
-    /// 两者之间有真实落差：字体文件可能解析失败（egui 底层 `ab_glyph` 只吃轮廓字体），
-    /// 那样挂上去也没用，甚至会 panic。
-    ///
-    /// 本机无中文字体时**软跳过**（而非失败）：那是环境问题，不是代码缺陷，
-    /// 由 `a_cjk_font_is_available_on_this_platform` 负责在缺字体时给出信号。
-    #[test]
-    fn real_cjk_font_provides_glyphs_for_chinese() {
-        let setup = font_definitions(None);
-        if setup.cjk_source.is_none() {
-            eprintln!("跳过：本机无中文字体，无法验证字形");
-            return;
-        }
-        let source = setup.cjk_source.clone().expect("上面已判非空");
-
-        let ctx = egui::Context::default();
-        // `set_fonts` 会引发字体解析；若字体格式不被支持（如彩色 emoji 字体），
-        // 这一步就会 panic——而本项目是 `panic = "abort"`，故这条测试同时守护了那个风险。
-        ctx.set_fonts(setup.definitions);
-        ctx.run_ui(egui::RawInput::default(), |_| {})
-            .drop_without_applying_deltas();
-
-        let font = egui::FontId::proportional(14.0);
-        let chinese = "中文编辑器文档预览测试";
-        let has = ctx.fonts_mut(|f| f.has_glyphs(&font, chinese));
-        assert!(
-            has,
-            "已加载 {source}，但中文仍无字形——字体可能解析失败或未被挂进族"
-        );
-
-        // 中文标点同样要能渲染（缺了会让中文排版断在标点上）。
-        let punct = ctx.fonts_mut(|f| f.has_glyphs(&font, "，。、「」"));
-        assert!(punct, "中文标点应同时具备字形");
-
-        // 等宽族（编辑区/代码块）也必须覆盖中文，否则那里仍是方框。
-        let mono = egui::FontId::monospace(14.0);
-        let mono_has = ctx.fonts_mut(|f| f.has_glyphs(&mono, chinese));
-        assert!(mono_has, "等宽族缺中文字形，编辑区与代码块会显示为方框");
     }
 
     /// 装好基础族的起点。
     ///
-    /// REL-03 后裸 `FontDefinitions::default()` 是空族——前缀 / 顺序 /
+    /// REL-03 后裸 `PortFontDefinitions::default()` 是空族——前缀 / 顺序 /
     /// 「族不为空」类断言都要以基础族为基准才有意义（空族下要么空转、
     /// 要么把「西文在前」这类不变式断言成假）。
-    fn base_defs() -> FontDefinitions {
-        let mut defs = FontDefinitions::default();
+    fn base_defs() -> PortFontDefinitions {
+        let mut defs = PortFontDefinitions::default();
         install_egui_base_fonts(&mut defs);
         defs
     }
@@ -377,7 +343,7 @@ mod tests {
     fn default_mono_family() -> Vec<String> {
         base_defs()
             .families
-            .get(&FontFamily::Monospace)
+            .get(&PortFontFamily::Monospace)
             .cloned()
             .expect("默认定义应含等宽族")
     }
@@ -394,7 +360,7 @@ mod tests {
         prepend_selected_to_monospace(&mut defs, Some(DEFAULT_EDITOR_FONT_KEY));
         prepend_selected_to_monospace(&mut defs, None);
         assert_eq!(
-            defs.families.get(&FontFamily::Monospace),
+            defs.families.get(&PortFontFamily::Monospace),
             Some(&mono),
             "选默认哨兵 / 不选时，等宽族必须与内置逐元素一致"
         );
@@ -411,13 +377,13 @@ mod tests {
         let mut defs = base_defs();
         defs.font_data.insert(
             "user:Consolas".to_owned(),
-            std::sync::Arc::new(FontData::from_owned(vec![0u8; 8])),
+            PortFontData::from_owned(vec![0u8; 8]),
         );
         let mono = default_mono_family();
         for junk in ["", "   ", "sans-serif", "serif", "system-ui", "user:缺失"] {
             prepend_selected_to_monospace(&mut defs, Some(junk));
             assert_eq!(
-                defs.families.get(&FontFamily::Monospace),
+                defs.families.get(&PortFontFamily::Monospace),
                 Some(&mono),
                 "非法键 {junk:?} 应原样保留内置等宽族，而不是把无效键塞进去"
             );
@@ -433,14 +399,14 @@ mod tests {
         let mut defs = base_defs();
         defs.font_data.insert(
             "user:Consolas".to_owned(),
-            std::sync::Arc::new(FontData::from_owned(vec![0u8; 8])),
+            PortFontData::from_owned(vec![0u8; 8]),
         );
         let mono = default_mono_family();
         prepend_selected_to_monospace(&mut defs, Some("user:Consolas"));
 
         let family = defs
             .families
-            .get(&FontFamily::Monospace)
+            .get(&PortFontFamily::Monospace)
             .expect("等宽族应仍在");
         assert_eq!(
             family.first().map(String::as_str),
@@ -467,47 +433,19 @@ mod tests {
             .first()
             .cloned()
             .expect("内置等宽族不应为空");
-        defs.font_data.insert(
-            builtin.clone(),
-            std::sync::Arc::new(FontData::from_owned(vec![0u8; 8])),
-        );
+        defs.font_data
+            .insert(builtin.clone(), PortFontData::from_owned(vec![0u8; 8]));
         prepend_selected_to_monospace(&mut defs, Some(&builtin));
 
         let family = defs
             .families
-            .get(&FontFamily::Monospace)
+            .get(&PortFontFamily::Monospace)
             .expect("等宽族应仍在");
         assert_eq!(family.first(), Some(&builtin));
         assert_eq!(
             family.iter().filter(|k| *k == &builtin).count(),
             1,
             "已在族中的字体被选中时不应重复"
-        );
-    }
-
-    /// 端到端：`set_fonts` 之后，内置 `FontId::monospace` 真能排出选中字体的字形。
-    ///
-    /// 这条钉住「方案可行」本身：置顶进内置族后，`FontId::monospace`
-    /// （编辑区 / 预览代码块实际用的构造）永远有绑定——不像自建族那样
-    /// 漏一处注册就 panic（`panic = "abort"` 下即窗口消失）。
-    #[test]
-    fn selected_font_renderable_through_builtin_monospace_font_id() {
-        let Some(source) = discover_font_sources(&default_roots()).into_iter().next() else {
-            eprintln!("跳过：本机未发现可选字体");
-            return;
-        };
-        let setup = font_definitions(Some(&source.key));
-        let ctx = egui::Context::default();
-        ctx.set_fonts(setup.definitions);
-        ctx.run_ui(egui::RawInput::default(), |_| {})
-            .drop_without_applying_deltas();
-        // 中文仍须有字形（选中字体多半没有中文字形，靠 CJK 兜底）。
-        let mono = egui::FontId::monospace(14.0);
-        let has = ctx.fonts_mut(|f| f.has_glyphs(&mono, "中文编辑器"));
-        assert!(
-            has,
-            "置顶 {} 后等宽族缺中文字形——CJK 兜底链被破坏",
-            source.display_name
         );
     }
 
@@ -585,7 +523,7 @@ mod tests {
         let mut defs = base_defs();
         extend_with_math_fallback(&mut defs);
         extend_with_cjk(&mut defs, vec![0u8; 8]);
-        for family in [FontFamily::Proportional, FontFamily::Monospace] {
+        for family in [PortFontFamily::Proportional, PortFontFamily::Monospace] {
             let list = defs.families.get(&family).expect("该族应存在");
             let math_at = list
                 .iter()
@@ -601,35 +539,6 @@ mod tests {
             );
             assert!(math_at > 0, "{family:?}：数学兜底不能抢在西文字体前面");
         }
-    }
-
-    /// 内置数学字体必须能被 egui 解析，且兜底真的接上。
-    ///
-    /// 畸形字体在 `panic = "abort"` 下会直接终止进程，故 `set_fonts`
-    /// 这一步同时守护「随仓库分发的字体文件是好的」。
-    #[test]
-    fn embedded_math_font_parses_and_covers_symbols() {
-        if !builtin_font_assets_present() {
-            eprintln!("跳过：内置字体资产 assets/fonts 缺失");
-            return;
-        }
-        let setup = font_definitions(None);
-        let ctx = egui::Context::default();
-        ctx.set_fonts(setup.definitions);
-        ctx.run_ui(egui::RawInput::default(), |_| {})
-            .drop_without_applying_deltas();
-
-        let font = egui::FontId::proportional(16.0);
-        // 挑几个西文与中文字体都没有、只有数学字体有的符号。
-        let has = ctx.fonts_mut(|f| f.has_glyphs(&font, "∀∅⇒⟨⨁ℜ"));
-        assert!(
-            has,
-            "数学兜底未接上：常见数学符号仍缺字形（问题 3 的根因仍在）"
-        );
-        // 等宽族同样要接上（源码卡回退走等宽）。
-        let mono = egui::FontId::monospace(16.0);
-        let mono_has = ctx.fonts_mut(|f| f.has_glyphs(&mono, "∀∅⇒⟨⨁ℜ"));
-        assert!(mono_has, "等宽族未接上数学兜底");
     }
 
     /// 内置三款等宽字体必须已登记、且在设置页下拉里（哨兵之后排最前）。
@@ -681,11 +590,11 @@ mod tests {
             eprintln!("跳过：内置字体资产 assets/fonts 缺失");
             return;
         }
-        let mut defs = FontDefinitions::default();
+        let mut defs = PortFontDefinitions::default();
         extend_with_math_fallback(&mut defs);
         extend_with_cjk(&mut defs, vec![0u8; 8]);
         extend_with_builtin_cjk(&mut defs);
-        for family in [FontFamily::Proportional, FontFamily::Monospace] {
+        for family in [PortFontFamily::Proportional, PortFontFamily::Monospace] {
             let list = defs.families.get(&family).expect("该族应存在");
             assert_eq!(
                 list.last().map(String::as_str),
@@ -703,39 +612,6 @@ mod tests {
             assert!(
                 builtin_at > cjk_at,
                 "{family:?}：内置子集不能抢在系统 CJK 之前"
-            );
-        }
-    }
-
-    /// **决定性验证**：内置 CJK 子集**单独**就能渲染中文（不靠系统字体）。
-    ///
-    /// 只用默认定义 + 内置子集装配（刻意不挂系统 CJK），模拟
-    /// 「精简 Linux / 最小化容器」环境：此时中文必须有字形。
-    /// 同时守护「随仓库分发的子集文件是好的」——畸形字体在
-    /// `panic = "abort"` 下会直接终止进程，`set_fonts` 即试金石。
-    #[test]
-    fn builtin_cjk_subset_alone_provides_glyphs_for_chinese() {
-        if !builtin_font_assets_present() {
-            eprintln!("跳过：内置字体资产 assets/fonts 缺失");
-            return;
-        }
-        let mut defs = FontDefinitions::default();
-        extend_with_builtin_cjk(&mut defs);
-        let ctx = egui::Context::default();
-        ctx.set_fonts(defs);
-        ctx.run_ui(egui::RawInput::default(), |_| {})
-            .drop_without_applying_deltas();
-
-        // GB2312 常用汉字 + 中文标点（缺标点会让中文排版断在标点上）。
-        let text = "中文编辑器文档预览测试，。、「」";
-        for font in [
-            egui::FontId::proportional(14.0),
-            egui::FontId::monospace(14.0),
-        ] {
-            let has = ctx.fonts_mut(|f| f.has_glyphs(&font, text));
-            assert!(
-                has,
-                "内置 CJK 子集应独立覆盖 GB2312 常用汉字与标点（{font:?}）"
             );
         }
     }

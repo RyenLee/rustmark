@@ -49,7 +49,9 @@ pub fn run_ui(
 pub fn ctx_with_app_fonts() -> egui::Context {
     let ctx = egui::Context::default();
     let setup = rustmark::infrastructure::fonts::font_definitions(None);
-    ctx.set_fonts(setup.definitions);
+    ctx.set_fonts(rustmark::app::frame::to_egui_font_definitions(
+        setup.definitions,
+    ));
     // 首帧落定字体：`panic = "abort"` 下字体解析失败会直接终止进程。
     let _ = run_ui(&ctx, egui::RawInput::default(), |_| {});
     ctx

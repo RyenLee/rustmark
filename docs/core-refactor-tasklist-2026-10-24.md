@@ -94,7 +94,7 @@
 | 8 | V11-60 | state 瘦身（分批迁移纯帧内状态） | 中 | 1–2 | V11-59 | C | 立即 |
 | 9 | V11-61 | find/replace 引擎上浮 application | 低 | 1 | V11-59 结论（弱） | C | 立即 |
 | 10 | V11-62 | presentation 非视图子模块 → `rustmark-ui` | 中 | 2–3 | V11-56；弱依赖 V11-58 | D | **触发式** |
-| 11 | V11-63 | infrastructure 去 egui 化（端口化） | 低 | 2–3 | 无（V11-62 后更顺） | D | **触发式** |
+| 11 | V11-63 | infrastructure 去 egui 化（端口化） | 低 | 2–3 | 无（V11-62 后更顺） | D | **已完成（2026-10-26）** |
 | 12 | V11-64 | 抽 `rustmark-infra` | 低 | 1–2 | **V11-63** | D | **触发式** |
 
 **依赖与并行图**：
@@ -380,6 +380,45 @@ V11-59 ─────────────────────┼──�
 - **验收标准**：`cargo tree -p rustmark-core | grep -c egui` = 0；字体装配对拍用例绿（族顺序/去重/兜底与端口化前一致）；导出截图相关用例绿；2131；真机手动回归记录（字体渲染、导出图片）。
 - **回退**：revert。
 
+> **V11-63 收官（2026-10-26，E-06 两阶段）**：验收判据**实测达成**——
+> `cargo tree -p rustmark-core | grep -c egui` = **0**（`crates/rustmark-core/Cargo.toml`
+> 的 `egui` 依赖已删，不是"无引用但仍拖着依赖"）。
+>
+> - **阶段 A（`ef7d5c2`）viewport 簇**：新增端口类型 `PortFrame { size: [usize; 2],
+>   pixels: Vec<[u8; 4]> }`（RGBA8 字节，egui 无关）替掉 `egui::epaint::ColorImage`；
+>   `capture_region_to_png(frame: &PortFrame, …)` 与 `image::crop(frame: &PortFrame, …)`；
+>   转换在组合根 `src/app/frame/capture.rs::deliver_capture` 的开头一次性完成。
+> - **阶段 B（本次）fonts 簇**：新增 `infrastructure/fonts/port.rs`——
+>   `PortFontDefinitions` / `PortFontFamily` / `PortFontData`（字节 `Arc<Vec<u8>>` +
+>   `scale`）。`port.rs` 的 `Default` **逐字段复刻** `FontDefinitions::empty()`
+>   （两个族键存在、列表为空）——这条不是形式主义：`install_egui_base_fonts` 用
+>   `families.get_mut()` 往既有族里 push，空 map 会让四个基础字体全部静默丢失
+>   （实测被 `definitions_stay_usable_when_no_cjk_font_exists` 当场抓住，7 条测试红）。
+> - **适配器唯一**：`src/app/frame.rs::to_egui_font_definitions` 是端口 → egui 的
+>   唯一转换点，用 `FontData::from_blob` 承接 `Arc<Vec<u8>>` 的 **unsize 零拷贝**
+>   （不为 1.5 MB 内置 CJK 子集复制一份）；`FontTweak` 只映射 `scale`，其余 8 个
+>   egui 0.37 新增字段取默认值（本项目从未设置过它们，逐字段等价）。
+> - **测试迁移**：`fonts.rs` 里仅 **4** 条用例真正用 `egui::Context`（此前估计
+>   "~26" 偏高；其余 13 条只读 `PortFontDefinitions`，类型一换即 egui 无关、留在
+>   core）。4 条迁到 `tests/presentation/font_glyph_test.rs`，经适配器跑真渲染断言。
+>   为迁移把 `extend_with_builtin_cjk` / `discover_font_sources` / `default_roots` /
+>   `FontSource` 开放为 `pub`（`font_definitions` 必然混入系统 CJK，构造不出
+>   "裸机只装内置子集"这个前提）。
+> - **棘轮拆除**：`V11_63_KNOWN_EGUI_LEAKS` 常量与放行分支**双双删除**（不是留空集），
+>   `INFRASTRUCTURE_FORBIDDEN` 的 egui 项升为无条件生效；验收用例改为
+>   `former_v11_63_leak_paths_are_now_caught`——把那 5 个历史路径 + 同目录新文件
+>   逐个钉成"必报"，防止清单以任何形式复活。
+> - **门禁实测**：fmt 干净 · clippy `--all-targets --all-features` 0 告警 ·
+>   check-arch 0 违规 · `--all-targets` **2178 passed / 0 failed / 4 ignored** +
+>   `--doc` 1 = **2179**（较 HEAD 的源码级 `#[test]` 净 −1：core −4 / presentation +4 /
+>   arch fixture 3→2）；field_visibility_guard 白名单 552 → **559**（`PortFontData`
+>   2 + `PortFontDefinitions` 2 + `FontSource` 3）。
+> - **release 体积实测 10,540,544 B**（`size_gate` exit 0，低于 10.5 MiB 预警线）。
+>   与 HEAD `ef7d5c2` 的 10,522,112 B 相比 **+18,432 B**，已三次构建 A/B 归因：
+>   **端口化代码 +17,408 B**（新增 `BTreeMap<PortFontFamily, …>` /
+>   `BTreeMap<String, PortFontData>` 一套泛型实例化，与 egui 侧并存）+ **删 egui
+>   依赖边 +1,024 B**。这是端口化的固有代价，不是功能增量；记录见 metrics §2.8。
+
 ### V11-64 · 抽 `rustmark-infra` ｜ 优先级：低（触发式）｜ 1–2 人日 ｜ 并行组 D
 
 - **涉及**：`crates/rustmark-core/src/infrastructure/` 全部 51 文件 / 10,859 行（2026-10-25 实测；`c08fd13` 后较原记录 10,824 行 +35）→ 新 crate `crates/rustmark-infra/`；root 组合根装配点；`tools/arch_check.rs`；`tests/infrastructure/`（302 条用例随迁）。
@@ -404,6 +443,13 @@ V11-59 ─────────────────────┼──�
 > `INFRASTRUCTURE_FORBIDDEN` 当前不禁 egui（domain / application / shared 三层的清单
 > 都禁）——该渗漏目前无机械守卫，可作低成本棘轮守卫候选。V11-64 在 Q-01 回答「无计划」
 > 时应明确记为「永不触发」，避免作为低优先级项被反复重评。
+>
+> **复核更新（2026-10-26，V11-63 收官后）**：前提 ② **已翻转**——egui 依赖已从
+> `crates/rustmark-core/Cargo.toml` 删除，`cargo tree -p rustmark-core | grep -c egui`
+> 实测 **0**；上述"棘轮守卫候选"也已在 2026-10-25 落地（`19496b6`）并于本日随端口化
+> 拆除（升为无条件生效）。前提 ① 不变：仍无真实非 UI 消费者，**V11-64 维持挂起**，
+> 触发门只剩 Q-01 的需求事实。判定细化的结论不变——「egui 归零」从来不是 64 的
+> 触发门，只是 63 的验收。
 
 ---
 
@@ -411,7 +457,7 @@ V11-59 ─────────────────────┼──�
 
 | ID | 债务 | 证据 | 处置 | 关联任务 |
 |---|---|---|---|---|
-| TD-01 | release 体积吃紧（已越旧红线，红线上调后入预警窗口） | 2026-10-24 基线 10,485,248 B（旧红线 10 MiB 余 512 B）；2026-10-25 V11-62 批次 2（state 迁入 `rustmark-ui`）致 +2,560 B → 10,487,808 B，旧 10 MiB 红线越线；批次 3（shortcuts）致 +1 KiB → 10,488,832 B；批次 4（theme）致 +1 KiB → 10,489,856 B；批次 5（rich，~5,918 行，V11-62 收官）致 -2,560 B → 10,487,296 B（非单调：rich 自绘排版零跨 crate 内联，迁移回吐批次 2 的 LTO 边界成本）；新红线 11 MiB 内、超预警 10 MiB。worktree A/B 实证 +2,560 B 确由跨 crate LTO 边界成本产生，无针对性修法。**维护者决策：NFR 红线 10→11 MiB、预警 8→10 MiB（原红线降级为预警）**，见 `scripts/size_gate.sh`、metrics.md §2.8 | V11-62 收官，体积窗口稳定（距新红线 11 MiB 余 1,047,040 B）；后续加依赖动作仍须过 size_gate。**2026-10-25 阈值整改（`c08fd13`）后 10,520,576 B（+33,280 B：撤销 64 MiB 字节预算、图片分层上限、纹理 128 MiB 预算等功能常量变更），size_gate exit 0 且低于预警线（现行红线 11,534,336 B / 预警 11,010,048 B = 10.5 MiB，`c08fd13` 统一 CI 与三个打包脚本口径），距红线余 1,013,760 B（~0.97 MiB），窗口仍稳定** | V11-62 / 所有 |
+| TD-01 | release 体积吃紧（已越旧红线，红线上调后入预警窗口） | 2026-10-24 基线 10,485,248 B（旧红线 10 MiB 余 512 B）；2026-10-25 V11-62 批次 2（state 迁入 `rustmark-ui`）致 +2,560 B → 10,487,808 B，旧 10 MiB 红线越线；批次 3（shortcuts）致 +1 KiB → 10,488,832 B；批次 4（theme）致 +1 KiB → 10,489,856 B；批次 5（rich，~5,918 行，V11-62 收官）致 -2,560 B → 10,487,296 B（非单调：rich 自绘排版零跨 crate 内联，迁移回吐批次 2 的 LTO 边界成本）；新红线 11 MiB 内、超预警 10 MiB。worktree A/B 实证 +2,560 B 确由跨 crate LTO 边界成本产生，无针对性修法。**维护者决策：NFR 红线 10→11 MiB、预警 8→10 MiB（原红线降级为预警）**，见 `scripts/size_gate.sh`、metrics.md §2.8 | V11-62 收官，体积窗口稳定（距新红线 11 MiB 余 1,047,040 B）；后续加依赖动作仍须过 size_gate。**2026-10-25 阈值整改（`c08fd13`）后 10,520,576 B（+33,280 B：撤销 64 MiB 字节预算、图片分层上限、纹理 128 MiB 预算等功能常量变更），size_gate exit 0 且低于预警线（现行红线 11,534,336 B / 预警 11,010,048 B = 10.5 MiB，`c08fd13` 统一 CI 与三个打包脚本口径），距红线余 1,013,760 B（~0.97 MiB），窗口仍稳定**；**2026-10-26 V11-63 端口化后 10,540,544 B（10.052 MiB），size_gate exit 0、仍低于 10.5 MiB 预警线，距红线余 993,792 B；较 HEAD `ef7d5c2` 的 +18,432 B 已三次构建 A/B 归因（端口化代码 +17,408 / 删 egui 依赖边 +1,024），非功能增量，详见 metrics §2.8** | V11-62 / 所有 |
 | TD-02 | `src/presentation/views/preview_view.rs` 1,421 行 | 上轮评估 | **已闭环（2026-10-25，TD-02 专项，`999e63c`）**：按 §7 D-4 阈值拆为入口 458 行 + `preview_view/image_cache.rs`（图片纹理缓存簇 319 行）+ `preview_view/tests.rs`（外置单测 664 行）；`ImageEntry` 本体与字段转 `pub(super)`（消费者 media.rs 跨子模块）；公开路径 `preview_view::{show, image_cache_state, is_remote_url, ImageEntryState}` 经 `pub use` 零变化；四门禁绿（2144 守恒）、release 逐字节 10,487,296 B、topology CLEAN | TD-02 专项 |
 | TD-03 | `domain.rs:3` 依赖注释宽于实际 | 允许 ropey/chrono，实测零使用 | **已闭环（2026-10-24，`3cc4c42`，V11-67）**：注释改为「serde/thiserror 实测在用；ropey/chrono 历史上允许但当前零使用」，check-arch 复跑 OK | V11-67 |
 | TD-04 | shared 通用件 ≈900 行且可能继续长 | 2026-10-25 实测：shared **19 文件 / 3,016 行**；非领域通用件 6 个 = pattern 494 + text_format 326 + lru 291 + path 254 + geometry 248 + export_format 233，合计 **1,846 行** | 阈值：合计 >1,500 行或第 4 个非领域通用模块 → 抽 crate。**阈值已触发**（1,846 > 1,500 且通用模块 6 ≥ 4）：待立项评估——按 constraints §10.3 外移触发流程完成触发核验并由维护者拍板，不宜静默启动 | 监控（已触发） |
@@ -426,7 +472,7 @@ V11-59 ─────────────────────┼──�
 | ID | 阻塞 | 影响 | 解除方式 |
 |---|---|---|---|
 | BLK-01 | 五项用户决策缺失（见 §5 Q-01~05） | V11-63/64 无法拍板是否启动（V11-62 已由维护者拍板启动并收官——Q-03 的实践答案：单人开发亦启动 ui crate；Q-02 取变体 A 见 ADR-013；Q-05 由 V11-62 摩擦取证回答） | 用户回答 §5 的 Q-01（headless 复用意图，决定 V11-63/64 是否升必做）与 Q-04（mermaid/math 路线图） |
-| BLK-02 | V11-62/63/64 触发条件未满足 | 提前启动 = 过早拆分，收益为负。V11-62 触发条件已核验满足（`c0aa194`，条件③）并收官；V11-63/64 仍未触发（core 仍引 egui、无 headless 消费者）——维持挂起（2026-10-25 复核评估见 V11-64 节后记录：触发门 = Q-01 的需求事实，「egui 归零」是 63 的验收而非触发前提） | V11-66 度量数据 / 触发核验达标后再启动（63/64 适用；62 的核验记录见 `c0aa194`） |
+| BLK-02 | V11-62/63/64 触发条件未满足 | 提前启动 = 过早拆分，收益为负。V11-62 触发条件已核验满足（`c0aa194`，条件③）并收官；**V11-63 已于 2026-10-26 收官（虽有触发式之名，但作为"层内渗漏修复"提前落地，见其节后收官记录）**；V11-64 仍未触发（无 headless 消费者）——维持挂起（2026-10-26 复核：egui 前提已翻转，触发门只剩 Q-01 的需求事实） | V11-66 度量数据 / 触发核验达标后再启动（64 适用；62 的核验记录见 `c0aa194`，63 的收官记录见其节后） |
 | BLK-03 | D-6/D-7 未合入，与 V11-57/58/62/63 同改 `tools/arch_check.rs` | 冲突/基线混乱 | **已解除**：`662536b`（D-6/D-7）已合入且实测为 HEAD 祖先；V11-57/58/62 各批次均在其后基线落地，无冲突 |
 
 ## 5. 前置澄清问题（按优先级）

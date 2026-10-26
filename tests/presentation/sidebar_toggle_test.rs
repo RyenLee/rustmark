@@ -55,7 +55,9 @@ fn fresh_ctx() -> egui::Context {
     rustmark::presentation::theme::mapper::clear_highlight_caches();
     let ctx = egui::Context::default();
     let setup = rustmark::infrastructure::fonts::font_definitions(None);
-    ctx.set_fonts(setup.definitions);
+    ctx.set_fonts(rustmark::app::frame::to_egui_font_definitions(
+        setup.definitions,
+    ));
     crate::support::run_ui(&ctx, egui::RawInput::default(), |_| {});
     ctx
 }

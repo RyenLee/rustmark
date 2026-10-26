@@ -91,7 +91,7 @@ presentation ──► application ──► domain ◄── infrastructure
 |---|---|
 | domain | `egui`、`eframe`、`rfd`、`syntect`、`pulldown_cmark`、`std::fs`、`std::io`、`anyhow`、`crate::app`、`crate::application`、`crate::infrastructure`、`crate::presentation`、直接打印（`print!` / `println!` / `eprint!` / `eprintln!` / `dbg!`） |
 | application | `egui`、`eframe`、`rfd`、`syntect`、`pulldown_cmark`、`std::fs`、`std::io`、`crate::app`、`crate::infrastructure`、`crate::presentation` |
-| infrastructure | `crate::app`、`crate::application`、`crate::presentation`、`egui`（V11-63 棘轮守卫：存量 5 文件见本节下文放行清单，清单外新增引用拦截） |
+| infrastructure | `crate::app`、`crate::application`、`crate::presentation`、`egui`（V11-63 端口化收口后**无条件生效**，无文件级豁免） |
 | presentation | `crate::domain`（含聚合与值对象）、`crate::infrastructure`、`crate::app`（**唯一例外 `crate::app::frame`**，见 4.2） |
 | shared | `egui`、`eframe`、`rfd`、`syntect`、`pulldown_cmark`、`std::process`（R-03）、全部业务层（`crate::domain` / `crate::application` / `crate::infrastructure` / `crate::presentation` / `crate::app`） |
 
@@ -103,18 +103,27 @@ presentation ──► application ──► domain ◄── infrastructure
 `shared` 的 `std::process` 禁令见 R-03：端口 trait 与纯逻辑校验可留在 `shared`，
 起进程的执行端必须在 `infrastructure`。`tests/` 的规则见第 9 节。
 
-infrastructure 的 `egui` 禁令（V11-63 棘轮守卫，2026-10-25）：依据是 §10.2
+infrastructure 的 `egui` 禁令（V11-63，2026-10-26 收口）：依据是 §10.2
 四问之④「egui 只应出现在表现适配器」——infrastructure 产字节与端口类型，
 直接产 `egui::FontDefinitions` / `ColorImage` 意味着「core 可 headless 复用」
-不成立。存量泄漏 5 文件（`infrastructure/fonts.rs`、`fonts/discovery.rs`、
-`fonts/assembly.rs`、`export/viewport_capture.rs`、
-`viewport_capture/image.rs`，即 V11-63 任务清单全集）在校验器里以文件级
-放行清单（`V11_63_KNOWN_EGUI_LEAKS`）grandfather：清单外文件（含同目录
-新文件）新增 egui 引用一律拦截——渗漏只能缩小不能扩大；清单内文件内部
-新增引用不被捕获，它们本就是 V11-63 的重写对象，边界由任务时间盒控制。
+不成立。
+
+落地分两步。**棘轮期**（2026-10-25）：存量泄漏 5 文件
+（`infrastructure/fonts.rs`、`fonts/discovery.rs`、`fonts/assembly.rs`、
+`export/viewport_capture.rs`、`viewport_capture/image.rs`，即 V11-63 任务清单
+全集）以校验器内的文件级放行清单 `V11_63_KNOWN_EGUI_LEAKS` grandfather，
+清单外文件（含同目录新文件）新增引用一律拦截——渗漏只能缩小不能扩大。
 放行清单不放 §4.4 豁免登记表：那张表的语义是行内豁免注释的治理门槛，
 文件级放行与规则同址置于校验器（`allowed_for` 的 `crate::app::frame`
-窄豁免同款先例）。**V11-63 端口化落地后清单清空**，禁令升级为无条件生效。
+窄豁免同款先例）。**端口化期**（2026-10-26）：阶段 A 以 `PortFrame`（RGBA8
+字节）替掉 `ColorImage`，阶段 B 以 `PortFontDefinitions` / `PortFontFamily` /
+`PortFontData` 替掉 `egui::FontDefinitions` 一族，egui 类型只在组合根
+`src/app/frame.rs` 的适配器（`to_egui_font_definitions`）里出现。
+
+**清单与放行分支已随之删除，禁令现为无条件生效**——校验器里已无
+`V11_63_KNOWN_EGUI_LEAKS`，任何 infrastructure 文件引 egui 都报。验收用例
+`tests/arch_violation_fixture.rs::former_v11_63_leak_paths_are_now_caught`
+把那 5 个历史路径逐个钉成「必报」，防止清单以任何形式复活。
 
 ### 4.0 `presentation` 内部依赖方向（R-13）
 
@@ -529,13 +538,13 @@ rustmark（root：组合根 + views + bin）
                         （三条本地链在 rustmark-actions 汇合；actions 零依赖）
 ```
 
-| crate | 角色 | 实测规模（2026-10-24，`src/` 口径） | 外部依赖面 |
+| crate | 角色 | 实测规模（2026-10-26，`src/` 口径） | 外部依赖面 |
 |---|---|---|---|
-| `rustmark`（root） | 组合根 + 视图层 + 工具 bin | 85 文件 / 21,188 行 | eframe / egui / image / rfd / anyhow / env_logger / log / wgpu(build) + 3 个本地 crate |
-| `rustmark-core` | 四层脊柱；表现层非视图子模块已全部于 V11-62 批次 1-5 抽去 `rustmark-ui`（core 的 `presentation` 退化为 doc-only 空壳） | 171 文件 / 28,047 行 | 13 个直接外部依赖（`cargo tree -p rustmark-core`）+ 1 个本地（actions） |
+| `rustmark`（root） | 组合根 + 视图层 + 工具 bin | 89 文件 / 21,396 行 | eframe / egui / image / rfd / anyhow / env_logger / log / wgpu(build) + 3 个本地 crate |
+| `rustmark-core` | 四层脊柱；表现层非视图子模块已全部于 V11-62 批次 1-5 抽去 `rustmark-ui`（core 的 `presentation` 退化为 doc-only 空壳）；**零 egui 依赖**（V11-63） | 172 文件 / 28,054 行 | 12 个直接外部依赖（`cargo tree -p rustmark-core`，V11-63 删 egui 后 13→12）+ 1 个本地（actions） |
 | `rustmark-actions` | 动作词汇表契约（V11-57） | 4 文件 / 687 行 | **零依赖** |
 | `rustmark-icons` | 16×16 图标规格 + Painter 渲染器（V11-58） | 1 文件 / 613 行 | egui + rustmark-actions |
-| `rustmark-ui` | 表现层非视图部分：widgets（批次 1）/ state（批次 2）/ shortcuts（批次 3）/ theme（批次 4）/ rich（批次 5，V11-62 收官） | 73 文件 / 17,651 行 | egui + rustmark-core |
+| `rustmark-ui` | 表现层非视图部分：widgets（批次 1）/ state（批次 2）/ shortcuts（批次 3）/ theme（批次 4）/ rich（批次 5，V11-62 收官） | 73 文件 / 17,653 行 | egui + rustmark-core |
 
 规模口径：`find <源码根> -name '*.rs' | xargs wc -l`，只含 `src/`、不含
 `tests/`，命令随文可复跑。core 与评审快照（46,375 行 / 238 文件）的差额 =
@@ -543,11 +552,14 @@ V11-57/58/62 拆出的文件（actions 3 + icons 1 + ui 的 widgets 3 / state 24
 shortcuts 5，另 2 个为 ui 的新建骨架 lib.rs / presentation.rs）扣除期间
 core 内的模块清单与文档增补；快照 238 与 git 树基线 `662536b` 的 244 文件
 之间存在未逐文件核对的口径差（评审当时工作区含 D-6/D-7 在途改动），
-**本节数字以今日实测为准**（2026-10-26：core 171 / 28,047，ui 73 / 17,651，
-root 85 / 21,188——TD-02 拆分 `preview_view.rs` 后 +2 文件 / +20 行；
+**本节数字以今日实测为准**（2026-10-26：core 172 / 28,054，ui 73 / 17,653，
+root 89 / 21,396。构成变化：TD-02 拆分 `preview_view.rs` +2 文件 / +20 行；
 `c08fd13` 阈值整改在 core / ui / root 分别 +171 / +3 / +101 行（撤销字节
-预算、纹理缓存字节预算等）；`toolbar_view.rs` D-4 拆分再 +1 文件 / +14 行；
-rich 于批次 5 从 core 迁 ui，V11-62 收官）。
+预算、纹理缓存字节预算等）；`toolbar_view.rs` D-4 拆分 +1 文件 / +14 行；
+E-24 拆分 `inline.rs` 为 facade + 4 子模块 **+4 文件 / +208 行**（拆子目录的
+模块头与文档开销）；E-06 阶段 B 新增 `infrastructure/fonts/port.rs` **+1 文件**
+（同时从 `fonts.rs` 迁出 4 条 egui 渲染用例 ~130 行、补文档若干，行数净
++7）；rich 于批次 5 从 core 迁 ui，V11-62 收官）。
 
 **三阶段演进**（照评审报告 §4；阶段 1 已由 V11-57 / V11-58 落地，阶段 2/3 为计划值）：
 
@@ -633,7 +645,7 @@ core。同一子模块内两种结论，判据的粒度是**模块**，不是目
 | 动作 | 触发条件（任一满足即启动评估） | 度量方式 | 当前状态（2026-10-24） |
 |---|---|---|---|
 | presentation 非视图子模块 → `rustmark-ui`（V11-62） | ① UI 并行开发人数 ≥2；② core 增量编译 >10s；③ presentation 年变更 ≥80 提交**且**「views↔core state 跨 crate 摩擦」在 ≥3 个功能中复现 | `tools/onboard_cost.py` + `git log` 去重 | ② 未触发（增量 5.92s）。③ **提交数已去重实测**——表现层整体 **88**、含 `tests/presentation` **93**、仅待搬迁的非视图部分 **51**（阈值 80：整体口径满足、待搬迁部分不满足，口径差异如实保留）；**摩擦已取证：8 个功能复现**（state 字段白名单 169/548 条 + 22 个 `pub` setter + 桥接 6 行 / 21 个 view 文件经桥接访问）。**③ 判定：满足**（证据见 tasklist V11-62 节）。① 仍待维护者提供。**已开工**：动作 2 批次 1 已落地（widgets 538 行 → `rustmark-ui`，本地依赖边 4→6，门禁 2144 / release exe 10,485,248 B 与基线逐字节相同）；批次 2–5 待续（theme → shortcuts → state → rich） |
-| infrastructure → `rustmark-infra`（V11-63/64） | 出现真实非 UI 消费者（CLI / headless / 嵌入）**且**去 egui 化完成 | 需求事实 + `cargo tree -p rustmark-core \| grep egui` 为 0 | 未触发（无 headless 消费者；core 现引 egui。2026-10-25 复核仍成立：`grep -c egui` = 1；「egui 归零」是 V11-63 的验收而非触发门，触发门 = 首条需求事实，评估记录见 tasklist V11-64 节后） |
+| infrastructure → `rustmark-infra`（V11-63/64） | 出现真实非 UI 消费者（CLI / headless / 嵌入）**且**去 egui 化完成 | 需求事实 + `cargo tree -p rustmark-core \| grep egui` 为 0 | **egui 侧已达标、消费者侧未触发**：V11-63 于 2026-10-26 收官，`cargo tree -p rustmark-core \| grep -c egui` **实测 0**（依赖已删，非仅无引用）；但触发门是首条需求事实（= BLK-01 的 Q-01），而 workspace 仍只有 `rustmark`（GUI）与 `check-arch`（零 core 依赖）两个 bin、无 CLI 参数解析——**V11-64 维持挂起**（Q-01 答「无计划」时应记「永不触发」，避免反复重评） |
 | math / mermaid → `rustmark-render` | mermaid/math 年变更 ≥10 提交或合计 >8k 行（现 5.6k） | git log + wc -l | 未触发 |
 | 新 crate 合并回退（防过度拆分） | 新建 crate <1k 行且 12mo 变更 <5 提交 | git log | 不适用：actions（687 行）/ icons（613 行）均 <1k 行，但属零依赖契约 / 纯资源 crate，回退等于把契约塞回 core——判据本意防「为拆而拆的业务模块」（ADR-013 决策 5） |
 | shared 通用件再拆分 | pattern+lru+text 合计 >1,500 行或出现第 4 个非领域通用模块 | wc -l | 未触发 |

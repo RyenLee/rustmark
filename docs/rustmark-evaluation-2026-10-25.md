@@ -96,6 +96,7 @@ rustmark 是一套**工程纪律极强、文档与代码同源性很高**的成�
 - **影响分析**：5 个文件是 unbounded 的耦合汇；只要不清空，core 永远拖着 egui，任何 headless/CLI/嵌入消费者都被迫引入整条 egui 依赖。
 - **改进建议**：将 V11-63 端口化落地（fonts/viewport_capture 改为产出字节/端口类型、执行端外移），随后删除 5 条放行；同时明确「core 依赖 egui 仅限 epaint 文本布局原语（无窗口/后端）」，把「headless 复用」重新定义为「无窗口复用」，消除文档与现实张力。
 - **位置**：`tools/arch_check.rs:98-127`；`crates/rustmark-core/Cargo.toml:26`；`docs/architecture-constraints.md:106-117`
+- **✅ 已收口（2026-10-26，V11-63 / E-06 两阶段）**：本条的**根因**（core 依赖 egui）已消除——`crates/rustmark-core/Cargo.toml` 的 `egui` 依赖已删，`cargo tree -p rustmark-core | grep -c egui` 实测 **0**；`V11_63_KNOWN_EGUI_LEAKS` 常量与放行分支双删，`INFRASTRUCTURE_FORBIDDEN` 的 egui 项升为无条件生效（验收用例 `former_v11_63_leak_paths_are_now_caught` 把 5 个历史路径钉成"必报"）。建议中"把 headless 复用重新定义为无窗口复用"这一折中**不再需要**：端口化已让 core 真正 egui 无关。上述"位置"与行号是 2026-10-25 快照，现状见 `docs/architecture-constraints.md` §4 与 tasklist V11-63 节后收官记录。
 
 #### E-07 · `views 留 root / state 留 core` 的跨 crate 字段保护摩擦，是持续增长的耦合税 ［架构设计｜中］
 - **问题描述**：为保留 R-11/R-12 的跨 crate 字段保护不被降级，引入 169/548 条 `pub` 字段白名单 + 22 个 `pub` setter + 6 行桥接（`views` 经桥接访问 core state）。白名单由 `tests/field_visibility_guard_test.rs` 集合相等双向断言守门，安全但随功能增长。

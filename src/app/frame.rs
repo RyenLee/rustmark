@@ -771,11 +771,67 @@ impl EditorApp {
                  Linux 可安装 fonts-noto-cjk；macOS 应自带苹方）"
             );
         }
-        ctx.set_fonts(setup.definitions);
+        ctx.set_fonts(to_egui_font_definitions(setup.definitions));
         // 清单同步刷新：用户可能往项目 fonts/ 目录放了新字体后重启，
         // 那次重启会走这里，下拉里立刻能选到。
         self.editor_fonts = setup.editor_fonts;
         self.installed_font_family = Some(selected.to_string());
+    }
+}
+
+/// V11-63 阶段 B：端口字体定义 → egui 字体定义的**唯一**适配器。
+///
+/// 基础设施层（`rustmark_core::infrastructure::fonts`）产出的是 egui 无关的
+/// `PortFontDefinitions`；只有组合根知道 egui。本函数做这一次转换，故
+/// 「基础设施的字体产物在哪里变成 egui 类型」在结构上只有这一处。
+///
+/// # 为什么用 `from_blob` 而不是 `from_owned`
+///
+/// `PortFontData::bytes` 是 `Arc<Vec<u8>>`，而 `FontData::from_blob` 接受
+/// `Arc<dyn AsRef<[u8]> + Send + Sync>`——直接 unsize 就把同一份字节交给 egui，
+/// 不必为 1.5 MB 的内置 CJK 子集再复制一份。端口类型用 `Arc` 包裹字节
+/// 正是为了保住这条零拷贝路径。
+///
+/// # 为什么只转 `scale`
+///
+/// egui 0.37 的 `FontTweak` 有 9 个字段（hinting / hinting_target /
+/// subpixel_binning / coords / thin_space_width / tab_size …），本项目只设置
+/// `scale`（emoji 字体 0.81 / 0.90，与 epaint 内嵌时代原值一致）。其余取 egui
+/// 默认值，与端口化之前的行为逐字段等价——端口化前那些字段也从未被赋值。
+/// 理由与扩展方式见 `rustmark_core::infrastructure::fonts::port` 的模块文档。
+pub fn to_egui_font_definitions(
+    defs: crate::infrastructure::fonts::PortFontDefinitions,
+) -> egui::FontDefinitions {
+    use crate::infrastructure::fonts::PortFontFamily;
+
+    let font_data = defs
+        .font_data
+        .into_iter()
+        .map(|(key, data)| {
+            let font = egui::FontData::from_blob(data.bytes, 0).tweak(egui::FontTweak {
+                scale: data.scale,
+                ..Default::default()
+            });
+            (key, std::sync::Arc::new(font))
+        })
+        .collect();
+
+    let families = defs
+        .families
+        .into_iter()
+        .map(|(family, keys)| {
+            let family = match family {
+                PortFontFamily::Proportional => egui::FontFamily::Proportional,
+                PortFontFamily::Monospace => egui::FontFamily::Monospace,
+                PortFontFamily::Name(name) => egui::FontFamily::Name(name.into()),
+            };
+            (family, keys)
+        })
+        .collect();
+
+    egui::FontDefinitions {
+        font_data,
+        families,
     }
 }
 

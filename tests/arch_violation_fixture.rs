@@ -623,21 +623,19 @@ fn std_process_is_allowed_in_infrastructure() {
 }
 
 // ============================================================================
-// 一之补二、V11-63 棘轮：infrastructure 禁 egui（2026-10-25）
+// 一之补二、V11-63：infrastructure 禁 egui（无条件生效）
 // ============================================================================
 
-/// **棘轮守卫的牙口**：清单外的 infrastructure 文件引 `egui` 必报。
+/// **规则的牙口**：infrastructure 文件引 `egui` 必报。
 ///
 /// # 为什么需要这条
 ///
-/// §10.2 四问之④规定「egui 只应出现在表现适配器」，但 infrastructure 有
-/// 3 个 V11-63 待端口化的已知泄漏文件（现仅 fonts 系 3；viewport_capture
-/// 系已于阶段 A 端口化移出，见 checker 的 `V11_63_KNOWN_EGUI_LEAKS`）。
-/// 一刀切禁会让那 3 个文件同时报错、规则无法遵守；放之不管则渗漏会扩大。
-/// 棘轮方案：清单内文件
-/// 文件级放行（见下一条），**清单外**文件照常拦截——渗漏只能缩小不能
-/// 扩大。用例故意取 `highlighting/` 下的真实兄弟文件：它与泄漏清单同层
-/// 不同目录，是最像「漏网新文件」的形状。
+/// §10.2 四问之④规定「egui 只应出现在表现适配器」。V11-63 两阶段端口化
+/// （阶段 A `ColorImage` → `PortFrame`；阶段 B `egui::FontDefinitions` →
+/// `PortFontDefinitions` 一族）之后，infrastructure 已零 egui 引用，
+/// 规则**无条件生效**——不再有文件级放行清单。
+/// 用例取 `highlighting/` 下的真实兄弟文件：它是最典型的「适配器层不该
+/// 知道 egui」的形状。
 #[test]
 fn egui_is_forbidden_in_infrastructure() {
     let dir = tempfile::tempdir().unwrap();
@@ -652,7 +650,7 @@ fn egui_is_forbidden_in_infrastructure() {
     assert_eq!(
         violations.len(),
         1,
-        "清单外的 infrastructure 文件引 egui 应报 1 处，实际：{:?}",
+        "infrastructure 文件引 egui 应报 1 处，实际：{:?}",
         described(&violations)
     );
     assert!(
@@ -665,51 +663,53 @@ fn egui_is_forbidden_in_infrastructure() {
     assert_eq!(violations[0].line, 2, "应报告具体行号");
 }
 
-/// 放行清单内的已知泄漏文件不报——棘轮≠一刀切。
+/// **棘轮已闭合**：V11-63 的 5 个历史泄漏路径现在**全部**照拦。
 ///
-/// 与上一条是同一枚硬币的两面：这条证明放行通道真实存在（否则真实工程
-/// 里那 3 个 fonts 文件的存量引用会让 `current_project_has_no_violations`
-/// 常红，规则将无法落地）。取 fonts 簇的文件（现仅该簇在放行清单中；
-/// viewport_capture 簇已于阶段 A 端口化移出，故不再出现在此用例）。
+/// # 这条钉的是什么
+///
+/// 2026-10-25 的棘轮方案用文件级放行清单（`V11_63_KNOWN_EGUI_LEAKS`）
+/// 让存量 5 个文件先过关（`fonts` 系 3 + `viewport_capture` 系 2）。
+/// 两阶段端口化后清单与放行分支**都已删除**，规则升为无条件生效。
+///
+/// 本用例把那 5 个历史路径逐个写成 fixture，断言每个都报 1 处违规——
+/// 若哪天有人把清单（或等价的位置型豁免，如目录前缀）加回来，这条当场红。
+/// 末尾带上「同目录新文件」，钉住「位置不构成豁免」。
 #[test]
-fn known_v11_63_leak_files_are_grandfathered() {
-    let dir = tempfile::tempdir().unwrap();
-    let root = dir.path().join("src");
-    write_fixture(
-        &root,
+fn former_v11_63_leak_paths_are_now_caught() {
+    let former_leaks = [
         "infrastructure/fonts.rs",
-        "//! x\nuse egui::FontDefinitions;\npub fn f(d: &FontDefinitions) {}\n",
-    );
-
-    let violations = arch_check::scan(&root);
-    assert!(
-        violations.is_empty(),
-        "清单内的已知泄漏应放行，实际：{:?}",
-        described(&violations)
-    );
-}
-
-/// 放行按**文件**精确匹配：已知泄漏文件旁边的新文件照样拦截。
-///
-/// 防「清单被稀释」——若哪天匹配退化成目录前缀（`fonts/` 下全部放行），
-/// `fonts/extra.rs` 这种新文件就能带着 egui 静溜进来，这条当场红。
-#[test]
-fn a_new_file_next_to_a_known_leak_is_still_caught() {
-    let dir = tempfile::tempdir().unwrap();
-    let root = dir.path().join("src");
-    write_fixture(
-        &root,
+        "infrastructure/fonts/discovery.rs",
+        "infrastructure/fonts/assembly.rs",
+        "infrastructure/export/viewport_capture.rs",
+        "infrastructure/export/viewport_capture/image.rs",
+        // 同目录新文件：不存在「整个目录放行」这种形状
         "infrastructure/fonts/extra.rs",
-        "//! x\nuse egui::FontData;\npub fn f(d: &FontData) {}\n",
-    );
+    ];
 
-    let violations = arch_check::scan(&root);
-    assert_eq!(
-        violations.len(),
-        1,
-        "放行不扩散到同目录新文件，实际：{:?}",
-        described(&violations)
-    );
+    for path in former_leaks {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("src");
+        write_fixture(
+            &root,
+            path,
+            "//! x\nuse egui::Color32;\npub fn f(c: Color32) {}\n",
+        );
+
+        let violations = arch_check::scan(&root);
+        assert_eq!(
+            violations.len(),
+            1,
+            "{path} 现在应无条件被拦（V11-63 放行清单已删），实际：{:?}",
+            described(&violations)
+        );
+        assert!(
+            violations[0]
+                .detail
+                .contains("infrastructure 层禁止依赖 egui"),
+            "{path} 的违规说明应点名 egui，实际：{}",
+            violations[0].detail
+        );
+    }
 }
 
 // ============================================================================

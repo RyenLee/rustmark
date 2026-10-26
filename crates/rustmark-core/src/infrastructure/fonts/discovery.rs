@@ -8,33 +8,35 @@
 //! 背景与体积红线约定见 `fonts.rs` 模块文档。
 
 use std::path::PathBuf;
-use std::sync::Arc;
 
-use egui::FontData;
-
+use super::port::PortFontData;
 use crate::shared::fonts::{DEFAULT_EDITOR_FONT_KEY, EditorFontChoice};
 
 /// 一个已发现的、可供用户选择的编辑区字体源。
-pub(crate) struct FontSource {
+///
+/// `pub`（V11-63 阶段 B）：根 crate 的 `tests/presentation/font_glyph_test.rs`
+/// 需要「按真实根目录发现字体、再取 key/display_name」来驱动端到端渲染断言。
+/// 该测试迁出 core 后无法再访问 `pub(crate)` 项。
+pub struct FontSource {
     /// egui 字体数据键（`user:<字体名>` 或 `builtin:<字体名>`，
     /// 与 [`EditorFontChoice::key`] 同值）。
-    pub(crate) key: String,
+    pub key: String,
     /// 下拉显示名（字体文件名去扩展名 / 内置字体名）。
-    pub(crate) display_name: String,
+    pub display_name: String,
     /// 字体文件路径（内置 `fonts/`、项目 `fonts/` 目录或系统字体目录）。
     ///
     /// 内置字体不再 `include_bytes!` 进二进制（体积红线 NFR-PERF-01），
     /// 改为随发行包以文件形式分发（见 [`builtin_font_path`]），
     /// 故此处统一为磁盘路径、只做「存在性检查」。
-    pub(crate) path: PathBuf,
+    pub path: PathBuf,
 }
 
 impl FontSource {
-    /// 取出字体字节并包装成 egui 的 `FontData`；读不通返回 `None`。
-    pub(crate) fn font_data(&self) -> Option<Arc<FontData>> {
-        std::fs::read(&self.path)
-            .ok()
-            .map(|bytes| Arc::new(FontData::from_owned(bytes)))
+    /// 取出字体字节并包装成端口 `PortFontData`；读不通返回 `None`。
+    ///
+    /// （V11-63 阶段 B：基础设施产出端口类型，由组合根转成 egui 类型。）
+    pub(crate) fn font_data(&self) -> Option<PortFontData> {
+        std::fs::read(&self.path).ok().map(PortFontData::from_owned)
     }
 }
 
@@ -127,7 +129,7 @@ pub(crate) fn builtin_editor_fonts() -> Vec<FontSource> {
 ///
 /// 真实文件系统的薄适配：[`discover_font_sources`] 接受注入的根目录列表，
 /// 此处给出生产环境的默认根，使发现逻辑可在无真实资产时单测。
-pub(crate) fn default_roots() -> Vec<PathBuf> {
+pub fn default_roots() -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = Vec::new();
     if let Ok(exe) = std::env::current_exe()
         && let Some(dir) = exe.parent()
@@ -147,7 +149,7 @@ pub(crate) fn default_roots() -> Vec<PathBuf> {
 ///
 /// `roots` 为注入的项目字体根目录列表（生产环境传 [`default_roots`]）；
 /// 项目字体排在系统等宽候选之前——用户自置字体优先于「机器刚好装了什么」。
-pub(crate) fn discover_font_sources(roots: &[PathBuf]) -> Vec<FontSource> {
+pub fn discover_font_sources(roots: &[PathBuf]) -> Vec<FontSource> {
     let mut sources: Vec<FontSource> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     // 内置字体排最前：同名时内置赢——跨平台确定性优先于「用户机器上恰好装了什么」。

@@ -1463,7 +1463,9 @@ fn frames(app: &mut EditorApp, fonts: Option<&str>) -> Vec<egui::epaint::Clipped
     let ctx = egui::Context::default();
     if let Some(family) = fonts {
         let setup = rustmark::infrastructure::fonts::font_definitions(Some(family));
-        ctx.set_fonts(setup.definitions);
+        ctx.set_fonts(rustmark::app::frame::to_egui_font_definitions(
+            setup.definitions,
+        ));
     }
     let mut shapes = Vec::new();
     for _ in 0..3 {

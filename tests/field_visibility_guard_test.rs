@@ -81,7 +81,7 @@ mod arch_check {
 /// - **删除条目** = 字段已收紧 / 已删：编译器保证外部没有读点，清单
 ///   同步移除，双向断言会把忘了删的情况报红。
 const APPROVED_PUB_FIELDS: &[&str] = &[
-    // total: 552
+    // total: 559
     "application/document/commands.rs::CloseCommand::force",
     "application/document/commands.rs::CloseCommand::id",
     "application/document/commands.rs::FormatCommand::id",
@@ -363,6 +363,19 @@ const APPROVED_PUB_FIELDS: &[&str] = &[
     "infrastructure/fonts.rs::FontSetup::cjk_source",
     "infrastructure/fonts.rs::FontSetup::definitions",
     "infrastructure/fonts.rs::FontSetup::editor_fonts",
+    // V11-63 阶段 B 端口化：core 的字体产物改为 egui 无关的端口类型。
+    // `PortFont*` 的字段是组合根适配器（`src/app/frame.rs` 的
+    // `to_egui_font_definitions`）在 crate 外的**读点**——适配器要逐字段
+    // 重建 egui 类型，必须能读；`FontSource` 三字段是迁到
+    // `tests/presentation/font_glyph_test.rs` 的端到端字形测试的读点
+    // （原为 core 内单测，`pub(crate)` 够用；迁出后需 `pub`）。
+    "infrastructure/fonts/discovery.rs::FontSource::display_name",
+    "infrastructure/fonts/discovery.rs::FontSource::key",
+    "infrastructure/fonts/discovery.rs::FontSource::path",
+    "infrastructure/fonts/port.rs::PortFontData::bytes",
+    "infrastructure/fonts/port.rs::PortFontData::scale",
+    "infrastructure/fonts/port.rs::PortFontDefinitions::families",
+    "infrastructure/fonts/port.rs::PortFontDefinitions::font_data",
     "infrastructure/persistence/asset_loader/policy.rs::AssetLimits::download_timeout",
     "infrastructure/persistence/asset_loader/policy.rs::AssetLimits::max_inline_bytes",
     "infrastructure/persistence/asset_loader/policy.rs::AssetLimits::max_local_bytes",

@@ -85,47 +85,27 @@ const APPLICATION_FORBIDDEN: &[&str] = &[
 /// 产 `egui::FontDefinitions` / `ColorImage`，「core 可 headless 复用」
 /// 就不成立——消费者为了拿字体装配结果被迫拖进整个 egui。
 ///
-/// # 为什么是棘轮而不是一刀切
+/// # 从棘轮到无条件（V11-63 全量端口化的终点）
 ///
-/// 存量泄漏最初落在 5 个文件（fonts 系 3 + viewport_capture 系 2，即
-/// V11-63 的任务清单，见 [`V11_63_KNOWN_EGUI_LEAKS`]）。viewport_capture 系 2
-/// 已于阶段 A 端口化移出；现仅余 fonts 系 3。一刀切禁 = 文件同时报错，
-/// 规则无法遵守；文件级放行后，**未登记**文件（及同目录新文件）的新增引用
-/// 照常拦截——渗漏只能缩小不能扩大。V11-63 端口化落地后放行清单清空，本条
-/// 升级为无条件生效。
+/// 存量泄漏最初落在 5 个文件（fonts 系 3 + viewport_capture 系 2），一刀切禁
+/// 会让它们同时报错、规则无法遵守。2026-10-25 先落地为**棘轮**：文件级放行
+/// 清单 `V11_63_KNOWN_EGUI_LEAKS` 只放行那 5 个文件，未登记文件（含同目录
+/// 新文件）的新增引用照常拦截——渗漏只能缩小不能扩大。
 ///
-/// 已知取舍：放行是文件级的，3 个 fonts 文件内部新增 egui 引用不会被本条
-/// 捕获——它们本就是 V11-63 的重写对象，边界由任务时间盒控制。
+/// 随后两阶段端口化把渗漏清零：阶段 A 用 `PortFrame`（RGBA8 字节）替掉
+/// `ColorImage`（viewport_capture 系 2 文件），阶段 B 用 `PortFontDefinitions`
+/// 一族端口类型替掉 `egui::FontDefinitions`（fonts 系 3 文件），egui 类型
+/// 只在组合根 `src/app/frame.rs` 的适配器里出现。
+///
+/// **清单已删、分支已删**：本条现在是**无条件生效**的硬规则，不再有任何
+/// 文件级例外。留着空清单只会给下一个人「这里还能登记豁免」的错觉；
+/// 真要再加例外，必须同时改本文件、约束文档 §4.4 与验收用例——成本高于
+/// 老老实实做端口化，这正是想要的激励方向。
 const INFRASTRUCTURE_FORBIDDEN: &[&str] = &[
     "crate::app",
     "crate::application",
     "crate::presentation",
     "egui",
-];
-
-/// [`INFRASTRUCTURE_FORBIDDEN`] 的 `egui` 项的文件级放行清单（V11-63）。
-///
-/// 文件清单 = V11-63 端口化的存量泄漏全集：`fonts.rs` / `fonts/discovery.rs` /
-/// `fonts/assembly.rs`（产 `egui::FontDefinitions` 一条链）。
-/// `export/viewport_capture.rs` / `viewport_capture/image.rs` 已于阶段 A 端口化
-/// （`ColorImage` → 端口类型 `PortFrame`），移出本清单。
-///
-/// 为什么不做成行内 `// arch-allow: egui`：两簇合计 35 处候选（含
-/// `#[cfg(test)]` 里的 `egui::Context` 用法），行内注释会在即将被 V11-63
-/// 重写的文件里留下 35 处只为删除而存在的噪音；清单是一处、删一次。
-///
-/// 为什么放在 checker 而不是 constraints §4.4 豁免登记表：那张表的语义是
-/// 「行内豁免注释的治理门槛」（未登记的行内豁免报「豁免未登记」，三态用例
-/// 钉死），把文件级放行也塞进去会让一种表格承载两种语义。清单与它服务的
-/// 规则同址（[`allowed_for`] 的 `crate::app::frame` 窄豁免同款先例），
-/// 约束文档 §4 有对应文字。
-const V11_63_KNOWN_EGUI_LEAKS: &[&str] = &[
-    "infrastructure/fonts.rs",
-    "infrastructure/fonts/discovery.rs",
-    "infrastructure/fonts/assembly.rs",
-    // `infrastructure/export/viewport_capture.rs` 与 `.../viewport_capture/image.rs`
-    // 已于 V11-63 阶段 A 端口化（ColorImage → 端口类型 `PortFrame`，裁剪 / 拼接 /
-    // 写盘只认 RGBA8 字节），不再含 egui 代码，故移出放行清单。
 ];
 
 const PRESENTATION_FORBIDDEN: &[&str] = &["crate::app", "crate::domain", "crate::infrastructure"];
@@ -1764,16 +1744,6 @@ fn check_file(rel: &str, layer: Layer, lexed: &Lexed, registry: &Registry) -> Ve
     if !forbidden.is_empty() {
         let candidates = collect_candidates(tokens, &module_path_of(rel), &forbidden, allowed_for(layer));
         for cand in &candidates {
-            // V11-63 棘轮的文件级放行：只放行 [`V11_63_KNOWN_EGUI_LEAKS`]
-            // 登记的 5 个存量泄漏文件，未登记文件（含同目录新文件）照常
-            // 拦截——渗漏只能缩小不能扩大。放在 `hit` 计算之前：这些行
-            // 没有行内豁免注释，走不到「已用豁免」的分支。
-            if layer == Layer::Infrastructure
-                && cand.banned == "egui"
-                && V11_63_KNOWN_EGUI_LEAKS.contains(&rel)
-            {
-                continue;
-            }
             let hit = lexed
                 .allows
                 .iter()

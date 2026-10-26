@@ -20,6 +20,8 @@ mod enter_ime_test;
 mod export_view_test;
 mod external_opener_test;
 mod find_replace_view_test;
+// V11-63 阶段 B：字体端到端字形验证（从 core infrastructure/fonts.rs 迁出）。
+mod font_glyph_test;
 mod highlight_layout_bench;
 mod highlight_layout_test;
 mod preview_border_test;

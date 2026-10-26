@@ -82,7 +82,9 @@ fn app_with_short_path_doc() -> (tempfile::TempDir, EditorApp, String) {
 fn ctx_with_app_fonts() -> egui::Context {
     let ctx = egui::Context::default();
     let setup = rustmark::infrastructure::fonts::font_definitions(None);
-    ctx.set_fonts(setup.definitions);
+    ctx.set_fonts(rustmark::app::frame::to_egui_font_definitions(
+        setup.definitions,
+    ));
     // 首帧落定字体（`panic = "abort"` 下字体解析失败会直接终止）。
     crate::support::run_ui(&ctx, raw_input(WIDE_W), |_| {});
     ctx

@@ -83,7 +83,9 @@ fn app_with_recent() -> (tempfile::TempDir, EditorApp) {
 fn ctx_with_app_fonts() -> egui::Context {
     let ctx = egui::Context::default();
     let setup = rustmark::infrastructure::fonts::font_definitions(None);
-    ctx.set_fonts(setup.definitions);
+    ctx.set_fonts(rustmark::app::frame::to_egui_font_definitions(
+        setup.definitions,
+    ));
     crate::support::run_ui(&ctx, raw_input(Vec::new()), |_| {});
     ctx
 }

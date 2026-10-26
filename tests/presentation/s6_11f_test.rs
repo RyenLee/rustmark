@@ -680,7 +680,9 @@ fn opening_the_symbol_panel_resets_its_state() {
 fn every_symbol_glyph_is_renderable_under_the_real_font_setup() {
     let setup = rustmark::infrastructure::fonts::font_definitions(None);
     let ctx = egui::Context::default();
-    ctx.set_fonts(setup.definitions);
+    ctx.set_fonts(rustmark::app::frame::to_egui_font_definitions(
+        setup.definitions,
+    ));
     // 必须先跑一帧，`fonts` 才可用。
     crate::support::run_ui(&ctx, egui::RawInput::default(), |_| {});
 

@@ -59,7 +59,9 @@ fn app_with_open_document() -> (tempfile::TempDir, EditorApp) {
 fn ctx_with_app_fonts() -> egui::Context {
     let ctx = egui::Context::default();
     let setup = rustmark::infrastructure::fonts::font_definitions(None);
-    ctx.set_fonts(setup.definitions);
+    ctx.set_fonts(rustmark::app::frame::to_egui_font_definitions(
+        setup.definitions,
+    ));
     // 首个 `run` 会解析字体（`panic = "abort"` 下字体解析失败会直接终止，
     // 故这一步同时守护了「字体文件不被支持」这个风险）。
     crate::support::run_ui(&ctx, raw_input(Vec::new()), |_| {});

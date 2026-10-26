@@ -19,11 +19,19 @@ publish = false
 # （docs/workspace-topology.expected.txt）——零依赖是本 crate 的设计约束。
 rustmark-actions = { path = "../rustmark-actions" }
 
-# --- UI 绘制原语（ADR-001：egui 原生）---
-# core 只画 egui（TextFormat / LayoutJob / Galley 等），不接触渲染后端；
-# eframe 与 wgpu 属组合根，留在 root。
-# V11-65：版本/规格继承 root [workspace.dependencies]（单点真源）。
-egui = { workspace = true }
+# --- UI 绘制原语 ---
+# V11-63 收口（2026-10-26）：**core 已零 egui 依赖**。
+# 原先这里挂着 `egui = { workspace = true }`，理由是「core 只画 egui
+# （TextFormat / LayoutJob / Galley 等），不接触渲染后端」。V11-62 把
+# widgets / state / shortcuts / theme / rich 五个子模块迁到 `rustmark-ui`
+# 之后，core 侧只剩字体簇与截图簇两处真实引用；V11-63 阶段 A/B 把它们
+# 分别端口化为 `PortFrame` 与 `PortFontDefinitions` 一族纯数据类型，
+# egui 类型只在组合根 `src/app/frame.rs` 的适配器里出现。
+#
+# 这条依赖的移除就是 V11-63 的验收判据本身：`cargo tree -p rustmark-core
+# | grep -c egui` 从 1 变 0，「core 可 headless 复用」不再是纸面声明。
+# 谁要把它加回来，等于同时推翻 `INFRASTRUCTURE_FORBIDDEN` 的 egui 项
+# （现为无条件生效）与 `tests/workspace_topology_test.rs` 的依赖边期望。
 
 # --- 解析与高亮（ADR-002）---
 pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }

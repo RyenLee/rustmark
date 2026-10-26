@@ -2426,7 +2426,6 @@ name = "rustmark-core"
 version = "0.2.0"
 dependencies = [
  "ahash",
- "egui",
  "image",
  "log",
  "pulldown-cmark",
