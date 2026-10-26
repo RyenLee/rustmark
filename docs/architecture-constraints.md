@@ -552,14 +552,16 @@ V11-57/58/62 拆出的文件（actions 3 + icons 1 + ui 的 widgets 3 / state 24
 shortcuts 5，另 2 个为 ui 的新建骨架 lib.rs / presentation.rs）扣除期间
 core 内的模块清单与文档增补；快照 238 与 git 树基线 `662536b` 的 244 文件
 之间存在未逐文件核对的口径差（评审当时工作区含 D-6/D-7 在途改动），
-**本节数字以今日实测为准**（2026-10-26：core 172 / 28,054，ui 73 / 17,653，
-root 89 / 21,396。构成变化：TD-02 拆分 `preview_view.rs` +2 文件 / +20 行；
+**本节数字以今日实测为准**（2026-10-26：root 91 / 21,443，core 172 / 28,061，
+ui 73 / 17,653。构成变化：TD-02 拆分 `preview_view.rs` +2 文件 / +20 行；
 `c08fd13` 阈值整改在 core / ui / root 分别 +171 / +3 / +101 行（撤销字节
 预算、纹理缓存字节预算等）；`toolbar_view.rs` D-4 拆分 +1 文件 / +14 行；
 E-24 拆分 `inline.rs` 为 facade + 4 子模块 **+4 文件 / +208 行**（拆子目录的
 模块头与文档开销）；E-06 阶段 B 新增 `infrastructure/fonts/port.rs` **+1 文件**
 （同时从 `fonts.rs` 迁出 4 条 egui 渲染用例 ~130 行、补文档若干，行数净
-+7）；rich 于批次 5 从 core 迁 ui，V11-62 收官）。
++7）；E-25 拆 `src/app/frame.rs`（839 行）为 facade 195 + `frame/state.rs` 434 +
+`frame/loop.rs` 257 = 886 行（**+2 文件 / +47 行**，模块头与文档注释开销，
+纯重构零行为变化）；rich 于批次 5 从 core 迁 ui，V11-62 收官）。
 
 **三阶段演进**（照评审报告 §4；阶段 1 已由 V11-57 / V11-58 落地，阶段 2/3 为计划值）：
 
@@ -642,11 +644,11 @@ core。同一子模块内两种结论，判据的粒度是**模块**，不是目
 「当前状态」列随每次度量刷新，数字以 `docs/metrics.md` §7（接入成本基线）
 为家，本表只放判定结论。
 
-| 动作 | 触发条件（任一满足即启动评估） | 度量方式 | 当前状态（2026-10-24） |
+| 动作 | 触发条件（任一满足即启动评估） | 度量方式 | 当前状态（2026-10-26 复核） |
 |---|---|---|---|
-| presentation 非视图子模块 → `rustmark-ui`（V11-62） | ① UI 并行开发人数 ≥2；② core 增量编译 >10s；③ presentation 年变更 ≥80 提交**且**「views↔core state 跨 crate 摩擦」在 ≥3 个功能中复现 | `tools/onboard_cost.py` + `git log` 去重 | ② 未触发（增量 5.92s）。③ **提交数已去重实测**——表现层整体 **88**、含 `tests/presentation` **93**、仅待搬迁的非视图部分 **51**（阈值 80：整体口径满足、待搬迁部分不满足，口径差异如实保留）；**摩擦已取证：8 个功能复现**（state 字段白名单 169/548 条 + 22 个 `pub` setter + 桥接 6 行 / 21 个 view 文件经桥接访问）。**③ 判定：满足**（证据见 tasklist V11-62 节）。① 仍待维护者提供。**已开工**：动作 2 批次 1 已落地（widgets 538 行 → `rustmark-ui`，本地依赖边 4→6，门禁 2144 / release exe 10,485,248 B 与基线逐字节相同）；批次 2–5 待续（theme → shortcuts → state → rich） |
+| presentation 非视图子模块 → `rustmark-ui`（V11-62） | ① UI 并行开发人数 ≥2；② core 增量编译 >10s；③ presentation 年变更 ≥80 提交**且**「views↔core state 跨 crate 摩擦」在 ≥3 个功能中复现 | `tools/onboard_cost.py` + `git log` 去重 | ② 未触发（增量 5.92s）。③ **提交数已去重实测**——表现层整体 **88**、含 `tests/presentation` **93**、仅待搬迁的非视图部分 **51**（阈值 80：整体口径满足、待搬迁部分不满足，口径差异如实保留）；**摩擦已取证：8 个功能复现**（state 字段白名单 169/548 条 + 22 个 `pub` setter + 桥接 6 行 / 21 个 view 文件经桥接访问）。**③ 判定：满足**（证据见 tasklist V11-62 节）。① 仍待维护者提供。**已收官（2026-10-25）**：五批次全部落地（widgets `9ab57ae` → state `c40235c` → shortcuts `6778f20` → theme `14f7d87` → rich `d8126a4`），`rustmark-ui` 收官态 73 文件 / 17,653 行（2026-10-26 实测）、本地依赖边 6 条、release 10,487,296 B；摩擦只搬迁不消除（views 留 root，白名单 169 条 + 22 个 `pub` setter 换 crate，保 R-11/R-12） |
 | infrastructure → `rustmark-infra`（V11-63/64） | 出现真实非 UI 消费者（CLI / headless / 嵌入）**且**去 egui 化完成 | 需求事实 + `cargo tree -p rustmark-core \| grep egui` 为 0 | **egui 侧已达标、消费者侧未触发**：V11-63 于 2026-10-26 收官，`cargo tree -p rustmark-core \| grep -c egui` **实测 0**（依赖已删，非仅无引用）；但触发门是首条需求事实（= BLK-01 的 Q-01），而 workspace 仍只有 `rustmark`（GUI）与 `check-arch`（零 core 依赖）两个 bin、无 CLI 参数解析——**V11-64 维持挂起**（Q-01 答「无计划」时应记「永不触发」，避免反复重评） |
 | math / mermaid → `rustmark-render` | mermaid/math 年变更 ≥10 提交或合计 >8k 行（现 5.6k） | git log + wc -l | 未触发 |
 | 新 crate 合并回退（防过度拆分） | 新建 crate <1k 行且 12mo 变更 <5 提交 | git log | 不适用：actions（687 行）/ icons（613 行）均 <1k 行，但属零依赖契约 / 纯资源 crate，回退等于把契约塞回 core——判据本意防「为拆而拆的业务模块」（ADR-013 决策 5） |
-| shared 通用件再拆分 | pattern+lru+text 合计 >1,500 行或出现第 4 个非领域通用模块 | wc -l | 未触发 |
+| shared 通用件再拆分 | pattern+lru+text 合计 >1,500 行或出现第 4 个非领域通用模块 | wc -l | **已触发、待拍板（2026-10-26 复核）**：模块计数分支满足——非领域通用件 **6 个**（pattern 531 / text_format 310 / lru 291 / path 278 / geometry 248 / export_format 233 = **1,891 行**，6 ≥ 阈值 4）；行数分支按本行初版具名清单（pattern+lru+text）算 **992 行**、未达 1,500。两分支口径不一致的根源是 1,500 行公式固化了初版三模块清单，而模块计数分支未绑定清单；按「任一满足即启动评估」判定**已触发**，评估登记见 tasklist TD-04，抽 crate 与否待维护者拍板 |
 | state 瘦身叫停 | 审计发现纯帧内字段 <10%（收益不抵改动风险） | 字段清单 | **已触发并闭环**（V11-59 审计纯帧内字段远低于阈值 → V11-60 关闭，结论见 `docs/state-field-audit.md`） |

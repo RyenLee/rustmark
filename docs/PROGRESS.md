@@ -50,7 +50,7 @@
   - **V11-04 PDF 开放（方案 B）**：开放入口并诚实提示「经系统打印对话框」，打印副作用抽为可注入 `PrintDispatcher`，CI 不弹框。
   - **V11-05 写作目标进度条**：领域 `WritingGoal` + 应用 `goal_progress` + 状态栏百分比/细进度条/达成去重提示，旧 TOML 配置缺字段按「未设置」兼容。
 
-**验证链最新记录**（2026-10-20 实测）：`fmt --check` 零差异 · `clippy --all-targets --all-features -- -D warnings` 0 告警 · `check-arch` OK · 全量 `cargo test --all-targets` **1879 passed / 0 failed / 4 ignored**（有界性能断言只在 release 生效，debug 仅打印指标，见 `docs/testing.md`）。2026-10-09~10 的各轮历史实测快照（含 7 条红的发现与处置）已归档于 `docs/v1.1-backlog.md` §2（V11-14/15）与 `docs/testing.md` 状态块。
+**验证链记录**（2026-10-20 实测，v1.0 收尾口径；**v1.1 现行基线见 §1.2 = 2185**）：`fmt --check` 零差异 · `clippy --all-targets --all-features -- -D warnings` 0 告警 · `check-arch` OK · 全量 `cargo test --all-targets` **1879 passed / 0 failed / 4 ignored**（有界性能断言只在 release 生效，debug 仅打印指标，见 `docs/testing.md`）。2026-10-09~10 的各轮历史实测快照（含 7 条红的发现与处置）已归档于 `docs/v1.1-backlog.md` §2（V11-14/15）与 `docs/testing.md` 状态块。
 
 **离线预发布演练记录**（2026-10-09，`tools/release_dryrun.py`）：绿路径 **13/13 通过**（tag v0.1.0 ↔ Cargo.toml 0.1.0 一致、产物 sha256 重算一致、Notes 按阶段聚合、无私钥入仓、回滚步骤齐备）；红路径 `--tag v9.9.9` → 11/12 且 **exit 1**，证明门禁会红。
 
@@ -74,15 +74,20 @@
 **阶段 01–09 已全部完成，无进行中的阶段。** 下一阶段为 **v1.1**，
 任务规划、逐项说明与完成记录以 [`docs/v1.1-backlog.md`](./v1.1-backlog.md) 为**唯一入口**（本文不重复其总览表）。
 
-截至 2026-10-20 的状态摘要：
+截至 2026-10-26 的状态摘要：
 
-- **功能项已全部完成**：V11-03~09、V11-12~26 均 ✅；验证链 1879 passed / 0 failed / 4 ignored。
+- **功能项已全部完成**：V11-03~09、V11-12~26 均 ✅；测试基线 **2185 passed / 0 failed / 4 ignored**
+  （`--all-targets` 2184 + `--doc` 1，2026-10-26 实测；命令与构成见 backlog §3）。
 - **剩余仅环境前置项**：V11-02（macOS / Linux 真机回归，P0）、V11-01（远端发布演练）、
   V11-10 / V11-11（证书预算 / 痛点驱动）——见 backlog §3。
-- **架构改造进行中**：V11-54 / V11-54a（全库架构评估 + 21 条改造项方案），
-  已落地 R-14 / R-15 / R-16（见 `docs/architecture-refactor-plan.md` §5.3 进度表）。
-- **已知超限项**：`NFR-PERF-01` 安装包体积 **11.36 MiB**（2026-10-20 实测）> 10 MB 红线 1.36 MiB，
-  缓解方案待 v1.1 评审决策，见 `docs/metrics.md` §2.6。
+- **架构改造已收官**：V11-54 / V11-54a（全库评估 + 21 条改造项）2026-10-21 完成；
+  V11-56~67 波次中 V11-56/57/58/59/62/63/65/66/67 已落地（`rustmark-actions` / `rustmark-icons` /
+  `rustmark-ui` 三个 crate 抽出，core 零 egui 依赖），V11-60 关闭、V11-61 降级为记录、
+  **V11-64（抽 `rustmark-infra`）挂起**——触发门是 Q-01「是否有 CLI / headless / 嵌入消费者」的需求事实。
+- **体积**：`NFR-PERF-01` release exe **10,540,544 B = 10.052 MiB**（2026-10-26 实测），低于
+  10.5 MiB 预警线与 11 MiB 红线（`size_gate` exit 0）。2026-10-20 的「11.36 MiB 超 10 MB 红线」
+  已解除：V11-26 依赖裁剪先把 11.36 → 10.93 MiB（仍高于旧红线），随后维护者把红线 10 → 11 MiB
+  （2026-10-24，`scripts/size_gate.sh` 与 metrics §2.8 同步），当前值再降至 10.05 MiB。
 
 ---
 

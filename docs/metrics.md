@@ -27,11 +27,13 @@
 |---|---|---|---|
 | `shared` 模块文件数 | 19 | `crates/rustmark-core/src/shared/*.rs`；`shared` 三问登记表（`architecture-constraints.md` §4.5）+ `check-arch` 构建期守门 | 增速持续 → 下沉边界不清 |
 | `shared` 内部依赖边 | 11 | `architecture-constraints.md` §4.6 清单 | 新增边未登记 → 内部环风险 |
-| 跨 crate 字段白名单条目 | ~169（含 22 个 `pub` setter） | `tests/field_visibility_guard_test.rs` 集合相等双向断言 | 随功能增长显著加速 → 重评 `state` 与 `views` 是否应同留 root |
+| 跨 crate 字段白名单条目（守卫总数 / 其中 `views` 经桥接读点） | **559**（2026-10-26 实测，与守卫 `// total:` 注释同值）/ **169**（2026-10-25 快照，含 22 个 `pub` setter） | `tests/field_visibility_guard_test.rs` 集合相等双向断言 | 随功能增长显著加速 → 重评 `state` 与 `views` 是否应同留 root |
 | 测试分布（**用例数**口径，2026-10-26） | domain 200｜application 169｜shared 81｜infrastructure 304｜presentation 626｜app 158｜integration 81｜e2e 16（另有 domain 内联 17） | `grep -c '#\[test\]' tests/<layer>/*.rs`；内联为 `src/**` 内 `#[cfg(test)] mod` | **单看文件数会误判**：domain 只有 11 个测试文件但 200 例（18.2 例/文件），密度高于 presentation 的 14.2；只有「用例数与文件数同时下降」才视为覆盖退化 |
 
 > 口径说明：`shared` 文件数已用 `find crates/rustmark-core/src/shared -name '*.rs' | wc -l` 复核为 **19**；
-> 白名单条目数随功能增长，以守卫测试为准，此处仅记评估时点快照。
+> 白名单**总数**取 2026-10-26 实测（559，守卫常量注释同值），`views` 侧读点 **169** 仍是
+> 2026-10-25 评估时点快照（V11-62 收官后未重测，重测需按「views 文件里对 app 状态字段的
+> 读点」逐点计数）；后续条目数一律以守卫测试为准。
 > 测试分布按**用例数**统计，不按文件数：评估报告 E-26 的「金字塔倒置」是文件数口径的产物
 > （领域层模块少 → 文件少，但每个文件的用例密度最高）；补测后 domain 200 例，见报告 E-26 收口记录。
 

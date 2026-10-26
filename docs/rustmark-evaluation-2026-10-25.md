@@ -334,7 +334,7 @@ rustmark 是一套**工程纪律极强、文档与代码同源性很高**的成�
 | E-09 | 已修：迷你正则加 `MAX_STEPS` 步数预算 | `54acd58` |
 | E-10 | 已修：`tree.rs` 静默丢弃 → `log::warn!` 暴露偏差 | `a1b7ad9` |
 | E-11 | 已修：`ureq::Agent` 进程级单例 | `422e3ff` |
-| E-12 | 已修：后台线程并发上限 + 有界回执 | `a448939` |
+| E-12 | 已修（等效）：并发上限 8 把在飞回执封顶；通道本身仍无界，见下文二次核验 | `a448939` |
 | E-13 | 已修：大本地图后台解码 | `a448939` |
 | E-14 | 已修：MIME 白名单提为 `shared` 单源 | `422e3ff` |
 | E-15 ~ E-19 | 已修：阶段文档补注、metrics 红线统一、docs/README 索引、refactor-plan 加注、贡献清单 | `585b3d2` |
@@ -349,3 +349,23 @@ rustmark 是一套**工程纪律极强、文档与代码同源性很高**的成�
 | E-28 ~ E-34 | 已修/已核：预算注记、ADR 索引、动作全集口径、SVG 隐式防护说明、PRIV-01 已登记、红线历史注记、行数复核 | `585b3d2`（E-31 的代码注释在 `422e3ff`） |
 
 **34 项处置完毕**：33 项落地、1 项明确不做（E-23）。
+
+**二次核验（2026-10-26，回读代码落点）**：E-11 / E-12 / E-13 的结论与代码一致，措辞按实测校正一处——
+
+- **E-11**：`crates/rustmark-core/src/infrastructure/persistence/asset_loader.rs:349`
+  `static DEFAULT_AGENT: OnceLock<ureq::Agent>`，进程级单例；同文件另有
+  `PLATFORM_ROOTS: OnceLock<RootCerts>` 缓存根证书。**有意保留的例外**：自定义超时
+  （≠ `AssetLimits::DEFAULT_DOWNLOAD_TIMEOUT`）退回按次构造——超时烧进 agent 配置，
+  共享单例会让 A 处的 30s 串到 B 处本该 10s 的图上；生产路径全部走默认超时，复用不受影响。
+- **E-12**：`src/presentation/views/preview_view/image_cache.rs:94`
+  `MAX_BACKGROUND_LOADS = 8` + `BACKGROUND_SLOTS` 原子额度，槽位满返回 `false`、占位不写缓存、
+  下一帧重试（额度在线程退出前归还）。报告原文把路径写成 `crates/rustmark-ui/src/presentation/views/...`，
+  但 views **从未**迁入 ui（ADR-013 决策 3：views 留 root），正确路径是 `src/presentation/views/...`。
+  **原结论里的「有界回执」措辞不准确**：回执通道仍是
+  `std::sync::mpsc::channel()`（无界），有界的是**在飞线程数**——同一时刻最多 8 条，未消费
+  消息数天然封顶，不存在无界堆积。以代码为准，不再声称通道本身有界。
+- **E-13**：本地/内联图 `> BACKGROUND_DECODE_BYTES`（512 KiB）走 `spawn_background`
+  后台解码、本帧出「加载中」占位，注释同源引用 E-13；远程图一律后台。
+- **E-07 数字校正**：白名单**总条目 559**（2026-10-26 实测，守卫常量注释同值）/ **`views` 侧
+  读点 169**（2026-10-25 快照，含 22 个 `pub` setter）——原报告「169/548」的两段含义已在
+  `docs/metrics.md` §1.1 分行写清，避免被读成「总数 169」。

@@ -35,7 +35,7 @@
 > widgets 7 个内联测试从 core lib 迁 ui lib，总量守恒）。
 > 下文「2131 / 2136 / 2139 / 2140」表述一律按 **2144** 执行。
 > V11-59 已完成（`2880678`）；V11-60 已关闭（审计 V=0，转 V11-62）；V11-61 已降级为记录；
-> **V11-62 已开工——动作 2 批次 1（widgets）+ 批次 2（state）+ 批次 3（shortcuts）+ 批次 4（theme）+ 批次 5（rich）已落地，V11-62 收官**（见 V11-62 节末记录块）。
+> **V11-62 已收官**——五个批次（widgets → state → shortcuts → theme → rich）全部落地（见 V11-62 节末记录块）。
 > 状态表见 `docs/v1.1-backlog.md` §3 的波次登记。
 >
 > **基线再更新（2026-10-25，阈值整改 `c08fd13` 后）：2150 passed / 0 failed / 4 ignored**
@@ -73,6 +73,14 @@
 > 同日作废）。无代码改动：测试 **2164** / release exe **10,520,576 B** /
 > check-arch 零违规均不变，门禁数字不进本次提交的差值口径。守卫加固包三项
 > （① infrastructure 禁 egui 棘轮 / ② shared 内部无环守卫 / ③ 本声明）全部收官。
+>
+> **基线再更新（2026-10-26，E-06 两阶段 + 报告整改批）：2185 passed / 0 failed / 4 ignored**
+> （`--all-targets` **2184** + `--doc` 1）。链路：E-06 阶段 B 实测 2179 → E-26 补撤销
+> 策略 6 例（`100135d`）推至 2184（+6），E-25 拆 `frame.rs`（`8fa1dab`）为纯重构零
+> 增减，`2a19807` / `151fbc6` / `9546535` 为文档批次。release exe 同步实测
+> **10,540,544 B**（10.052 MiB，`size_gate` exit 0，低于 10.5 MiB 预警线）。
+> **本清单的「当前基线」一律按 2185 执行**；文中 2178 / 2179 等数字是彼时记录，
+> 保留原貌不回写。附录命令速查已同步为 2184 + 1。
 
 **通用验收（每项必含）**：上表五项全绿 + `cargo fmt --check` 绿 + 所有命令带
 `--workspace`（root `Cargo.toml` 注释警告：否则 core 单测静默退出测试集，
@@ -460,7 +468,7 @@ V11-59 ─────────────────────┼──�
 | TD-01 | release 体积吃紧（已越旧红线，红线上调后入预警窗口） | 2026-10-24 基线 10,485,248 B（旧红线 10 MiB 余 512 B）；2026-10-25 V11-62 批次 2（state 迁入 `rustmark-ui`）致 +2,560 B → 10,487,808 B，旧 10 MiB 红线越线；批次 3（shortcuts）致 +1 KiB → 10,488,832 B；批次 4（theme）致 +1 KiB → 10,489,856 B；批次 5（rich，~5,918 行，V11-62 收官）致 -2,560 B → 10,487,296 B（非单调：rich 自绘排版零跨 crate 内联，迁移回吐批次 2 的 LTO 边界成本）；新红线 11 MiB 内、超预警 10 MiB。worktree A/B 实证 +2,560 B 确由跨 crate LTO 边界成本产生，无针对性修法。**维护者决策：NFR 红线 10→11 MiB、预警 8→10 MiB（原红线降级为预警）**，见 `scripts/size_gate.sh`、metrics.md §2.8 | V11-62 收官，体积窗口稳定（距新红线 11 MiB 余 1,047,040 B）；后续加依赖动作仍须过 size_gate。**2026-10-25 阈值整改（`c08fd13`）后 10,520,576 B（+33,280 B：撤销 64 MiB 字节预算、图片分层上限、纹理 128 MiB 预算等功能常量变更），size_gate exit 0 且低于预警线（现行红线 11,534,336 B / 预警 11,010,048 B = 10.5 MiB，`c08fd13` 统一 CI 与三个打包脚本口径），距红线余 1,013,760 B（~0.97 MiB），窗口仍稳定**；**2026-10-26 V11-63 端口化后 10,540,544 B（10.052 MiB），size_gate exit 0、仍低于 10.5 MiB 预警线，距红线余 993,792 B；较 HEAD `ef7d5c2` 的 +18,432 B 已三次构建 A/B 归因（端口化代码 +17,408 / 删 egui 依赖边 +1,024），非功能增量，详见 metrics §2.8** | V11-62 / 所有 |
 | TD-02 | `src/presentation/views/preview_view.rs` 1,421 行 | 上轮评估 | **已闭环（2026-10-25，TD-02 专项，`999e63c`）**：按 §7 D-4 阈值拆为入口 458 行 + `preview_view/image_cache.rs`（图片纹理缓存簇 319 行）+ `preview_view/tests.rs`（外置单测 664 行）；`ImageEntry` 本体与字段转 `pub(super)`（消费者 media.rs 跨子模块）；公开路径 `preview_view::{show, image_cache_state, is_remote_url, ImageEntryState}` 经 `pub use` 零变化；四门禁绿（2144 守恒）、release 逐字节 10,487,296 B、topology CLEAN | TD-02 专项 |
 | TD-03 | `domain.rs:3` 依赖注释宽于实际 | 允许 ropey/chrono，实测零使用 | **已闭环（2026-10-24，`3cc4c42`，V11-67）**：注释改为「serde/thiserror 实测在用；ropey/chrono 历史上允许但当前零使用」，check-arch 复跑 OK | V11-67 |
-| TD-04 | shared 通用件 ≈900 行且可能继续长 | 2026-10-25 实测：shared **19 文件 / 3,016 行**；非领域通用件 6 个 = pattern 494 + text_format 326 + lru 291 + path 254 + geometry 248 + export_format 233，合计 **1,846 行** | 阈值：合计 >1,500 行或第 4 个非领域通用模块 → 抽 crate。**阈值已触发**（1,846 > 1,500 且通用模块 6 ≥ 4）：待立项评估——按 constraints §10.3 外移触发流程完成触发核验并由维护者拍板，不宜静默启动 | 监控（已触发） |
+| TD-04 | shared 通用件 ≈900 行且可能继续长 | 2026-10-26 实测：shared **19 文件 / 3,061 行**；非领域通用件 6 个 = pattern 531 + text_format 310 + lru 291 + path 278 + geometry 248 + export_format 233，合计 **1,891 行**（若把 text 170 也计为通用件则为 7 个 / 2,061 行，结论不变） | 阈值：合计 >1,500 行或第 4 个非领域通用模块 → 抽 crate。**阈值已触发**（1,891 > 1,500 且通用模块 6 ≥ 4）：触发核验已完成，`architecture-constraints.md` §10.3 该行已同步为「已触发、待拍板」；抽 crate 与否由维护者拍板，不宜静默启动 | 监控（已触发，待拍板） |
 | TD-05 | D-6/D-7 六文件未提交合入 | git status | **已闭环**：D-6/D-7 已合入（`662536b`，`git merge-base --is-ancestor 662536b HEAD` 实测成立） | BLK-03 |
 | TD-06 | 双 manifest 重复 | egui/image/syntect/log/tempfile | **已闭环（2026-10-24，`12e65bc`，V11-65）**：5 项依赖与 lint 收敛至 root `[workspace.dependencies]` / `[workspace.lints]`，两侧 `{ workspace = true }` 继承，Cargo.lock 零 diff | V11-65 |
 | TD-07 | tests/presentation 43 文件将随 V11-62 拆分 | 2026-10-25 实测：**未随迁**——43 文件仍在 root `tests/presentation/`，其中 38 个经 `rustmark::presentation::*` 公开桥接路径消费 ui 模块，零改动通过（2149+1 守恒） | 按被测模块归属拆；保持总数。**已复核决定维持 root 集成测试定位**：公开契约的测试保证属于应用 crate，随迁只增目标声明成本、零覆盖收益；仅当 ui crate 出现独立复用/发布需求时再评估 | V11-62 |
@@ -490,8 +498,8 @@ V11-59 ─────────────────────┼──�
 cargo fmt --check
 cargo run --bin check-arch
 cargo clippy --workspace --all-targets --all-features -- -D warnings   # 0 告警
-cargo test --workspace --all-targets --no-fail-fast   # 2163 passed / 0 failed / 4 ignored
-cargo test --workspace --doc                          # +1 = 合计 2164
+cargo test --workspace --all-targets --no-fail-fast   # 2184 passed / 0 failed / 4 ignored
+cargo test --workspace --doc                          # +1 = 合计 2185
                                  # （grep '^test result:' | awk 逐行求和；命令必带 --workspace）
 bash scripts/size_gate.sh       # exe ≤ 11,534,336 B（11 MiB 红线；预警 11,010,048 B = 10.5 MiB）
 cargo tree --workspace --depth 1   # 拓扑对 docs/workspace-topology.expected.txt
