@@ -13,6 +13,8 @@
 4. 无私钥 / 证书入仓：扫描工作区（排除 target / dist）无证书与私钥，
    `.gitignore` 已排除相关扩展名
 5. 回滚步骤：docs/release.md 三条命令齐备，且与 release.yml 的 tag 触发一致
+6. SBOM（DEP-06）：CycloneDX 1.5 结构完整（purl / version / licenses / 根组件
+   版本），且两次生成逐字节一致（不写时间戳）
 
 用法：
     python tools/release_dryrun.py [--tag v0.1.0] [--dist dist]
@@ -24,9 +26,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import importlib.util
+import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -297,6 +301,67 @@ def check_rollback_docs(rep: Report) -> None:
         rep.bad("回滚与触发一致", "release.yml 未找到 v* tag 触发配置")
 
 
+def check_sbom(rep: Report, tag: str) -> None:
+    """DEP-06：SBOM 必须是可解析的 CycloneDX 1.5，且两次生成逐字节相同。
+
+    判据刻意包含**确定性**：SBOM 随 Release 发布、用户可能按哈希比对，
+    同一棵依赖树两次产出不同字节会让人以为依赖变了。时间戳一律不写。
+    """
+    tool = TOOLS / "sbom.py"
+    if not tool.is_file():
+        rep.bad("SBOM", "缺少 tools/sbom.py（DEP-06）")
+        return
+
+    with tempfile.TemporaryDirectory() as tmp:
+        first = Path(tmp) / "a.json"
+        second = Path(tmp) / "b.json"
+        for target in (first, second):
+            run = subprocess.run(
+                [sys.executable, str(tool), "--output", str(target)],
+                capture_output=True,
+                text=True,
+            )
+            if run.returncode != 0:
+                rep.bad("SBOM", f"生成失败：{(run.stderr or run.stdout).strip()[:200]}")
+                return
+
+        raw_a = first.read_bytes()
+        raw_b = second.read_bytes()
+        try:
+            bom = json.loads(raw_a)
+        except json.JSONDecodeError as exc:
+            rep.bad("SBOM", f"输出不是合法 JSON：{exc}")
+            return
+
+        problems: list[str] = []
+        if bom.get("bomFormat") != "CycloneDX":
+            problems.append(f"bomFormat={bom.get('bomFormat')!r}")
+        if bom.get("specVersion") != "1.5":
+            problems.append(f"specVersion={bom.get('specVersion')!r}")
+        components = bom.get("components") or []
+        if not components:
+            problems.append("components 为空")
+        missing = [
+            c.get("name", "?")
+            for c in components
+            if not c.get("purl") or not c.get("version") or not c.get("licenses")
+        ]
+        if missing:
+            problems.append(f"{len(missing)} 个组件缺 purl/version/licenses：{missing[:5]}")
+        root = (bom.get("metadata") or {}).get("component") or {}
+        want_version = tag[1:] if tag.startswith("v") else tag
+        if root.get("version") != want_version:
+            problems.append(f"根组件版本 {root.get('version')!r} != {want_version!r}")
+
+        if problems:
+            rep.bad("SBOM", "；".join(problems))
+            return
+        if raw_a != raw_b:
+            rep.bad("SBOM", "两次生成字节不同（确定性被破坏，检查是否写入了时间戳）")
+            return
+        rep.ok("SBOM", f"CycloneDX {bom['specVersion']}，{len(components)} 个组件，两次生成逐字节一致")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="rustmark 离线预发布演练（S9-06）")
     parser.add_argument("--tag", default=None, help="待发布 tag，默认取 Cargo.toml 版本加 v 前缀")
@@ -317,6 +382,7 @@ def main() -> int:
     check_version_guard(rep, tag)
     check_checksums(rep, ROOT / args.dist)
     check_release_notes(rep, tag)
+    check_sbom(rep, tag)
     check_no_secrets(rep)
     check_rollback_docs(rep)
     print("-" * 60)

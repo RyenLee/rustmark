@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 安全漏洞（私密披露）
+    url: https://github.com/RyenLee/rustmark/security/advisories
+    about: 请勿在公开 Issue 里提交安全漏洞；按 SECURITY.md 的渠道私密披露。
+  - name: 使用问题 / 讨论
+    url: https://github.com/RyenLee/rustmark/discussions
+    about: 不确定是不是 bug、或想问怎么用，请走讨论区。

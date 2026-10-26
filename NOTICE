@@ -51,10 +51,16 @@ runtime; they are not compiled into the executable (see `docs/metrics.md` §2.7)
 
 Data files vendored in this repository:
 
-* `src/infrastructure/persistence/gbk_table.bin` — GBK double-byte
-  encoding table, generated from public Unicode/WHATWG encoding indexes.
-* `src/infrastructure/persistence/gb18030_ranges.bin` — GB18030 four-byte
-  linear mapping table, generated from the WHATWG Encoding Standard's
-  `index-gb18030-ranges` table (public domain specification data).
-* `src/infrastructure/spell/words.txt` — English word list vendored for
-  the spell checker (project-specific compilation of common words).
+* `crates/rustmark-infra/src/infrastructure/persistence/gbk_table.bin` — GBK
+  double-byte encoding table, generated from public Unicode/WHATWG encoding indexes.
+* `crates/rustmark-infra/src/infrastructure/persistence/gb18030_ranges.bin` —
+  GB18030 four-byte linear mapping table, generated from the WHATWG Encoding
+  Standard's `index-gb18030-ranges` table (public domain specification data).
+* `crates/rustmark-infra/src/infrastructure/spell/words.txt` — English word list
+  used by the spell checker. It is a **project-authored compilation** (present
+  since the initial commit, 2026-10-10): 3,984 entries / 3,635 unique, plain
+  words only, no definitions, examples or other third-party text. Provenance is
+  recorded here because a vendored word list is a licensing question, not a
+  code detail: if this list is ever replaced by a third-party one, its source
+  and licence MUST be registered in this file and in
+  `THIRD-PARTY-LICENSES.md` §4.3 before the replacement lands.

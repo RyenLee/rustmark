@@ -148,9 +148,9 @@ REL-03 起两个特性**均关闭**，前四个字体改为 §4.1 列出的随�
 
 | 文件 | 来源 | 许可 / 依据 |
 |---|---|---|
-| `src/infrastructure/persistence/gbk_table.bin` | 由公开 Unicode / WHATWG 编码索引生成 | 生成数据，遵循上游（Unicode 许可 / 规范数据） |
-| `src/infrastructure/persistence/gb18030_ranges.bin` | WHATWG Encoding Standard `index-gb18030-ranges` | 规范数据（公有领域性质） |
-| `src/infrastructure/spell/words.txt` | 项目自编英文常用词表 | 自有编译物（**待办：补齐来源与许可声明，见差距报告 PRIV/DOC 项**） |
+| `crates/rustmark-infra/src/infrastructure/persistence/gbk_table.bin` | 由公开 Unicode / WHATWG 编码索引生成 | 生成数据，遵循上游（Unicode 许可 / 规范数据） |
+| `crates/rustmark-infra/src/infrastructure/persistence/gb18030_ranges.bin` | WHATWG Encoding Standard `index-gb18030-ranges` | 规范数据（公有领域性质） |
+| `crates/rustmark-infra/src/infrastructure/spell/words.txt` | **项目自编**英文常用词表（自初始提交 `338d333` 即在仓内，`git log --follow` 可追溯；3,984 条 / 去重 3,635，仅单词，无释义与例句） | 自有编译物（本项目双许可覆盖）；不含第三方受版权保护的文本。**后续规则**：若替换为第三方词表，落地前必须在 `NOTICE` 与本表登记来源与许可 |
 
 ## 5. 复现与审计命令
 

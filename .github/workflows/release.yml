@@ -142,6 +142,25 @@ jobs:
           python3 tools/gen_release_notes.py --tag "${GITHUB_REF_NAME}" > dist/RELEASE_NOTES.md
           cat dist/RELEASE_NOTES.md
 
+      # DEP-06：SBOM（CycloneDX 1.5）随产物发布。`cargo metadata --locked`
+      # 需要本机有 cargo，故这一步先装工具链（本 job 之前不需要 Rust）。
+      # 生成器零第三方依赖，判据（结构 / 确定性）由 tools/release_dryrun.py 守着。
+      - name: Install Rust (for cargo metadata)
+        uses: dtolnay/rust-toolchain@master
+
+      - name: Generate SBOM (CycloneDX 1.5)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/sbom.py --output dist/sbom.cdx.json
+          python3 - <<'PY'
+          import json
+          bom = json.load(open("dist/sbom.cdx.json", encoding="utf-8"))
+          assert bom["bomFormat"] == "CycloneDX", bom.get("bomFormat")
+          assert bom["specVersion"] == "1.5", bom.get("specVersion")
+          print(f"SBOM: {len(bom['components'])} components")
+          PY
+
       - name: Create release
         shell: bash
         run: |
@@ -149,6 +168,6 @@ jobs:
           gh release create "${GITHUB_REF_NAME}" \
             --title "rustmark ${GITHUB_REF_NAME}" \
             --notes-file dist/RELEASE_NOTES.md \
-            dist/rustmark-v* dist/SHA256SUMS
+            dist/rustmark-v* dist/SHA256SUMS dist/sbom.cdx.json
         env:
           GH_TOKEN: ${{ github.token }}

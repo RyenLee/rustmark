@@ -182,6 +182,7 @@ python tools/release_dryrun.py            # 离线发布演练：版本守卫 / 
 - 配置与主题格式参考（`preferences.toml` 全字段）：[docs/config-reference.md](docs/config-reference.md)
 - 需求基线：[REQUIREMENTS.md](REQUIREMENTS.md)
 - 贡献指南：[CONTRIBUTING.md](CONTRIBUTING.md)
+- 贡献者行为准则：[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)（安全问题请走私密渠道，见下节）
 
 ## 8. 隐私与安全
 

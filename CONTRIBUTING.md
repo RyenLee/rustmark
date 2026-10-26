@@ -3,6 +3,13 @@
 > 适用：`rustmark` 全部代码、测试与文档。
 > 执行模型：任务单元制（见 `.agent/README.md`）——一次一个单元，每单元可编译、可测试、可提交。
 
+## 0. 行为准则与披露渠道
+
+- 参与本项目（Issue / PR / 评审 / 讨论）即表示同意
+  [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)（Contributor Covenant 2.1）。
+- **安全漏洞不要开公开 Issue**：按 [SECURITY.md](SECURITY.md) 的私密渠道披露；
+  公开披露会让所有用户在补丁发布前处于风险中。
+
 ---
 
 ## 1. 提交前验证链（每单元必跑）

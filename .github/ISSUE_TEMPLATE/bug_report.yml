@@ -1,0 +1,65 @@
+name: 缺陷报告
+description: 报告一个可复现的 bug（安全问题请走 SECURITY.md 的私密渠道）
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        > **安全漏洞请勿在此提交**：请按仓库根 `SECURITY.md` 里的私密渠道披露，
+        > 公开 Issue 会让所有用户在你打补丁前处于风险中。
+
+        提交前请先搜一下现有 Issue，避免重复。
+  - type: input
+    id: version
+    attributes:
+      label: 版本与平台
+      description: 例如 `v0.2.0` · Windows 11 23H2 / macOS 14.5 / Ubuntu 24.04
+      placeholder: v0.2.0 · Windows 11 23H2
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 从启动开始的最小步骤；能复现的步骤越少，修得越快
+      placeholder: |
+        1. 打开含 ![x](https://…) 的文档
+        2. 关闭「设置 → 编辑器 → 远程图片」
+        3. …
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望行为 vs 实际行为
+      placeholder: 期望：图片显示断网占位；实际：编辑器卡住 3 秒后恢复
+    validations:
+      required: true
+  - type: textarea
+    id: document
+    attributes:
+      label: 最小复现文档（Markdown 片段）
+      description: 粘贴能触发问题的最小 Markdown；含隐私内容请先脱敏
+      render: markdown
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志 / 截图
+      description: |
+        从源码构建时可附 `cargo run --release 2> frame.log` 的尾部；
+        崩溃可附 `%LOCALAPPDATA%\rustmark\crashes`（或 `~/.local/share/rustmark/crashes`）里的报告。
+        截图可直接拖进本框。
+    validations:
+      required: false
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: 确认
+      options:
+        - label: 我已搜索过现有 Issue，没有重复
+          required: true
+        - label: 这不是安全漏洞（安全问题走 SECURITY.md 私密渠道）
+          required: true
