@@ -69,6 +69,30 @@ const IMAGE_CACHE_BUDGET_BYTES: usize = 128 * 1024 * 1024;
 /// 一张 6000×4000 的相机图从 96 MiB 降到约 6 MiB。
 const DECODE_MAX_EDGE: u32 = 1600;
 
+/// 本地 / data URI 图片超过该体积就**不在 UI 线程解码**。
+///
+/// 这两种来源原先整条链路走同步路径，理由是「读盘 + 解码在几十毫秒量级」
+/// ——那对几十 KB 的小图成立，对接近 `AssetLimits::max_local_bytes`（8 MiB）
+/// 上限的大图不成立：`image::load_from_memory` 要先完整解码到数千万像素
+/// （24MP 约 96 MiB 临时缓冲）才轮到 [`DECODE_MAX_EDGE`] 降采样，单次开销
+/// 足以把一帧拖到几百毫秒——表现为滚动预览时可感知的一次卡顿尖刺。
+///
+/// 超过阈值的改为后台解码（复用远程那条回执通道）。阈值取 512 KiB：压缩后的
+/// JPEG / PNG 到这个量级，对应像素数已足以越过帧预算；更小的图保持同步，
+/// 是为了不让「本地文件出现在磁盘上却要闪一下占位」这种观感退化。
+const BACKGROUND_DECODE_BYTES: usize = 512 * 1024;
+
+/// 后台任务（远程下载、本地大图解码）的**并发上限**。
+///
+/// 早先每个不同的远程 URL 起一条脱离线程：一篇引用上百张远程图的文档会同时
+/// 拉起上百个线程，各自占栈、各自一次 TLS 握手，而它们往往指向同一两个图床。
+/// 设上限后多余的 URL 本帧只出占位、**下一帧重试**——所以那个占位**不能**
+/// 写进 `IMAGE_CACHE`（写进去就成了永久缓存命中，再也没人来重试了，见
+/// [`image_entry`] 的注释）。
+///
+/// 取 8：够撑住「一屏十几张图」的并发观感，又不至于让 OS 线程数失控。
+const MAX_BACKGROUND_LOADS: usize = 8;
+
 /// 图片纹理缓存：引用字符串 → 已解码纹理 / 失败原因，带 LRU 淘汰。
 ///
 /// 淘汰策略本体在 [`LruMap`]（D-4 收敛：高亮 / 拼写 / 渲染 / 图片四处共用）。
@@ -128,15 +152,19 @@ thread_local! {
     /// 每帧都会被 `get` / `insert` 触碰，因此不会被误踢。
     ///
     /// 远程图片的「加载中」占位条目同样进这张表（F-3）：它既是渲染状态，
-    /// 也是「已有线程在下载」的标记（配合 [`REMOTE_INFLIGHT`] 防重复 spawn）。
+    /// 也是「已有线程在下载」的标记（配合 [`BACKGROUND_INFLIGHT`] 防重复 spawn）。
     static IMAGE_CACHE: RefCell<ImageCache> =
         RefCell::new(ImageCache::new(IMAGE_CACHE_CAPACITY, IMAGE_CACHE_BUDGET_BYTES));
-    /// 正在后台下载的远程 URL（防重复 spawn 的守卫）。
+    /// 正在后台处理的图片（防重复 spawn 的守卫）。
     ///
-    /// 正常情况下「加载中」条目在缓存里就能挡住重复 spawn；本集合兜住
-    /// 「加载中被 LRU 淘汰、线程还没回来」这一窗口，避免同一 URL 起两条线程。
-    static REMOTE_INFLIGHT: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
+    /// 覆盖**全部**后台任务（远程下载 + 本地大图解码）。正常情况下列
+    /// 「加载中」条目在缓存里就能挡住重复 spawn；本集合兜住「加载中被 LRU
+    /// 淘汰、线程还没回来」这一窗口，避免同一张图起两条线程。
+    static BACKGROUND_INFLIGHT: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
 }
+
+/// 当前在跑的后台任务数（[`MAX_BACKGROUND_LOADS`] 的计数器）。
+static BACKGROUND_SLOTS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// 远程图片的后台加载结果回执（后台线程 → UI 线程，F-3）。
 struct RemoteLoadDone {
@@ -164,42 +192,63 @@ fn remote_channel() -> &'static RemoteChannel {
     })
 }
 
-/// 是否远程地址（http / https）：只有它们走后台线程（F-3）。
+/// 是否远程地址（http / https）：只有它们强制走后台线程（F-3）。
 ///
-/// 本地路径与 data URI 保持同步路径：读盘 + 解码在几十毫秒量级，
-/// 且失败要立即出占位（同步路径的失败回执也是当帧的）。
+/// 本地路径与 data URI 原则上保持同步路径，但**超过 [`BACKGROUND_DECODE_BYTES`]
+/// 的例外**——不能让一张相机原图把 UI 线程按在地上。
 pub fn is_remote_url(url: &str) -> bool {
     let trimmed = url.trim();
     trimmed.starts_with("http://") || trimmed.starts_with("https://")
 }
 
-/// 起一个后台线程下载 + 解码远程图片；完成后经通道回执并唤醒 UI。
+/// 后台任务的实际活儿：下载 + 解码，或只解码（已在 UI 线程读到的本地大图）。
 ///
-/// `loader` 由调用方从 `Services::assets` **拷贝**传入（不于此点名具体类型：
-/// 表现层不得依赖 infrastructure，与既有 `assets.load(...)` 调用同一立场）。
+/// 装箱是因为两类作业的闭包类型不同（捕获的上下文不一样），而回执通道只有
+/// 一种消息。作业数为 O(文档引用到的图片数)，装箱开销可以忽略。
+type LoadingWork = Box<dyn FnOnce() -> Result<egui::ColorImage, String> + Send>;
+
+/// 后台起一个加载任务；完成后经通道回执并唤醒 UI。
 ///
-/// **为什么必须 `request_repaint`**：加载中的占位符不会自行重绘，
-/// 后台线程完成时若只是往通道里塞消息，UI 可能隔很久才跑下一帧——
-/// 用户看着「加载中」干等。`egui::Context` 是 `Send + Sync`，
-/// 专为这种跨线程唤醒设计。
-fn spawn_remote_load<L>(url: &str, loader: L, ctx: egui::Context)
-where
-    L: FnOnce(&str) -> Result<LoadedBytes, String> + Send + 'static,
-{
+/// # 返回值是有含义的
+///
+/// **返回 `false` 表示槽位已满、这次没起**：调用方必须把它当成「还没开始」——
+/// 本帧给个占位、下一帧再来重试。绝不能顺手把占位写进缓存了事：那会让占位
+/// 变成永久命中，这张图从此再也没人来重试（见 [`image_entry`] 的分支注释）。
+///
+/// # 为什么要有上限
+///
+/// 早先来一个 URL 就 `std::thread::spawn` 一条：线程数随**文档里不同远程地址
+/// 的个数**线性增长，而每条线程都要占栈、都要自己握手一遍 TLS。上限把「并发」
+/// 与「待办数量」解耦——待办的图排队等空位，而不是同时把自己塞进来。
+///
+/// # 额度怎么归还
+///
+/// 额度在线程**即将退出前**归还，且这条路不经过任何可能提前返回的分支
+/// （无论 `run` 成功还是失败都会走到 `fetch_sub`）。
+fn spawn_background(url: &str, run: LoadingWork, ctx: egui::Context) -> bool {
+    use std::sync::atomic::Ordering;
+
+    let taken = BACKGROUND_SLOTS.try_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
+        (n < MAX_BACKGROUND_LOADS).then_some(n + 1)
+    });
+    if taken.is_err() {
+        return false;
+    }
     let url = url.to_string();
     let tx = remote_channel().tx.clone();
     std::thread::spawn(move || {
-        // 下载与解码都在后台：`AssetLoader::load` 自带超时 / 体积 / MIME 边界，
-        // 远程 URL 不需要 base_dir。解码失败与下载失败对预览是同一种降级。
-        let result = loader(&url).and_then(|bytes| decode(&bytes.0));
+        let result = run();
+        // 先归还额度再回执：回执会立刻唤醒下一帧，那一帧可能马上要排新任务。
+        BACKGROUND_SLOTS.fetch_sub(1, Ordering::SeqCst);
         let _ = tx.send(RemoteLoadDone { url, result });
+        // **为什么必须 `request_repaint`**：加载中的占位符不会自行重绘，
+        // 后台线程完成时若只是往通道里塞消息，UI 可能隔很久才跑下一帧——
+        // 用户看着「加载中」干等。`egui::Context` 是 `Send + Sync`，
+        // 专为这种跨线程唤醒设计。
         ctx.request_repaint();
     });
+    true
 }
-
-/// 后台线程用的「下载结果」：只拿字节（`LoadedAsset` 活在 infrastructure 层，
-/// 表现层不引进其类型；字段访问同样不需要）。
-struct LoadedBytes(Vec<u8>);
 
 /// 收干后台回执：解码完成的图在此**建纹理**（`load_texture` 只能在 UI 线程调）
 /// 并入缓存。返回是否有回执到达（有则本帧已request_repaint，无需额外动作）。
@@ -213,7 +262,7 @@ fn drain_remote_results(ctx: &egui::Context) -> bool {
     let mut any = false;
     while let Ok(msg) = rx.try_recv() {
         any = true;
-        REMOTE_INFLIGHT.with(|f| f.borrow_mut().remove(&msg.url));
+        BACKGROUND_INFLIGHT.with(|f| f.borrow_mut().remove(&msg.url));
         let entry = match msg.result {
             Ok(img) => {
                 let size = [img.size[0] as f32, img.size[1] as f32];
@@ -267,24 +316,33 @@ pub(super) fn image_entry(ui: &Ui, app: &EditorApp, url: &str) -> ImageEntry {
     }
 
     if is_remote_url(url) {
-        let spawn = REMOTE_INFLIGHT.with(|f| !f.borrow().contains(url.trim()));
-        if spawn {
-            REMOTE_INFLIGHT.with(|f| f.borrow_mut().insert(url.trim().to_string()));
+        let in_flight = BACKGROUND_INFLIGHT.with(|f| f.borrow().contains(url.trim()));
+        if !in_flight {
             // 从 `Services` 拷贝一份加载器进线程（Copy，不借用 app）。
             let loader = app.services.assets;
-            spawn_remote_load(
+            let u = url.to_string();
+            let spawned = spawn_background(
                 url,
-                move |u| {
+                Box::new(move || {
                     loader
-                        .load(u, None)
-                        .map(|asset| LoadedBytes(asset.bytes))
+                        .load(&u, None)
                         .map_err(|e| e.to_string())
-                },
+                        .and_then(|asset| decode(&asset.bytes))
+                }),
                 ui.ctx().clone(),
             );
+            // 仅在真正起了一条线程时才登记「在飞」；槽位满（`spawn_background`
+            // 返回 `false`）则下一帧应重试，不登记、也不写缓存。
+            if spawned {
+                BACKGROUND_INFLIGHT.with(|f| f.borrow_mut().insert(url.trim().to_string()));
+            }
         }
         let entry = ImageEntry::loading();
-        IMAGE_CACHE.with(|c| c.borrow_mut().insert(url.to_string(), entry.clone()));
+        // 槽位满的占位不进缓存（下一帧重试）；已起线程的占位进缓存，
+        // 待 `drain_remote_results` 换上真图。
+        if BACKGROUND_INFLIGHT.with(|f| f.borrow().contains(url.trim())) {
+            IMAGE_CACHE.with(|c| c.borrow_mut().insert(url.to_string(), entry.clone()));
+        }
         return entry;
     }
 
@@ -302,28 +360,53 @@ pub(super) fn image_entry(ui: &Ui, app: &EditorApp, url: &str) -> ImageEntry {
         loading: false,
         bytes: 0,
     };
-    let entry = match app.services.assets.load(url, base_dir.as_deref()) {
+    // 本地 / data URI：先取到字节；超过 [`BACKGROUND_DECODE_BYTES`] 的大图
+    // 不在 UI 线程解码（E-13），改走后台解码、本帧出「加载中」占位，避免
+    // 帧尖刺。远程地址已在上面的分支处理。
+    let loader = app.services.assets;
+    let entry = match loader.load(url, base_dir.as_deref()) {
         Err(e) => failed(e.to_string()),
-        Ok(asset) => match decode(&asset.bytes) {
-            Ok(img) => {
-                let size = [img.width() as f32, img.height() as f32];
-                // 必须在 `load_texture` 移动 `img` 之前结算字节数。
-                let bytes = img.size[0].saturating_mul(img.size[1]).saturating_mul(4);
-                let texture = ui.ctx().load_texture(
-                    format!("preview-image:{url}"),
-                    img,
-                    egui::TextureOptions::LINEAR,
-                );
-                ImageEntry {
-                    texture: Some(texture),
-                    size,
-                    error: None,
-                    loading: false,
-                    bytes,
+        Ok(asset) => {
+            if asset.bytes.len() > BACKGROUND_DECODE_BYTES {
+                let in_flight = BACKGROUND_INFLIGHT.with(|f| f.borrow().contains(url.trim()));
+                if !in_flight {
+                    let bytes = asset.bytes;
+                    let spawned =
+                        spawn_background(url, Box::new(move || decode(&bytes)), ui.ctx().clone());
+                    if spawned {
+                        BACKGROUND_INFLIGHT.with(|f| f.borrow_mut().insert(url.trim().to_string()));
+                    }
                 }
+                let placeholder = ImageEntry::loading();
+                // 槽位满（未能起线程）的占位不进缓存，下一帧重试。
+                if BACKGROUND_INFLIGHT.with(|f| f.borrow().contains(url.trim())) {
+                    IMAGE_CACHE
+                        .with(|c| c.borrow_mut().insert(url.to_string(), placeholder.clone()));
+                }
+                return placeholder;
             }
-            Err(e) => failed(e),
-        },
+            // 小图：同步解码（几十毫秒量级，当帧出纹理）。
+            match decode(&asset.bytes) {
+                Ok(img) => {
+                    let size = [img.width() as f32, img.height() as f32];
+                    // 必须在 `load_texture` 移动 `img` 之前结算字节数。
+                    let bytes = img.size[0].saturating_mul(img.size[1]).saturating_mul(4);
+                    let texture = ui.ctx().load_texture(
+                        format!("preview-image:{url}"),
+                        img,
+                        egui::TextureOptions::LINEAR,
+                    );
+                    ImageEntry {
+                        texture: Some(texture),
+                        size,
+                        error: None,
+                        loading: false,
+                        bytes,
+                    }
+                }
+                Err(e) => failed(e),
+            }
+        }
     };
 
     IMAGE_CACHE.with(|c| {
