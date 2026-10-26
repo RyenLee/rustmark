@@ -28,9 +28,12 @@
 | `shared` 模块文件数 | 19 | `crates/rustmark-core/src/shared/*.rs`；`shared` 三问登记表（`architecture-constraints.md` §4.5）+ `check-arch` 构建期守门 | 增速持续 → 下沉边界不清 |
 | `shared` 内部依赖边 | 11 | `architecture-constraints.md` §4.6 清单 | 新增边未登记 → 内部环风险 |
 | 跨 crate 字段白名单条目 | ~169（含 22 个 `pub` setter） | `tests/field_visibility_guard_test.rs` 集合相等双向断言 | 随功能增长显著加速 → 重评 `state` 与 `views` 是否应同留 root |
+| 测试分布（**用例数**口径，2026-10-26） | domain 200｜application 169｜shared 81｜infrastructure 304｜presentation 626｜app 158｜integration 81｜e2e 16（另有 domain 内联 17） | `grep -c '#\[test\]' tests/<layer>/*.rs`；内联为 `src/**` 内 `#[cfg(test)] mod` | **单看文件数会误判**：domain 只有 11 个测试文件但 200 例（18.2 例/文件），密度高于 presentation 的 14.2；只有「用例数与文件数同时下降」才视为覆盖退化 |
 
 > 口径说明：`shared` 文件数已用 `find crates/rustmark-core/src/shared -name '*.rs' | wc -l` 复核为 **19**；
 > 白名单条目数随功能增长，以守卫测试为准，此处仅记评估时点快照。
+> 测试分布按**用例数**统计，不按文件数：评估报告 E-26 的「金字塔倒置」是文件数口径的产物
+> （领域层模块少 → 文件少，但每个文件的用例密度最高）；补测后 domain 200 例，见报告 E-26 收口记录。
 
 ## 2. 体积预算分解（预估 vs 实测）
 
@@ -298,6 +301,7 @@ macOS（`.dmg`）与 Linux（`.AppImage`）产物体积**本机无法构建**（
 | **release 文件总大小（2026-10-25，V11-62 批次 5 收官后）** | **10,487,296 B = 10.001 MiB** | -2,560 B（-0.024%） | 新红线 11 MiB 内，距红线余 **1,047,040 B（~1.0 MiB）**；超新预警线 10 MiB 进入告警窗口。注：较批次 4 非单调 -2,560 B——rich 为自绘排版、零跨 crate 内联，迁移回吐批次 2 引入的 LTO 边界成本，净尺寸由 LTO 边界分配主导而非行数 |
 | **release 文件总大小（2026-10-25，阈值整改 `c08fd13` 后）** | **10,520,576 B = 10.003 MiB** | +33,280 B（+0.031%） | 新红线 11 MiB 内、**低于预警线 10.5 MiB（退出告警窗口）**，距红线余 **1,013,760 B（~0.97 MiB）**；增量为内存型容量字节预算与体积门禁收敛的功能常量变更（撤销 64 MiB 预算、图片分层上限、纹理 128 MiB 预算等），非跨 crate 搬迁的 LTO 边界成本 |
 | **release 文件总大小（2026-10-26，V11-63 / E-06 阶段 B 后）** | **10,540,544 B = 10.052 MiB** | 相对 HEAD（`ef7d5c2`）**+18,432 B（+0.18%）** | 新红线 11 MiB 内、**低于预警线 10.5 MiB**（10.052 < 10.5），`size_gate` exit 0，距红线余 **993,792 B（~0.95 MiB）**。**A/B 归因（同机三次 release 构建）**：① HEAD（`ef7d5c2`，未端口化、仍声明 `egui` 依赖）= **10,522,112 B**；② 端口化代码 + 旧 `Cargo.toml`（仍声明 `egui`，反证用）= **10,539,520 B**，即**端口化代码本体 +17,408 B**；③ 完整阶段 B（端口化 + 删依赖）= **10,540,544 B**，即**删依赖边 +1,024 B**。（反向组合"HEAD 代码 + 删依赖"无法编译——旧代码产 `egui::FontDefinitions`——故只能取 ②。）前者是端口化的固有代价——`BTreeMap<PortFontFamily, Vec<String>>` 与 `BTreeMap<String, PortFontData>` 是**新的一套泛型实例化**，与 egui 侧的 `BTreeMap<FontFamily, …>` 并存，BTreeMap 的插入/遍历机器码在二进制里出现两份；不是 LTO 边界成本，也不是功能增量 |
+| **release 文件总大小（2026-10-26，E-25 拆分 `frame.rs` 后）** | **10,540,544 B = 10.052 MiB** | **±0 B（逐字节相同）** | 纯重构对代码生成**零影响**：`frame.rs` 839 → 193 行 facade + `state.rs` 434 + `loop.rs` 258，模块边界与 22 个字段的 `pub(super)` 化都不改变 MIR 与单态化结果。也证伪了「拆文件会改变内联决策」的猜测——同机重建与 E-06 收官值逐字节一致。 |
 
 - **V11-65 零体积影响已实证**：收敛前后同树重建字节数完全一致（均 10,485,248 B）——
   manifest 继承与 lint attribute 移动不改变代码生成，与预期相符。

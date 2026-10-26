@@ -15,5 +15,6 @@ mod export_test;
 mod markdown_test;
 mod preferences_test;
 mod text_buffer_test;
+mod undo_policy_test;
 mod undo_test;
 mod workspace_test;
