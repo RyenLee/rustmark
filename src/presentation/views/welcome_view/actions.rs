@@ -2,9 +2,10 @@
 
 use egui::{Ui, Vec2};
 
-use crate::app::frame::{EditorApp, PendingDialog};
 use crate::presentation::shortcuts::registry::UiAction;
+use crate::presentation::state::pending_dialog::PendingDialog;
 use crate::presentation::theme::builtin::Theme;
+use crate::presentation::view_context::EditorViewContext;
 
 use super::*;
 
@@ -59,7 +60,7 @@ pub struct ShortcutHint {
 ///
 /// 刻意现取而不是硬编码：用户改过键位后，欢迎页还显示旧的
 /// `Ctrl+N` 会让用户以为改键没生效——而他恰恰是刚改过的人。
-pub fn shortcut_hints(app: &EditorApp) -> Vec<ShortcutHint> {
+pub fn shortcut_hints(vctx: &dyn EditorViewContext) -> Vec<ShortcutHint> {
     let actions = [
         (UiAction::NewDocument, "新建"),
         (UiAction::OpenDocument, "打开"),
@@ -69,7 +70,7 @@ pub fn shortcut_hints(app: &EditorApp) -> Vec<ShortcutHint> {
     actions
         .iter()
         .map(|(action, label)| ShortcutHint {
-            combo: app.ui.dispatcher.registry().display_for(*action),
+            combo: vctx.dispatcher_state().registry().display_for(*action),
             label: (*label).to_string(),
         })
         .filter(|h| !h.combo.is_empty())
@@ -167,17 +168,17 @@ fn action_button(ui: &mut Ui, theme: &Theme, action: PrimaryAction) -> bool {
 }
 
 /// 执行主操作。
-pub(super) fn run_action(app: &mut EditorApp, action: PrimaryAction) {
+pub(super) fn run_action(vctx: &mut dyn EditorViewContext, action: PrimaryAction) {
     match action {
         PrimaryAction::NewFile => {
-            if let Err(e) = app.new_document() {
-                app.set_status_error(&format!("无法新建文档：{e}"));
+            if let Err(e) = vctx.new_document() {
+                vctx.set_status_error(&format!("无法新建文档：{e}"));
             }
         }
         // 「打开文件 / 文件夹」都要弹原生对话框，而 `DialogPort` 是
         // **同步阻塞**的，不能在 `update()` 里调（S5-08 已写明）。
         // 故只登记意图，由后台线程取回。
-        PrimaryAction::OpenFile => app.request_dialog(PendingDialog::OpenFile),
-        PrimaryAction::OpenFolder => app.request_dialog(PendingDialog::PickFolder),
+        PrimaryAction::OpenFile => vctx.request_dialog(PendingDialog::OpenFile),
+        PrimaryAction::OpenFolder => vctx.request_dialog(PendingDialog::PickFolder),
     }
 }

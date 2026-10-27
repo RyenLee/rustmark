@@ -1471,6 +1471,8 @@ pub fn check_ui_submodule_sync(manifest: &Path) -> Vec<Violation> {
 ///
 /// `about_view` / `stats_view` / `symbol_view` / `shortcut_overview_view`
 /// ——四个浮层面板，正是 `overlays::show` 的四个 `match` 分支。
+///
+/// **批 1 · 步 1.1（2026-10-27）**：`welcome_view` 树（3 个文件）已迁。
 pub const PENDING_DECOUPLED_VIEWS: &[&str] = &[
     "src/presentation/views/command_palette_view.rs",
     "src/presentation/views/diff_view.rs",
@@ -1501,9 +1503,6 @@ pub const PENDING_DECOUPLED_VIEWS: &[&str] = &[
     "src/presentation/views/toolbar_view/controls.rs",
     "src/presentation/views/toolbar_view/menu_bar.rs",
     "src/presentation/views/toolbar_view/tab_strip.rs",
-    "src/presentation/views/welcome_view.rs",
-    "src/presentation/views/welcome_view/actions.rs",
-    "src/presentation/views/welcome_view/hints.rs",
 ];
 
 /// 视图解耦进度守卫（R-03 B1）：`views/**` 不得再直取组合根 `crate::app`。

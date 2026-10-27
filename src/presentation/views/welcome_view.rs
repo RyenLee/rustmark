@@ -40,7 +40,7 @@ pub use recent::display_name;
 
 use egui::{ScrollArea, Ui};
 
-use crate::app::frame::EditorApp;
+use crate::presentation::view_context::EditorViewContext;
 
 /// 品牌区标题。
 const LOGO: &str = "Rust Markdown Editor";
@@ -85,8 +85,8 @@ const HINT_ITEM_GAP: f32 = 16.0;
 use recent::shorten_left;
 
 /// 绘制欢迎页。
-pub fn show(app: &mut EditorApp, ui: &mut Ui) {
-    let theme = app.theme().clone();
+pub fn show(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
+    let theme = vctx.theme_state().clone();
     ui.painter()
         .rect_filled(ui.max_rect(), egui::CornerRadius::ZERO, theme.bg_primary);
 
@@ -106,10 +106,11 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
         ui.add_space(theme.metrics.space_xxl);
         actions::primary_actions(ui, &theme, &mut action);
         ui.add_space(theme.metrics.space_xxl);
-        let recent = app.recent_files();
+        let recent = vctx.recent_files();
         recent::recent_section(ui, &theme, &recent, &mut open_recent);
         ui.add_space(theme.metrics.space_xl);
-        hints::hints(ui, &theme, app);
+        // `hints` 只读——用不可变重借用（`&*vctx`）把它要的那份视图交出去。
+        hints::hints(ui, &theme, &*vctx);
     });
 
     // 滚动：最近文件可能很多（虽截断到 5 条）+ 小窗口高度不足。
@@ -120,12 +121,12 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
     // 渲染完再执行：执行会改 `active_doc`（新建 / 打开），
     // 而本帧的其余部分还在读它。
     if let Some(action) = action {
-        actions::run_action(app, action);
+        actions::run_action(vctx, action);
     }
     // 失败提示由 `open_path` **自己**报（见其文档），这里不再重复报一遍：
     // 两处都报会让用户看到两条几乎一样的消息。
     if let Some(path) = open_recent {
-        let _ = app.open_path(&path);
+        let _ = vctx.open_path(&path);
     }
 }
 
