@@ -150,6 +150,11 @@
   **20 处 `EditorApp`（14 文件）** 仍全部不触发。
   **取证姿势**：变异态下直接 `cargo build --bin check-arch` 会让 `build.rs` 先 panic、
   bin 不重建 → 跑旧 exe 假绿；必须 `SKIP_ARCH_CHECK=1` 构建后再独立运行。
+- **R-05 解耦 icons 与 actions（2026-10-27）**：**问题 C 收口**——`rustmark-icons` 不再依赖 `rustmark-actions`。
+  ① icons 侧定义自有小契约 `IconKey` 枚举（`Bold / Italic / Strikethrough / InlineCode / InsertLink`），`Icon::Action(UiAction)` 改为 `Icon::Action(IconKey)`，`build_specs` 与 icons 单测同步；删除 `use rustmark_actions::UiAction` 与 `rustmark-icons` `[dependencies]` 里的 `rustmark-actions`。`cargo tree -p rustmark-icons` 已确认无 `rustmark-actions`。
+  ② `UiAction → IconKey` 映射上移到 **root** 的 `src/presentation.rs::icon_key_for`（非方案字面写的「ui crate」）：唯一生产调用点 `toolbar_view/controls.rs:261` 本就在 root，且 `rustmark-ui` 的拓扑守卫 `ui_crate_dependency_face_is_egui_plus_core` 严禁其获第三依赖，加 `rustmark-icons` 边会破该守卫；root 已同时依赖 icons 与（经 re-export 的）actions，上移映射不引入任何新跨 crate 边，最小侵入。
+  ③ 方案步骤 3「root 显式依赖 actions」**未触发**：root 经 `crate::presentation::shortcuts::registry::UiAction` 间接引用，非直连，符合「若无则不动 root 依赖」。
+  ④ 门禁全绿：fmt / check-arch / clippy -D warnings / `test --all-targets` 2250 passed·0 failed·4 ignored / `test --doc` / thresholds 121 / size_gate **10,558,464 B（±0 B，与 R-03 收官基线一致）**。拓扑期望 `workspace-topology.expected.txt` 同步（本地依赖边 9 → 8，icons 依赖面收敛为纯 egui）。
 - **可观测性（D-5，2026-10-26，`1c58052`）**：`FrameScheduler` 兼作帧耗时观测点——超 16ms 的帧打一条
   `warn`（状态更新 / 绘制 / 未归因三段归因 + 本帧到期任务，120 帧限流；**仅 release 构建输出**），
   `RUST_LOG=…=debug`

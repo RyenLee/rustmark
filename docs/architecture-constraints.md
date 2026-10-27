@@ -512,8 +512,8 @@ crate 没有层内边界可言。「不得引用 core / 任何 crate」由 Cargo
 照旧生效（fixture 第十六节钉住）。
 
 `crates/rustmark-icons/src/`（V11-58）**不设**强制层：单文件 `lib.rs` 落在
-crate 入口白名单里，`layer_of` 自然判 Free（依赖面 = egui +
-rustmark-actions，由 `tests/workspace_topology_test.rs` 断言）。禁
+crate 入口白名单里，`layer_of` 自然判 Free（依赖面 = egui，由
+`tests/workspace_topology_test.rs` 断言；R-05 已移除 `rustmark-actions` 边）。禁
 `mod.rs`、帧预约唯一出口等与层无关的规则照旧生效；将来若长出第二个文件，
 「未知层」警报会逼着给它定层——缺口要响，不静。
 
@@ -636,7 +636,7 @@ rustmark（root：组合根 + views + bin）
 ├──► rustmark-core   ──► rustmark-actions
 │                     └► rustmark-shared
 ├──► rustmark-infra  ──► rustmark-core ──► {rustmark-actions, rustmark-shared}
-├──► rustmark-icons  ──► rustmark-actions
+├──► rustmark-icons
 └──► rustmark-ui     ──► rustmark-core ──► rustmark-shared
                         （五条本地链，无环；actions 与 shared 是叶）
 ```
@@ -648,7 +648,7 @@ rustmark（root：组合根 + views + bin）
 | `rustmark-infra` | 基础设施层：外部库适配与 IO（解析 / 高亮 / 文本缓冲 / 对话框 / 远程图片 / 图片解码 / 导出 / 字体装配）。**端口与领域类型仍住 core**（V11-64） | 55 文件 / 11,011 行 | **11 个**直接外部依赖（pulldown-cmark / syntect / image / ropey / rfd / serde / toml / thiserror / ureq / rustls-native-certs / log）+ 1 个本地（core） |
 | `rustmark-actions` | 动作词汇表契约（V11-57） | 4 文件 / 687 行 | **零依赖** |
 | `rustmark-shared` | 共享内核：纯值 / 端口 / 唯一真源（TD-04） | 21 文件 / 3,153 行 | ahash + serde + thiserror（**零本地**） |
-| `rustmark-icons` | 16×16 图标规格 + Painter 渲染器（V11-58） | 1 文件 / 613 行 | egui + rustmark-actions |
+| `rustmark-icons` | 16×16 图标规格 + Painter 渲染器（V11-58） | 1 文件 / 630 行 | egui |
 | `rustmark-ui` | 表现层非视图部分：widgets（批次 1）/ state（批次 2）/ shortcuts（批次 3）/ theme（批次 4）/ rich（批次 5，V11-62 收官）/ view_context（R-03 B1：视图窄接口 `EditorViewContext`） | 72 文件 / 17,401 行（2026-10-27 实测） | egui + rustmark-core |
 
 规模口径：`find <源码根> -name '*.rs' -exec cat {} + | wc -l`（**不用 `xargs wc -l`**——超 ~100 文件会分批而 `tail -1` 只抓末批小计），只含 `src/`、

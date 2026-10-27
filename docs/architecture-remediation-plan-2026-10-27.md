@@ -334,6 +334,12 @@
 - **优先级**：P2（改造成本小，可早做）
 - **预期产出**：icons 不再依赖 actions；映射上移；root 依赖显式。
 - **验收点**：`cargo tree -p rustmark-icons` 无 `rustmark-actions`；icons 单测绿；门禁绿。
+- **实施记录（2026-10-27，已落地）**：
+  - icons 侧：`IconKey` 取**枚举**形态（`Bold / Italic / Strikethrough / InlineCode / InsertLink`），`Icon::Action(UiAction)` 改为 `Icon::Action(IconKey)`，`build_specs` 与 icons 单测同步；删除 `use rustmark_actions::UiAction`，`rustmark-icons` 的 `[dependencies]` 移除 `rustmark-actions`。`cargo tree -p rustmark-icons` 已确认无 `rustmark-actions`。
+  - 映射落点**偏差**（与步骤 2「ui」不符）：实际 `UiAction → IconKey` 映射落在 **root** 的 `src/presentation.rs::icon_key_for`，而非 `rustmark-ui` crate。原因：① 唯一生产调用点 `toolbar_view/controls.rs:261` 本就在 root（不在 ui crate）；② `rustmark-ui` 的拓扑守卫 `ui_crate_dependency_face_is_egui_plus_core` 严禁其获得第三依赖，加 `rustmark-icons` 边会破该守卫。root 已同时依赖 icons 与（经 re-export 的）actions，上移映射不引入任何新跨 crate 边，是**最小侵入、不扩改动面**的选择。
+  - 步骤 3 **未触发**：root 经 `crate::presentation::shortcuts::registry::UiAction` **间接**引用动作词汇表（非直连），符合「若无，则不动 root 依赖」，故未往 root `[dependencies]` 加 `rustmark-actions`。
+  - 门禁全绿：fmt / check-arch / clippy -D warnings / `test --all-targets` 2250 passed·0 failed·4 ignored / `test --doc` / thresholds 121 / size_gate 10,558,464 B（±0 B，与 R-03 收官基线一致）。
+
 
 ### R-06 · core 超大服务拆分（纯函数提取）　【P3，对应问题 G】
 
