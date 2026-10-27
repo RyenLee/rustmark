@@ -85,7 +85,7 @@ modules:
       artifact_size_limit_local:
         value: 11534336
         unit: "bytes"
-        source: "scripts/size_gate.sh:25"
+        source: "scripts/size_gate.sh:26"
         anchor: "LIMIT=\"${SIZE_LIMIT_BYTES:-11534336}\""
         purpose: "本地与 CI 共用的体积红线默认值（11 MiB）；CI 经环境变量覆盖，故实际生效值取决于 CI。越线 exit 1。"
         recommended: "11534336"
@@ -93,7 +93,7 @@ modules:
       artifact_size_warn_local:
         value: 11010048
         unit: "bytes"
-        source: "scripts/size_gate.sh:26"
+        source: "scripts/size_gate.sh:27"
         anchor: "WARN=\"${SIZE_WARN_BYTES:-11010048}\""
         purpose: "体积预警线默认值（10.5 MiB）；越线仅告警并打印距红线余量。"
         recommended: "11010048（10.5 MiB）"
