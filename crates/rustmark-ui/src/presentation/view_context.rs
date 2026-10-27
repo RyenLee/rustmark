@@ -27,8 +27,8 @@
 //! |---|---|---|
 //! | [`ThemeAccess`] | 主题 + 快捷键注册表 | 3 |
 //! | [`UiStateAccess`] | UI 状态直取（字段级） | 15 |
-//! | [`DocumentAccess`] | 文档 / 标签 / 只读查询 | 12 |
-//! | [`CommandPort`] | 语义命令（含 `execute`） | 45 |
+//! | [`DocumentAccess`] | 文档 / 标签 / 只读查询 | 13 |
+//! | [`CommandPort`] | 语义命令（含 `execute`） | 47 |
 //! | [`ServiceQueries`] | 组合根服务查询 | 0（批 2 填充） |
 //!
 //! 为什么不摊平成一个大 trait：摊平后 ≈ `EditorApp`（183 方法 + 40 字段）的
@@ -251,6 +251,13 @@ pub trait DocumentAccess {
 
     /// 设置页「字体」下拉的可选项。
     fn editor_font_choices(&self) -> &[EditorFontChoice];
+
+    /// 「该格式打不开」的统一文案（按路径后缀判格式）。
+    ///
+    /// 它是**只读文案投影**，故归 [`DocumentAccess`] 而非 [`CommandPort`]：
+    /// 文件树里置灰行的悬停说明与双击后报给状态栏的提示必须**同一句**，
+    /// 视图侧只有一条出口才做得到这一点。
+    fn unsupported_format_notice(&self, path: &str) -> String;
 }
 
 // ===========================================================================
@@ -390,6 +397,14 @@ pub trait CommandPort {
 
     /// 设置是否加载文档里的远程图片（PRIV-01）。
     fn set_load_remote_images(&mut self, on: bool);
+
+    // ---------- 工作区条目增删改 ----------
+
+    /// 在工作区里新建一个条目（文件或目录）。
+    fn create_entry(&mut self, parent: &str, name: &str, is_directory: bool) -> AppResult<()>;
+
+    /// 重命名工作区里的一个条目。
+    fn rename_entry(&mut self, path: &str, new_name: &str) -> AppResult<()>;
 
     // ---------- 差异 ----------
 

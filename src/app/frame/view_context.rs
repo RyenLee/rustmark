@@ -202,6 +202,10 @@ impl DocumentAccess for EditorApp {
     fn editor_font_choices(&self) -> &[EditorFontChoice] {
         EditorApp::editor_font_choices(self)
     }
+
+    fn unsupported_format_notice(&self, path: &str) -> String {
+        EditorApp::unsupported_format_notice(path)
+    }
 }
 
 // ===========================================================================
@@ -371,6 +375,16 @@ impl CommandPort for EditorApp {
 
     fn set_load_remote_images(&mut self, on: bool) {
         EditorApp::set_load_remote_images(self, on);
+    }
+
+    // ---------- 工作区条目增删改 ----------
+
+    fn create_entry(&mut self, parent: &str, name: &str, is_directory: bool) -> AppResult<()> {
+        EditorApp::create_entry(self, parent, name, is_directory)
+    }
+
+    fn rename_entry(&mut self, path: &str, new_name: &str) -> AppResult<()> {
+        EditorApp::rename_entry(self, path, new_name)
     }
 
     // ---------- 差异 ----------

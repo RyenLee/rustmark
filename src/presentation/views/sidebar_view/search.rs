@@ -3,37 +3,37 @@
 use egui::epaint::text::{LayoutJob, TextFormat};
 use egui::{Color32, Layout, RichText, ScrollArea, Ui};
 
-use crate::app::frame::{EditorApp, WorkspaceSearch};
 use crate::presentation::state::sidebar_ui_state::{
-    SEARCH_SCOPES, SEARCH_TOGGLES, SearchGroup, SearchScope,
+    SEARCH_SCOPES, SEARCH_TOGGLES, SearchGroup, SearchScope, WorkspaceSearch,
 };
 use crate::presentation::theme::builtin::Theme;
+use crate::presentation::view_context::EditorViewContext;
 use crate::presentation::widgets;
 
 use super::files::display_name;
 use super::*;
 
 /// 搜索标签。
-pub(super) fn search_tab(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
-    let mut query = app.sidebar.search_query.clone();
+pub(super) fn search_tab(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
+    let mut query = vctx.sidebar_state().search_query.clone();
     let response = ui.add(
         egui::TextEdit::singleline(&mut query)
             .id(egui::Id::unique(SEARCH_INPUT_ID))
             // 占位提示随范围变化：打字之前就知道这一框会搜到哪里。
-            .hint_text(app.sidebar.search_scope.placeholder())
+            .hint_text(vctx.sidebar_state().search_scope.placeholder())
             .desired_width(ui.available_width()),
     );
     if response.changed() {
-        app.set_search_query(query);
+        vctx.set_search_query(query);
     }
     // 范围切换器紧贴输入框：它是比下面那排选项更高一级的决定
     // （决定「搜谁」先于「怎么搜」），位置上也要读得出这个次序。
-    scope_row(app, ui, theme);
+    scope_row(vctx, ui, theme);
     // 开关行顺带把**本帧唯一一次**搜索取回来：右侧计数与下方结果列表
     // 必须同源。此前计数自己搜一次、列表再搜一次，同一帧跑两遍全量检索
     // （「当前文档」范围下每遍还要白读整个工作区，见 `search_workspace`）。
     // 位置在这里而不是更早：开关的点击在上面已处理完，计数因此当帧就新。
-    let result = toggle_row(app, ui, theme);
+    let result = toggle_row(vctx, ui, theme);
     ui.separator();
 
     // 「当前文档」范围 + 没有活动文档：说清为什么空，并指出去路。
@@ -41,7 +41,11 @@ pub(super) fn search_tab(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
     // 这条分支必须在结果渲染之前——否则用户看到的是
     // 「没有找到匹配」而不是「没有打开的文档」，会以为搜索坏了。
     // （计数此时为 0 是 `search_workspace` 的保证，见其文档。）
-    if app.sidebar.search_scope == SearchScope::CurrentDocument && app.active_doc.is_none() {
+    // 两项先取出再比较：`&mut dyn` 上一次独占借用，同一表达式里两次
+    // `vctx.state()` 直接编译不过。
+    let scope = vctx.sidebar_state().search_scope;
+    let no_active_doc = vctx.active_doc().is_none();
+    if scope == SearchScope::CurrentDocument && no_active_doc {
         ui.weak("没有打开的文档");
         ui.weak("打开一个 .md 后，这里会列出它的命中；也可切换到「打开的文档」跨文档查找。");
         return;
@@ -55,17 +59,17 @@ pub(super) fn search_tab(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
             return;
         }
     };
-    if !app.sidebar.should_search() {
+    let should_search = vctx.sidebar_state().should_search();
+    let scope_placeholder = vctx.sidebar_state().search_scope.placeholder();
+    if !should_search {
         // 与输入框占位提示同源：默认范围已是「当前文档」，这里若还写
         // 「在所有打开的文档中搜索」，等于界面的两处声明自相矛盾。
-        ui.weak(app.sidebar.search_scope.placeholder());
+        ui.weak(scope_placeholder);
         return;
     }
     if result.is_empty() {
-        ui.weak(format!(
-            "没有找到匹配「{}」的内容",
-            app.sidebar.search_query
-        ));
+        let search_query = vctx.sidebar_state().search_query.clone();
+        ui.weak(format!("没有找到匹配「{}」的内容", search_query));
         return;
     }
     let mut jump: Option<(String, usize)> = None;
@@ -86,7 +90,7 @@ pub(super) fn search_tab(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
             }
         });
     if let Some((path, line)) = jump {
-        jump_to_hit(app, &path, line);
+        jump_to_hit(vctx, &path, line);
     }
 }
 
@@ -108,10 +112,10 @@ pub(super) fn search_tab(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
 /// 文字与底色完全相同 → 「看不到按钮的文案」。
 /// 故选中文案用正文色（ mapper 同时把 `fg_stroke` 映射为正文色，
 /// 两条路都保证对比度），未选中才用次要色。
-fn scope_row(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
+fn scope_row(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
     ui.horizontal(|ui| {
         for scope in SEARCH_SCOPES {
-            let on = app.sidebar.search_scope == scope;
+            let on = vctx.sidebar_state().search_scope == scope;
             let text = RichText::new(scope.label()).color(if on {
                 theme.text_primary
             } else {
@@ -122,7 +126,7 @@ fn scope_row(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
                 .on_hover_text(scope.hint())
                 .clicked()
             {
-                app.set_search_scope(scope);
+                vctx.set_search_scope(scope);
             }
         }
     });
@@ -140,11 +144,11 @@ fn scope_row(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
 /// 右侧计数与列表必须来自同一次检索，否则同一帧要跑两遍全量搜索。
 /// 检索失败时计数显示 0，错误详情由 [`search_tab`] 统一呈现。
 fn toggle_row(
-    app: &mut EditorApp,
+    vctx: &mut dyn EditorViewContext,
     ui: &mut Ui,
     theme: &Theme,
 ) -> Result<WorkspaceSearch, rustmark_core::shared::error::AppError> {
-    let options = app.sidebar.search_options;
+    let options = vctx.sidebar_state().search_options;
     ui.horizontal(|ui| {
         for toggle in SEARCH_TOGGLES {
             let on = toggle.is_on(&options);
@@ -158,7 +162,7 @@ fn toggle_row(
                 .on_hover_text(toggle.hint())
                 .clicked()
             {
-                app.toggle_search_option(toggle);
+                vctx.toggle_search_option(toggle);
             }
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -172,10 +176,10 @@ fn toggle_row(
                 .on_hover_text("关闭全部搜索选项（区分大小写 / 全字匹配 / 正则）")
                 .clicked()
             {
-                app.reset_search_options();
+                vctx.reset_search_options();
             }
             // 放在开关处理之后：本帧点了开关 / 重置，数字当帧就是新的。
-            let result = app.search_workspace();
+            let result = vctx.search_workspace();
             ui.weak(format!(
                 "{} 条结果",
                 result.as_ref().map(|r| r.total()).unwrap_or(0)
@@ -320,17 +324,18 @@ fn snippet_job(ui: &Ui, theme: &Theme, snippet: &str, highlight: (usize, usize))
 }
 
 /// 跳到某文件某行（先切文件，再按行号定位）。
-fn jump_to_hit(app: &mut EditorApp, path: &str, line: usize) {
-    let already_open = app.current_document_path().eq_ignore_ascii_case(path);
-    if !already_open && let Err(e) = app.open_workspace_file(path) {
-        app.sidebar
+fn jump_to_hit(vctx: &mut dyn EditorViewContext, path: &str, line: usize) {
+    let already_open = vctx.current_document_path().eq_ignore_ascii_case(path);
+    if !already_open && let Err(e) = vctx.open_workspace_file(path) {
+        vctx.sidebar_state()
             .fail(format!("无法打开 {}：{e}", display_name(path)));
         return;
     }
     // 行号 → 字节偏移，与大纲跳转走同一个换算，不各算一遍。
-    let starts = crate::presentation::views::scroll_sync::line_start_offsets(&app.editor_text);
+    // `line_start_offsets` 返回自有 `Vec`，借用的编辑区文本当场结束。
+    let starts = crate::presentation::views::scroll_sync::line_start_offsets(vctx.editor_text());
     let Some(&offset) = starts.get(line) else {
         return;
     };
-    app.goto_byte_offset(offset);
+    vctx.goto_byte_offset(offset);
 }

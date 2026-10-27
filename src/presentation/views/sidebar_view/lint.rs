@@ -2,8 +2,8 @@
 
 use egui::{Align, Layout, RichText, ScrollArea, Ui};
 
-use crate::app::frame::EditorApp;
 use crate::presentation::theme::builtin::Theme;
+use crate::presentation::view_context::EditorViewContext;
 use crate::presentation::widgets;
 
 use super::*;
@@ -12,20 +12,20 @@ use super::*;
 ///
 /// 与大纲同源（见文件头表格）：`lint_document` 是 O(行数) 的线性扫描，
 /// 每帧现算即可，不缓存。
-pub(super) fn lint_tab(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
-    let rules = app.settings().editor.lint;
+pub(super) fn lint_tab(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
+    let rules = vctx.settings().editor.lint;
     if !rules_enabled(&rules) {
         ui.weak("所有检查规则均已关闭；可在「设置 → 编辑器」里开启。");
         return;
     }
     // 没打开文档时先说清作用域（V11-28）：检查是文档级能力，空工作区
     // 下显示「无问题」会让人误以为全盘已检，其实根本没东西可检。
-    if app.active_doc.is_none() {
+    if vctx.active_doc().is_none() {
         ui.weak("没有打开的文档");
         ui.weak("打开一个 .md 后，这里会列出它发现的格式问题。");
         return;
     }
-    let issues = app.lint_current_document();
+    let issues = vctx.lint_current_document();
     if issues.is_empty() {
         ui.weak("未发现格式问题");
         return;
@@ -39,7 +39,7 @@ pub(super) fn lint_tab(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
                 if lint_row(ui, theme, issue).clicked() {
                     // 与大纲跳转同一条通路：光标落到该行行首（0-based 行号
                     // 由 `goto_outline_line` 统一换算）。
-                    app.goto_outline_line(issue.line);
+                    vctx.goto_outline_line(issue.line);
                 }
             }
         });

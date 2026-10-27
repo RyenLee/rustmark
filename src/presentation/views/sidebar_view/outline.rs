@@ -2,15 +2,15 @@
 
 use egui::{Align, Layout, RichText, ScrollArea, Ui};
 
-use crate::app::frame::EditorApp;
 use crate::presentation::theme::builtin::Theme;
+use crate::presentation::view_context::EditorViewContext;
 use crate::presentation::widgets;
 
 use super::*;
 
 /// 大纲标签。
-pub(super) fn outline_tab(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
-    level_filter(app, ui);
+pub(super) fn outline_tab(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
+    level_filter(vctx, ui);
     // 提示放在列表**上方**：下面的滚动区 `auto_shrink([false, false])`
     // 会吃掉全部剩余高，若放在它后面，提示会被推出面板底缘、永远
     // 不可见（036 修复时发现，旧版同样存在——压扁缺陷反而让它「溢出
@@ -20,11 +20,11 @@ pub(super) fn outline_tab(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
         "点击标题可跳转；标题级别的调整请在编辑区用 Ctrl+[ / Ctrl+]。",
     );
     ui.separator();
-    let items = app.current_outline();
+    let items = vctx.current_outline();
     if items.is_empty() {
         // 先区分「没打开文档」与「文档里真没标题」：前者是作用域问题，
         // 提示应指路去打开文件，而不是让人以为大纲坏了（V11-28）。
-        if app.active_doc.is_none() {
+        if vctx.active_doc().is_none() {
             ui.weak("没有打开的文档");
             ui.weak("打开一个 .md 后，这里会列出它的标题层级。");
         } else {
@@ -32,14 +32,14 @@ pub(super) fn outline_tab(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
         }
         return;
     }
-    let selected = app.sidebar.outline_selected.clone();
+    let selected = vctx.sidebar_state().outline_selected.clone();
     let mut jump: Option<usize> = None;
     ScrollArea::vertical()
         .id_salt("rustmark.sidebar.outline")
         .auto_shrink([false, false])
         .show(ui, |ui| {
             for item in &items {
-                if !app.sidebar.outline_level_visible(item.level) {
+                if !vctx.sidebar_state().outline_level_visible(item.level) {
                     continue;
                 }
                 let is_active = selected.as_deref() == Some(item.text.as_str());
@@ -74,24 +74,24 @@ pub(super) fn outline_tab(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
                     },
                 );
                 if response.clicked() {
-                    app.select_outline_item(item.text.clone());
+                    vctx.select_outline_item(item.text.clone());
                     jump = Some(item.line);
                 }
             }
         });
     if let Some(line) = jump {
-        app.goto_outline_line(line);
+        vctx.goto_outline_line(line);
     }
 }
 
 /// 大纲层级过滤条。
-fn level_filter(app: &mut EditorApp, ui: &mut Ui) {
+fn level_filter(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
     ui.horizontal(|ui| {
         ui.weak("层级");
         for level in 1..=6u8 {
-            let selected = app.sidebar.outline_max_level == level;
+            let selected = vctx.sidebar_state().outline_max_level == level;
             if ui.selectable_label(selected, level.to_string()).clicked() && !selected {
-                app.sidebar.set_outline_max_level(level);
+                vctx.sidebar_state().set_outline_max_level(level);
             }
         }
     });

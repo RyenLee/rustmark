@@ -2,9 +2,9 @@
 
 use egui::{RichText, ScrollArea, Ui};
 
-use crate::app::frame::EditorApp;
 use crate::presentation::state::sidebar_ui_state::{NameEdit, TreeRow, tree_rows};
 use crate::presentation::theme::builtin::Theme;
+use crate::presentation::view_context::EditorViewContext;
 use crate::presentation::widgets;
 use rustmark_core::shared::path::file_name_of;
 
@@ -18,18 +18,18 @@ const ICON_W: f32 = 16.0;
 const ICON_GAP: f32 = 4.0;
 
 /// 文件树标签。
-pub(super) fn files_tab(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
-    if !app.workspace_entries.is_loaded() {
+pub(super) fn files_tab(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
+    if !vctx.workspace_entries_state().is_loaded() {
         return;
     }
-    let root = app.workspace_root();
-    let expanded: Vec<String> = app.sidebar.expanded_dirs.clone();
-    let rows = tree_rows(&app.workspace_entries.items, &root, &|path| {
+    let root = vctx.workspace_root();
+    let expanded: Vec<String> = vctx.sidebar_state().expanded_dirs.clone();
+    let rows = tree_rows(&vctx.workspace_entries_state().items, &root, &|path| {
         expanded.iter().any(|p| p == path)
     });
-    let selected = app.sidebar.selected_path.clone();
-    let renaming = app.sidebar.renaming_path.clone();
-    let creating = app.sidebar.creating.clone();
+    let selected = vctx.sidebar_state().selected_path.clone();
+    let renaming = vctx.sidebar_state().renaming_path.clone();
+    let creating = vctx.sidebar_state().creating.clone();
 
     let mut intent = FileIntent::default();
     ScrollArea::vertical()
@@ -40,7 +40,7 @@ pub(super) fn files_tab(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
             if let Some((parent, _, is_dir)) = &creating {
                 name_editor(
                     ui,
-                    app,
+                    vctx,
                     theme,
                     &format!("rustmark.sidebar.create.{parent}"),
                     &format!("{}", is_dir),
@@ -48,15 +48,15 @@ pub(super) fn files_tab(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
             }
             for row in &rows {
                 if row.is_editing(&renaming) {
-                    name_editor(ui, app, theme, &row.path, &row.name);
+                    name_editor(ui, vctx, theme, &row.path, &row.name);
                     continue;
                 }
-                file_row(ui, app, theme, row, &selected, &mut intent);
+                file_row(ui, vctx, theme, row, &selected, &mut intent);
             }
         });
-    let opened_menu = run_file_intent(app, intent);
+    let opened_menu = run_file_intent(vctx, intent);
     // 菜单画在 `ScrollArea` 之外的前景浮层里：独立层级、不占树布局。
-    show_context_menu(app, ui, theme, opened_menu);
+    show_context_menu(vctx, ui, theme, opened_menu);
 }
 
 /// 文件树里一次点击的**意图**（先收集，最后统一执行）。
@@ -117,23 +117,23 @@ impl RowEditing for TreeRow {
 ///    预览区打开——与资源管理器、VS Code 的行为一致，避免「点一下
 ///    就切走当前文档」打断编辑。
 /// 4. **白名单外的格式置灰且打不开**（问题 045）：只有
-///    [`EditorApp::can_open_as_text`] 放行的文件可双击打开；图片 /
+///    [`EditorViewContext::can_open_as_text`] 放行的文件可双击打开；图片 /
 ///    二进制等以次要色绘制（一眼可辨「这一项不能用」），双击不派打开
 ///    意图、只把原因报到状态栏。判据与应用层的打开守卫**同源**——
 ///    文件树置灰的东西，打开管线也一定拒绝，反之亦然。
 fn file_row(
     ui: &mut Ui,
-    app: &mut EditorApp,
+    vctx: &mut dyn EditorViewContext,
     theme: &Theme,
     row: &TreeRow,
     selected: &Option<String>,
     intent: &mut FileIntent,
 ) {
     let is_selected = selected.as_deref() == Some(row.path.as_str());
-    let expanded = app.sidebar.is_expanded(&row.path);
-    let menu_open = app.sidebar.menu_is_for(&row.path);
+    let expanded = vctx.sidebar_state().is_expanded(&row.path);
+    let menu_open = vctx.sidebar_state().menu_is_for(&row.path);
     // 目录没有「格式」可言（双击是展开/收起），故只对文件做白名单判定。
-    let openable = row.is_directory || app.can_open_as_text(&row.path);
+    let openable = row.is_directory || vctx.can_open_as_text(&row.path);
     // 整行可点（含右键）由 `widgets::row::clickable_row` 保证：行内容由
     // 箭头、图标、文件名等多段 `Ui` 拼成，默认只有 hover sense，会盖在
     // 行交互之上、吞掉点击（问题 1：文件树点击与右键均无响应）。
@@ -168,12 +168,12 @@ fn file_row(
         ui.add(egui::Label::new(RichText::new(&row.name).color(name_color)).truncate());
     });
     // 白名单外的行挂一句悬停说明：置灰只表达了「不能用」，说不清「为什么」。
-    // 文案取自应用层（[`EditorApp::unsupported_format_notice`]）——
+    // 文案取自应用层（[`EditorViewContext::unsupported_format_notice`]）——
     // 与双击时报到状态栏的是**同一句**，不会出现两种说法。
     let response = if openable {
         response
     } else {
-        response.on_hover_text(EditorApp::unsupported_format_notice(&row.path))
+        response.on_hover_text(vctx.unsupported_format_notice(&row.path))
     };
     // 选中 / 菜单高亮画成一整条固定高度的底色（对齐原型 `.row.active`）：
     // 只给文字加底色的话，底色会紧贴字高，在 24px 栅格下像一条下划线。
@@ -352,13 +352,18 @@ fn paint_row_icon(
 /// `opened_this_frame` 豁免「刚刚打开菜单的那一次右键」：落点本来就贴着
 /// 锚点，窗口边缘触发 `constrain` 平移后落点可能落到矩形之外，不豁免会
 /// 出现「一右键就闪一下」。
-fn show_context_menu(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, opened_this_frame: bool) {
-    let Some(path) = app.sidebar.context_menu_path.clone() else {
+fn show_context_menu(
+    vctx: &mut dyn EditorViewContext,
+    ui: &mut Ui,
+    theme: &Theme,
+    opened_this_frame: bool,
+) {
+    let Some(path) = vctx.sidebar_state().context_menu_path.clone() else {
         return;
     };
     // 程序化打开（测试）没有落点：退回文件树左上角，至少不会画到屏幕外。
-    let anchor = app
-        .sidebar
+    let anchor = vctx
+        .sidebar_state()
         .context_menu_pos
         .unwrap_or_else(|| ui.max_rect().left_top());
 
@@ -395,7 +400,7 @@ fn show_context_menu(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, opened_thi
                     }
                 });
         });
-    run_menu_intent(app, &path, intent);
+    run_menu_intent(vctx, &path, intent);
 
     // 标准浮层交互：点击落在菜单矩形之外 / Esc → 关闭。
     let (outside_click, escaped) = ui.input(|i| {
@@ -406,7 +411,7 @@ fn show_context_menu(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, opened_thi
         (outside, i.key_pressed(egui::Key::Escape))
     });
     if escaped || (outside_click && !opened_this_frame) {
-        app.sidebar.close_context_menu();
+        vctx.sidebar_state().close_context_menu();
     }
 }
 
@@ -420,28 +425,34 @@ struct MenuIntent {
 }
 
 /// 执行右键菜单意图。
-fn run_menu_intent(app: &mut EditorApp, path: &str, intent: MenuIntent) {
+fn run_menu_intent(vctx: &mut dyn EditorViewContext, path: &str, intent: MenuIntent) {
     if let Some(parent) = intent.create_file {
-        app.sidebar.start_create(Some(&parent), false);
+        vctx.sidebar_state().start_create(Some(&parent), false);
     } else if let Some(parent) = intent.create_folder {
-        app.sidebar.start_create(Some(&parent), true);
+        vctx.sidebar_state().start_create(Some(&parent), true);
     } else if intent.rename.is_some() {
-        app.sidebar.start_rename(path, &display_name(path));
+        vctx.sidebar_state().start_rename(path, &display_name(path));
     } else if let Some(target) = intent.delete {
-        delete_with_feedback(app, &target);
+        delete_with_feedback(vctx, &target);
     } else {
         return;
     }
-    app.sidebar.close_context_menu();
+    vctx.sidebar_state().close_context_menu();
 }
 
 /// 名字编辑行（新建与重命名共用一套渲染与提交）。
-fn name_editor(ui: &mut Ui, app: &mut EditorApp, theme: &Theme, key: &str, label: &str) {
+fn name_editor(
+    ui: &mut Ui,
+    vctx: &mut dyn EditorViewContext,
+    theme: &Theme,
+    key: &str,
+    label: &str,
+) {
     ui.horizontal(|ui| {
         ui.add_space(ROW_PAD);
         // 编辑态才有草稿：取不到就退化为空输入框并直接返回（非编辑态本不该
         // 进入本函数），而不是 `expect` 终止进程（规范 §四-15 / V11-12）。
-        let response = if let Some(draft) = app.sidebar.draft_mut() {
+        let response = if let Some(draft) = vctx.sidebar_state().draft_mut() {
             ui.add(
                 egui::TextEdit::singleline(draft)
                     .id(egui::Id::unique(key))
@@ -459,23 +470,23 @@ fn name_editor(ui: &mut Ui, app: &mut EditorApp, theme: &Theme, key: &str, label
         let ok = ui.small_button("√");
         let cancel = ui.small_button("×");
         if enter || ok.clicked() {
-            commit_name_edit(app, label);
+            commit_name_edit(vctx, label);
         } else if cancel.clicked() {
-            app.sidebar.cancel_edit();
+            vctx.sidebar_state().cancel_edit();
         }
     });
     ui.colored_label(theme.text_secondary, "回车提交 · Esc 或 × 取消");
 }
 
 /// 提交一次名字编辑（新建或重命名）。
-fn commit_name_edit(app: &mut EditorApp, label: &str) {
-    let Some(edit) = app.sidebar.take_edit() else {
+fn commit_name_edit(vctx: &mut dyn EditorViewContext, label: &str) {
+    let Some(edit) = vctx.sidebar_state().take_edit() else {
         return;
     };
     if !edit.has_usable_name() {
-        app.sidebar.fail("名字不能为空");
+        vctx.sidebar_state().fail("名字不能为空");
         // 编辑态**不**退出：草稿已被取走，重新放回去让用户改。
-        restore_draft(app, edit, label);
+        restore_draft(vctx, edit, label);
         return;
     }
     let name = edit.name().to_string();
@@ -484,46 +495,46 @@ fn commit_name_edit(app: &mut EditorApp, label: &str) {
             parent,
             is_directory,
             ..
-        } => app
+        } => vctx
             .create_entry(parent, &name, *is_directory)
             .map(|_| format!("已创建 {name}")),
-        NameEdit::Rename { path, .. } => app
+        NameEdit::Rename { path, .. } => vctx
             .rename_entry(path, &name)
             .map(|_| format!("已重命名为 {name}")),
     };
     match outcome {
-        Ok(notice) => app.sidebar.succeed(notice),
+        Ok(notice) => vctx.sidebar_state().succeed(notice),
         Err(e) => {
-            app.sidebar.fail(e.to_string());
-            restore_draft(app, edit, label);
+            vctx.sidebar_state().fail(e.to_string());
+            restore_draft(vctx, edit, label);
         }
     }
 }
 
 /// 提交失败时把草稿放回编辑态（让用户改后重试，而不是重新敲一遍）。
-fn restore_draft(app: &mut EditorApp, edit: NameEdit, label: &str) {
+fn restore_draft(vctx: &mut dyn EditorViewContext, edit: NameEdit, label: &str) {
     match edit {
         NameEdit::Create {
             parent,
             name,
             is_directory,
         } => {
-            app.restore_create_draft(parent, name, is_directory);
+            vctx.restore_create_draft(parent, name, is_directory);
         }
         NameEdit::Rename { path, name } => {
-            app.restore_rename_draft(path, name);
+            vctx.restore_rename_draft(path, name);
         }
     }
     let _ = label;
 }
 
 /// 删除并给出反馈。
-fn delete_with_feedback(app: &mut EditorApp, path: &str) {
-    match app.delete_entry(path) {
-        Ok(()) => app
-            .sidebar
+fn delete_with_feedback(vctx: &mut dyn EditorViewContext, path: &str) {
+    match vctx.delete_entry(path) {
+        Ok(()) => vctx
+            .sidebar_state()
             .succeed(format!("已删除 {}", display_name(path))),
-        Err(e) => app.sidebar.fail(e.to_string()),
+        Err(e) => vctx.sidebar_state().fail(e.to_string()),
     }
 }
 
@@ -535,7 +546,7 @@ pub(super) fn display_name(path: &str) -> String {
 /// 执行文件树的点击意图（在渲染结束后统一做，见 `FileIntent`）。
 ///
 /// 返回本帧是否**新打开了**右键菜单（浮层据此豁免同一帧的关闭判定）。
-fn run_file_intent(app: &mut EditorApp, intent: FileIntent) -> bool {
+fn run_file_intent(vctx: &mut dyn EditorViewContext, intent: FileIntent) -> bool {
     let clicked = intent.select.is_some()
         || intent.toggle.is_some()
         || intent.open.is_some()
@@ -543,30 +554,30 @@ fn run_file_intent(app: &mut EditorApp, intent: FileIntent) -> bool {
         || intent.menu.is_some();
     if let Some(path) = intent.select {
         // 单选只改高亮，不开文档——打开是双击的动作（见 [`file_row`]）。
-        app.select_sidebar_path(path);
+        vctx.select_sidebar_path(path);
     }
     if let Some(path) = intent.toggle {
-        app.sidebar.toggle_expanded(&path);
+        vctx.sidebar_state().toggle_expanded(&path);
     }
     let mut opened_menu = false;
     if let Some((path, at)) = intent.menu {
-        app.sidebar.open_context_menu(&path, at);
+        vctx.sidebar_state().open_context_menu(&path, at);
         opened_menu = true;
     } else if clicked {
         // 左键点到**别的行**也要关菜单（原型 `window click → closeMenu` 的
         // 行内一半）：只靠底部空白区的判定，点行时菜单会赖着不走（问题 040）。
         // 树外那一半在 [`show_context_menu`] 的「点击浮层之外」判定里。
-        app.sidebar.close_context_menu();
+        vctx.sidebar_state().close_context_menu();
     }
     // 白名单外的格式：不进打开管线，只把原因报到状态栏（问题 045）。
-    // 文案与置灰行的悬停说明同源，见 [`EditorApp::report_unsupported_format`]。
+    // 文案与置灰行的悬停说明同源，见 [`EditorViewContext::report_unsupported_format`]。
     if let Some(path) = intent.denied {
-        app.report_unsupported_format(&path);
+        vctx.report_unsupported_format(&path);
     }
     if let Some(path) = intent.open
-        && let Err(e) = app.open_workspace_file(&path)
+        && let Err(e) = vctx.open_workspace_file(&path)
     {
-        app.sidebar
+        vctx.sidebar_state()
             .fail(format!("无法打开 {}：{e}", display_name(&path)));
     }
     opened_menu

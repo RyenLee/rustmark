@@ -4,10 +4,10 @@
 //!
 //! | 标签 | 数据来源 | 刷新时机 |
 //! |---|---|---|
-//! | 文件 | `EditorApp::workspace_entries`（已装载快照） | 打开文件夹 / 文件操作后 |
-//! | 大纲 | `EditorApp::current_outline()`（每次现算） | 文档内容变化时自动跟随 |
-//! | 搜索 | `EditorApp::search_workspace()`（每帧一次，只读内存内容） | 每次显示搜索标签时 |
-//! | 检查 | `EditorApp::lint_current_document()`（每次现算，V11-08） | 每次显示检查标签时 |
+//! | 文件 | `workspace_entries_state()`（已装载快照） | 打开文件夹 / 文件操作后 |
+//! | 大纲 | `current_outline()`（每次现算） | 文档内容变化时自动跟随 |
+//! | 搜索 | `search_workspace()`（每帧一次，只读内存内容） | 每次显示搜索标签时 |
+//! | 检查 | `lint_current_document()`（每次现算，V11-08） | 每次显示检查标签时 |
 //!
 //! 文件树**不**每帧扫盘（那是递归 `read_dir`）；大纲、检查**每帧**现算
 //! （大纲只解析已缓存的块，检查是 O(行数) 线性扫描）。搜索每帧现算，
@@ -48,9 +48,9 @@ mod search;
 
 use egui::{Align, Context, Layout, Ui};
 
-use crate::app::frame::EditorApp;
 use crate::presentation::state::app_ui_state::SidebarTab;
 use crate::presentation::theme::builtin::Theme;
+use crate::presentation::view_context::EditorViewContext;
 
 /// 每行高度（对齐原型 `.row { height: 24px }`）。
 const ROW_HEIGHT: f32 = 24.0;
@@ -80,16 +80,16 @@ const ACTIVITY_BAR_W: f32 = 48.0;
 /// 传入的是**生效宽**（已按窗口做动态夹紧），不是 `AppUiState` 里
 /// 的用户值：窄窗口下两者不相等，面板必须按生效宽排，否则会超出
 /// 「侧栏 ≤ 主体区 60%」的约束。
-pub fn show(app: &mut EditorApp, ui: &mut Ui, width: f32) {
+pub fn show(vctx: &mut dyn EditorViewContext, ui: &mut Ui, width: f32) {
     let ctx = ui.ctx().clone();
     egui::Panel::left("rustmark.sidebar")
         .exact_size(width)
         .resizable(false)
-        .show(ui, |ui| draw(app, ui, &ctx));
+        .show(ui, |ui| draw(vctx, ui, &ctx));
 }
 
-fn draw(app: &mut EditorApp, ui: &mut Ui, ctx: &Context) {
-    let theme = app.theme().clone();
+fn draw(vctx: &mut dyn EditorViewContext, ui: &mut Ui, ctx: &Context) {
+    let theme = vctx.theme_state().clone();
     ui.painter()
         .rect_filled(ui.max_rect(), egui::CornerRadius::ZERO, theme.bg_secondary);
     // 活动栏（按作用域分两组）+ 单内容面板：纯展示层重组，
@@ -104,10 +104,10 @@ fn draw(app: &mut EditorApp, ui: &mut Ui, ctx: &Context) {
     // 初始高取 `available_size_before_wrap()`（面板全高），内容顶对齐。
     ui.horizontal_top(|ui| {
         ui.allocate_ui(egui::vec2(ACTIVITY_BAR_W, ui.available_height()), |ui| {
-            activity_bar(app, ui, &theme)
+            activity_bar(vctx, ui, &theme)
         });
         ui.separator();
-        content_panel(app, ui, &theme);
+        content_panel(vctx, ui, &theme);
     });
     // 切到搜索标签时把焦点交给搜索框：搜索的全部交互都从这个框开始，
     // 让用户切过来还要再点一次才输得进字，会以为这个标签坏了。
@@ -115,12 +115,13 @@ fn draw(app: &mut EditorApp, ui: &mut Ui, ctx: &Context) {
     // 判据是「上一帧画的不是搜索」而不是「当前没有焦点」：编辑区
     // 同样没有焦点，若无差别请求，用户在搜索结果里点开一个文件后
     // 焦点会被侧栏抢回去，键盘输入直接打到搜索框里。
-    let want_search_focus = app.sidebar.search_just_activated(app.ui.sidebar_tab);
+    let sidebar_tab = vctx.ui_state().sidebar_tab;
+    let want_search_focus = vctx.sidebar_state().search_just_activated(sidebar_tab);
     if want_search_focus && !ctx.memory(|m| m.has_focus(egui::Id::unique(SEARCH_INPUT_ID))) {
         ctx.memory_mut(|m| m.request_focus(egui::Id::unique(SEARCH_INPUT_ID)));
     }
-    let current = app.ui.sidebar_tab;
-    app.sidebar.mark_drawn(current);
+    let current = vctx.ui_state().sidebar_tab;
+    vctx.sidebar_state().mark_drawn(current);
 }
 
 /// 左侧活动栏：纵向导航，按作用域分两组（工作区级 / 文档级）。
@@ -128,46 +129,51 @@ fn draw(app: &mut EditorApp, ui: &mut Ui, ctx: &Context) {
 /// 复用 `selectable_label` 的「选中即高亮」语言，与标签栏、大纲层级条同源；
 /// 两组之间用一条细分隔线取代「四个标签平铺在同一行」——作用域不同的面板
 /// 不该排在一起让人误以为是同级能力（V11-28）。
-fn activity_bar(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
+fn activity_bar(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
     // 比内容面板更深的底色，把导航列从面板里视觉上分出来。
     ui.painter()
         .rect_filled(ui.max_rect(), egui::CornerRadius::ZERO, theme.bg_primary);
     ui.vertical_centered(|ui| {
         ui.add_space(6.0);
         // 工作区级：仅「文件」（资源管理器）。
-        activity_entry(app, ui, SidebarTab::Files, "工作区");
+        activity_entry(vctx, ui, SidebarTab::Files, "工作区");
         ui.separator();
         // 文档级：跟随活动文档，文档切换结果随之更新、无文档时显空状态。
-        activity_entry(app, ui, SidebarTab::Outline, "当前文档");
-        activity_entry(app, ui, SidebarTab::Search, "可切换范围");
-        activity_entry(app, ui, SidebarTab::Lint, "当前文档");
+        activity_entry(vctx, ui, SidebarTab::Outline, "当前文档");
+        activity_entry(vctx, ui, SidebarTab::Search, "可切换范围");
+        activity_entry(vctx, ui, SidebarTab::Lint, "当前文档");
         ui.add_space(6.0);
     });
 }
 
 /// 活动栏里的一个条目：选中高亮 + 悬停提示作用域。
-fn activity_entry(app: &mut EditorApp, ui: &mut Ui, tab: SidebarTab, scope_hint: &str) {
-    let selected = app.ui.sidebar_tab == tab;
+fn activity_entry(
+    vctx: &mut dyn EditorViewContext,
+    ui: &mut Ui,
+    tab: SidebarTab,
+    scope_hint: &str,
+) {
+    let selected = vctx.ui_state().sidebar_tab == tab;
     let response = ui.selectable_label(selected, tab.label());
     if response.clicked() {
-        app.ui.toggle_sidebar_tab(tab);
+        vctx.ui_state().toggle_sidebar_tab(tab);
         // 菜单只属于「文件」面板；切走后面板不再渲染它，回来时它还挂着
         // 会显得凭空出现。切标签即关闭（与原型「点击窗口任意处关菜单」一致）。
-        app.sidebar.close_context_menu();
+        vctx.sidebar_state().close_context_menu();
     }
     response.on_hover_text(format!("{} · {}", tab.label(), scope_hint));
 }
 
 /// 右侧内容面板：顶部作用域声明标题 + 当前标签内容 + 底部提示。
-fn content_panel(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
-    let current = app.ui.sidebar_tab;
+fn content_panel(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
+    let current = vctx.ui_state().sidebar_tab;
     ui.vertical(|ui| {
-        content_header(app, ui, theme, current);
+        content_header(vctx, ui, theme, current);
         ui.separator();
         match current {
             SidebarTab::Files => {
-                if app.workspace_entries.is_loaded() {
-                    files::files_tab(app, ui, theme);
+                if vctx.workspace_entries_state().is_loaded() {
+                    files::files_tab(vctx, ui, theme);
                 } else {
                     ui.colored_label(
                         theme.text_secondary,
@@ -175,11 +181,11 @@ fn content_panel(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
                     );
                 }
             }
-            SidebarTab::Outline => outline::outline_tab(app, ui, theme),
-            SidebarTab::Search => search::search_tab(app, ui, theme),
-            SidebarTab::Lint => lint::lint_tab(app, ui, theme),
+            SidebarTab::Outline => outline::outline_tab(vctx, ui, theme),
+            SidebarTab::Search => search::search_tab(vctx, ui, theme),
+            SidebarTab::Lint => lint::lint_tab(vctx, ui, theme),
         }
-        messages(app, ui, theme);
+        messages(vctx, ui, theme);
     });
 }
 
@@ -188,12 +194,12 @@ fn content_panel(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
 ///
 /// 「搜索」的精确范围由 `search` 标签内的切换行声明，这里只给面板名，
 /// 避免与作用域切换行上的「当前文档 / 打开的文档」重复出现、干扰点击。
-fn content_header(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, tab: SidebarTab) {
+fn content_header(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme, tab: SidebarTab) {
     let m = theme.metrics;
     let scope: Option<String> = match tab {
         SidebarTab::Files => Some("工作区".into()),
         SidebarTab::Outline | SidebarTab::Lint => Some(
-            if app.active_doc.is_some() {
+            if vctx.active_doc().is_some() {
                 "当前文档"
             } else {
                 "无文档"
@@ -213,11 +219,11 @@ fn content_header(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, tab: SidebarT
                     ui.weak(s);
                 }
                 // 「文件」面板专属的刷新入口：树是快照，外部改动不会自动进树。
-                if tab == SidebarTab::Files && app.workspace_entries.is_loaded() {
+                if tab == SidebarTab::Files && vctx.workspace_entries_state().is_loaded() {
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.add_space(m.space_sm);
                         if ui.small_button("刷新").clicked() {
-                            app.refresh_workspace();
+                            vctx.refresh_workspace();
                         }
                     });
                 }
@@ -227,11 +233,11 @@ fn content_header(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, tab: SidebarT
 }
 
 /// 底部提示行。
-fn messages(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
-    if let Some(error) = app.sidebar.error.clone() {
+fn messages(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
+    if let Some(error) = vctx.sidebar_state().error.clone() {
         ui.colored_label(theme.error, format!("⚠ {error}"));
     }
-    if let Some(notice) = app.sidebar.notice.clone() {
+    if let Some(notice) = vctx.sidebar_state().notice.clone() {
         ui.colored_label(theme.success, notice);
     }
 }
