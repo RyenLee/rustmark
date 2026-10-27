@@ -25,6 +25,7 @@ mod frame_test;
 mod insert_image_test;
 mod open_limit_test;
 mod path_file_name_test;
+mod preview_image_fetcher_test;
 mod remaining_state_writes_test;
 mod revert_test;
 mod routing_exporter_test;
