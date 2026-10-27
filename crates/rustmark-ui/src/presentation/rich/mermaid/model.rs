@@ -1,6 +1,9 @@
 //! Mermaid 各图种共用的数据模型：解析产物 `Graph`、布局产物 `Prim` / `MermaidLayout`。
+//!
+//! 几何类型走 `render` 端口层（`Pt` / `geom::Rect` / `Rgb8`），不依赖 egui
+//! （问题 F / O4）。
 
-use egui::{Color32, Pos2, Rect, Vec2};
+use crate::presentation::rich::render::{Pt, Rgb8, geom::Rect};
 
 /// 节点外形。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -68,8 +71,8 @@ pub(super) struct Graph {
 #[derive(Clone, Debug)]
 pub(super) struct Placed {
     /// 节点中心。
-    pub(super) center: Pos2,
-    pub(super) size: Vec2,
+    pub(super) center: Pt,
+    pub(super) size: Pt,
     pub(super) shape: NodeShape,
 }
 
@@ -78,41 +81,41 @@ pub(super) struct Placed {
 pub(super) enum Prim {
     /// 多边形。`radius > 0` 且为 4 点时按圆角矩形处理。
     Poly {
-        points: Vec<Pos2>,
+        points: Vec<Pt>,
         radius: f32,
         fill: bool,
         /// 子程序形的两道内竖线。
         ticks: bool,
         /// 覆盖填充色（优先于 `style.node_fill`）。`None` 时回落主题节点色——
         /// 甘特图按状态着色（done/active/crit/默认）时逐条指定。
-        fill_color: Option<Color32>,
+        fill_color: Option<Rgb8>,
         /// 覆盖描边色（优先于 `style.node_stroke`）。
-        stroke_color: Option<Color32>,
+        stroke_color: Option<Rgb8>,
     },
     Line {
-        a: Pos2,
-        b: Pos2,
+        a: Pt,
+        b: Pt,
         width: f32,
         dotted: bool,
     },
     /// 实心三角箭头。
     Arrow {
-        tip: Pos2,
-        dir: Vec2,
+        tip: Pt,
+        dir: Pt,
         len: f32,
         spread: f32,
     },
     /// 叉头（`--x`）。
-    Cross { at: Pos2, dir: Vec2, len: f32 },
+    Cross { at: Pt, dir: Pt, len: f32 },
     /// 文字。
     Text {
-        at: Pos2,
+        at: Pt,
         text: String,
         size: f32,
         /// 是否铺一块底色（边标签压线时用）。
         plate: bool,
         /// 覆盖文字色（优先于 `style.text`）。甘特图把任务名画在条内时用白色。
-        color: Option<Color32>,
+        color: Option<Rgb8>,
     },
 }
 

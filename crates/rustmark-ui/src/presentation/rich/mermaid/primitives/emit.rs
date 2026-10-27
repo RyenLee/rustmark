@@ -1,5 +1,8 @@
 //! 图元生成：emit 入口 + 节点外形 + 边线/箭头/标签。
-use egui::{Pos2, Vec2};
+//!
+//! 几何类型走 `render` 端口层（`Pt`），不依赖 egui（问题 F / O4）。
+
+use crate::presentation::rich::render::Pt;
 
 use super::super::model::{Edge, Graph, Head, LineStyle, NodeShape, Placed, Prim};
 use super::super::*;
@@ -22,10 +25,10 @@ fn push_node(prims: &mut Vec<Prim>, p: &Placed, text: &str, size: f32) {
     let (hw, hh) = (p.size.x * 0.5, p.size.y * 0.5);
     let rect_pts = |w: f32, h: f32| {
         vec![
-            Pos2::new(c.x - w, c.y - h),
-            Pos2::new(c.x + w, c.y - h),
-            Pos2::new(c.x + w, c.y + h),
-            Pos2::new(c.x - w, c.y + h),
+            Pt::new(c.x - w, c.y - h),
+            Pt::new(c.x + w, c.y - h),
+            Pt::new(c.x + w, c.y + h),
+            Pt::new(c.x - w, c.y + h),
         ]
     };
     let corners = |hw: f32, hh: f32, radius: f32, ticks: bool| Prim::Poly {
@@ -49,10 +52,10 @@ fn push_node(prims: &mut Vec<Prim>, p: &Placed, text: &str, size: f32) {
         NodeShape::Circle => prims.push(corners(hw, hh, hw.min(hh), false)),
         NodeShape::Rhombus => prims.push(Prim::Poly {
             points: vec![
-                Pos2::new(c.x, c.y - hh),
-                Pos2::new(c.x + hw, c.y),
-                Pos2::new(c.x, c.y + hh),
-                Pos2::new(c.x - hw, c.y),
+                Pt::new(c.x, c.y - hh),
+                Pt::new(c.x + hw, c.y),
+                Pt::new(c.x, c.y + hh),
+                Pt::new(c.x - hw, c.y),
             ],
             radius: 0.0,
             fill: true,
@@ -64,12 +67,12 @@ fn push_node(prims: &mut Vec<Prim>, p: &Placed, text: &str, size: f32) {
             let inset = hw * 0.5;
             prims.push(Prim::Poly {
                 points: vec![
-                    Pos2::new(c.x - hw + inset, c.y - hh),
-                    Pos2::new(c.x + hw - inset, c.y - hh),
-                    Pos2::new(c.x + hw, c.y),
-                    Pos2::new(c.x + hw - inset, c.y + hh),
-                    Pos2::new(c.x - hw + inset, c.y + hh),
-                    Pos2::new(c.x - hw, c.y),
+                    Pt::new(c.x - hw + inset, c.y - hh),
+                    Pt::new(c.x + hw - inset, c.y - hh),
+                    Pt::new(c.x + hw, c.y),
+                    Pt::new(c.x + hw - inset, c.y + hh),
+                    Pt::new(c.x - hw + inset, c.y + hh),
+                    Pt::new(c.x - hw, c.y),
                 ],
                 radius: 0.0,
                 fill: true,
@@ -82,10 +85,10 @@ fn push_node(prims: &mut Vec<Prim>, p: &Placed, text: &str, size: f32) {
             let skew = hw * 0.4;
             prims.push(Prim::Poly {
                 points: vec![
-                    Pos2::new(c.x - hw + skew, c.y - hh),
-                    Pos2::new(c.x + hw, c.y - hh),
-                    Pos2::new(c.x + hw - skew, c.y + hh),
-                    Pos2::new(c.x - hw, c.y + hh),
+                    Pt::new(c.x - hw + skew, c.y - hh),
+                    Pt::new(c.x + hw, c.y - hh),
+                    Pt::new(c.x + hw - skew, c.y + hh),
+                    Pt::new(c.x - hw, c.y + hh),
                 ],
                 radius: 0.0,
                 fill: true,
@@ -97,11 +100,11 @@ fn push_node(prims: &mut Vec<Prim>, p: &Placed, text: &str, size: f32) {
         NodeShape::Asymmetric => {
             prims.push(Prim::Poly {
                 points: vec![
-                    Pos2::new(c.x - hw, c.y - hh),
-                    Pos2::new(c.x + hw - hh * 0.6, c.y - hh),
-                    Pos2::new(c.x + hw, c.y),
-                    Pos2::new(c.x + hw - hh * 0.6, c.y + hh),
-                    Pos2::new(c.x - hw, c.y + hh),
+                    Pt::new(c.x - hw, c.y - hh),
+                    Pt::new(c.x + hw - hh * 0.6, c.y - hh),
+                    Pt::new(c.x + hw, c.y),
+                    Pt::new(c.x + hw - hh * 0.6, c.y + hh),
+                    Pt::new(c.x - hw, c.y + hh),
                 ],
                 radius: 0.0,
                 fill: true,
@@ -140,12 +143,12 @@ fn push_edge(
 
     // 自环：在节点上方绕一个小圈（`A --> A` 在状态图里很常见）。
     if e.from == e.to {
-        let top = Pos2::new(a.center.x, a.center.y - a.size.y * 0.5);
+        let top = Pt::new(a.center.x, a.center.y - a.size.y * 0.5);
         let r = size * 0.7;
         let pts = [
             top,
-            Pos2::new(top.x - r, top.y - r),
-            Pos2::new(top.x + r, top.y - r),
+            Pt::new(top.x - r, top.y - r),
+            Pt::new(top.x + r, top.y - r),
             top,
         ];
         for w in pts.windows(2) {
@@ -158,13 +161,13 @@ fn push_edge(
         }
         prims.push(Prim::Arrow {
             tip: top,
-            dir: Vec2::new(0.0, 1.0),
+            dir: Pt::new(0.0, 1.0),
             len: size * ARROW_LEN,
             spread: ARROW_SPREAD,
         });
         if let Some(label) = &e.label {
             prims.push(Prim::Text {
-                at: Pos2::new(top.x, top.y - r * 1.6),
+                at: Pt::new(top.x, top.y - r * 1.6),
                 text: label.clone(),
                 size: size * 0.85,
                 plate: false,
@@ -177,10 +180,10 @@ fn push_edge(
     // 出 / 入方向：沿主轴由 a 指向 b，另一轴上则互相靠近（正交走线）。
     let (out_dir, in_dir) = if g.horizontal {
         let sign = if b.center.x >= a.center.x { 1.0 } else { -1.0 };
-        (Vec2::new(sign, 0.0), Vec2::new(sign, 0.0))
+        (Pt::new(sign, 0.0), Pt::new(sign, 0.0))
     } else {
         let sign = if b.center.y >= a.center.y { 1.0 } else { -1.0 };
-        (Vec2::new(0.0, sign), Vec2::new(0.0, sign))
+        (Pt::new(0.0, sign), Pt::new(0.0, sign))
     };
 
     // 从节点**边界**出发而不是中心：否则线会被节点盖住一半，箭头也看不见。
@@ -240,7 +243,7 @@ fn push_edge(
 }
 
 /// 取节点边界上沿 `dir` 方向的交点。
-fn boundary_point(p: &Placed, dir: Vec2) -> Pos2 {
+fn boundary_point(p: &Placed, dir: Pt) -> Pt {
     let (hw, hh) = (p.size.x * 0.5, p.size.y * 0.5);
     // 菱形 / 圆按更小的内切半径算，让线不要插进斜边里。
     let (sx, sy) = match p.shape {
@@ -259,11 +262,11 @@ fn boundary_point(p: &Placed, dir: Vec2) -> Pos2 {
         f32::INFINITY
     };
     let k = t.min(u);
-    Pos2::new(p.center.x + dir.x * k, p.center.y + dir.y * k)
+    Pt::new(p.center.x + dir.x * k, p.center.y + dir.y * k)
 }
 
 /// 走线：同轴对齐时走直线，否则走「出边 → 中点干 → 入边」的折线。
-fn route_points(start: Pos2, end: Pos2, out_dir: Vec2, in_dir: Vec2) -> Vec<Pos2> {
+fn route_points(start: Pt, end: Pt, out_dir: Pt, in_dir: Pt) -> Vec<Pt> {
     let aligned = (out_dir.x.abs() > 0.5 && (end.y - start.y).abs() < 1.0)
         || (out_dir.y.abs() > 0.5 && (end.x - start.x).abs() < 1.0);
     if aligned {
@@ -273,27 +276,27 @@ fn route_points(start: Pos2, end: Pos2, out_dir: Vec2, in_dir: Vec2) -> Vec<Pos2
         let mid_x = (start.x + end.x) * 0.5;
         vec![
             start,
-            Pos2::new(start.x + out_dir.x * ROUTE_STUB, start.y),
-            Pos2::new(mid_x, start.y),
-            Pos2::new(mid_x, end.y),
-            Pos2::new(end.x - in_dir.x * ROUTE_STUB, end.y),
+            Pt::new(start.x + out_dir.x * ROUTE_STUB, start.y),
+            Pt::new(mid_x, start.y),
+            Pt::new(mid_x, end.y),
+            Pt::new(end.x - in_dir.x * ROUTE_STUB, end.y),
             end,
         ]
     } else {
         let mid_y = (start.y + end.y) * 0.5;
         vec![
             start,
-            Pos2::new(start.x, start.y + out_dir.y * ROUTE_STUB),
-            Pos2::new(start.x, mid_y),
-            Pos2::new(end.x, mid_y),
-            Pos2::new(end.x, end.y - in_dir.y * ROUTE_STUB),
+            Pt::new(start.x, start.y + out_dir.y * ROUTE_STUB),
+            Pt::new(start.x, mid_y),
+            Pt::new(end.x, mid_y),
+            Pt::new(end.x, end.y - in_dir.y * ROUTE_STUB),
             end,
         ]
     }
 }
 
 /// 折线的中点（用于放标签）。
-fn polyline_midpoint(pts: &[Pos2]) -> Pos2 {
+fn polyline_midpoint(pts: &[Pt]) -> Pt {
     let total: f32 = pts.windows(2).map(|w| (w[1] - w[0]).length()).sum();
     let mut want = total * 0.5;
     for w in pts.windows(2) {
@@ -304,5 +307,5 @@ fn polyline_midpoint(pts: &[Pos2]) -> Pos2 {
         }
         want -= seg;
     }
-    *pts.last().unwrap_or(&Pos2::ZERO)
+    *pts.last().unwrap_or(&Pt::zero())
 }

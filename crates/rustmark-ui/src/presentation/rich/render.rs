@@ -21,7 +21,7 @@ pub mod geom;
 pub use egui::{EguiBackend, apply_egui, rgb8_from_color32};
 pub use geom::Rect;
 
-use std::ops::{Add, Mul, Neg, Sub};
+use std::ops::{Add, Div, Mul, Neg, Sub};
 
 /// 二维点（取代 egui `Pos2` / `Vec2` 的几何语义；同时用作「点」与「自由向量」）。
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -220,5 +220,11 @@ impl Mul<f32> for &Pt {
     type Output = Pt;
     fn mul(self, s: f32) -> Pt {
         Pt::new(self.x * s, self.y * s)
+    }
+}
+impl Div<f32> for Pt {
+    type Output = Pt;
+    fn div(self, s: f32) -> Pt {
+        Pt::new(self.x / s, self.y / s)
     }
 }

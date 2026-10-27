@@ -10,7 +10,7 @@
 
 use std::collections::HashMap;
 
-use egui::{Color32, Pos2, Rect, Vec2};
+use crate::presentation::rich::render::{Pt, Rgb8, geom::Rect};
 
 use super::graph_parse::leading_word;
 use super::model::Prim;
@@ -197,22 +197,22 @@ pub(super) fn parse_gantt(src: &str) -> Result<GanttModel, MermaidError> {
 }
 
 /// 任务状态 →（填充色, 描边色）。描边取填充色向白混合 45%，即「浅描边」。
-fn status_colors(s: GanttStatus) -> (Color32, Color32) {
+fn status_colors(s: GanttStatus) -> (Rgb8, Rgb8) {
     let fill = match s {
-        GanttStatus::Done => Color32::from_rgb(0x80, 0x80, 0x80),
-        GanttStatus::Active => Color32::from_rgb(0x1f, 0x6f, 0xd6),
-        GanttStatus::Crit => Color32::from_rgb(0xd6, 0x3a, 0x3a),
-        GanttStatus::Default => Color32::from_rgb(0x55, 0x55, 0x55),
+        GanttStatus::Done => Rgb8::opaque(0x80, 0x80, 0x80),
+        GanttStatus::Active => Rgb8::opaque(0x1f, 0x6f, 0xd6),
+        GanttStatus::Crit => Rgb8::opaque(0xd6, 0x3a, 0x3a),
+        GanttStatus::Default => Rgb8::opaque(0x55, 0x55, 0x55),
     };
     (fill, mix_white(fill, 0.45))
 }
 
 /// 把颜色向白色混合 `t`（0=原色，1=白）。
-fn mix_white(c: Color32, t: f32) -> Color32 {
-    let r = (c.r() as f32 + (255.0 - c.r() as f32) * t) as u8;
-    let g = (c.g() as f32 + (255.0 - c.g() as f32) * t) as u8;
-    let b = (c.b() as f32 + (255.0 - c.b() as f32) * t) as u8;
-    Color32::from_rgb(r, g, b)
+fn mix_white(c: Rgb8, t: f32) -> Rgb8 {
+    let r = (c.r as f32 + (255.0 - c.r as f32) * t) as u8;
+    let g = (c.g as f32 + (255.0 - c.g as f32) * t) as u8;
+    let b = (c.b as f32 + (255.0 - c.b as f32) * t) as u8;
+    Rgb8::opaque(r, g, b)
 }
 
 /// 把天数序号格式化成日期轴标签（按刻度步长决定精度）。
@@ -330,7 +330,7 @@ pub(super) fn layout_gantt(
     if let Some(title) = &model.title {
         let cx = (chart_left + chart_right) * 0.5;
         prims.push(Prim::Text {
-            at: Pos2::new(cx, size * 1.0),
+            at: Pt::new(cx, size * 1.0),
             text: title.clone(),
             size: size * 1.1,
             plate: false,
@@ -345,14 +345,14 @@ pub(super) fn layout_gantt(
         if last_section != Some(t.section) {
             // section 分隔线 + 标签（左侧）。
             prims.push(Prim::Line {
-                a: Pos2::new(margin * 0.5, y),
-                b: Pos2::new(chart_right, y),
+                a: Pt::new(margin * 0.5, y),
+                b: Pt::new(chart_right, y),
                 width: line_w,
                 dotted: true,
             });
             if let Some(s) = model.sections.get(t.section) {
                 prims.push(Prim::Text {
-                    at: Pos2::new(margin * 0.5, y + row_h * 0.5),
+                    at: Pt::new(margin * 0.5, y + row_h * 0.5),
                     text: s.clone(),
                     size: size * 0.9,
                     plate: false,
@@ -363,10 +363,7 @@ pub(super) fn layout_gantt(
         }
         let x0 = chart_left + starts[i] * day_w;
         let w = (ends[i] - starts[i]).max(0.5) * day_w;
-        let bar = Rect::from_min_size(
-            Pos2::new(x0, y + (row_h - bar_h) * 0.5),
-            Vec2::new(w, bar_h),
-        );
+        let bar = Rect::from_min_size(Pt::new(x0, y + (row_h - bar_h) * 0.5), Pt::new(w, bar_h));
         let (fill, stroke) = status_colors(t.status);
         prims.push(Prim::Poly {
             points: rect_corners(bar),
@@ -382,7 +379,7 @@ pub(super) fn layout_gantt(
             text: t.name.clone(),
             size: size * 0.8,
             plate: false,
-            color: Some(Color32::WHITE),
+            color: Some(Rgb8::opaque(255, 255, 255)),
         });
         // done：画对勾（沿用主题线色，条内可见）。
         if t.status == GanttStatus::Done {
@@ -404,8 +401,8 @@ pub(super) fn layout_gantt(
         let gx = chart_left + tick * day_w;
         // 竖向网格线（虚线、细）。
         prims.push(Prim::Line {
-            a: Pos2::new(gx, top_pad),
-            b: Pos2::new(gx, axis_y),
+            a: Pt::new(gx, top_pad),
+            b: Pt::new(gx, axis_y),
             width: line_w * 0.6,
             dotted: true,
         });
@@ -416,7 +413,7 @@ pub(super) fn layout_gantt(
             date_label(base + tick as i64, step)
         };
         prims.push(Prim::Text {
-            at: Pos2::new(gx, axis_y + size * 0.25),
+            at: Pt::new(gx, axis_y + size * 0.25),
             text: label,
             size: size * 0.7,
             plate: false,
@@ -426,8 +423,8 @@ pub(super) fn layout_gantt(
     }
     // 轴基线（实线）。
     prims.push(Prim::Line {
-        a: Pos2::new(chart_left, axis_y),
-        b: Pos2::new(chart_right, axis_y),
+        a: Pt::new(chart_left, axis_y),
+        b: Pt::new(chart_right, axis_y),
         width: line_w,
         dotted: false,
     });

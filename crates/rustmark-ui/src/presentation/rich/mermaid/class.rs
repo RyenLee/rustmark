@@ -1,6 +1,6 @@
 //! `classDiagram` 类图的解析与布局。
 
-use egui::{Pos2, Rect, Vec2};
+use crate::presentation::rich::render::{Pt, geom::Rect};
 
 use super::graph_parse::leading_word;
 use super::model::Prim;
@@ -217,7 +217,7 @@ pub(super) fn layout_class(
         let x = col as f32 * col_w + size;
         let y = row as f32 * row_h + size;
         let h = box_hs[i];
-        rects.push(Rect::from_min_size(Pos2::new(x, y), Vec2::new(box_w, h)));
+        rects.push(Rect::from_min_size(Pt::new(x, y), Pt::new(box_w, h)));
     }
     let mut prims: Vec<Prim> = Vec::new();
     let mut id_rects: Vec<(String, Rect)> = Vec::new();
@@ -235,7 +235,7 @@ pub(super) fn layout_class(
         });
         // 类名（居中于表头）。
         prims.push(Prim::Text {
-            at: Pos2::new(r.left() + box_w * 0.5, r.top() + header_h * 0.5),
+            at: Pt::new(r.left() + box_w * 0.5, r.top() + header_h * 0.5),
             text: c.name.clone(),
             size,
             plate: false,
@@ -243,15 +243,15 @@ pub(super) fn layout_class(
         });
         // 表头分隔线。
         prims.push(Prim::Line {
-            a: Pos2::new(r.left(), r.top() + header_h),
-            b: Pos2::new(r.right(), r.top() + header_h),
+            a: Pt::new(r.left(), r.top() + header_h),
+            b: Pt::new(r.right(), r.top() + header_h),
             width: 1.0 * (size / 16.0).max(0.7),
             dotted: false,
         });
         // 成员行。
         for (j, m) in c.members.iter().enumerate() {
             prims.push(Prim::Text {
-                at: Pos2::new(
+                at: Pt::new(
                     r.left() + size * 0.4,
                     r.top() + header_h + member_h * (j as f32 + 0.5),
                 ),
@@ -286,10 +286,10 @@ pub(super) fn layout_class(
         let dir = if len > 1e-6 {
             delta / len
         } else {
-            Vec2::new(1.0, 0.0)
+            Pt::new(1.0, 0.0)
         };
-        let ha = rects[ai].size() * 0.5;
-        let hb = rects[bi].size() * 0.5;
+        let ha = Pt::new(rects[ai].width() * 0.5, rects[ai].height() * 0.5);
+        let hb = Pt::new(rects[bi].width() * 0.5, rects[bi].height() * 0.5);
         let (sa, sb) = (rect_boundary(ca, ha, dir), rect_boundary(cb, hb, -dir));
         let dotted = matches!(
             rel.kind,
@@ -317,10 +317,10 @@ pub(super) fn layout_class(
                 let dm = size * 0.5;
                 let d = sb;
                 let diamond = vec![
-                    Pos2::new(d.x - dm, d.y),
-                    Pos2::new(d.x, d.y - dm * 0.7),
-                    Pos2::new(d.x + dm, d.y),
-                    Pos2::new(d.x, d.y + dm * 0.7),
+                    Pt::new(d.x - dm, d.y),
+                    Pt::new(d.x, d.y - dm * 0.7),
+                    Pt::new(d.x + dm, d.y),
+                    Pt::new(d.x, d.y + dm * 0.7),
                 ];
                 prims.push(Prim::Poly {
                     points: diamond,
@@ -334,7 +334,7 @@ pub(super) fn layout_class(
             RelKind::Plain | RelKind::Dotted => {}
         }
         if let Some(label) = &rel.label {
-            let mid = Pos2::new((sa.x + sb.x) * 0.5, (sa.y + sb.y) * 0.5);
+            let mid = Pt::new((sa.x + sb.x) * 0.5, (sa.y + sb.y) * 0.5);
             prims.push(Prim::Text {
                 at: mid,
                 text: label.clone(),
@@ -346,7 +346,7 @@ pub(super) fn layout_class(
                 direct.push((
                     Rect::from_center_size(
                         mid,
-                        Vec2::new(label.chars().count() as f32 * size * 0.5 + size, size * 1.4),
+                        Pt::new(label.chars().count() as f32 * size * 0.5 + size, size * 1.4),
                     ),
                     url,
                 ));

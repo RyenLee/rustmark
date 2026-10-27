@@ -194,13 +194,25 @@ pub(super) fn draw_diagram(ui: &mut Ui, theme: &Theme, block: &BlockView, wrap: 
             let h = mermaid::fitted_height(graph, max_w);
             let (rect, _) = ui.allocate_exact_size(egui::vec2(max_w, h), egui::Sense::hover());
             let style = mermaid::MermaidStyle {
-                node_fill: theme.bg_tertiary,
-                node_stroke: theme.border,
-                text: theme.text_primary,
-                edge: theme.text_secondary,
-                label_bg: theme.code_bg,
+                node_fill: render::rgb8_from_color32(theme.bg_tertiary),
+                node_stroke: render::rgb8_from_color32(theme.border),
+                text: render::rgb8_from_color32(theme.text_primary),
+                edge: render::rgb8_from_color32(theme.text_secondary),
+                label_bg: render::rgb8_from_color32(theme.code_bg),
             };
-            mermaid::paint(ui.painter(), rect, graph, &style);
+            // 与 math 同一条路径：先发射 egui-free 的命令，再由唯一 egui
+            // 后端（`render::apply_egui`）绘制；图表恒水平居中、顶部对齐
+            // （纵向不居中，与旧 `mermaid::paint` 一致）。
+            let cmds = mermaid::commands(graph, &style);
+            render::apply_egui(
+                ui.painter(),
+                rect,
+                graph.width,
+                graph.height,
+                HAlign::Center,
+                false,
+                &cmds,
+            );
 
             // 图表内超链接可点击：把 mermaid 返回的命中区（左上角原点、
             // 已归一化，与图元同一坐标系）按 `paint` 完全相同的缩放 + 平移
@@ -225,8 +237,8 @@ pub(super) fn draw_diagram(ui: &mut Ui, theme: &Theme, block: &BlockView, wrap: 
             for (i, (hot, url)) in graph.click_targets().iter().enumerate() {
                 // 屏幕坐标下的命中矩形（与绘制同一变换）。
                 let screen = egui::Rect::from_min_max(
-                    origin + hot.min.to_vec2() * scale,
-                    origin + hot.max.to_vec2() * scale,
+                    egui::Pos2::new(origin.x + hot.min.x * scale, origin.y + hot.min.y * scale),
+                    egui::Pos2::new(origin.x + hot.max.x * scale, origin.y + hot.max.y * scale),
                 );
                 let resp = ui.interact(
                     screen,

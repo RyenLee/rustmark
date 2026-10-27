@@ -1,6 +1,6 @@
 //! `sequenceDiagram` 时序图的解析与布局。
 
-use egui::{Pos2, Rect, Vec2};
+use crate::presentation::rich::render::{Pt, geom::Rect};
 
 use super::graph_parse::leading_word;
 use super::model::Prim;
@@ -252,21 +252,21 @@ pub(super) fn layout_sequence(
     for (i, (id, label)) in model.parts.iter().enumerate() {
         let x = xs[i];
         prims.push(Prim::Line {
-            a: Pos2::new(x, top),
-            b: Pos2::new(x, bottom),
+            a: Pt::new(x, top),
+            b: Pt::new(x, bottom),
             width: 1.0 * (size / 16.0).max(0.7),
             dotted: true,
         });
         prims.push(Prim::Text {
-            at: Pos2::new(x, size * 0.8),
+            at: Pt::new(x, size * 0.8),
             text: label.clone(),
             size: size * 0.9,
             plate: false,
             color: None,
         });
         let r = Rect::from_min_max(
-            Pos2::new(x - col_w * 0.45, 0.0),
-            Pos2::new(x + col_w * 0.45, bottom),
+            Pt::new(x - col_w * 0.45, 0.0),
+            Pt::new(x + col_w * 0.45, bottom),
         );
         id_rects.push((id.clone(), r));
         if let Some(url) = first_md_link(label) {
@@ -289,31 +289,31 @@ pub(super) fn layout_sequence(
                 let xt = xs[ti];
                 let sign = if xt >= xf { 1.0 } else { -1.0 };
                 prims.push(Prim::Line {
-                    a: Pos2::new(xf, y),
-                    b: Pos2::new(xt, y),
+                    a: Pt::new(xf, y),
+                    b: Pt::new(xt, y),
                     width: line_w,
                     dotted: m.head == SeqHead::Dotted,
                 });
                 match m.head {
                     SeqHead::Solid | SeqHead::Dotted => {
                         prims.push(Prim::Arrow {
-                            tip: Pos2::new(xt, y),
-                            dir: Vec2::new(sign, 0.0),
+                            tip: Pt::new(xt, y),
+                            dir: Pt::new(sign, 0.0),
                             len: size * ARROW_LEN,
                             spread: ARROW_SPREAD,
                         });
                     }
                     SeqHead::Cross => {
                         prims.push(Prim::Cross {
-                            at: Pos2::new(xt, y),
-                            dir: Vec2::new(sign, 0.0),
+                            at: Pt::new(xt, y),
+                            dir: Pt::new(sign, 0.0),
                             len: size * ARROW_LEN * 0.7,
                         });
                     }
                 }
                 if !m.label.is_empty() {
                     prims.push(Prim::Text {
-                        at: Pos2::new((xf + xt) * 0.5, y),
+                        at: Pt::new((xf + xt) * 0.5, y),
                         text: m.label.clone(),
                         size: size * 0.85,
                         plate: true,
@@ -325,8 +325,8 @@ pub(super) fn layout_sequence(
                     let hi = xf.max(xt) + size * 0.5;
                     direct.push((
                         Rect::from_min_max(
-                            Pos2::new(lo, y - size * 0.6),
-                            Pos2::new(hi, y + size * 0.6),
+                            Pt::new(lo, y - size * 0.6),
+                            Pt::new(hi, y + size * 0.6),
                         ),
                         url,
                     ));
@@ -352,10 +352,8 @@ pub(super) fn layout_sequence(
                     NoteKind::LeftOf => (xs[ai] - col_w * 1.3, xs[ai] - col_w * 0.3),
                     NoteKind::RightOf => (xs[ai] + col_w * 0.3, xs[ai] + col_w * 1.3),
                 };
-                let rect = Rect::from_min_max(
-                    Pos2::new(x0, y - size * 0.7),
-                    Pos2::new(x1, y + size * 0.7),
-                );
+                let rect =
+                    Rect::from_min_max(Pt::new(x0, y - size * 0.7), Pt::new(x1, y + size * 0.7));
                 prims.push(Prim::Poly {
                     points: rect_corners(rect),
                     radius: 2.0,

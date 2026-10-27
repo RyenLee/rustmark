@@ -1,6 +1,6 @@
 //! 流程图布局：分层（Sugiyama 骨架）→ 层内排序 → 定位。
 
-use egui::{Pos2, Rect, Vec2};
+use crate::presentation::rich::render::{Pt, geom::Rect};
 
 use super::model::{Graph, NodeShape, Placed};
 use super::primitives::{collect_clicks, emit, finalize, first_md_link};
@@ -142,7 +142,7 @@ fn order_within_rank(g: &Graph, ranks: &[usize]) -> Vec<Vec<usize>> {
 }
 
 /// 节点尺寸：由文本量 + 外形决定。
-fn node_size(text: &str, shape: NodeShape, size: f32, measure: Measure<'_>) -> Vec2 {
+fn node_size(text: &str, shape: NodeShape, size: f32, measure: Measure<'_>) -> Pt {
     let tw = measure(text, size);
     let pad_x = size * NODE_PAD_X;
     let pad_y = size * NODE_PAD_Y;
@@ -169,7 +169,7 @@ fn node_size(text: &str, shape: NodeShape, size: f32, measure: Measure<'_>) -> V
         }
         _ => {}
     }
-    Vec2::new(w.max(size * 1.2), h.max(size * 1.5))
+    Pt::new(w.max(size * 1.2), h.max(size * 1.5))
 }
 
 /// 定位：rank → 主坐标，rank 内次序 → 次坐标。
@@ -177,7 +177,7 @@ fn node_size(text: &str, shape: NodeShape, size: f32, measure: Measure<'_>) -> V
 /// 内部一律按「流向水平」计算，需要时在末尾把主轴镜像 / 交换——
 /// 若为横竖两种流向各写一套定位，两套的分支点迟早会不一致。
 fn place(g: &Graph, layers: &[Vec<usize>], size: f32, measure: Measure<'_>) -> Vec<Placed> {
-    let sizes: Vec<Vec2> = g
+    let sizes: Vec<Pt> = g
         .nodes
         .iter()
         .map(|(t, s)| node_size(t, *s, size, measure))
@@ -217,8 +217,8 @@ fn place(g: &Graph, layers: &[Vec<usize>], size: f32, measure: Measure<'_>) -> V
 
     let mut out = vec![
         Placed {
-            center: Pos2::ZERO,
-            size: Vec2::ZERO,
+            center: Pt::zero(),
+            size: Pt::zero(),
             shape: NodeShape::Rect,
         };
         g.nodes.len()
@@ -237,7 +237,7 @@ fn place(g: &Graph, layers: &[Vec<usize>], size: f32, measure: Measure<'_>) -> V
             };
             secondary += sec_extent + gap;
             out[*v] = Placed {
-                center: Pos2::new(px + s.x * 0.5, py + s.y * 0.5),
+                center: Pt::new(px + s.x * 0.5, py + s.y * 0.5),
                 size: s,
                 shape: g.nodes[*v].1,
             };

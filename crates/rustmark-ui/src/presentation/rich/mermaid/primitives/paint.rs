@@ -1,9 +1,9 @@
-//! egui 绘制、finalize 收尾、坐标工具与热点解析。
+//! 图元收尾工具、热点解析，与「`Prim` → `RenderCommand`」的几何翻译（问题 F / O4）。
+//!
+//! 本文件不再 `use egui`：几何用 `render` 端口层的 `Pt` / `geom::Rect` / `Rgb8`，
+//! 绘制由唯一 egui 后端 `render::apply_egui` 完成。
 
-use egui::text::LayoutJob;
-use egui::{
-    Color32, CornerRadius, FontId, Painter, Pos2, Rect, Shape, Stroke, StrokeKind, TextFormat, Vec2,
-};
+use crate::presentation::rich::render::{Pt, RenderCommand, Rgb8, TextAnchor, geom::Rect};
 
 use super::super::model::{MermaidLayout, Prim};
 
@@ -11,15 +11,15 @@ use super::super::model::{MermaidLayout, Prim};
 #[derive(Clone, Copy, Debug)]
 pub struct MermaidStyle {
     /// 节点填充色。
-    pub node_fill: Color32,
+    pub node_fill: Rgb8,
     /// 节点描边色。
-    pub node_stroke: Color32,
+    pub node_stroke: Rgb8,
     /// 节点文字色。
-    pub text: Color32,
+    pub text: Rgb8,
     /// 连线色。
-    pub edge: Color32,
+    pub edge: Rgb8,
     /// 边标签底色。
-    pub label_bg: Color32,
+    pub label_bg: Rgb8,
 }
 
 /// 一个图元的外接框。
@@ -33,17 +33,17 @@ fn prim_bounds(p: &Prim) -> Rect {
             len,
             spread,
         } => Rect::from_two_pos(*tip, *tip - *dir * *len).expand(*len * *spread),
-        Prim::Cross { at, len, .. } => Rect::from_center_size(*at, Vec2::splat(*len * 2.0)),
+        Prim::Cross { at, len, .. } => Rect::from_center_size(*at, Pt::splat(*len * 2.0)),
         Prim::Text { at, text, size, .. } => {
             // 用「字符数 × 半字号」估外接框：这里只需要**足够大**。
             // 真实宽度由绘制阶段的字体度量决定，估算偏差只让版面多一点留白。
             let w = text.chars().count() as f32 * *size * 0.55;
-            Rect::from_center_size(*at, Vec2::new(w.max(*size), *size * 1.5))
+            Rect::from_center_size(*at, Pt::new(w.max(*size), *size * 1.5))
         }
     }
 }
 
-fn shift_prim(p: Prim, d: Vec2) -> Prim {
+fn shift_prim(p: Prim, d: Pt) -> Prim {
     match p {
         Prim::Poly {
             points,
@@ -103,163 +103,84 @@ fn shift_prim(p: Prim, d: Vec2) -> Prim {
     }
 }
 
-/// 把版面按可用宽度缩放到 `rect` 里，返回实际占用高度。
+/// 把版面翻译成 egui-free 的绘制命令序列（着色由 `style` 提供）。
 ///
-/// 宽度不足时**整体等比缩小**（含字号与线宽）——宁可整张图小一点，
-/// 也不要右侧被裁掉：图的信息全在结构上，被裁掉的结构等于没画。
-pub fn paint(painter: &Painter, rect: Rect, layout: &MermaidLayout, style: &MermaidStyle) -> f32 {
-    let scale = if layout.width > rect.width() && layout.width > 0.0 {
-        rect.width() / layout.width
-    } else {
-        1.0
-    };
-    let origin = Pos2::new(
-        rect.left() + (rect.width() - layout.width * scale).max(0.0) * 0.5,
-        rect.top(),
-    );
-    let map = |p: Pos2| origin + p.to_vec2() * scale;
+/// 原点与缩放由下游 `render::apply_egui` 负责——本函数只在**内容局部坐标**
+/// 里把每个 `Prim` 翻译成对应的 `RenderCommand`，与旧 `paint` 的居中 / 等比
+/// 缩放公式（见 `render::apply_egui`）解耦。
+pub fn commands(layout: &MermaidLayout, style: &MermaidStyle) -> Vec<RenderCommand> {
+    layout
+        .prims
+        .iter()
+        .map(|p| prim_to_command(p, style))
+        .collect()
+}
 
-    for prim in &layout.prims {
-        match prim {
-            Prim::Poly {
-                points,
-                radius,
-                fill,
-                ticks,
-                fill_color,
-                stroke_color,
-            } => {
-                let pts: Vec<Pos2> = points.iter().map(|p| map(*p)).collect();
-                let fill_c = fill_color.unwrap_or(style.node_fill);
-                let stroke_c = stroke_color.unwrap_or(style.node_stroke);
-                let stroke = Stroke::new(1.2 * scale, stroke_c);
-                if *fill {
-                    let r = Rect::from_points(&pts);
-                    if pts.len() == 4 && *radius > 0.0 {
-                        painter.rect_filled(
-                            r,
-                            CornerRadius::same(radius.round().clamp(0.0, 255.0) as u8),
-                            fill_c,
-                        );
-                    } else {
-                        painter.add(Shape::convex_polygon(pts.clone(), fill_c, Stroke::NONE));
-                    }
-                }
-                // 描边：圆角矩形用 `rect_stroke`，其余多边形闭合折线。
-                let r = Rect::from_points(&pts);
-                if pts.len() == 4 && *radius > 0.0 {
-                    painter.rect_stroke(
-                        r,
-                        CornerRadius::same(radius.round().clamp(0.0, 255.0) as u8),
-                        stroke,
-                        StrokeKind::Inside,
-                    );
-                } else {
-                    let mut closed = pts.clone();
-                    if let Some(first) = pts.first() {
-                        closed.push(*first);
-                    }
-                    painter.add(Shape::line(closed, stroke));
-                }
-                if *ticks {
-                    // 子程序形：左右各一道内竖线。
-                    for t in [0.25_f32, 0.75] {
-                        let x = r.left() + r.width() * t;
-                        painter.line_segment(
-                            [Pos2::new(x, r.top()), Pos2::new(x, r.bottom())],
-                            Stroke::new(1.0 * scale, stroke_c),
-                        );
-                    }
-                }
-            }
-            Prim::Line {
-                a,
-                b,
-                width,
-                dotted,
-            } => {
-                let (a, b) = (map(*a), map(*b));
-                let stroke = Stroke::new(width * scale, style.edge);
-                if *dotted {
-                    painter.extend(Shape::dashed_line(
-                        &[a, b],
-                        stroke,
-                        4.0 * scale,
-                        3.0 * scale,
-                    ));
-                } else {
-                    painter.line_segment([a, b], stroke);
-                }
-            }
-            Prim::Arrow {
-                tip,
-                dir,
-                len,
-                spread,
-            } => {
-                let tip = map(*tip);
-                let len = len * scale;
-                // 等比缩放不改变方向，故 `dir` 直接用原值。
-                let side = Vec2::new(-dir.y, dir.x);
-                let back = tip - *dir * len;
-                painter.add(Shape::convex_polygon(
-                    vec![
-                        tip,
-                        back + side * len * *spread,
-                        back - side * len * *spread,
-                    ],
-                    style.edge,
-                    Stroke::NONE,
-                ));
-            }
-            Prim::Cross { at, dir, len } => {
-                let at = map(*at);
-                let len = len * scale;
-                let side = Vec2::new(-dir.y, dir.x);
-                for s in [1.0_f32, -1.0] {
-                    painter.line_segment(
-                        [at, at + (*dir + side * s) * len * 0.9],
-                        Stroke::new(1.4 * scale, style.edge),
-                    );
-                }
-            }
-            Prim::Text {
-                at,
-                text,
-                size,
-                plate,
-                color,
-            } => {
-                if text.is_empty() {
-                    continue;
-                }
-                let at = map(*at);
-                let text_c = color.unwrap_or(style.text);
-                let mut job = LayoutJob::default();
-                job.append(
-                    text,
-                    0.0,
-                    TextFormat {
-                        font_id: FontId::proportional(size * scale),
-                        color: text_c,
-                        ..Default::default()
-                    },
-                );
-                let galley = painter.layout_job(job);
-                let pos = at - galley.size() * 0.5;
-                if *plate {
-                    // 边标签：先铺一块底色，否则线从字缝里穿过去读不清。
-                    painter.rect_filled(
-                        Rect::from_center_size(at, galley.size() + Vec2::splat(4.0 * scale)),
-                        CornerRadius::same(2),
-                        style.label_bg,
-                    );
-                }
-                painter.galley(pos, galley, style.text);
-            }
-        }
+/// 单个 `Prim` → `RenderCommand`。
+fn prim_to_command(p: &Prim, style: &MermaidStyle) -> RenderCommand {
+    match p {
+        Prim::Poly {
+            points,
+            radius,
+            fill,
+            ticks,
+            fill_color,
+            stroke_color,
+        } => RenderCommand::Poly {
+            points: points.clone(),
+            radius: *radius,
+            fill: *fill,
+            ticks: *ticks,
+            fill_color: fill_color.unwrap_or(style.node_fill),
+            stroke_color: stroke_color.unwrap_or(style.node_stroke),
+        },
+        Prim::Line {
+            a,
+            b,
+            width,
+            dotted,
+        } => RenderCommand::Line {
+            a: *a,
+            b: *b,
+            width: *width,
+            dotted: *dotted,
+            color: style.edge,
+        },
+        Prim::Arrow {
+            tip,
+            dir,
+            len,
+            spread,
+        } => RenderCommand::Arrow {
+            tip: *tip,
+            dir: *dir,
+            len: *len,
+            spread: *spread,
+            color: style.edge,
+        },
+        Prim::Cross { at, dir, len } => RenderCommand::Cross {
+            at: *at,
+            dir: *dir,
+            len: *len,
+            color: style.edge,
+        },
+        Prim::Text {
+            at,
+            text,
+            size,
+            plate,
+            color,
+        } => RenderCommand::Text {
+            at: *at,
+            text: text.clone(),
+            size: *size,
+            italic: false,
+            anchor: TextAnchor::Center,
+            plate: *plate,
+            plate_bg: style.label_bg,
+            color: color.unwrap_or(style.text),
+        },
     }
-    layout.height * scale
 }
 
 /// 按可用宽度等比缩放后占用的高度（调用方排布卡片时用）。
@@ -301,8 +222,8 @@ pub fn finalize(
     for (r, _) in &direct {
         bounds = Some(union_opt(bounds, *r));
     }
-    let bounds = bounds.unwrap_or_else(|| Rect::from_min_size(Pos2::ZERO, Vec2::splat(1.0)));
-    let offset = -bounds.min.to_vec2();
+    let bounds = bounds.unwrap_or_else(|| Rect::from_min_size(Pt::zero(), Pt::splat(1.0)));
+    let offset = -bounds.min;
     let prims: Vec<Prim> = prims.into_iter().map(|p| shift_prim(p, offset)).collect();
     let mut hotspots: Vec<(Rect, String)> = Vec::new();
     for (id, r) in &id_rects {
@@ -378,17 +299,17 @@ pub fn first_md_link(text: &str) -> Option<String> {
 }
 
 /// 轴对齐矩形的四个角点（用于 `Poly`）。
-pub fn rect_corners(r: Rect) -> Vec<Pos2> {
+pub fn rect_corners(r: Rect) -> Vec<Pt> {
     vec![
-        Pos2::new(r.left(), r.top()),
-        Pos2::new(r.right(), r.top()),
-        Pos2::new(r.right(), r.bottom()),
-        Pos2::new(r.left(), r.bottom()),
+        Pt::new(r.left(), r.top()),
+        Pt::new(r.right(), r.top()),
+        Pt::new(r.right(), r.bottom()),
+        Pt::new(r.left(), r.bottom()),
     ]
 }
 
 /// 矩形（中心 + 半尺寸）沿 `dir` 方向到边界的交点。
-pub fn rect_boundary(center: Pos2, half: Vec2, dir: Vec2) -> Pos2 {
+pub fn rect_boundary(center: Pt, half: Pt, dir: Pt) -> Pt {
     let t = if dir.x.abs() > f32::EPSILON {
         half.x / dir.x.abs()
     } else {
@@ -400,7 +321,7 @@ pub fn rect_boundary(center: Pos2, half: Vec2, dir: Vec2) -> Pos2 {
         f32::INFINITY
     };
     let k = t.min(u);
-    Pos2::new(center.x + dir.x * k, center.y + dir.y * k)
+    Pt::new(center.x + dir.x * k, center.y + dir.y * k)
 }
 
 /// 在矩形里画一个对勾（两段 `Line`），表示「已完成」。
@@ -409,14 +330,14 @@ pub fn push_check(prims: &mut Vec<Prim>, r: Rect, w: f32) {
     let cy = r.center().y;
     let s = r.height() * 0.25;
     prims.push(Prim::Line {
-        a: Pos2::new(cx - s, cy),
-        b: Pos2::new(cx, cy + s),
+        a: Pt::new(cx - s, cy),
+        b: Pt::new(cx, cy + s),
         width: w,
         dotted: false,
     });
     prims.push(Prim::Line {
-        a: Pos2::new(cx, cy + s),
-        b: Pos2::new(cx + s * 1.6, cy - s),
+        a: Pt::new(cx, cy + s),
+        b: Pt::new(cx + s * 1.6, cy - s),
         width: w,
         dotted: false,
     });

@@ -41,7 +41,7 @@
 //! - `model`：各图种共用的数据模型（`Graph` / `Prim` / [`MermaidLayout`]）；
 //! - `graph_parse` / `graph_layout`：流程图解析与 Sugiyama 分层布局；
 //! - `flow_js`：flowchart.js 语法的解析（复用同一布局管线）；
-//! - `primitives`：图元生成、坐标归一化收尾与 egui 绘制；
+//! - `primitives`：图元生成、坐标归一化收尾与 `Prim` → `RenderCommand` 翻译；
 //! - `sequence` / `class` / `gantt`：时序图 / 类图 / 甘特图；
 //! - `tests`：外置单元测试。
 
@@ -58,7 +58,7 @@ mod sequence;
 mod tests;
 
 pub use self::model::MermaidLayout;
-pub use self::primitives::{MermaidStyle, fitted_height, paint, prim_count};
+pub use self::primitives::{MermaidStyle, commands, fitted_height, prim_count};
 
 use self::class::layout_class;
 use self::gantt::layout_gantt;
