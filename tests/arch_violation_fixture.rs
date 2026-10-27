@@ -270,6 +270,11 @@ fn every_library_layer_name_is_forbidden_in_tests() {
 /// 一视同仁——写错布局既不报错、也不影响测试。规则若只写在约束文档里，
 /// 下一次重构就会悄悄回退（2026-10-22 复核时 `fonts/` 与 `tests/support/`
 /// 两处存量正是这样活下来的）。
+///
+/// R-02（2026-10-27）把 `rustmark-shared` 二分到 `shared/kernel/` 与
+/// `shared/support/`，正是「`xxx.rs` + `xxx/`」布局的**多层嵌套**形态：
+/// 拆分时会顺手写成 `kernel/mod.rs` / `support/mod.rs`，编译器同样不报。
+/// 故此处除顶层 `shared/mod.rs` 外，另钉两个新子目录的 `mod.rs` 必须被捕获。
 #[test]
 fn mod_rs_is_rejected_in_src_and_tests() {
     let dir = tempfile::tempdir().unwrap();
@@ -279,8 +284,15 @@ fn mod_rs_is_rejected_in_src_and_tests() {
     // 合法形态：层根文件 `shared.rs` + 同名目录里的子模块。
     write_fixture(&src_root, "shared.rs", "//! x\npub mod gateway;\n");
     write_fixture(&src_root, "shared/gateway.rs", "//! x\n");
-    // 违规形态：src 与 tests 各一处。
+    // R-02 的多层嵌套合法形态：`kernel.rs` + `kernel/`、`support.rs` + `support/`。
+    write_fixture(&src_root, "shared/kernel.rs", "//! x\npub mod dialog;\n");
+    write_fixture(&src_root, "shared/kernel/dialog.rs", "//! x\n");
+    write_fixture(&src_root, "shared/support.rs", "//! x\npub mod text;\n");
+    write_fixture(&src_root, "shared/support/text.rs", "//! x\n");
+    // 违规形态：src 顶层、tests 侧，以及 R-02 两个新子目录各一处。
     write_fixture(&src_root, "shared/mod.rs", "//! x\n");
+    write_fixture(&src_root, "shared/kernel/mod.rs", "//! x\n");
+    write_fixture(&src_root, "shared/support/mod.rs", "//! x\n");
     write_fixture(&tests_root, "support/mod.rs", "//! x\n");
 
     let violations = arch_check::scan_with_tests(&src_root, &tests_root);
@@ -290,18 +302,21 @@ fn mod_rs_is_rejected_in_src_and_tests() {
         .collect();
     assert_eq!(
         mod_hits.len(),
-        2,
-        "src 与 tests 下的 mod.rs 应各报一条，实际：{:?}",
+        4,
+        "src 顶层 + R-02 两个新子目录 + tests 侧各报一条，实际：{:?}",
         described(&violations)
     );
-    assert!(
-        mod_hits.iter().any(|v| v.file == "shared/mod.rs"),
-        "src 侧应报 shared/mod.rs：{mod_hits:?}"
-    );
-    assert!(
-        mod_hits.iter().any(|v| v.file == "tests/support/mod.rs"),
-        "tests 侧应带 tests/ 前缀：{mod_hits:?}"
-    );
+    for expected in [
+        "shared/mod.rs",
+        "shared/kernel/mod.rs",
+        "shared/support/mod.rs",
+        "tests/support/mod.rs",
+    ] {
+        assert!(
+            mod_hits.iter().any(|v| v.file == expected),
+            "应报 {expected}：{mod_hits:?}"
+        );
+    }
     for v in &mod_hits {
         assert_eq!(v.line, 1, "文件布局违规报首行：{v:?}");
         assert!(
@@ -309,14 +324,21 @@ fn mod_rs_is_rejected_in_src_and_tests() {
             "文案应点名规则与禁用文件名：{v:?}"
         );
     }
-    // 「`xxx.rs` + `xxx/`」是合法布局，不得误报。
-    assert!(
-        !violations
-            .iter()
-            .any(|v| v.file == "shared.rs" || v.file == "shared/gateway.rs"),
-        "合法布局不应报错，实际：{:?}",
-        described(&violations)
-    );
+    // 「`xxx.rs` + `xxx/`」是合法布局（含 R-02 的两层嵌套），不得误报。
+    for legal in [
+        "shared.rs",
+        "shared/gateway.rs",
+        "shared/kernel.rs",
+        "shared/kernel/dialog.rs",
+        "shared/support.rs",
+        "shared/support/text.rs",
+    ] {
+        assert!(
+            !violations.iter().any(|v| v.file == legal),
+            "合法布局 {legal} 不应报错，实际：{:?}",
+            described(&violations)
+        );
+    }
 }
 
 /// 表现层的「更窄豁免前缀」**不**适用于 `tests/` 侧。
