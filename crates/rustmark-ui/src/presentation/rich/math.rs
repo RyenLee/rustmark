@@ -39,8 +39,9 @@
 //!
 //! # 模块结构
 //!
-//! 三段管线各占一个私有子模块，公共入口（`layout` / `paint` /
-//! `fitted_height`）、错误类型、排版常量与度量类型留在本 facade：
+//! 三段管线各占一个私有子模块，公共入口（`layout` / `emit` /
+//! `fitted_height`）——`emit` 产出 egui-free 的几何命令，由 `render` 端口层的
+//! 唯一 egui 后端绘制（问题 F / O4）——、错误类型、排版常量与度量类型留在本 facade：
 //!
 //! - `symbols`：命令 → 字形的命名表与函数名 / 环境名单；
 //! - `model`：语法树（`Node` / `MathFont` / `Accent`）与树变换；
@@ -59,7 +60,7 @@ mod symbols;
 mod tests;
 
 pub use self::layout::MathLayout;
-pub use self::paint::{fitted_height, paint};
+pub use self::paint::{emit, fitted_height};
 
 use self::layout::{Ctx, layout_nodes};
 use self::model::mark_stacked;

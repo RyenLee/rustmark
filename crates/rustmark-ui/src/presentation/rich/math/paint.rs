@@ -1,41 +1,26 @@
-//! 绘制：把排版结果画进 egui `Painter`，含等比缩放高度的预算。
+//! 几何发射：把排版结果转成 egui-free 的 [`RenderCommand`] 序列（问题 F / O4）。
+//!
+//! 旧的 `paint` 直接调 egui；现拆为「发射几何」（本文件）＋「唯一 egui 后端绘制」
+//! （见 `render` 端口层、`render::apply_egui`）。本文件不再 `use egui`，
+//! 使无头 / 导出环境可复用同一套排版而不背负 egui。
 
-use egui::text::{LayoutJob, TextFormat};
-use egui::{Align2, Color32, FontId, Painter, Pos2, Rect, Stroke, Vec2};
-
+use super::super::render::{Pt, RenderCommand, Rgb8, TextAnchor};
 use super::layout::{Item, MathLayout};
 use super::model::MathFont;
 
-/// 把版面画到 `rect` 里，返回实际占用的高度。
+/// 把排版结果发射成一组 egui-free 的绘制命令。
 ///
-/// `rect` 是**可用区域**；`align` 决定内容在其中的水平落点
-/// （块级公式居中、行内公式左对齐）。宽度不足时整体等比缩小（含字号），
-/// 与 root crate 的 `crate::presentation::views::mermaid::paint`（文字指路不成链接）
-/// 同一策略：宁可公式小一点，也不要右侧被裁掉——
-/// 被裁掉的项在数学上会**改变含义**（`a+b=c` 裁成 `a+b`）。
-pub fn paint(
-    painter: &Painter,
-    rect: Rect,
-    layout: &MathLayout,
-    color: Color32,
-    align: Align2,
-) -> f32 {
-    let scale = if layout.width > rect.width() && layout.width > 0.0 {
-        rect.width() / layout.width
-    } else {
-        1.0
-    };
-    let used_w = layout.width * scale;
-    let used_h = layout.height() * scale;
-    // 基线左端的绝对位置：纵向把内容居中，横向按 `align`。
-    let v_extra = (rect.height() - used_h).max(0.0) * 0.5;
-    let origin_y = rect.top() + v_extra + layout.ascent * scale;
-    let origin_x = match align.x() {
-        egui::Align::Min => rect.left(),
-        egui::Align::Center => rect.left() + (rect.width() - used_w).max(0.0) * 0.5,
-        egui::Align::Max => rect.right() - used_w,
-    };
-    let to_pos = |x: f32, y: f32| Pos2::new(origin_x + x * scale, origin_y + y * scale);
+/// 坐标沿用 `layout` 的「基线左端」约定（`y` 向上为负）。为复刻旧 `paint` 的
+/// 纵向公式 `origin_y = rect.top() + v_extra + ascent * scale`，这里把 `ascent`
+/// 折叠进每个 `y`（`y' = y + ascent`），于是下游 `render::apply_egui` 以
+/// `rect.top()` 为纵轴原点、配合 `v_center = true`（承担 `v_extra`）即可等价。
+///
+/// 水平落点（左 / 中 / 右）由调用方经 `apply_egui` 的 `h_align` 传入，本函数
+/// **不**预偏移 `x`：预偏移需要 `rect` 宽度，而发射阶段拿不到（见任务说明）。
+pub fn emit(layout: &MathLayout, color: Rgb8) -> Vec<RenderCommand> {
+    let dy = layout.ascent; // 基线 → 内容顶的位移，折叠进 y
+    let c = color;
+    let mut cmds: Vec<RenderCommand> = Vec::with_capacity(layout.items.len());
     for item in &layout.items {
         match item {
             Item::Text {
@@ -48,57 +33,38 @@ pub fn paint(
                 if text.is_empty() {
                     continue;
                 }
-                // 斜体：`FontId` 里没有「斜体位」，但 epaint 的
-                // `TextFormat::italics` 会把字形**倾斜合成**（见 epaint
-                // `text_layout.rs` 的 italics 分支）。故数学变量（`x`）
-                // 走 `LayoutJob` 而不是 `painter.text`。
-                //
-                // 双线体（`\mathbb{R}`）在 epaint 里没有对应字形族——
-                // 这是本引擎**已知的表现力缺口**，不假装支持：`\mathbb`
-                // 只做「正体」处理，视觉上与 `\mathrm` 相同。
-                let mut job = LayoutJob::default();
-                job.append(
-                    text,
-                    0.0,
-                    TextFormat {
-                        font_id: FontId::proportional(*size * scale),
-                        color,
-                        italics: matches!(font, MathFont::Italic | MathFont::Calligraphic),
-                        ..Default::default()
-                    },
-                );
-                let galley = painter.layout_job(job);
-                // 基线对齐：`Align2` 只有「外框」档位（Top/Center/Bottom），
-                // 没有基线档位。直接把 `y` 当外框顶边会让每个公式整体上浮
-                // 约 0.2em——分数与上下标会跟着一起飘。故先量一次拿到真实的
-                // 基线偏移（行顶 + 首个字形的基线位置）。
-                let baseline_offset = galley
-                    .rows
-                    .first()
-                    .map(|row| row.pos.y + row.row.glyphs.first().map_or(0.0, |glyph| glyph.pos.y))
-                    .unwrap_or(0.0);
-                painter.galley(
-                    to_pos(*x, *y) - Vec2::new(0.0, baseline_offset),
-                    galley,
-                    color,
-                );
+                cmds.push(RenderCommand::Text {
+                    at: Pt::new(*x, *y + dy),
+                    text: text.clone(),
+                    size: *size,
+                    italic: matches!(*font, MathFont::Italic | MathFont::Calligraphic),
+                    anchor: TextAnchor::BaselineLeft,
+                    plate: false,
+                    plate_bg: Rgb8::opaque(0, 0, 0),
+                    color: c,
+                });
             }
             Item::Line { from, to, width } => {
-                painter.line_segment(
-                    [to_pos(from.0, from.1), to_pos(to.0, to.1)],
-                    Stroke::new(*width * scale, color),
-                );
+                cmds.push(RenderCommand::Line {
+                    a: Pt::new(from.0, from.1 + dy),
+                    b: Pt::new(to.0, to.1 + dy),
+                    width: *width,
+                    dotted: false,
+                    color: c,
+                });
             }
             Item::Rect { x, y, w, h } => {
-                painter.rect_filled(
-                    Rect::from_min_size(to_pos(*x, *y), Vec2::new(*w * scale, *h * scale)),
-                    0.0,
-                    color,
-                );
+                cmds.push(RenderCommand::Rect {
+                    pos: Pt::new(*x, *y + dy),
+                    size: Pt::new(*w, *h),
+                    radius: 0.0,
+                    color: c,
+                    fill: true,
+                });
             }
         }
     }
-    used_h
+    cmds
 }
 
 /// 按可用宽度等比缩放后占用的高度（调用方排布卡片时用）。

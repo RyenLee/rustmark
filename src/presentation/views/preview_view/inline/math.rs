@@ -6,8 +6,9 @@
 //! 引擎二维排版后按**基线**拼回文字流，正是官方 KaTeX 的观感。
 
 use egui::epaint::text::PlacedRow;
-use egui::{Align2, Color32, FontId, Galley, Pos2, Rect, Ui, Vec2};
+use egui::{Color32, FontId, Galley, Pos2, Rect, Ui, Vec2};
 
+use crate::presentation::rich::render::{self, HAlign};
 use crate::presentation::theme::builtin::Theme;
 use crate::presentation::view_context::EditorViewContext;
 use crate::presentation::views::math::{self, MathLayout, Measure};
@@ -266,14 +267,17 @@ pub(crate) fn render_with_math(
                     .galley(origin + pos.to_vec2(), galley.clone(), color);
             }
             Cmd::Math { layout, rect } => {
-                // 矩形高度已等于内容高度，`paint` 的纵向居中成为恒等操作，
+                // 矩形高度已等于内容高度，`apply_egui` 的纵向居中成为恒等操作，
                 // 于是版面基线正好落在行基线上。
-                math::paint(
+                let cmds = math::emit(layout, render::rgb8_from_color32(color));
+                render::apply_egui(
                     ui.painter(),
                     rect.translate(origin.to_vec2()),
-                    layout,
-                    color,
-                    Align2::LEFT_CENTER,
+                    layout.width,
+                    layout.height(),
+                    HAlign::Left,
+                    true,
+                    &cmds,
                 );
             }
         }

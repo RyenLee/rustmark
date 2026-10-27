@@ -18,7 +18,7 @@
 mod egui;
 pub mod geom;
 
-pub use egui::{EguiBackend, apply_egui};
+pub use egui::{EguiBackend, apply_egui, rgb8_from_color32};
 pub use geom::Rect;
 
 use std::ops::{Add, Mul, Neg, Sub};

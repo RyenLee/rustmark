@@ -14,7 +14,7 @@
 //!
 //! | 引擎 | 排版（纯函数） | 绘制 | 尺寸 | 错误 |
 //! |---|---|---|---|---|
-//! | `math` | `layout(&str, size: f32, display: bool, Measure) -> Result<MathLayout, MathError>` | `paint(&Painter, Pos2, &MathLayout, f32, Color32)` | `fitted_height` | `MathError` |
+//! | `math` | `layout(&str, size: f32, display: bool, Measure) -> Result<MathLayout, MathError>` | `emit(&MathLayout, Rgb8) -> Vec<RenderCommand>`（绘制交给 `render::apply_egui`） | `fitted_height` | `MathError` |
 //! | `mermaid` | `layout(&str, size: f32, Measure) -> Result<MermaidLayout, MermaidError>` | `paint(&Painter, Rect, &MermaidLayout, &MermaidStyle)` | `fitted_height` | `MermaidError` |
 //!
 //! 两个 `layout` 都**不碰 `egui`**：度量通过
@@ -26,9 +26,11 @@
 //!
 //! - 实现模块（`layout` / `model` / `parser` / `graph_parse` / `primitives`…）
 //!   一律是私有 `mod`，外部只能看见 facade 里的那几项；
-//! - 唯一的跨模块依赖是 `egui` 的 `Pos2` / `Rect` / `Vec2` / `Align` /
-//!   `LayoutJob`——**不依赖 `presentation` 的任何其他模块**（不碰主题、
-//!   不碰 icons、不碰 state），配色由调用方通过参数传入。
+//! - `math` 已端口化：排版结果经 `render` 端口层（`RenderCommand` / `Rgb8` /
+//!   `Pt`）描述几何，**不** `use egui`；唯一允许 `use egui` 的是 `render::egui`
+//!   （`RenderBackend` 实现与 `apply_egui`）。配色由调用方经 `Rgb8` 参数传入，
+//!   不依赖 `presentation` 的其他模块（不碰主题、不碰 icons、不碰 state）。
+//!   `mermaid` 的端口化在后续步骤。
 //!
 //! # 为什么没有拆成独立 crate（2026-10-19 评估）
 //!

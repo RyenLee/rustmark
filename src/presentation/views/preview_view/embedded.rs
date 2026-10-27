@@ -1,7 +1,8 @@
 //! 数学公式与 Mermaid 图表：内置引擎渲染 + 源码卡降级。
 
-use egui::{Align2, FontId};
+use egui::FontId;
 
+use crate::presentation::rich::render::{self, HAlign};
 use crate::presentation::theme::mapper::atlas_token;
 use crate::presentation::views::{math, mermaid};
 
@@ -79,12 +80,15 @@ pub(super) fn draw_math(ui: &mut Ui, theme: &Theme, block: &BlockView, wrap: boo
         let h = math::fitted_height(math_layout, ui.available_width());
         let (rect, _) =
             ui.allocate_exact_size(egui::vec2(ui.available_width(), h), egui::Sense::hover());
-        math::paint(
+        let cmds = math::emit(math_layout, render::rgb8_from_color32(theme.text_primary));
+        render::apply_egui(
             ui.painter(),
             rect,
-            math_layout,
-            theme.text_primary,
-            Align2::LEFT_CENTER,
+            math_layout.width,
+            math_layout.height(),
+            HAlign::Left,
+            true,
+            &cmds,
         );
         return;
     }
@@ -112,12 +116,15 @@ pub(super) fn draw_math(ui: &mut Ui, theme: &Theme, block: &BlockView, wrap: boo
             let h = math::fitted_height(math_layout, ui.available_width());
             let (rect, _) =
                 ui.allocate_exact_size(egui::vec2(ui.available_width(), h), egui::Sense::hover());
-            math::paint(
+            let cmds = math::emit(math_layout, render::rgb8_from_color32(theme.text_primary));
+            render::apply_egui(
                 ui.painter(),
                 rect,
-                math_layout,
-                theme.text_primary,
-                Align2::CENTER_CENTER,
+                math_layout.width,
+                math_layout.height(),
+                HAlign::Center,
+                true,
+                &cmds,
             );
         });
 }

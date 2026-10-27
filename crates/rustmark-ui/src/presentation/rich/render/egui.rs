@@ -18,6 +18,13 @@ impl Rgb8 {
     }
 }
 
+/// egui `Color32` → `Rgb8`（非预乘，与主题色同源）。放在本白名单文件，
+/// 保持 `mod` / `geom` 零 `egui` 引用；消费方（如视图层）把主题色转成
+/// `Rgb8` 后再交给端口层，使排版引擎不碰 egui。
+pub fn rgb8_from_color32(c: egui::Color32) -> Rgb8 {
+    Rgb8::new(c.r(), c.g(), c.b(), c.a())
+}
+
 /// egui 后端：持有 painter 与「原点 + 缩放」变换，逐条翻译命令。
 ///
 /// 变换复刻旧 `math::paint` / `mermaid::paint` 的等比缩放 + 原点公式：
