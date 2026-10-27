@@ -929,7 +929,7 @@ modules:
       find_max_matches:
         value: 100000
         unit: "matches"
-        source: "crates/rustmark-core/src/application/document/find.rs:98"
+        source: "crates/rustmark-core/src/application/document/find.rs:110"
         anchor: "MAX_MATCHES: usize = 100_000"
         purpose: "单次查找命中上限；超过即停止收集，防止退化模式把内存吃满。"
         recommended: "50000-200000"
