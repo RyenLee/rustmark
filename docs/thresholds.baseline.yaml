@@ -772,7 +772,7 @@ modules:
       reading_wpm:
         value: 300
         unit: "words per minute"
-        source: "crates/rustmark-core/src/application/document/service/stats.rs:93"
+        source: "crates/rustmark-core/src/application/document/service/stats.rs:112"
         anchor: "div_ceil(300)"
         purpose: "阅读时长的每分钟字数基准；用于把字数换算为分钟数，值越大估计越短。"
         recommended: "200-400"
