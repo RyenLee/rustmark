@@ -1335,6 +1335,195 @@ fn check_view_file_sizes(views_root: &Path) -> Vec<Violation> {
     out
 }
 
+// ============================================================================
+// R-03 B2：ui 子模块 ↔ root 逐项 re-export ↔ §10.1 三方对账
+// ============================================================================
+
+/// `rustmark-ui` 的 presentation 子模块声明文件（真源 1）。
+const UI_PRESENTATION_RS: &str = "crates/rustmark-ui/src/presentation.rs";
+/// root 的 presentation 桥接文件（真源 2）。
+const ROOT_PRESENTATION_RS: &str = "src/presentation.rs";
+/// 约束文档（真源 3）。
+const CONSTRAINTS_DOC: &str = "docs/architecture-constraints.md";
+/// §10.1 小节的起止标题；只在本段内找 ui 子模块名。
+const CRATE_MAP_HEADING: &str = "### 10.1";
+const CRATE_MAP_NEXT_HEADING: &str = "### 10.2";
+
+/// R-03 B2（2026-10-27，对应问题 B 的短期项）：ui 子模块与 root 显式
+/// re-export、§10.1 crate 地图的机械同步。
+///
+/// # 为什么需要
+///
+/// root `src/presentation.rs` 原以整组形式
+/// `pub use rustmark_ui::presentation::{rich, shortcuts, state, theme, widgets};`
+/// 转发 ui 的五个非视图子层。整组转发在 Rust 里语义等价于逐项，但它把
+/// 「新增 ui 子模块」这件事**静默**了：新模块自动进入 root 命名空间，
+/// `cargo check` / `clippy` / 全量测试全绿，而 root 的显式清单与 §10.1
+/// crate 地图已经失配——只有人眼评审能发现。与 `mod.rs` 禁令同型：
+/// 规则写在文档里，却不在门禁里，下一次重构就会漂。
+///
+/// # 判据（三处真源对账）
+///
+/// 1. `crates/rustmark-ui/src/presentation.rs` 的 `pub mod X;`（ui 侧真源）；
+/// 2. root `src/presentation.rs` 的 `pub use rustmark_ui::presentation::X;`
+///    （逐项显式；出现整组 `::{…}` 即违规）；
+/// 3. `docs/architecture-constraints.md` §10.1 段落提及 X。
+///
+/// 反向（root 有 X 但 ui 没有）不报：删模块时编译器会先报
+/// `unresolved import`，不需要重复守。
+///
+/// # 为什么是 `pub`
+///
+/// `tests/arch_violation_fixture.rs` 需要直接调用它注入合成树（见
+/// `ui_submodule_must_be_synced_to_root_and_crate_map`），与
+/// [`scan_with_tests`] 同一用法。
+pub fn check_ui_submodule_sync(manifest: &Path) -> Vec<Violation> {
+    let Ok(ui_text) = fs::read_to_string(manifest.join(UI_PRESENTATION_RS)) else {
+        // 合成夹具 / 历史快照可能没有 ui crate——不报。
+        return Vec::new();
+    };
+    let ui_modules = parse_pub_mod_names(&ui_text);
+    if ui_modules.is_empty() {
+        return Vec::new();
+    }
+
+    // 只在**真实工程口径**下生效：三处真源必须同时存在。
+    //
+    // 合成夹具常常只建模其中一两处（如 `ui_root_presentation_prefix_keeps_sublayer_judgement`
+    // 只写 `crates/rustmark-ui/src/presentation.rs` 验证前缀判层），
+    // 不能因「另外两处不存在」就报「失配」——与 §4.5 登记制只挂真实工程同思路。
+    if !manifest.join(ROOT_PRESENTATION_RS).is_file()
+        || !manifest.join(CONSTRAINTS_DOC).is_file()
+    {
+        return Vec::new();
+    }
+
+    let mut violations = Vec::new();
+    let root_text = fs::read_to_string(manifest.join(ROOT_PRESENTATION_RS)).unwrap_or_default();
+    let (explicit, uses_group) = parse_ui_reexports(&root_text);
+
+    if uses_group {
+        violations.push(Violation {
+            file: ROOT_PRESENTATION_RS.to_string(),
+            line: 1,
+            detail: "R-03 B2：root 桥接禁止整组 `pub use rustmark_ui::presentation::{…}` —— \
+                     新增 ui 子模块会被静默带入 root 命名空间，清单与 §10.1 失配却不报；\
+                     改为逐项 `pub use rustmark_ui::presentation::<子模块>;`"
+                .to_string(),
+        });
+    }
+
+    let doc_text = fs::read_to_string(manifest.join(CONSTRAINTS_DOC)).unwrap_or_default();
+    let crate_map = section_between(&doc_text, CRATE_MAP_HEADING, CRATE_MAP_NEXT_HEADING);
+
+    for name in &ui_modules {
+        if !explicit.iter().any(|n| n == name) {
+            violations.push(Violation {
+                file: ROOT_PRESENTATION_RS.to_string(),
+                line: 1,
+                detail: format!(
+                    "R-03 B2：ui 子模块 `{name}` 未在 root 显式 re-export —— \
+                     补 `pub use rustmark_ui::presentation::{name};`（整组 `::{{…}}` 不算）"
+                ),
+            });
+        }
+        if !crate_map.map(|s| contains_token(s, name)).unwrap_or(false) {
+            violations.push(Violation {
+                file: CONSTRAINTS_DOC.to_string(),
+                line: 1,
+                detail: format!(
+                    "R-03 B2：ui 子模块 `{name}` 未登记在 constraints §10.1 的 `rustmark-ui` 行 —— \
+                     新子模块须同步 crate 地图"
+                ),
+            });
+        }
+    }
+
+    violations
+}
+
+/// 提取 `pub mod X;` 的 X（跳过行注释与 `pub mod x { … }` 内联块）。
+fn parse_pub_mod_names(text: &str) -> Vec<String> {
+    text.lines()
+        .filter_map(|raw| {
+            let line = raw.split("//").next().unwrap_or("").trim();
+            let rest = line.strip_prefix("pub mod ")?;
+            let name = rest.strip_suffix(';')?.trim();
+            is_ident(name).then(|| name.to_string())
+        })
+        .collect()
+}
+
+/// 提取 root 对 `rustmark_ui::presentation::X` 的逐项 re-export；同时报告
+/// 是否出现了整组 `::{…}` 形式。
+fn parse_ui_reexports(text: &str) -> (Vec<String>, bool) {
+    let marker = "rustmark_ui::presentation::";
+    let mut names = Vec::new();
+    let mut uses_group = false;
+    for raw in text.lines() {
+        let line = raw.split("//").next().unwrap_or("");
+        let Some(pos) = line.find(marker) else {
+            continue;
+        };
+        let rest = line[pos + marker.len()..].trim();
+        if rest.starts_with('{') {
+            uses_group = true;
+            continue;
+        }
+        let name = rest.trim_end_matches(';').trim();
+        let name = name.split_whitespace().next().unwrap_or("");
+        if is_ident(name) {
+            names.push(name.to_string());
+        }
+    }
+    (names, uses_group)
+}
+
+fn is_ident(s: &str) -> bool {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// 取 `begin` 与 `end` 之间的段落（`begin` 含、`end` 不含）；找不到 `begin` 返回 `None`。
+fn section_between<'a>(text: &'a str, begin: &str, end: &str) -> Option<&'a str> {
+    let start = text.find(begin)?;
+    let rest = &text[start..];
+    let stop = rest.find(end).unwrap_or(rest.len());
+    Some(&rest[..stop])
+}
+
+/// `needle` 是否作为独立 token 出现（前后不是 ASCII 字母/数字/`_`/`-`）。
+fn contains_token(haystack: &str, needle: &str) -> bool {
+    let mut from = 0;
+    while let Some(pos) = haystack[from..].find(needle) {
+        let abs = from + pos;
+        let before_ok = haystack[..abs]
+            .chars()
+            .next_back()
+            .map(|c| !is_token_char(c))
+            .unwrap_or(true);
+        let after = abs + needle.len();
+        let after_ok = haystack[after..]
+            .chars()
+            .next()
+            .map(|c| !is_token_char(c))
+            .unwrap_or(true);
+        if before_ok && after_ok {
+            return true;
+        }
+        from = abs + needle.len();
+    }
+    false
+}
+
+fn is_token_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_' || c == '-'
+}
+
 /// 扫描 `src_root` 下的全部 `.rs` 文件，返回违规列表（空表示通过）。
 ///
 /// **签名保持不变**（`build.rs` 与 `check-arch` bin 之外的调用点、以及
@@ -1566,6 +1755,9 @@ pub fn scan_project(manifest: &Path) -> Vec<Violation> {
     violations.extend(check_view_file_sizes(
         &manifest.join("src").join("presentation").join("views"),
     ));
+
+    // R-03 B2：ui 子模块 ↔ root 逐项 re-export ↔ §10.1 crate 地图三方对账。
+    violations.extend(check_ui_submodule_sync(manifest));
 
     violations
 }

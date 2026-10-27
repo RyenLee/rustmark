@@ -8,7 +8,17 @@ pub mod views;
 // `rich` **全部**抽去独立 crate `rustmark-ui`——core 内零消费者，root 经本文件
 // 把它们 re-export 回 `crate::presentation::<子模块>` 原路径，存量视图与集成测试零改动。
 // 桥接路径与 ui 侧同形（`rustmark_ui::presentation::<子模块>`）。
-pub use rustmark_ui::presentation::{rich, shortcuts, state, theme, widgets};
+//
+// R-03 B2（2026-10-27）：**逐项显式**，不再用整组 `::{…}` 转发。整组形式的
+// 隐患是「新增 ui 子模块被静默带入 root 命名空间」——编译与测试都不报，但
+// root 的清单与 §10.1 crate 地图已经失配。逐项后，增删都必须落到本文件；
+// `check-arch` 的 `check_ui_submodule_sync` 会拿 ui 侧 `pub mod`、本清单与
+// `docs/architecture-constraints.md` §10.1 三方对账（缺一即报）。
+pub use rustmark_ui::presentation::rich;
+pub use rustmark_ui::presentation::shortcuts;
+pub use rustmark_ui::presentation::state;
+pub use rustmark_ui::presentation::theme;
+pub use rustmark_ui::presentation::widgets;
 
 // V11-58：向量图标资源（16×16 规格数据 + Painter 渲染器）抽去独立 crate
 // `rustmark-icons`——core 内零消费者，住 core 里没有 core 的职责。

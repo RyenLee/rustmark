@@ -716,6 +716,13 @@ V11-62 全落地，阶段 3 的 `rustmark-infra` 行已由 V11-64 提前兑现�
 3. **每拆一个 crate，三件套同步**：校验器扫描根 + `layer_of` 归一化 + 本地
    依赖边期望（`docs/workspace-topology.expected.txt`）——照 actions/icons
    两例（§7）。漏任一件，新 crate 要么被误报「未知层」，要么依赖边静默增长。
+4. **ui 子模块三处对账**（R-03 B2，2026-10-27）：`rustmark-ui` 的
+   `presentation/` 子模块增删，必须同时改 root `src/presentation.rs` 的
+   **逐项** `pub use rustmark_ui::presentation::<子模块>;`（**禁**整组
+   `::{…}`——新增子模块会被静默带入 root，清单与本节失配却不报）与本节
+   `rustmark-ui` 行；`check-arch` 的 `check_ui_submodule_sync` 拿三处真源
+   （ui 侧 `pub mod` ↔ root 逐项 re-export ↔ 本节 §10.1）对账，缺一即报。
+   「views 留 root」的已知约束见上一条硬约束 2（ADR-013 决策 3），不靠人记。
 
 ### 10.2 模块归属判据（四问 + 两条强信号）
 

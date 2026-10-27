@@ -1,6 +1,6 @@
 # rustmark 架构整改细化实施方案
 
-> 文档编号：ADR-REM-2026-10-27　|　作者：架构评审（专家视角）　|　状态：进行中（R-01、R-02 已落地 2026-10-27；其余批次待排期）
+> 文档编号：ADR-REM-2026-10-27　|　作者：架构评审（专家视角）　|　状态：进行中（R-01、R-02、R-03 B2 已落地 2026-10-27；其余批次待排期）
 > 综合来源：架构评审 `architecture-review-2026-10-23.md`、评估报告 `rustmark-evaluation-2026-10-25.md`、合规差额报告、多轮 refactor 波次（V11-56~67）、「去双源」批次（2026-10-26）、专家架构评审（2026-10-27）。
 > 本文件是上述所有讨论的**可执行汇总**。任何一条改造项落地后，请在 `docs/PROGRESS.md` / `docs/v1.1-backlog.md` §3 回填实测数字，并同步本文件的「状态」列。
 
@@ -106,6 +106,7 @@
 - **优先级**：P1（root 臃肿直接原因、视图不可独立测；短期 B2 成本低先做）
 - **预期产出**：B2=显式 re-export + 守卫；B1=视图窄接口 + views 迁 ui + root 瘦身。
 - **验收点**：B2——re-export 显式、守卫绿；B1——`src/presentation/views` 清空或仅留装配、`crate::app` 在视图 0 处、root 行数下降、视图可独立单测。
+- **状态**：**B2 ✅ 已落地（2026-10-27）**——`src/presentation.rs:11` 的整组 `pub use rustmark_ui::presentation::{rich, shortcuts, state, theme, widgets};` 改为 5 行**逐项显式**；`tools/arch_check.rs` 新增 `pub fn check_ui_submodule_sync(manifest)` 并接入 `scan_project`：以 ui 侧 `pub mod X;` 为真源，对账 root 逐项 re-export 与 constraints §10.1，出现整组 `::{…}` 即报（与 `mod.rs` 同型：整组会让新子模块被静默带入，编译测试全绿而清单失配）；fixture `ui_submodule_must_be_synced_to_root_and_crate_map` 覆盖三场景（缺 root / 缺 §10.1 / 整组形式）+ 变异验证（关掉逐项断言 → 红）；constraints §10.1 补硬约束 4 并引用既有「views 留 root」条款。门禁全绿（fmt / check-arch / thresholds 121 / clippy `-D warnings` / `test --all-targets` 2242 passed / `test --doc` 1 / `size_gate` 10,548,736 B 逐字节不变——纯 re-export + 构建期守卫，不进 release 产物）。**B1 未开工**（43 视图解耦 `EditorApp`，属阶段 3，需先做窄接口设计评审）。
 
 ### R-04 · 抽离 `rustmark-render`（富内容渲染引擎）　【P2，对应问题 F】
 

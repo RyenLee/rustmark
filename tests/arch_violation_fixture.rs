@@ -341,6 +341,96 @@ fn mod_rs_is_rejected_in_src_and_tests() {
     }
 }
 
+/// R-03 B2：ui 新增子模块必须同步 root 逐项 re-export + §10.1 crate 地图。
+///
+/// # 为什么单独钉
+///
+/// 整组 `pub use rustmark_ui::presentation::{…}` 在 Rust 里与逐项**语义等价**，
+/// 但「新增 ui 子模块」会被静默带入 root：编译不报、测试不红，而 root 清单与
+/// §10.1 已经失配（同 `mod.rs` 禁令的失效模式——规则在文档里，不在门禁里）。
+/// 本用例注入「ui 有 `delta`、root/§10 没有」的合成树，钉住两处各报一条；
+/// 补齐后全绿；最后钉整组形式本身违规。
+#[test]
+fn ui_submodule_must_be_synced_to_root_and_crate_map() {
+    let dir = tempfile::tempdir().unwrap();
+    let manifest = dir.path();
+
+    // ui 侧：rich（既有）+ delta（新增）。
+    write_fixture(
+        manifest,
+        "crates/rustmark-ui/src/presentation.rs",
+        "//! x\npub mod rich;\npub mod delta;\n",
+    );
+    // root 侧：只显式 re-export 了 rich，漏了 delta。
+    write_fixture(
+        manifest,
+        "src/presentation.rs",
+        "//! x\npub use rustmark_ui::presentation::rich;\n",
+    );
+    // §10.1 只登记了 rich。
+    write_fixture(
+        manifest,
+        "docs/architecture-constraints.md",
+        "### 10.1 crate 地图\n\n| `rustmark-ui` | widgets / rich |\n\n### 10.2 判据\n",
+    );
+
+    let violations = arch_check::check_ui_submodule_sync(manifest);
+    let details: Vec<&str> = violations.iter().map(|v| v.detail.as_str()).collect();
+    assert_eq!(
+        violations.len(),
+        2,
+        "应报 2 条（root 缺逐项 re-export + §10.1 缺登记），实际：{details:?}"
+    );
+    assert!(
+        details
+            .iter()
+            .any(|d| d.contains("`delta`") && d.contains("未在 root 显式")),
+        "应报 delta 未在 root 显式 re-export：{details:?}"
+    );
+    assert!(
+        details
+            .iter()
+            .any(|d| d.contains("`delta`") && d.contains("§10.1")),
+        "应报 delta 未登记 §10.1：{details:?}"
+    );
+
+    // 补齐两处 → 全绿。
+    write_fixture(
+        manifest,
+        "src/presentation.rs",
+        "//! x\npub use rustmark_ui::presentation::rich;\npub use rustmark_ui::presentation::delta;\n",
+    );
+    write_fixture(
+        manifest,
+        "docs/architecture-constraints.md",
+        "### 10.1 crate 地图\n\n| `rustmark-ui` | widgets / rich / delta |\n\n### 10.2 判据\n",
+    );
+    let after = arch_check::check_ui_submodule_sync(manifest);
+    assert!(
+        after.is_empty(),
+        "补齐 root + §10.1 后应全绿，实际：{:?}",
+        described(&after)
+    );
+
+    // 整组 `::{…}` 形式本身违规（新增子模块会被静默带入）。
+    write_fixture(
+        manifest,
+        "src/presentation.rs",
+        "//! x\npub use rustmark_ui::presentation::{rich, delta};\n",
+    );
+    let violations = arch_check::check_ui_submodule_sync(manifest);
+    let details: Vec<&str> = violations.iter().map(|v| v.detail.as_str()).collect();
+    assert_eq!(
+        violations.len(),
+        3,
+        "整组形式 = 1 条整组禁令 + 2 条缺逐项，实际：{details:?}"
+    );
+    assert!(
+        details.iter().any(|d| d.contains("禁止整组")),
+        "应报整组转发违规：{details:?}"
+    );
+}
+
 /// 表现层的「更窄豁免前缀」**不**适用于 `tests/` 侧。
 ///
 /// # 为什么单独一条
