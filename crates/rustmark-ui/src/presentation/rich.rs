@@ -50,3 +50,5 @@
 
 pub mod math;
 pub mod mermaid;
+/// 渲染端口层（egui-free 的几何命令 + 唯一 egui 后端）。见 `render` 模块文档。
+pub mod render;
