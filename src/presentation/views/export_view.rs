@@ -31,13 +31,13 @@
 use egui::{Align, Color32, Context, Layout, RichText, Ui};
 
 use crate::app::frame::{EditorApp, PendingDialog};
-use crate::application::dto::ExportRequestView;
 use crate::presentation::state::dialog_ui_state::Overlay;
 use crate::presentation::state::export_ui_state::{
     is_available, page_size_label, pdf_caveat, unavailable_reason,
 };
 use crate::presentation::theme::builtin::Theme;
-use crate::shared::export_format::{ExportFormat, PageSize};
+use rustmark_core::application::dto::ExportRequestView;
+use rustmark_core::shared::export_format::{ExportFormat, PageSize};
 
 /// 对话框默认尺寸（对齐原型 `BaseModal :width="540" :height="430"`）。
 const WIDTH: f32 = 540.0;

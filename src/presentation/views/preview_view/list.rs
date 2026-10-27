@@ -2,7 +2,7 @@
 
 use egui::{Align, RichText};
 
-use crate::application::dto::ListItemView;
+use rustmark_core::application::dto::ListItemView;
 
 use super::blocks::draw_text_with_images;
 use super::inline::Typography;

@@ -111,7 +111,9 @@ impl EditorApp {
             }
         };
         let clamped = crate::presentation::views::scroll_sync::clamp_scroll(target, geom);
-        if (clamped - self.editor.scroll_y).abs() > crate::shared::constants::SCROLL_MOVE_EPS {
+        if (clamped - self.editor.scroll_y).abs()
+            > rustmark_core::shared::constants::SCROLL_MOVE_EPS
+        {
             self.editor.scroll_y = clamped;
         }
     }

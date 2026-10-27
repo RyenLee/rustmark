@@ -2,7 +2,7 @@
 
 use egui::Stroke;
 
-use crate::application::dto::{ImageSpecView, InlineImageView, RangeView, SpanView};
+use rustmark_core::application::dto::{ImageSpecView, InlineImageView, RangeView, SpanView};
 
 use crate::presentation::theme::mapper::StyleMapper;
 

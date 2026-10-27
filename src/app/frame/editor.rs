@@ -132,7 +132,7 @@ impl EditorApp {
 
     /// 状态栏统计（防抖版；建议一 / 问题 039）。
     ///
-    /// 与 [`crate::application::markdown::service::span_cache::HighlightPace`]
+    /// 与 [`rustmark_core::application::markdown::service::span_cache::HighlightPace`]
     /// 同源：打字期不每击键整篇重算（`compute_stats` 在 1MB 上 ≈ 9.5ms，
     /// 见 `docs/metrics.md` §3.2.5），而是沿用「上一次静止时算出的结果」，
     /// 直到文档**静止满 [`super::STATS_DEBOUNCE_MS`]** 才刷新。

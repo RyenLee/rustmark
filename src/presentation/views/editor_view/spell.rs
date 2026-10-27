@@ -3,11 +3,11 @@
 use egui::Context;
 
 use crate::app::frame::EditorApp;
-use crate::application::markdown::queries::{SpellCheckQuery, SpellSuggestQuery};
 use crate::presentation::state::editor_ui_state::SpellSuggestMenu;
 use crate::presentation::theme::builtin::Theme;
 use crate::presentation::views::editor_ops;
-use crate::shared::text::word_bounds_at;
+use rustmark_core::application::markdown::queries::{SpellCheckQuery, SpellSuggestQuery};
+use rustmark_core::shared::text::word_bounds_at;
 
 /// 拼写建议菜单一次最多列几条（V11-07）。
 ///

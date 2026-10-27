@@ -53,7 +53,7 @@ pub(super) fn paint_gutter(
     let Some(tops) = mapper::line_tops(theme, text) else {
         return;
     };
-    let line_count = crate::shared::text::line_count(text);
+    let line_count = rustmark_core::shared::text::line_count(text);
     let font = FontId::monospace(font_size);
     let clip = ui.clip_rect();
     let painter = ui.painter();
@@ -90,8 +90,8 @@ pub(super) fn paint_gutter(
 /// 给定字节偏移，返回其所在行号（0-based）。
 ///
 /// 规则本身（按字节数换行、越界夹紧、多字节中间不 panic）住在
-/// [`crate::shared::text::line_index_at`]——状态栏与编辑器其它位置要的是同一个数，
+/// [`rustmark_core::shared::text::line_index_at`]——状态栏与编辑器其它位置要的是同一个数，
 /// 各写一份必然漂移。
 pub(super) fn current_line_index(text: &str, byte: usize) -> usize {
-    crate::shared::text::line_index_at(text, byte)
+    rustmark_core::shared::text::line_index_at(text, byte)
 }

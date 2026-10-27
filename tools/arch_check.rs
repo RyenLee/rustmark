@@ -1529,6 +1529,13 @@ pub fn scan_project(manifest: &Path) -> Vec<Violation> {
                 v.file = display.clone();
                 violations.push(v);
             }
+            // R-01（批次 1 / 问题 A）：root（src 根，display_prefix 为空）禁止经
+            // 联邦 re-export 直取 `rustmark-core` 内部层。见 `check_root_federated_layers`
+            // 注释——此处**刻意不走**层禁令机制（那会把 `rustmark_core::` 归一为
+            // `crate::` 误伤我们刚收敛成的显式写法）。
+            if display_prefix.is_empty() {
+                violations.extend(check_root_federated_layers(&display, &lexed));
+            }
         }
     }
 
@@ -1862,6 +1869,64 @@ fn check_file(rel: &str, layer: Layer, lexed: &Lexed, registry: &Registry) -> Ve
     violations
 }
 
+/// R-01（架构整改批次 1 / 问题 A）：root（src 根）禁止经联邦 re-export
+/// 直取 `rustmark-core` 的内部层。
+///
+/// # 为什么需要这道门
+///
+/// `src/lib.rs` 把 `rustmark_core::{application, domain, shared}` 整层
+/// re-export 回 `crate::<层>`，使 root 源码能以 `crate::domain::…` 这种
+/// 「联邦别名」取用 core 的内部层。这带来两个问题：
+/// 1. root 对 core 内部层的真实依赖被隐藏——`Cargo.toml` 看不出 root 直接
+///    依赖了 domain/application/shared，违反「依赖图必须完全可见」；
+/// 2. 这是未声明的逻辑依赖：谁动了 core 的那几层，root 侧毫无感知。
+///
+/// 整改把 root 源码里的 `crate::<层>` 收敛为显式 `rustmark_core::<层>`
+/// （`layer_of` 判 root 为 App/Free，**无层禁令**，故 `rustmark_core::domain`
+/// 等显式写法不被现有层禁令拦截，正是我们要鼓励的形态）。本门把
+/// 「root 不得再用联邦别名直取」机械化。
+///
+/// # 为什么不直接复用层禁令（forbidden_for + collect_candidates）
+///
+/// [`push_candidates`] 会把 `rustmark_core::` **归一为** `crate::` 后再匹配
+/// 同一张禁令表（为堵「改前缀绕过」）。若把 `crate::domain` 放进层禁令，
+/// 会连我们刚收敛成的显式 `rustmark_core::domain` 一起误伤——那恰恰是要
+/// 保留的合法写法。故这里**直接按词法扫描** `crate::<联邦层>` 字面三连，
+/// 绕过归一化，只拦「联邦别名」这一种拼写。
+///
+/// `crate::infrastructure` **不在**禁列：它是组合根经 `lib.rs` 合法
+/// re-export 的装配路径（`app/**` 大量使用），与「core 内部层联邦」是两回事。
+const ROOT_FEDERATED_LAYERS: &[&str] = &["domain", "shared", "application"];
+
+fn check_root_federated_layers(rel: &str, lexed: &Lexed) -> Vec<Violation> {
+    let mut violations = Vec::new();
+    let tokens = &lexed.tokens;
+    let mut i = 0usize;
+    while i + 2 < tokens.len() {
+        let is_federated = tokens[i].kind == TokKind::Ident
+            && tokens[i].text == "crate"
+            && tokens.get(i + 1).map(|t| t.kind) == Some(TokKind::PathSep)
+            && tokens.get(i + 2).map(|t| t.kind) == Some(TokKind::Ident)
+            && ROOT_FEDERATED_LAYERS.contains(&tokens[i + 2].text.as_str());
+        if is_federated {
+            let layer_name = tokens[i + 2].text.clone();
+            violations.push(Violation {
+                file: rel.to_string(),
+                line: tokens[i].line,
+                detail: format!(
+                    "root（src 根）不得经联邦 re-export 直取 core 内部层 `crate::{layer_name}` \
+                     （R-01 / 问题 A）：请改用显式 `rustmark_core::{layer_name}::…`，\
+                     使真实依赖在 Cargo.toml 可见；`crate::infrastructure` 是合法装配路径，不受影响"
+                ),
+            });
+            i += 3;
+            continue;
+        }
+        i += 1;
+    }
+    violations
+}
+
 /// 该文件对应的**模块路径**（含开头的 `crate`）。
 ///
 /// # 为什么这条路走得通
@@ -2184,5 +2249,56 @@ mod view_size_tests {
         assert!(!flagged.iter().any(|f| f.contains("tests/inner")), "tests/ 应豁免");
         assert!(!flagged.iter().any(|f| f.contains("preview_view/tests")), "嵌套 tests.rs/tests/ 应豁免");
         let _ = fs::remove_dir_all(&base);
+    }
+}
+
+/// R-01（批次 1）守卫的单元验证：
+/// - 正向：root 源码里出现 `crate::domain` / `crate::shared` / `crate::application`
+///   必须被捕获；
+/// - 负向：`rustmark_core::<层>` 与 `crate::infrastructure` 必须放行（前者是
+///   整改后要鼓励的显式写法，后者是组合根合法装配路径）；
+/// - 注释豁免：注释里的 `crate::domain` 字面量不得误报（词法器剔注释）；
+/// - 变异：删掉 `check_root_federated_layers` 的命中逻辑 → 正向用例变红，
+///   证明这道门「有牙齿」（删断言即失效）。
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod root_federated_layer_tests {
+    use super::*;
+
+    #[test]
+    fn root_federated_layers_flags_crate_domain_shared_application() {
+        let content = "use crate::domain::Foo;\n\
+                       fn a() { let _ = crate::shared::Bar; }\n\
+                       fn b() { let _ = crate::application::Baz; }\n";
+        let lexed = Lexer::new(content).run();
+        let v = check_root_federated_layers("app/x.rs", &lexed);
+        assert_eq!(
+            v.len(),
+            3,
+            "应捕获 crate::domain/shared/application 各一次: {v:?}"
+        );
+    }
+
+    #[test]
+    fn root_federated_layers_allows_explicit_core_and_infrastructure() {
+        let content = "use rustmark_core::domain::Foo;\n\
+                       use rustmark_core::shared::Bar;\n\
+                       use rustmark_core::application::Baz;\n\
+                       use crate::infrastructure::qux::Qux;\n";
+        let lexed = Lexer::new(content).run();
+        let v = check_root_federated_layers("app/x.rs", &lexed);
+        assert!(
+            v.is_empty(),
+            "rustmark_core::<层> 与 crate::infrastructure 必须放行: {v:?}"
+        );
+    }
+
+    #[test]
+    fn root_federated_layers_ignores_comments() {
+        // 对应 lib.rs:42 之类注释里出现 `crate::domain` 字面量不得误报。
+        let content = "// 存量源码与测试的 `crate::domain::…` 等引用零改动\n";
+        let lexed = Lexer::new(content).run();
+        let v = check_root_federated_layers("lib.rs", &lexed);
+        assert!(v.is_empty(), "注释中的 crate::domain 不得误报: {v:?}");
     }
 }

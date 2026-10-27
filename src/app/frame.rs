@@ -23,42 +23,42 @@ use eframe::egui;
 
 use crate::app::bootstrap::Services;
 use crate::app::dialog_runner::{DialogOutcome, DialogRequest, DialogRunner};
-use crate::application::document::commands::{
+use rustmark_core::application::document::commands::{
     CloseCommand, FormatCommand, FormatKind, InsertTextCommand, NewDocumentCommand,
     OpenFileCommand, RedoCommand, ReplaceRangeCommand, RevertCommand, SaveCommand,
     SaveToPathCommand, UndoCommand,
 };
-use crate::application::document::queries::{
+use rustmark_core::application::document::queries::{
     GetContentQuery, GetDocumentQuery, GetStatsQuery, ListOpenDocumentsQuery,
 };
-use crate::application::dto::{
+use rustmark_core::application::dto::{
     EditorSettingsView, RecentFileView, SettingsView, StatsView, TabSummary, ThemeView,
 };
-use crate::application::dto::{
+use rustmark_core::application::dto::{
     ExportRequestView, ExportResultView, LintIssueView, OutlineItemView,
 };
-use crate::application::export::commands::{CreateExportJobCommand, RunExportCommand};
-use crate::application::markdown::queries::{LintQuery, RebuildOutlineQuery};
-use crate::application::preferences::commands::{
+use rustmark_core::application::export::commands::{CreateExportJobCommand, RunExportCommand};
+use rustmark_core::application::markdown::queries::{LintQuery, RebuildOutlineQuery};
+use rustmark_core::application::preferences::commands::{
     ResetSectionCommand, SetEditorCommand, SetShortcutCommand, SetThemeCommand, SettingsSection,
 };
-use crate::application::preferences::queries::GetSettingsQuery;
-use crate::application::workspace::commands::{
+use rustmark_core::application::preferences::queries::GetSettingsQuery;
+use rustmark_core::application::workspace::commands::{
     CreateEntryCommand, DeleteEntryCommand, MoveEntryCommand, ScanTreeCommand, TouchRecentCommand,
 };
-use crate::application::workspace::queries::{ListRecentQuery, ReadFileQuery, SearchQuery};
-use crate::application::workspace::service::TREE_MAX_DEPTH;
-use crate::domain::export::errors::ExportError;
-use crate::domain::preferences::value_objects::ActionId;
-use crate::shared::encoding::TextEncoding;
-use crate::shared::error::AppError;
-use crate::shared::export_format::{ExportFormat, PageSize};
-use crate::shared::fonts::EditorFontChoice;
-use crate::shared::path::{FilePath, file_name_of};
-use crate::shared::result::AppResult;
-use crate::shared::text_format::{self, TextFormats};
-use crate::shared::theme::ThemeKind;
-use crate::shared::time::Timestamp;
+use rustmark_core::application::workspace::queries::{ListRecentQuery, ReadFileQuery, SearchQuery};
+use rustmark_core::application::workspace::service::TREE_MAX_DEPTH;
+use rustmark_core::domain::export::errors::ExportError;
+use rustmark_core::domain::preferences::value_objects::ActionId;
+use rustmark_core::shared::encoding::TextEncoding;
+use rustmark_core::shared::error::AppError;
+use rustmark_core::shared::export_format::{ExportFormat, PageSize};
+use rustmark_core::shared::fonts::EditorFontChoice;
+use rustmark_core::shared::path::{FilePath, file_name_of};
+use rustmark_core::shared::result::AppResult;
+use rustmark_core::shared::text_format::{self, TextFormats};
+use rustmark_core::shared::theme::ThemeKind;
+use rustmark_core::shared::time::Timestamp;
 
 use crate::presentation::shortcuts::dispatcher::{Dispatch, ShortcutDispatcher};
 use crate::presentation::shortcuts::registry::{ShortcutRegistry, UiAction};
@@ -87,8 +87,8 @@ use crate::presentation::views::scroll_sync::{LineIndex, RevealIntent, TARGET_MA
 // `floor_char_boundary` 的语义与「为何只下取整」见 `shared::geometry`；
 // 程序化设值（大纲跳转、测试、`TextEdit` 回调）能给任意字节偏移，
 // 而 `&str[a..b]` 遇到非字符边界会 panic，`panic = "abort"` 下即窗口消失。
-use crate::shared::geometry::{ByteOffset, TextRange, floor_char_boundary};
-use crate::shared::ids::{DocumentId, JobId};
+use rustmark_core::shared::geometry::{ByteOffset, TextRange, floor_char_boundary};
+use rustmark_core::shared::ids::{DocumentId, JobId};
 
 pub use dialog::PendingDialog;
 pub use workspace::{WorkspaceEntries, WorkspaceSearch};

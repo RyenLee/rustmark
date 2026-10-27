@@ -7,10 +7,10 @@ use egui::text::{CCursor, CharIndex, LayoutJob};
 use egui::{CursorIcon, Galley, Pos2, Rect, Response, Sense, Ui};
 
 use crate::app::frame::EditorApp;
-use crate::application::dto::SpanView;
 use crate::presentation::theme::builtin::Theme;
 use crate::presentation::theme::mapper::{SpanHit, SpanPolicy, build_job};
-use crate::shared::system;
+use rustmark_core::application::dto::SpanView;
+use rustmark_core::shared::system;
 
 use super::delimiters::{footnote_ref_mark, strip_math_delimiters};
 use super::math::render_with_math;

@@ -16,7 +16,7 @@ use std::collections::HashSet;
 use egui::Ui;
 
 use crate::app::frame::EditorApp;
-use crate::shared::lru::LruMap;
+use rustmark_core::shared::lru::LruMap;
 
 /// 一张图片的加载结果。
 ///

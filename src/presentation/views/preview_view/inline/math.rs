@@ -9,10 +9,10 @@ use egui::epaint::text::PlacedRow;
 use egui::{Align2, Color32, FontId, Galley, Pos2, Rect, Ui, Vec2};
 
 use crate::app::frame::EditorApp;
-use crate::application::dto::{RangeView, SpanView};
 use crate::presentation::theme::builtin::Theme;
 use crate::presentation::views::math::{self, MathLayout, Measure};
-use crate::shared::geometry::clamp_to_char_boundaries;
+use rustmark_core::application::dto::{RangeView, SpanView};
+use rustmark_core::shared::geometry::clamp_to_char_boundaries;
 
 use super::delimiters::strip_math_delimiters;
 use super::text_format::{Typography, span_format};

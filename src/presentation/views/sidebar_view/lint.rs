@@ -46,7 +46,7 @@ pub(super) fn lint_tab(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
 }
 
 /// 四条规则里是否还有开着的（决定空态文案走「无问题」还是「全关闭」）。
-fn rules_enabled(rules: &crate::application::dto::LintRulesView) -> bool {
+fn rules_enabled(rules: &rustmark_core::application::dto::LintRulesView) -> bool {
     rules.heading_jump || rules.list_marker_mix || rules.trailing_whitespace || rules.unclosed_fence
 }
 
@@ -74,7 +74,7 @@ fn rules_enabled(rules: &crate::application::dto::LintRulesView) -> bool {
 fn lint_row(
     ui: &mut Ui,
     theme: &Theme,
-    issue: &crate::application::dto::LintIssueView,
+    issue: &rustmark_core::application::dto::LintIssueView,
 ) -> egui::Response {
     let (response, _) = widgets::row::clickable_row(
         ui,

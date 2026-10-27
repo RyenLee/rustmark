@@ -30,9 +30,9 @@
 //! 只有 [`apply`] 需要 `EditorApp`，它本身不含判定逻辑。
 
 use crate::app::frame::EditorApp;
-use crate::application::markdown::queries::{MapScrollQuery, ScrollSource, ScrollTarget};
 use crate::presentation::state::scroll_sync_state::{BlockRect, PaneGeometry, Side};
 use crate::presentation::theme::mapper;
+use rustmark_core::application::markdown::queries::{MapScrollQuery, ScrollSource, ScrollTarget};
 
 /// 目标点与视口顶部之间留出的余量（点）。
 ///

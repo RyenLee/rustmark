@@ -20,10 +20,10 @@
 use egui::{Align, CornerRadius, Layout, Rect, Response, Sense, Ui, Vec2};
 
 use crate::app::frame::EditorApp;
-use crate::application::dto::{GoalProgressView, StatsView};
 use crate::presentation::shortcuts::registry::UiAction;
 use crate::presentation::theme::builtin::Theme;
-use crate::shared::text::thousands;
+use rustmark_core::application::dto::{GoalProgressView, StatsView};
+use rustmark_core::shared::text::thousands;
 
 /// 一项的固定高度（与原型的 `--statusbar-h` 内边距一致）。
 const ITEM_HEIGHT: f32 = 18.0;

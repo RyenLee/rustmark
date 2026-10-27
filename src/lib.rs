@@ -38,13 +38,15 @@
 pub mod app;
 pub mod presentation;
 
-// D-3 阶段 4a：四层住在 `rustmark-core`，此处 re-export 拼回原 `crate::<层>` 路径，
-// 存量源码与测试的 `crate::domain::…` 等引用零改动（反向依赖由 cargo 锁死：
-// core 无法引用 root 的 `crate::app`，根 crate 的私有项也无法渗入 core）。
-// TD-04（2026-10-26）：shared 已抽为 rustmark-shared，core 以
-// `pub use rustmark_shared::shared;` 原样转发，这里继续经 core 取用。
-// V11-64（2026-10-26）：infrastructure 已抽为 rustmark-infra，此处拼回
-// `crate::infrastructure` —— 组合根 `src/app/**` 的装配代码与
-// `tests/infrastructure/` 的 `rustmark::infrastructure::…` 引用零改动。
+// R-01（架构整改批次 1 / 问题 A）：下方两行 re-export 是**公开 API shim**，
+// 仅用于对外（集成测试、下游消费者）维持 `rustmark::domain` 等历史路径稳定；
+// **root 自身（src/ 实现代码）禁止再用 `crate::domain` / `crate::shared`
+// / `crate::application` 经此联邦别名直取 core 内部层**——一律改用显式
+// `rustmark_core::<层>::…`（使真实依赖在 Cargo.toml 完全可见，消除未声明
+// 逻辑依赖）。该禁令由 `tools/arch_check.rs` 的 `check_root_federated_layers`
+// 机械化兜底（root 经 `crate::infrastructure` 取装配依赖仍是合法路径，不在禁列）。
+//
+// 历史：D-3 阶段 4a 曾用整层转发把 core 的四层拼回 `crate::<层>`，使存量
+// 源码与测试零改动；TD-04 / V11-64 抽出 shared / infra 后继续经 core 取用。
 pub use rustmark_core::{application, domain, shared};
 pub use rustmark_infra::infrastructure;

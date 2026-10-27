@@ -68,7 +68,7 @@ impl EditorApp {
     pub(crate) fn apply_scan_result(
         &mut self,
         root: &str,
-        entries: Vec<crate::application::dto::FileEntryView>,
+        entries: Vec<rustmark_core::application::dto::FileEntryView>,
     ) {
         // 后台线程已通过 FilePath::new 验证过 root 合法性，
         // 主线程直接用字符串构造 WorkspaceEntries——scan_tree 成功返回的前提
@@ -278,8 +278,8 @@ impl EditorApp {
     ///
     /// # 可打开的格式白名单（问题 045）
     ///
-    /// 只有 [`crate::shared::text_format::TextFormats`] 放行的扩展名能被打开；
-    /// 内置清单见 [`crate::shared::text_format::BUILTIN_TEXT_EXTENSIONS`]
+    /// 只有 [`rustmark_core::shared::text_format::TextFormats`] 放行的扩展名能被打开；
+    /// 内置清单见 [`rustmark_core::shared::text_format::BUILTIN_TEXT_EXTENSIONS`]
     /// （大小写不敏感）。图片与二进制一律拒绝并提示。守卫放在
     /// 本方法开头，故**五条入口**（文件树 / 搜索跳转 / 最近文件 /
     /// 快速打开 / 拖放）一次性全覆盖，各调用方不必各自判一遍。
@@ -449,8 +449,9 @@ impl EditorApp {
     /// 新建文件或目录（右键菜单「新建」提交时调用）。
     pub fn create_entry(&mut self, parent: &str, name: &str, is_directory: bool) -> AppResult<()> {
         let base = if parent.is_empty() {
-            FilePath::new(self.workspace_root())
-                .map_err(|e: crate::shared::path::PathError| AppError::domain(e.to_string()))?
+            FilePath::new(self.workspace_root()).map_err(
+                |e: rustmark_core::shared::path::PathError| AppError::domain(e.to_string()),
+            )?
         } else {
             FilePath::new(parent).map_err(|e| AppError::domain(e.to_string()))?
         };

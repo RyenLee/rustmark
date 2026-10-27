@@ -2,8 +2,8 @@
 
 use egui::FontId;
 
-use crate::application::markdown::queries::HighlightSnippetQuery;
 use crate::presentation::theme::mapper::{SpanPolicy, StyleMapper, build_job};
+use rustmark_core::application::markdown::queries::HighlightSnippetQuery;
 
 use super::*;
 
@@ -77,7 +77,7 @@ pub(super) fn draw_highlighted_code(
     ui: &mut Ui,
     theme: &Theme,
     text: &str,
-    spans: Option<&[crate::application::dto::SpanView]>,
+    spans: Option<&[rustmark_core::application::dto::SpanView]>,
     wrap_width: f32,
 ) {
     let job = highlighted_code_job(theme, text, spans, wrap_width);
@@ -103,7 +103,7 @@ pub(super) fn draw_highlighted_code(
 pub(super) fn highlighted_code_job(
     theme: &Theme,
     text: &str,
-    spans: Option<&[crate::application::dto::SpanView]>,
+    spans: Option<&[rustmark_core::application::dto::SpanView]>,
     wrap_width: f32,
 ) -> egui::text::LayoutJob {
     let mapper = StyleMapper::new(theme);

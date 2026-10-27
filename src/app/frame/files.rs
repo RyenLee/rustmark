@@ -359,7 +359,7 @@ impl EditorApp {
     ///
     /// 按**扩展名**判定而非写死「Markdown」：编辑器能打开 `.txt`，
     /// 状态栏却显示「Markdown」会让用户怀疑自己打开了错的文件。
-    /// 扩展名提取与展示名都取自 [`crate::shared::text_format`]（唯一出处）——
+    /// 扩展名提取与展示名都取自 [`rustmark_core::shared::text_format`]（唯一出处）——
     /// 在这里另写一张匹配表，就会出现「白名单加了一种格式、状态栏却仍然
     /// 显示『纯文本』」的漂移。
     pub fn current_document_kind(&self) -> &'static str {
@@ -401,7 +401,7 @@ impl EditorApp {
     /// 行为（推荐方案）：
     /// - 按扩展名分类（`classify_dropped`，判据是**全应用唯一**的格式白名单）——
     ///   白名单内的扩展名（内置清单见
-    ///   [`crate::shared::text_format::BUILTIN_TEXT_EXTENSIONS`]）
+    ///   [`rustmark_core::shared::text_format::BUILTIN_TEXT_EXTENSIONS`]）
     ///   逐个打开为标签；其余扩展名拒绝并在状态栏提示；
     /// - 拖入无本地路径的「虚拟文件」（如浏览器拖拽）忽略；
     /// - 一次拖入多个文件：全部可识别的都打开（批量），不截断到第一个；

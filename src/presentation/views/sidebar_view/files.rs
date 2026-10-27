@@ -6,7 +6,7 @@ use crate::app::frame::EditorApp;
 use crate::presentation::state::sidebar_ui_state::{NameEdit, TreeRow, tree_rows};
 use crate::presentation::theme::builtin::Theme;
 use crate::presentation::widgets;
-use crate::shared::path::file_name_of;
+use rustmark_core::shared::path::file_name_of;
 
 use super::*;
 

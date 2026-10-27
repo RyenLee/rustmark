@@ -23,21 +23,6 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
 
-use crate::application::document::registry::DocumentRegistry;
-use crate::application::document::service::DocumentAppService;
-use crate::application::event_subscriptions::{AutoSaveTracker, EventSubscribers};
-use crate::application::export::service::ExportAppService;
-use crate::application::markdown::service::{
-    DebouncePolicy, MarkdownAppService, RENDER_CACHE_CAPACITY, RenderCache,
-};
-use crate::application::preferences::service::PreferencesAppService;
-use crate::application::workspace::service::WorkspaceAppService;
-use crate::domain::document::repository::DocumentRepository;
-use crate::domain::document::services::BufferFactory;
-use crate::domain::export::services::Exporter;
-use crate::domain::preferences::repository::PreferencesRepository;
-use crate::domain::workspace::aggregate::Workspace;
-use crate::domain::workspace::repository::WorkspaceRepository;
 use crate::infrastructure::dialogs::rfd_adapter::RfdDialogAdapter;
 use crate::infrastructure::events::in_process_event_bus::InProcessEventBus;
 use crate::infrastructure::export::routing_exporter::RoutingExporter;
@@ -51,18 +36,33 @@ use crate::infrastructure::persistence::toml_preferences_repository::TomlPrefere
 use crate::infrastructure::spell::VendoredSpellChecker;
 use crate::infrastructure::system::SystemExternalOpener;
 use crate::infrastructure::text::rope_text_buffer::RopeBufferFactory;
-use crate::shared::dialog::DialogPort;
-use crate::shared::event::EventBus;
-use crate::shared::ids::WorkspaceId;
-use crate::shared::image_asset::ImageAssetStore;
-use crate::shared::result::AppResult;
-use crate::shared::system::ExternalOpener;
-use crate::shared::time::{Clock, SystemClock};
+use rustmark_core::application::document::registry::DocumentRegistry;
+use rustmark_core::application::document::service::DocumentAppService;
+use rustmark_core::application::event_subscriptions::{AutoSaveTracker, EventSubscribers};
+use rustmark_core::application::export::service::ExportAppService;
+use rustmark_core::application::markdown::service::{
+    DebouncePolicy, MarkdownAppService, RENDER_CACHE_CAPACITY, RenderCache,
+};
+use rustmark_core::application::preferences::service::PreferencesAppService;
+use rustmark_core::application::workspace::service::WorkspaceAppService;
+use rustmark_core::domain::document::repository::DocumentRepository;
+use rustmark_core::domain::document::services::BufferFactory;
+use rustmark_core::domain::export::services::Exporter;
+use rustmark_core::domain::preferences::repository::PreferencesRepository;
+use rustmark_core::domain::workspace::aggregate::Workspace;
+use rustmark_core::domain::workspace::repository::WorkspaceRepository;
+use rustmark_core::shared::dialog::DialogPort;
+use rustmark_core::shared::event::EventBus;
+use rustmark_core::shared::ids::WorkspaceId;
+use rustmark_core::shared::image_asset::ImageAssetStore;
+use rustmark_core::shared::result::AppResult;
+use rustmark_core::shared::system::ExternalOpener;
+use rustmark_core::shared::time::{Clock, SystemClock};
 
 /// 预览防抖间隔（毫秒，FR-01）。
 ///
 /// 与统计防抖、高亮静止窗口共用 core 的单一真源。
-pub const PREVIEW_DEBOUNCE_MS: u64 = crate::shared::constants::DEBOUNCE_MS;
+pub const PREVIEW_DEBOUNCE_MS: u64 = rustmark_core::shared::constants::DEBOUNCE_MS;
 
 // 渲染缓存容量（`RENDER_CACHE_CAPACITY`）的**单一事实来源**在
 // `application::markdown::service` 层定义，本文件通过上方 `use` 引入并在装配处使用。
@@ -234,7 +234,7 @@ impl Services {
     /// 「窗口内」与「窗口已超时」两种状态下断言回车行为，而真实 `SystemClock`
     /// 下整个用例跑完也未必跨过 800ms，窗口超时分支**永远测不到**。
     ///
-    /// 传 [`crate::shared::time::SystemClock`] 之外的可控时钟即可推进时间。
+    /// 传 [`rustmark_core::shared::time::SystemClock`] 之外的可控时钟即可推进时间。
     ///
     /// [`IME_GUARD_MS`]: crate::app::frame::IME_GUARD_MS
     pub fn assemble_with_clock_and_dialogs(

@@ -15,7 +15,7 @@
 //!   多行选区缩进/反缩进另由 `Indent` / `Outdent` 动作（egui 单行 `lock_focus` 语义之外）
 //!   经命令面板可达。
 //! - **内容单一真相**：egui 改过的字符串经 [`editor_ops::diff_replace`] 算出最小替换，
-//!   发 [`crate::application::document::commands::ReplaceRangeCommand`] 回写领域，
+//!   发 [`rustmark_core::application::document::commands::ReplaceRangeCommand`] 回写领域，
 //!   随后 `refresh_text()` 用 `get_content` 覆盖回来，二者永不漂移。
 //!
 //! IME 的「组合期不产生撤销快照」由 egui 天然满足：组合中的预编辑文本不进入
@@ -46,11 +46,11 @@ pub use spell::spell_menu_for;
 use egui::{FontId, ScrollArea, TextEdit, Ui};
 
 use crate::app::frame::EditorApp;
-use crate::application::markdown::queries::{HighlightQuery, SpellCheckQuery};
 use crate::presentation::state::scroll_sync_state::Side;
 use crate::presentation::theme::mapper;
 use crate::presentation::views::editor_ops;
-use crate::shared::geometry::{ByteOffset, TextRange};
+use rustmark_core::application::markdown::queries::{HighlightQuery, SpellCheckQuery};
+use rustmark_core::shared::geometry::{ByteOffset, TextRange};
 
 /// 绘制编辑区。
 pub fn show(app: &mut EditorApp, ui: &mut Ui) {

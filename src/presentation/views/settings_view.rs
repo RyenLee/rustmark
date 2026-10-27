@@ -33,7 +33,7 @@ use crate::presentation::shortcuts::registry::UiAction;
 use crate::presentation::state::dialog_ui_state::Overlay;
 use crate::presentation::state::settings_ui_state::SettingsTab;
 use crate::presentation::theme::builtin::Theme;
-use crate::shared::theme::ThemeKind;
+use rustmark_core::shared::theme::ThemeKind;
 
 /// 对话框默认尺寸（对齐原型 `BaseModal :width="620" :height="420"`）。
 const WIDTH: f32 = 620.0;

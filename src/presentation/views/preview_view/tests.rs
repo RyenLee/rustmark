@@ -1,10 +1,10 @@
 //! 模块外置测试。
 use super::*;
-use crate::application::dto::{RangeView, SpanView};
+use rustmark_core::application::dto::{RangeView, SpanView};
 // R-10 对拍用例要访问行内路径的私有项（样式表 / 构造器 / 命中区间）。
 use super::inline::{Typography, build_text_job, done_overlay, span_format};
 use crate::presentation::theme::mapper::SpanHit;
-use crate::shared::geometry::clamp_to_char_boundaries;
+use rustmark_core::shared::geometry::clamp_to_char_boundaries;
 
 /// DEF-04：span 边界落在多字节字符中间时，预览区代码块不得 panic。
 ///

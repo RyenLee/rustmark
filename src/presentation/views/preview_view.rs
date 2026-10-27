@@ -89,10 +89,10 @@ pub mod test_only {
 use egui::{Align, CornerRadius, Layout, RichText, ScrollArea, Stroke, Ui};
 
 use crate::app::frame::EditorApp;
-use crate::application::dto::BlockView;
-use crate::application::markdown::queries::RenderPreviewQuery;
 use crate::presentation::state::scroll_sync_state::{BlockRect, Side};
 use crate::presentation::theme::builtin::Theme;
+use rustmark_core::application::dto::BlockView;
+use rustmark_core::application::markdown::queries::RenderPreviewQuery;
 
 // 代码块文本 → 带语法色 `LayoutJob` 的纯函数留在 `code` 子模块；facade 内的
 // 单测经 `super::*` 取用，故仅在测试构建里导入。

@@ -2,10 +2,10 @@
 
 use egui::{RichText, Ui, Vec2};
 
-use crate::application::dto::RecentFileView;
 use crate::presentation::theme::builtin::Theme;
 use crate::presentation::widgets;
-use crate::shared::path::file_name_of;
+use rustmark_core::application::dto::RecentFileView;
+use rustmark_core::shared::path::file_name_of;
 
 use super::*;
 

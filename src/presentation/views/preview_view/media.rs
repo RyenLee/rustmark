@@ -19,7 +19,7 @@
 
 use egui::{Align, Layout};
 
-use crate::application::dto::ImageSpecView;
+use rustmark_core::application::dto::ImageSpecView;
 
 use super::*;
 

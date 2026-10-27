@@ -54,7 +54,7 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// [`RecentFiles`] 保证——`last_opened` 降序，即最新的在最上面
 /// （问题记录 058 有呈现层回归用例钉住这条契约）；这里只定**条数**。
 ///
-/// [`RecentFiles`]: crate::domain::workspace::value_objects::RecentFiles
+/// [`RecentFiles`]: rustmark_core::domain::workspace::value_objects::RecentFiles
 const MAX_RECENT: usize = 5;
 /// 最近文件卡片宽度。
 const RECENT_WIDTH: f32 = 460.0;

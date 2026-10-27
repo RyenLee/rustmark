@@ -20,8 +20,8 @@
 
 use super::*;
 
-use crate::application::dto::BlockView;
 use crate::presentation::state::scroll_sync_state::BlockRect;
+use rustmark_core::application::dto::BlockView;
 
 impl EditorApp {
     /// 写入一次预览渲染的块序列（缓存未命中、`render_preview` 返回时）。

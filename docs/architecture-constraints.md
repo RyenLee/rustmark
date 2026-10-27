@@ -425,7 +425,9 @@ shell（root）只留组合根、视图与 re-export 拼接点**；
 
 ```
 src/                                    # shell（root crate `rustmark`）
-├─ main.rs / lib.rs                     # lib.rs 拼接点：pub use rustmark_core::{application, domain, shared};
+├─ main.rs / lib.rs                     # lib.rs 公开 API shim：pub use rustmark_core::{application, domain, shared};
+│                                       #   R-01（2026-10-27）：仅对外/历史 `rustmark::` 消费者维持路径稳定；
+│                                       #   根源码（src/）禁走此联邦别名，须写显式 `rustmark_core::<层>::…`
 │                                       #                  pub use rustmark_infra::infrastructure（V11-64）
 ├─ app.rs / app/{bootstrap.rs,frame.rs,crash_log.rs,…}
 │                                       # 组合根；帧预约唯一出口 app/frame/scheduler.rs
@@ -461,6 +463,15 @@ crates/rustmark-icons/src/              # icons（crate `rustmark-icons`，V11-5
 crates/rustmark-ui/src/                 # ui（crate `rustmark-ui`，V11-62 批次 1-5 收官）
 └─ lib.rs / presentation.rs / presentation/{widgets,state,shortcuts,theme,rich}/  # widgets（批次 1）、state（批次 2）、shortcuts（批次 3）、theme（批次 4）、rich（批次 5）；依赖 egui + rustmark-core
 ```
+
+> **R-01 收敛（2026-10-27）**：root（src 根）对 `rustmark-core` 内部层的依赖已收敛为显式
+> `rustmark_core::domain` / `rustmark_core::shared` / `rustmark_core::application`，不再经
+> `lib.rs` 的联邦 re-export 走 `crate::<层>` 别名（消除未声明逻辑依赖，真实依赖在
+> `Cargo.toml` 完全可见）。`lib.rs` 的两行 `pub use` 退化为**公开 API shim**，仅维持对外/
+> 历史 `rustmark::<层>` 路径稳定；**根源码（src/）禁止再用该联邦别名**，由
+> `tools/arch_check.rs` 的 `check_root_federated_layers` 机械化兜底（只拦 `crate::domain` /
+> `crate::shared` / `crate::application` 字面三连，不影响 `crate::infrastructure` 装配路径，
+> 也不误伤显式 `rustmark_core::<层>`）。`cargo tree -p rustmark` 仅含声明依赖。
 
 白名单外的顶层位置（shell `src/foo.rs`、core `src/utils/` 等）会被校验器报
 「未知层」：新目录要么归入既有层，要么先改本文档与校验器再放代码。

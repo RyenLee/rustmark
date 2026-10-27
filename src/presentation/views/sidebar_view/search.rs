@@ -143,7 +143,7 @@ fn toggle_row(
     app: &mut EditorApp,
     ui: &mut Ui,
     theme: &Theme,
-) -> Result<WorkspaceSearch, crate::shared::error::AppError> {
+) -> Result<WorkspaceSearch, rustmark_core::shared::error::AppError> {
     let options = app.sidebar.search_options;
     ui.horizontal(|ui| {
         for toggle in SEARCH_TOGGLES {
@@ -267,7 +267,7 @@ fn hit_row(
 }
 
 /// 命中片段按字节区间切分（DTO 的 `highlight` 是**字符**下标，见
-/// [`SearchHitView`](crate::application::dto::document::SearchHitView)）。
+/// [`SearchHitView`](rustmark_core::application::dto::document::SearchHitView)）。
 struct ByteRange {
     start: usize,
     end: usize,

@@ -1,6 +1,6 @@
 //! 拖放分类的纯函数（不 IO、不依赖 EditorApp）。
 
-use crate::shared::text_format::TextFormats;
+use rustmark_core::shared::text_format::TextFormats;
 
 /// 把一批拖入的路径分成「可打开」与「应拒绝」两组（纯函数，便于单测）。
 ///

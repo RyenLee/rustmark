@@ -64,7 +64,7 @@ impl Default for StatsPace {
 /// 取 150ms：与编辑器高亮 `HighlightPace` 的静止窗口一致——用户停手约一帧半后
 /// 刷新字数，打字期完全不重算。数字来自 `docs/metrics.md` §3.2.5：`compute_stats`
 /// 在 1MB 上 ≈ 9.5ms，与其每击键付一次，不如等静止后付一次。
-pub(crate) const STATS_DEBOUNCE_MS: u64 = crate::shared::constants::DEBOUNCE_MS;
+pub(crate) const STATS_DEBOUNCE_MS: u64 = rustmark_core::shared::constants::DEBOUNCE_MS;
 
 /// 应用根状态：一个 `eframe::App` 实例持有的全部东西。
 ///
@@ -299,7 +299,7 @@ pub struct EditorApp {
     pub(crate) scan_pending: Option<
         std::sync::mpsc::Receiver<(
             String,
-            Result<Vec<crate::application::dto::FileEntryView>, String>,
+            Result<Vec<rustmark_core::application::dto::FileEntryView>, String>,
         )>,
     >,
     /// 侧栏扫描 loading 态（显示"正在扫描..."提示）。

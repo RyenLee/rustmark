@@ -25,7 +25,7 @@ pub struct TextEdit {
 ///
 /// 这是编辑区「把 egui 改过的字符串同步回领域」的核心：每次按键后，
 /// egui 把 `self.editor_text` 原地改成 `new`，我们用本函数得到一条
-/// [`TextEdit`]，再发 [`crate::application::document::commands::ReplaceRangeCommand`]。
+/// [`TextEdit`]，再发 [`rustmark_core::application::document::commands::ReplaceRangeCommand`]。
 ///
 /// # 为什么在**字节层**求前后缀（问题 049 的修复）
 ///
@@ -103,7 +103,7 @@ pub fn diff_replace(old: &str, new: &str) -> Option<TextEdit> {
 /// - **列表续行**：插入内容含 `\n` 且前一行为列表项 → 追加下一行标记。
 ///
 /// 注意：`edit.byte_start` / `byte_end` 始终以**旧文本**为基准，变换后不变，
-/// 只有 `inserted` 与 `cursor_char` 会变——下游据此发 [`crate::application::document::commands::ReplaceRangeCommand`]。
+/// 只有 `inserted` 与 `cursor_char` 会变——下游据此发 [`rustmark_core::application::document::commands::ReplaceRangeCommand`]。
 pub fn transform_insert(old: &str, edit: &mut TextEdit) -> bool {
     let mut changed = false;
 

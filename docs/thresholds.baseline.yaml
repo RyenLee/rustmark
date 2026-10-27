@@ -571,7 +571,7 @@ modules:
         value: 150
         unit: "ms"
         source: "src/app/bootstrap.rs:65"
-        anchor: "PREVIEW_DEBOUNCE_MS: u64 = crate::shared::constants::DEBOUNCE_MS"
+        anchor: "PREVIEW_DEBOUNCE_MS: u64 = rustmark_core::shared::constants::DEBOUNCE_MS"
         via: "crates/rustmark-shared/src/shared/constants.rs"
         purpose: "预览防抖窗口（FR-01），装配 DebouncePolicy 时传入；打字期不重排，停手 150ms 后渲染。"
         recommended: "100-250"
@@ -589,7 +589,7 @@ modules:
         value: 150
         unit: "ms"
         source: "src/app/frame/state.rs:67"
-        anchor: "STATS_DEBOUNCE_MS: u64 = crate::shared::constants::DEBOUNCE_MS"
+        anchor: "STATS_DEBOUNCE_MS: u64 = rustmark_core::shared::constants::DEBOUNCE_MS"
         via: "crates/rustmark-shared/src/shared/constants.rs"
         purpose: "状态栏字数统计防抖窗口；1MB 文档 compute_stats 约 9.5ms，故等停手后算一次。"
         recommended: "100-250"
@@ -880,8 +880,8 @@ modules:
       find_scroll_eps:
         value: 0.5
         unit: "pt"
-        source: "src/app/frame/find.rs:114"
-        anchor: "abs() > crate::shared::constants::SCROLL_MOVE_EPS"
+        source: "src/app/frame/find.rs:115"
+        anchor: "> rustmark_core::shared::constants::SCROLL_MOVE_EPS"
         via: "crates/rustmark-shared/src/shared/constants.rs"
         purpose: "查找跳转时「需要改滚动位置」的容差；与 MOVE_EPS 同值但独立定义。"
         recommended: "0.5（复用 MOVE_EPS）"

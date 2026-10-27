@@ -28,9 +28,9 @@
 
 use std::sync::mpsc::{Receiver, Sender, channel};
 
-use crate::shared::dialog::{DialogPort, default_filters};
-use crate::shared::error::AppError;
-use crate::shared::path::FilePath;
+use rustmark_core::shared::dialog::{DialogPort, default_filters};
+use rustmark_core::shared::error::AppError;
+use rustmark_core::shared::path::FilePath;
 
 /// 一次对话框请求（UI 线程登记意图时使用）。
 #[derive(Clone, Debug, PartialEq, Eq)]

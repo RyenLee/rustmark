@@ -19,10 +19,10 @@
 use egui::{Align, Context, Layout, RichText, Ui};
 
 use crate::app::frame::EditorApp;
-use crate::application::dto::StatsView;
 use crate::presentation::state::dialog_ui_state::Overlay;
 use crate::presentation::theme::builtin::Theme;
-use crate::shared::text::thousands;
+use rustmark_core::application::dto::StatsView;
+use rustmark_core::shared::text::thousands;
 
 /// 对话框默认尺寸（对齐原型 `BaseModal :width="420" :height="400"`）。
 const WIDTH: f32 = 420.0;

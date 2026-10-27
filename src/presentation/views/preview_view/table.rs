@@ -2,7 +2,7 @@
 
 use egui::{Align, CornerRadius, FontId, Layout};
 
-use crate::application::dto::{CellAlignView, SpanView, TableView};
+use rustmark_core::application::dto::{CellAlignView, SpanView, TableView};
 
 use super::inline::{Typography, render_inline_text};
 use super::*;

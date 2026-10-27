@@ -35,10 +35,10 @@ pub(super) fn live_preview(ui: &mut Ui, theme: &Theme, source_kind: &str) {
         // 走真源的显示名表，不再手写一份 `match`——
         // 这份手写 `match` 是 R-09 收敛掉的**第六份**主题映射副本。
         match theme.kind {
-            crate::shared::theme::ThemeKind::Dark => "深色主题",
-            crate::shared::theme::ThemeKind::Light => "浅色主题",
-            crate::shared::theme::ThemeKind::System => "跟随系统主题",
-            crate::shared::theme::ThemeKind::Custom => "自定义主题",
+            rustmark_core::shared::theme::ThemeKind::Dark => "深色主题",
+            rustmark_core::shared::theme::ThemeKind::Light => "浅色主题",
+            rustmark_core::shared::theme::ThemeKind::System => "跟随系统主题",
+            rustmark_core::shared::theme::ThemeKind::Custom => "自定义主题",
         }
     };
     egui::Frame::new()

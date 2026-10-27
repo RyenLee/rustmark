@@ -21,7 +21,7 @@ use crate::app::frame::EditorApp;
 use crate::presentation::state::dialog_ui_state::Overlay;
 use crate::presentation::state::diff_ui_state::{CharSeg, CharSegKind, DisplayRow};
 use crate::presentation::theme::builtin::Theme;
-use crate::shared::path::file_name_of;
+use rustmark_core::shared::path::file_name_of;
 
 /// 对话框默认尺寸（对齐原型 `BaseModal :width="760" :height="560"`）。
 const WIDTH: f32 = 760.0;
