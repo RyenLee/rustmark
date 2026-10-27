@@ -27,11 +27,12 @@
 //! # 本模块的测试策略
 //!
 //! 所有换算都是**纯函数**（不碰 egui），故可单元测试；
-//! 只有 [`apply`] 需要 `EditorApp`，它本身不含判定逻辑。
+//! 只有 [`apply`] 需要视图上下文（读两侧偏移、下两条滚动命令），
+//! 它本身不含判定逻辑。
 
-use crate::app::frame::EditorApp;
 use crate::presentation::state::scroll_sync_state::{BlockRect, PaneGeometry, Side};
 use crate::presentation::theme::mapper;
+use crate::presentation::view_context::EditorViewContext;
 use rustmark_core::application::markdown::queries::{MapScrollQuery, ScrollSource, ScrollTarget};
 
 /// 目标点与视口顶部之间留出的余量（点）。
@@ -242,30 +243,38 @@ pub fn line_of_offset(starts: &[usize], offset: usize) -> usize {
 /// 放在两侧之后是因为：同步要读两侧**本帧真实**的偏移，
 /// 而 `ScrollArea` 的偏移只有在它的 `show` 结束后才确定
 /// （用户滚轮的增量是在 `show` 内部才叠加的）。
-pub fn apply(app: &mut EditorApp, now_ms: u64) {
+pub fn apply(vctx: &mut dyn EditorViewContext, now_ms: u64) {
     // 无论是否同步都要观测：`last` 一旦停更，下次开启同步时
     // 累积的位移会被当成一次巨大的用户手势，预览会猛跳一下。
-    let driver = app
-        .ui
-        .sync
-        .observe(now_ms, app.editor.scroll_y, app.preview.scroll_y);
+    //
+    // **借用形态 A**：`ui_state().sync.observe(…)` 要独占借用，
+    // 而它的两个实参分别住在 `EditorUiState` / `PreviewUiState`。
+    // 先把两个 `f32` 读出来（都是 `Copy`），再调 observe。
+    let (editor_y, preview_y) = (
+        vctx.editor_state_read().scroll_y,
+        vctx.preview_state_read().scroll_y,
+    );
+    let driver = vctx.ui_state().sync.observe(now_ms, editor_y, preview_y);
 
     // 点击跳转**独立于**「连续滚动同步」开关（见 S6-05 #12）：即便用户关掉同步，
     // 点目录 / 标题 / 脚注仍应跳到编辑区对应行。故先取点击、先行处理，
     // 再判定连续同步是否启用——原有的顺序会在关闭同步时把点击吞掉，
     // 表现为「点了大纲 / 目录没反应」。
-    if let Some(block_id) = app.ui.sync.take_click() {
-        if drive_editor(app, Some(block_id)) {
-            app.ui.sync.record_drive(Side::Preview);
+    if let Some(block_id) = vctx.ui_state().sync.take_click() {
+        if drive_editor(vctx, Some(block_id)) {
+            vctx.ui_state().sync.record_drive(Side::Preview);
         }
         return;
     }
 
     // 预览关掉 / 专注模式 / 大文件降级时没有可同步的对侧。
-    let enabled = app.ui.sync.enabled
-        && app.ui.preview_visible
-        && !app.ui.focus_mode
-        && !app.preview.degraded;
+    // 三个开关同住 `AppUiState`，一次借用读完；`degraded` 在另一个容器里，
+    // 故必须在块外单独取——同一条表达式中两次独占借用编译不过（形态 A）。
+    let ui_flags = {
+        let ui = vctx.ui_state();
+        ui.sync.enabled && ui.preview_visible && !ui.focus_mode
+    };
+    let enabled = ui_flags && !vctx.preview_state_read().degraded;
     if !enabled {
         return;
     }
@@ -274,80 +283,95 @@ pub fn apply(app: &mut EditorApp, now_ms: u64) {
         return;
     };
     let done = match side {
-        Side::Editor => drive_preview(app),
-        Side::Preview => drive_editor(app, None),
+        Side::Editor => drive_preview(vctx),
+        Side::Preview => drive_editor(vctx, None),
     };
     if done {
-        app.ui.sync.record_drive(side);
+        vctx.ui_state().sync.record_drive(side);
     }
 }
 
 /// 编辑区 → 预览区。
-fn drive_preview(app: &mut EditorApp) -> bool {
-    let Some(doc_id) = app.active_doc else {
+fn drive_preview(vctx: &mut dyn EditorViewContext) -> bool {
+    let Some(doc_id) = vctx.active_doc() else {
         return false;
     };
-    let theme = app.theme().clone();
-    let Some(tops) = mapper::line_tops(&theme, &app.editor_text) else {
+    let theme = vctx.theme_state().clone();
+    let Some(tops) = mapper::line_tops(&theme, vctx.editor_text()) else {
         return false;
     };
-    let starts = line_start_offsets(&app.editor_text);
-    let line = line_at_y(&tops, app.editor.scroll_y);
+    let starts = line_start_offsets(vctx.editor_text());
+    let line = line_at_y(&tops, vctx.editor_state_read().scroll_y);
     let offset = starts.get(line).copied().unwrap_or(0);
 
-    let Ok(ScrollTarget::Preview { block_id, ratio }) =
-        app.services.markdown.map_scroll(MapScrollQuery {
-            doc_id,
-            source: ScrollSource::Editor { offset },
-        })
-    else {
+    let mapped = vctx.markdown_service().map_scroll(MapScrollQuery {
+        doc_id,
+        source: ScrollSource::Editor { offset },
+    });
+    let Ok(ScrollTarget::Preview { block_id, ratio }) = mapped else {
         return false;
     };
 
-    let geom = app.ui.sync.geometry(Side::Preview);
-    let Some(target) = offset_for_block(&app.preview.rects, block_id, ratio, geom, TARGET_MARGIN)
-    else {
+    let geom = vctx.ui_state().sync.geometry(Side::Preview);
+    let target = offset_for_block(
+        &vctx.preview_state_read().rects,
+        block_id,
+        ratio,
+        geom,
+        TARGET_MARGIN,
+    );
+    let Some(target) = target else {
         return false;
     };
-    app.set_preview_scroll_y(target);
+    vctx.set_preview_scroll_y(target);
     true
 }
 
 /// 预览区 → 编辑区。
 ///
 /// `block_id` 为 `Some` 时来自**点击**（标题），为 `None` 时取视口顶部命中的块。
-fn drive_editor(app: &mut EditorApp, block_id: Option<u64>) -> bool {
-    let Some(doc_id) = app.active_doc else {
+fn drive_editor(vctx: &mut dyn EditorViewContext, block_id: Option<u64>) -> bool {
+    let Some(doc_id) = vctx.active_doc() else {
         return false;
     };
     let id = match block_id {
         Some(id) => id,
-        None => match block_at_offset(&app.preview.rects, app.preview.scroll_y + HIT_BIAS) {
-            Some(id) => id,
-            None => return false,
-        },
+        None => {
+            // 命中的块从只读状态算出，借用随此块结束——后面 `map_scroll`
+            // 还要再借一次 `&self`，两次不能叠在同一个表达式里。
+            let hit = {
+                let preview = vctx.preview_state_read();
+                block_at_offset(&preview.rects, preview.scroll_y + HIT_BIAS)
+            };
+            match hit {
+                Some(id) => id,
+                None => return false,
+            }
+        }
     };
 
-    let Ok(ScrollTarget::Editor { offset }) = app.services.markdown.map_scroll(MapScrollQuery {
+    let mapped = vctx.markdown_service().map_scroll(MapScrollQuery {
         doc_id,
         source: ScrollSource::Preview { block_id: id },
-    }) else {
+    });
+    let Ok(ScrollTarget::Editor { offset }) = mapped else {
         return false;
     };
 
-    let theme = app.theme().clone();
-    let Some(tops) = mapper::line_tops(&theme, &app.editor_text) else {
+    let theme = vctx.theme_state().clone();
+    let Some(tops) = mapper::line_tops(&theme, vctx.editor_text()) else {
         return false;
     };
-    let starts = line_start_offsets(&app.editor_text);
+    let starts = line_start_offsets(vctx.editor_text());
     let line = line_of_offset(&starts, offset);
     // Galley 坐标 → 内容坐标：加每帧实测的文本顶端偏移（TextEdit atom
     // frame 的竖向内边距，见 [`ScrollSync::set_editor_text_top`]）。
     // 不加这一项，预览点击跳转会系统性偏高该偏移（实测 4pt）——
     // 与大纲跳转（问题 066）同源，两条路径必须一起修。
-    let y = tops.get(line).copied().unwrap_or(0.0) + app.ui.sync.editor_text_top();
+    let text_top = vctx.ui_state().sync.editor_text_top();
+    let y = tops.get(line).copied().unwrap_or(0.0) + text_top;
 
-    let geom = app.ui.sync.geometry(Side::Editor);
-    app.set_editor_scroll_y(clamp_scroll(y - TARGET_MARGIN, geom));
+    let geom = vctx.ui_state().sync.geometry(Side::Editor);
+    vctx.set_editor_scroll_y(clamp_scroll(y - TARGET_MARGIN, geom));
     true
 }

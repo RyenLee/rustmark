@@ -114,6 +114,20 @@
   补到 **3 个**（多出 `editor_state_read`——`build_model` 要读三个编辑器开关，
   而通往 `EditorUiState` 的唯一出口是 `&mut` 的）。`LineIndex` 不搬，行索引靠
   应用层缓存保证仍只扫一次全文（问题 053 的性能不变量未破）。
+- **R-03 B1 批 2 · 步 2.2 `editor_view` 树（已收官，`e9024b6`）**：契约 **108 → 118**
+  个方法（`UiStateAccess` +1 `editor_text_mut` / `CommandPort` +9）。`editor_ops::TextEdit`
+  搬进契约同侧（root 侧 `pub use` 转发，公开路径逐字不变，实测 **±0 B**）。
+  `flush_edit` 的 `domain_len` 口径钉死为**旧文本长度**，专项回归
+  （`enter_key_creates_lines_and_keeps_list_numbers_intact` /
+  `list_enter_right_after_commit_does_not_pile_markers`）通过。
+- **R-03 B1 批 2 · 步 2.3–2.4（已收官，`d988edf` + 本步）**：`preview_view` 树（含
+  `image_cache.rs`）/ `main_view` / `scroll_sync` 全部解耦，契约 **118 → 133** 个方法，
+  `PENDING_DECOUPLED_VIEWS` **归零**、`views/**` 零 `crate::app`。
+  **`image_cache.rs` 的「三重阻塞」被一条闭包契约解开**——文件不搬家（`image` crate
+  与 `decode()` 原样可用），`AssetLoader`（infra）与文档目录（`pub(crate)`）封进
+  `preview_image_fetcher(&self) -> ImageFetcher` 返回的
+  `Box<dyn FnOnce() -> Result<Vec<u8>, String> + Send>`，远程图的后台下载（F-3）
+  因此不受影响。原计划的 `EXEMPT_VIEWS` 永久豁免**没有实际成员**。
 - **可观测性（D-5，2026-10-26，`1c58052`）**：`FrameScheduler` 兼作帧耗时观测点——超 16ms 的帧打一条
   `warn`（状态更新 / 绘制 / 未归因三段归因 + 本帧到期任务，120 帧限流；**仅 release 构建输出**），
   `RUST_LOG=…=debug`
@@ -126,8 +140,8 @@
 - **`--workspace` 纪律机制化（2026-10-26，`9c85129`）**：根 manifest 的 `default-members`
   覆盖全部 7 个包，漏带 flag 不再漏测子 crate；两份清单的同步由
   `workspace_topology_test::default_members_cover_every_workspace_member` 集合相等断言钉死。
-- **体积**：`NFR-PERF-01` release exe **10,556,416 B = 10.071 MiB**（2026-10-27 R-03 B1 收官后实测），
-  低于 10.5 MiB 预警线与 11 MiB 红线（`size_gate` exit 0，距预警线余 453,632 B、距红线余 977,920 B）。
+- **体积**：`NFR-PERF-01` release exe **10,558,464 B = 10.070 MiB**（2026-10-27 R-03 B1 批 2 收官后实测），
+  低于 10.5 MiB 预警线与 11 MiB 红线（`size_gate` exit 0，距预警线余 451,584 B、距红线余 975,872 B）。
   2026-10-20 的
   「11.36 MiB 超 10 MB 红线」已解除：V11-26 依赖裁剪先把 11.36 → 10.93 MiB（仍高于旧红线），
   随后维护者把红线 10 → 11 MiB（2026-10-24，`scripts/size_gate.sh` 与 metrics §2.8 同步），

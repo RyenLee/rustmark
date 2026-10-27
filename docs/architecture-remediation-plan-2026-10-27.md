@@ -218,6 +218,25 @@
     `to_string()` 并就地注释钉死。
     顺带把 `media.rs` 的外链打开从 `app.services.opener.open`
     改走 `external_opener()`（`ServiceQueries` 早已给出，此前只是没人用）。
+  - **步 2.4 `scroll_sync.rs` + `main_view.rs`（已收官）**：两者同一步做，契约新增
+    **8** 个方法（trait 总数 125 → **133**）：`DocumentAccess` +1
+    （`should_show_welcome`）；`CommandPort` +7（`set_preview_scroll_y` /
+    `set_preview_rect` / `set_split_dragging` / `set_sidebar_dragging` /
+    `persist_split_ratio` / `persist_sidebar_visibility` / `persist_sidebar_width`）。
+    **`ScrollSync` 一个 trait 方法都没加**：它的全部方法本就 `pub` 且住在 ui crate，
+    经 `ui_state().sync.*` 全可达——为它加转发只会在契约上多出十几个
+    「组合根转手一次」的空壳。
+    **`main_view` 的 Panel 顺序一行未动**（egui 的 Panel 是命令式切分，
+    顺序就是布局本身）：`toolbar → status_bar → sidebar → sidebar_divider →
+    (welcome | editor → divider → preview) → overlays`，`scroll_sync::apply`
+    仍在两侧都画完之后、`overlays` 之前。
+    **形态 A 的新落点**：`ScrollSync::observe(now_ms, editor_y, preview_y)` 要
+    独占借用 `ui_state()`，而两个实参分别住 `EditorUiState` / `PreviewUiState`
+    ——同一表达式里就是两次借用。先把两个 `f32` 读出来（`Copy`）再调。
+    同理 `sync.enabled && preview_visible && !focus_mode` 与
+    `preview.degraded` 分属两个容器，`&&` 前半段关进块、后半段在外层求值。
+    **白名单归零**：`PENDING_DECOUPLED_VIEWS = &[]`，常量与双向校验保留
+    （批 3 新增视图时「零容忍」直接生效）。
 - **批 1 遗留（移交给批 2 / 批 3）**：
   - ~~`preview_view/image_cache.rs` **本轮不迁**，留 root + 批 3 加
     `EXEMPT_VIEWS` 永久豁免；三重阻塞：`image` crate 属 root 独有依赖 /
@@ -242,7 +261,7 @@
 - **守卫 `check_view_decoupling`**：白名单 `PENDING_DECOUPLED_VIEWS`（32 条）**双向**校验——名单外的 `crate::app` 引用报违规；名单内已解耦的条目也报（防名单腐烂）。词法级判定（`first_crate_app_line`），注释里提到旧路径不误伤。已接入 `scan_project`，故 `check-arch` bin 与 `build.rs` 构建期同时生效。
 - **变异验证**：① 废掉 `first_crate_app_line` → 构建期 panic，列出 32 条陈旧；② 关掉反向陈旧检查 → fixture 红（「名单陈旧应报 1 条，实际：[]」）。
 - **门禁**：fmt / check-arch / thresholds 121 / clippy `-D warnings` / `test --all-targets` **2243** passed（+1 新用例）/ `test --doc` 1 / `size_gate` 见 §metrics。
-- **下一步**：按「零 `app.services` 的独立视图树」分批推进——批 1 = 24 个视图（`welcome_view` 树 / `settings_view` 树 / `diff_view` / `find_replace_view` / `export_view` / `quick_open_view` / `command_palette_view` / `overlays` / `toolbar_view` 树 / `sidebar_view` 树）**✅ 已完成**；批 2 = 8 个 `services` 视图 + 6 个未登记子模块（`ServiceQueries` 的 4 个窄访问器已就位，`*_state()` 只读变体按上条「批 1 遗留」补）；批 3 = 守卫收官（`EXEMPT_VIEWS` 永久豁免 + 白名单归零 + 「视图不得出现 `EditorApp` 记号」新守卫）。
+- **下一步**：按「零 `app.services` 的独立视图树」分批推进——批 1 = 24 个视图（`welcome_view` 树 / `settings_view` 树 / `diff_view` / `find_replace_view` / `export_view` / `quick_open_view` / `command_palette_view` / `overlays` / `toolbar_view` 树 / `sidebar_view` 树）**✅ 已完成**；批 2 = 8 个 `services` 视图 + 6 个未登记子模块 **✅ 已完成（白名单归零、`views/**` 零 `crate::app`）**；批 3 = 守卫收官（「视图不得出现 `EditorApp` 记号」新守卫 + `PENDING_DECOUPLED_VIEWS` 常量退役评估；`EXEMPT_VIEWS` 因 `image_cache.rs` 已解耦而**无成员**，是否保留该机制待裁决）。
 
 ### R-04 · 抽离 `rustmark-render`（富内容渲染引擎）　【P2，对应问题 F】
 

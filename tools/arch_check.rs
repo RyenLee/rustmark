@@ -1480,12 +1480,14 @@ pub fn check_ui_submodule_sync(manifest: &Path) -> Vec<Violation> {
 /// **批 1 · 步 1.4（2026-10-27）**：`command_palette_view`（1 个文件）已迁。
 /// **批 1 · 步 1.5（2026-10-27）**：`overlays`（1 个文件，10 个分支全通）已迁。
 /// **批 1 · 步 1.6（2026-10-27）**：`toolbar_view` 树（4 个文件）已迁。
-/// **批 1 · 步 1.7（2026-10-27）**：`sidebar_view` 树（5 个文件）
-/// + `preview_view/inline/math.rs`（1 个文件）已迁——批 1 的 24 个文件收官。
-pub const PENDING_DECOUPLED_VIEWS: &[&str] = &[
-    "src/presentation/views/main_view.rs",
-    "src/presentation/views/scroll_sync.rs",
-];
+/// **批 1 · 步 1.7（2026-10-27）**：`sidebar_view` 树（5 个文件）与
+/// `preview_view/inline/math.rs`（1 个文件）已迁——批 1 的 24 个文件收官。
+/// **批 2（2026-10-27）**：`status_bar_view` / `editor_view` 树 /
+/// `preview_view` 树 / `main_view` / `scroll_sync` 全部解耦，白名单归零。
+///
+/// 保留这个常量与 `check_view_decoupling` 的**双向**校验：批 3 新增视图时
+/// 只要有人写了 `crate::app` 就直接报违规；空表意味着「零容忍」。
+pub const PENDING_DECOUPLED_VIEWS: &[&str] = &[];
 
 /// 视图解耦进度守卫（R-03 B1）：`views/**` 不得再直取组合根 `crate::app`。
 ///

@@ -119,13 +119,13 @@ fn handle_keys(vctx: &mut dyn EditorViewContext, ctx: &Context) {
 /// 第 30 条」，截到 12 条会让它退化成快速打开面板。
 ///
 /// 纯读，故收 `&dyn`（不可变重借用）：查询词经
-/// `command_palette_query()` 这条 `&self` 只读出口拿，动作表经
+/// `command_palette_state_read()` 这条 `&self` 只读出口拿，动作表经
 /// `dispatcher_state()` 拿——两者都不改状态。
 pub fn rows(vctx: &dyn EditorViewContext) -> Vec<CommandRow> {
     vctx.dispatcher_state()
         .registry()
         .table()
-        .search(vctx.command_palette_query())
+        .search(&vctx.command_palette_state_read().query)
         .into_iter()
         .map(|s| CommandRow {
             entry: s.entry,

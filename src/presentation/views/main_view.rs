@@ -39,9 +39,9 @@
 
 use egui::Ui;
 
-use crate::app::frame::EditorApp;
 use crate::presentation::state::app_ui_state::{SPLIT_MAX, SPLIT_MIN};
 use crate::presentation::theme::builtin::Metrics;
+use crate::presentation::view_context::EditorViewContext;
 
 /// 分割条的**视觉**宽度（来自 Metrics）与**命中**宽度之比。
 ///
@@ -55,26 +55,26 @@ const DIVIDER_HIT_SCALE: f32 = 2.0;
 ///
 /// 入参是 eframe 0.37 传入的根 `Ui`（覆盖整个窗口、无默认边距与底色），
 /// 所有 `Panel` 都从这里就地切分。
-pub fn show(app: &mut EditorApp, ui: &mut Ui) {
-    draw(app, ui);
+pub fn show(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
+    draw(vctx, ui);
     // 帧末：侧栏开合**变了就落盘**（问题 062）。
     //
     // 必须放在**所有绘制之后**：右上角按钮的点击发生在顶栏绘制阶段，
     // 放在前面会漏掉本帧那一次切换（用户点完立刻关窗口就丢了）。
     // 与 `persist_split_ratio` 同一手法（都在主视图帧末统一落盘，而不是在
     // 每个切换入口各写一遍——入口有四条以上，漏一个是静默失效）。
-    app.persist_sidebar_visibility();
+    vctx.persist_sidebar_visibility();
     // 帧末：侧栏宽度**变了就落盘**（问题 067）。拖拽期间宽度每帧都在变，
     // 由 `persist_sidebar_width` 内部的 `sidebar_dragging` 门控跳过，
     // 松手那一帧自然落盘一次；双击复位与设置页「恢复本组默认」不走
     // 拖拽，同样在这一处被捕获（入口逐个写必漏，062 的教训）。
-    app.persist_sidebar_width();
+    vctx.persist_sidebar_width();
 }
 
 /// 绘制三栏布局（[`show`] 的实现体；单独成函数只为让帧末的落盘
 /// 不受中途 `return` 影响）。
-fn draw(app: &mut EditorApp, ui: &mut Ui) {
-    let metrics = app.theme().metrics;
+fn draw(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
+    let metrics = vctx.theme_state().metrics;
 
     // 防御性底色：先把整块可用区域铺成面板底色（`bg_secondary`），画在最底层。
     //
@@ -86,27 +86,33 @@ fn draw(app: &mut EditorApp, ui: &mut Ui) {
     ui.layer_painter(egui::LayerId::background()).rect_filled(
         ui.available_rect_before_wrap(),
         egui::CornerRadius::ZERO,
-        app.theme().bg_secondary,
+        vctx.theme_state().bg_secondary,
     );
 
     // —— 顶部：菜单栏 + 标签条 ——
-    crate::presentation::views::toolbar_view::show(app, ui);
+    crate::presentation::views::toolbar_view::show(vctx, ui);
 
     // —— 底部：状态栏（可独立开关）——
-    if app.ui.status_bar_visible {
-        crate::presentation::views::status_bar_view::show(app, ui);
+    let status_bar_on = vctx.ui_state().status_bar_visible;
+    if status_bar_on {
+        crate::presentation::views::status_bar_view::show(vctx, ui);
     }
 
     // —— 左侧：侧栏 + 侧栏分割条（专注模式下整体隐藏）——
-    let sidebar_on = app.ui.sidebar_visible && !app.ui.focus_mode;
+    let sidebar_on = {
+        let ui_state = vctx.ui_state();
+        ui_state.sidebar_visible && !ui_state.focus_mode
+    };
     if sidebar_on {
         // 生效宽必须在侧栏面板**之前**算：它按「整个主体带宽度」做动态
         // 夹紧（不超过编辑区+预览区的 60%），而面板一开，可用宽就被
         // 切掉侧栏那一份，再也量不到总数。
         let total = ui.available_rect_before_wrap().width();
-        let width = app.ui.effective_sidebar_width(total, metrics.divider_width);
-        crate::presentation::views::sidebar_view::show(app, ui, width);
-        render_sidebar_divider(app, ui, metrics, width);
+        let width = vctx
+            .ui_state()
+            .effective_sidebar_width(total, metrics.divider_width);
+        crate::presentation::views::sidebar_view::show(vctx, ui, width);
+        render_sidebar_divider(vctx, ui, metrics, width);
     }
 
     // —— 主体：编辑区 + 分割条 + 预览 ——
@@ -121,18 +127,21 @@ fn draw(app: &mut EditorApp, ui: &mut Ui) {
         return;
     }
 
-    let preview_on = app.ui.preview_visible && !app.ui.focus_mode;
+    let preview_on = {
+        let ui_state = vctx.ui_state();
+        ui_state.preview_visible && !ui_state.focus_mode
+    };
     // 欢迎页占**整个主体区**（侧栏之外）：它是「还没有任何文档」时的
     // 整屏入口，左边挂一个空文件树只会让人以为该点点看。
-    if app.should_show_welcome() {
+    if vctx.should_show_welcome() {
         egui::CentralPanel::default().show(ui, |ui| {
-            crate::presentation::views::welcome_view::show(app, ui);
+            crate::presentation::views::welcome_view::show(vctx, ui);
         });
         // 浮层仍要画：用户在欢迎页上按 `Ctrl+,` 打开设置是合理的。
-        crate::presentation::views::overlays::show(app, ui);
+        crate::presentation::views::overlays::show(vctx, ui);
         return;
     }
-    render_split(app, ui, metrics, body_width, preview_on);
+    render_split(vctx, ui, metrics, body_width, preview_on);
 
     // —— 浮层 ——
     // 必须**最后**画：浮层是 `Window`，需要在所有 Panel 之后、
@@ -140,18 +149,18 @@ fn draw(app: &mut EditorApp, ui: &mut Ui) {
     //
     // 放在 `render_split` 之后还有第二个原因：`scroll_sync::apply` 要在
     // 编辑区与预览区都画完后才跑，浮层若夹在中间会打乱那个顺序。
-    crate::presentation::views::overlays::show(app, ui);
+    crate::presentation::views::overlays::show(vctx, ui);
 }
 
 /// 渲染编辑区 + 分割条 + 预览区。
 fn render_split(
-    app: &mut EditorApp,
+    vctx: &mut dyn EditorViewContext,
     ui: &mut Ui,
     metrics: Metrics,
     body_width: f32,
     with_preview: bool,
 ) {
-    let ratio = app.ui.editor_ratio();
+    let ratio = vctx.ui_state().editor_ratio();
 
     // 防御性底色：先把整块主体区铺成面板底色（`bg_secondary`）。
     //
@@ -166,7 +175,7 @@ fn render_split(
     ui.layer_painter(egui::LayerId::background()).rect_filled(
         ui.available_rect_before_wrap(),
         egui::CornerRadius::ZERO,
-        app.theme().bg_secondary,
+        vctx.theme_state().bg_secondary,
     );
 
     let divider_w = metrics.divider_width;
@@ -183,7 +192,7 @@ fn render_split(
         .resizable(false)
         .show_separator_line(false)
         .show(ui, |ui| {
-            crate::presentation::views::editor_view::show(app, ui)
+            crate::presentation::views::editor_view::show(vctx, ui)
         });
 
     if !with_preview {
@@ -196,7 +205,7 @@ fn render_split(
     let mut next_ratio = ratio;
     // 拖拽结束的跳变检测：上一帧还在拖、这一帧松手 → 落盘一次分割比例。
     // 每帧都写配置文件太频繁，只在「松手」那一刻写。
-    let was_dragging = app.ui.split_dragging;
+    let was_dragging = vctx.ui_state().split_dragging;
     egui::Panel::left("rustmark.divider")
         .exact_size(divider_w)
         .resizable(false)
@@ -223,7 +232,7 @@ fn render_split(
                 .on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
             ui.painter()
                 .rect_filled(rect, egui::CornerRadius::ZERO, divider_color(ui, &grab));
-            app.set_split_dragging(grab.dragged());
+            vctx.set_split_dragging(grab.dragged());
             if grab.dragged() {
                 // 每帧只累加本帧位移：`ratio` 是**上一帧写回后**的值，
                 // 跨帧累加因此天然成立，不需要额外的拖拽状态机。
@@ -232,11 +241,11 @@ fn render_split(
             }
         });
     if (next_ratio - ratio).abs() > f32::EPSILON {
-        app.ui.set_split_ratio(next_ratio);
+        vctx.ui_state().set_split_ratio(next_ratio);
     }
-    if was_dragging && !app.ui.split_dragging {
+    if was_dragging && !vctx.ui_state().split_dragging {
         // 拖拽结束：把最终比例持久化到设置（跨重启保留）。
-        app.persist_split_ratio();
+        vctx.persist_split_ratio();
     }
 
     // 剩下的全部宽度归预览区。
@@ -257,23 +266,23 @@ fn render_split(
         .frame(
             egui::Frame::new()
                 .inner_margin(egui::Margin::symmetric(0, 2))
-                .fill(app.theme().bg_primary),
+                .fill(vctx.theme_state().bg_primary),
         )
         .show(ui, |ui| {
-            crate::presentation::views::preview_view::show(app, ui);
+            crate::presentation::views::preview_view::show(vctx, ui);
             // 记录本帧预览区矩形，供图片导出裁剪用（P2）。
             //
             // 记在这里而不是 `preview_view` 内部：CentralPanel 的 `max_rect`
             // 才是「预览区在窗口里的最终位置」，而 `preview_view` 看到的
             // `ui.max_rect()` 会因内部滚动区而未必等于它。
-            app.set_preview_rect(ui.max_rect());
+            vctx.set_preview_rect(ui.max_rect());
         });
 
     // 滚动同步放在**两侧都画完之后**：`ScrollArea` 的用户滚轮增量是在
     // 它自己的 `show` 内部叠加的，只有画完才能拿到本帧的真实偏移。
     // 算出的目标在下一帧生效（16ms），对连续滚动无感。
-    let now_ms = app.services.markdown.now().millis();
-    crate::presentation::views::scroll_sync::apply(app, now_ms);
+    let now_ms = vctx.markdown_service().now().millis();
+    crate::presentation::views::scroll_sync::apply(vctx, now_ms);
 }
 
 /// 渲染侧栏分割条：侧栏右缘的 4px 拖拽柄（问题 067）。
@@ -282,7 +291,12 @@ fn render_split(
 /// `Panel::left`、紧贴侧栏右侧；写成 `right` 会被推到窗口最右缘），
 /// 差别只在拖拽数学：那条除 `body_width` 得比例，这条加指针横移得
 /// 像素宽。另多一个能力：**双击复位**到主题默认宽度。
-fn render_sidebar_divider(app: &mut EditorApp, ui: &mut Ui, metrics: Metrics, width: f32) {
+fn render_sidebar_divider(
+    vctx: &mut dyn EditorViewContext,
+    ui: &mut Ui,
+    metrics: Metrics,
+    width: f32,
+) {
     let divider_w = metrics.divider_width;
     // 拖拽从**生效宽**起算，而不是 `AppUiState` 里的用户值：生效宽被
     // 动态上界夹住时（窄窗口），用户值可能更大，从它起算会让分割条
@@ -316,7 +330,7 @@ fn render_sidebar_divider(app: &mut EditorApp, ui: &mut Ui, metrics: Metrics, wi
                 .on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
             ui.painter()
                 .rect_filled(rect, egui::CornerRadius::ZERO, divider_color(ui, &grab));
-            app.set_sidebar_dragging(grab.dragged());
+            vctx.set_sidebar_dragging(grab.dragged());
             if grab.dragged() {
                 // 每帧只累加本帧位移：`width` 是**上一帧写回后**的生效值，
                 // 跨帧累加因此天然成立（与分割比例同一手法）。
@@ -326,11 +340,11 @@ fn render_sidebar_divider(app: &mut EditorApp, ui: &mut Ui, metrics: Metrics, wi
             if grab.double_clicked() {
                 // 双击复位到主题默认宽度（`set_sidebar_width` 会夹紧，
                 // 主题默认值越界时也不会破）。
-                next_width = app.theme().metrics.sidebar_width;
+                next_width = vctx.theme_state().metrics.sidebar_width;
             }
         });
     if (next_width - width).abs() > f32::EPSILON {
-        app.ui.set_sidebar_width(next_width);
+        vctx.ui_state().set_sidebar_width(next_width);
     }
 }
 

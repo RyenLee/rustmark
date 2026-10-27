@@ -242,16 +242,20 @@ pub trait UiStateAccess {
     /// 快速打开浮层状态。
     fn quick_open_ui_state(&mut self) -> &mut QuickOpenUiState;
 
-    /// 命令面板状态。
+    /// 命令面板状态（可变出口）。
     fn command_palette_ui_state(&mut self) -> &mut CommandPaletteUiState;
 
-    /// 命令面板的查询词（只读）。
+    /// 命令面板状态的**只读**视图。
     ///
     /// [`Self::command_palette_ui_state`] 是 `&mut self` 方法，**纯读**的
     /// 过滤路径（命令面板按查询词过滤动作表）拿不到它；本视图的
     /// `rows()` 不改任何状态，故给一条 `&self` 只读出口——否则为了
     /// 读一个词就得把整个上下文可变地借走。
-    fn command_palette_query(&self) -> &str;
+    ///
+    /// 交出整个状态而不是只交出 `query: &str`：视图侧要的是「把查询词喂给
+    /// 搜索」，将来读第二个字段（如高亮区间）时不必再加一条方法；而
+    /// `&self` 的性质保证它照样改不了任何东西。
+    fn command_palette_state_read(&self) -> &CommandPaletteUiState;
 
     /// 差异对比浮层状态。
     fn diff_ui_state(&mut self) -> &mut DiffUiState;
@@ -389,6 +393,9 @@ pub trait DocumentAccess {
     /// `content_and_revision` 会把整篇文本从 rope 里快照出来，每帧一次
     /// 只为拿一个版本号（问题 043）。
     fn document_revision(&self, id: DocumentId) -> Option<u64>;
+
+    /// 是否该显示欢迎页（没有任何打开的文档时占满整个主体区）。
+    fn should_show_welcome(&self) -> bool;
 }
 
 // ===========================================================================
@@ -731,6 +738,36 @@ pub trait CommandPort {
     /// 闭包必须能**在线程里跑**：远程图片走后台下载 + 解码（F-3），
     /// 若只给一条 `&self` 同步查询，UI 线程就会被网络阻塞。
     fn preview_image_fetcher(&self, url: &str) -> ImageFetcher;
+
+    /// 写入预览区垂直滚动量（滚动同步驱动用；与 [`Self::set_editor_scroll_y`] 同族）。
+    fn set_preview_scroll_y(&mut self, y: f32);
+
+    /// 记录本帧预览区在窗口里的**最终矩形**（图片导出裁剪用）。
+    ///
+    /// 由主视图在 `CentralPanel` 的闭包里记，而不是 `preview_view` 内部：
+    /// `CentralPanel` 的 `max_rect` 才是预览区的真实位置，
+    /// `preview_view` 看到的 `ui.max_rect()` 会因内部滚动区而不等于它。
+    fn set_preview_rect(&mut self, rect: egui::Rect);
+
+    // ---------- 布局拖拽与落盘 ----------
+
+    /// 分割条拖拽中标志（每帧只在跳变帧写，避免无谓写回）。
+    fn set_split_dragging(&mut self, dragging: bool);
+
+    /// 侧栏宽度拖拽中标志（与上一项对称，目的相反：门控「松手才落盘」）。
+    fn set_sidebar_dragging(&mut self, dragging: bool);
+
+    /// 把当前分割比例落盘（**只应在拖拽结束那一帧调**；每帧写太频繁）。
+    fn persist_split_ratio(&mut self);
+
+    /// 侧栏开合状态变了就落盘（问题 062）。
+    ///
+    /// 由主视图在**帧末**统一调一次，而不是在每个切换入口各写一遍——
+    /// 入口有四条以上，漏一个是静默失效。
+    fn persist_sidebar_visibility(&mut self);
+
+    /// 侧栏宽度变了就落盘（问题 067），同样由主视图帧末统一调。
+    fn persist_sidebar_width(&mut self);
 }
 
 // ===========================================================================

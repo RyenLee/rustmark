@@ -143,8 +143,8 @@ impl UiStateAccess for EditorApp {
         &mut self.command_palette_ui
     }
 
-    fn command_palette_query(&self) -> &str {
-        &self.command_palette_ui.query
+    fn command_palette_state_read(&self) -> &CommandPaletteUiState {
+        &self.command_palette_ui
     }
 
     fn diff_ui_state(&mut self) -> &mut DiffUiState {
@@ -259,6 +259,10 @@ impl DocumentAccess for EditorApp {
 
     fn current_document_kind(&self) -> &'static str {
         EditorApp::current_document_kind(self)
+    }
+
+    fn should_show_welcome(&self) -> bool {
+        EditorApp::should_show_welcome(self)
     }
 
     fn document_revision(&self, id: DocumentId) -> Option<u64> {
@@ -645,6 +649,36 @@ impl CommandPort for EditorApp {
                 .map(|asset| asset.bytes)
                 .map_err(|e| e.to_string())
         })
+    }
+
+    fn set_preview_scroll_y(&mut self, y: f32) {
+        EditorApp::set_preview_scroll_y(self, y);
+    }
+
+    fn set_preview_rect(&mut self, rect: egui::Rect) {
+        EditorApp::set_preview_rect(self, rect);
+    }
+
+    // ---------- 布局拖拽与落盘 ----------
+
+    fn set_split_dragging(&mut self, dragging: bool) {
+        EditorApp::set_split_dragging(self, dragging);
+    }
+
+    fn set_sidebar_dragging(&mut self, dragging: bool) {
+        EditorApp::set_sidebar_dragging(self, dragging);
+    }
+
+    fn persist_split_ratio(&mut self) {
+        EditorApp::persist_split_ratio(self);
+    }
+
+    fn persist_sidebar_visibility(&mut self) {
+        EditorApp::persist_sidebar_visibility(self);
+    }
+
+    fn persist_sidebar_width(&mut self) {
+        EditorApp::persist_sidebar_width(self);
     }
 }
 
