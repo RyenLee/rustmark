@@ -23,12 +23,12 @@
 //! - 任何形如 `enum ...Format...` 且带 `Html`/`Pdf`/`Image` 变体的定义
 //!   （换个名字重建同构枚举，绕过前两条）。
 //!
-//! 合法出现只有一处：`src/shared/export_format.rs`。
+//! 合法出现只有一处：`src/shared/kernel/export_format.rs`（R-02 起落在 kernel 子目录）。
 
 use std::path::{Path, PathBuf};
 
 /// 真源文件（相对 `src/` 的路径）。
-const SOURCE_OF_TRUTH: &str = "shared/export_format.rs";
+const SOURCE_OF_TRUTH: &str = "shared/kernel/export_format.rs";
 
 /// 扫出「导出格式 / 页面尺寸枚举的多余定义」。
 ///
@@ -130,13 +130,14 @@ fn collect_rs_files(dir: &Path) -> Vec<PathBuf> {
     out
 }
 
-/// 四根扫描（D-3 阶段 4a workspace 化 + TD-04 + V11-64）：四层在
+/// 四根扫描（D-3 阶段 4a workspace 化 + TD-04 + V11-64 + R-02）：四层在
 /// `crates/rustmark-core/src`，组合根与视图在 `src`，共享内核真源
-/// `shared/export_format.rs` 在 `crates/rustmark-shared/src`，导出适配器
+/// `shared/kernel/export_format.rs` 在 `crates/rustmark-shared/src`（R-02 起
+/// 落在 kernel 子目录），导出适配器
 /// （`system_pdf_exporter` / `routing_exporter` 等最易另写一份格式枚举的
 /// 地方）在 `crates/rustmark-infra/src`。四根都扫才等价于拆分前对单一
 /// `src` 的全量覆盖（各根内按层相对路径记键，`shared/` `infrastructure/`
-/// 前缀随目录保留，`SOURCE_OF_TRUTH` 不需要改写）。
+/// 前缀随目录保留，`SOURCE_OF_TRUTH` 同步搬子目录）。
 fn src_roots() -> Vec<PathBuf> {
     let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     vec![
@@ -237,9 +238,9 @@ fn injected_renamed_format_enum_is_detected() {
 fn the_source_of_truth_is_not_flagged() {
     let dir = tempfile::tempdir().expect("应可创建临时目录");
     let root = dir.path().join("src");
-    std::fs::create_dir_all(root.join("shared")).expect("应可建目录");
+    std::fs::create_dir_all(root.join("shared/kernel")).expect("应可建目录");
     std::fs::write(
-        root.join("shared/export_format.rs"),
+        root.join("shared/kernel/export_format.rs"),
         "pub enum ExportFormat {\n    Html,\n    Markdown,\n    Pdf,\n    Image,\n}\npub enum PageSize {\n    A4,\n    Letter,\n}\n",
     )
     .expect("写 fixture 应成功");

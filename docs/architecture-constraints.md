@@ -308,25 +308,27 @@ rich / widgets ──► （不得回指 views / state / theme / widgets）
 <!-- shared:registry -->
 | 文件 | 三问理由 |
 |---|---|
-| `shared/constants.rs` | 跨层阈值常量（大文件 500KB / 防抖 150ms / 滚动容差 0.5pt）：core 的应用层、基础设施层、表现层与 `rustmark-ui`、root 五处消费，改一处漏一处即行为分叉；纯常量零 IO，无业务归属层 |
-| `shared/dialog.rs` | 对话框端口：presentation（菜单触发）、application（用例取路径）、infrastructure（rfd 实现）三方共用——矩阵禁 presentation→domain、infrastructure→application，共同落点只有 shared |
-| `shared/encoding.rs` | 编码**标签**纯值：infrastructure 探测编码（IO），presentation 状态栏展示，两层方向互禁，抽值共享 |
-| `shared/error.rs` | `AppError` 跨层统一错误：domain / application 具体错误的汇聚点，全部层与二进制入口共用 |
-| `shared/event.rs` | 事件总线（Shared Kernel）：事件只携带 ID 与标量，订阅者横跨各层，总线契约须被全部层引用 |
-| `shared/export_format.rs` | 导出格式与页面尺寸唯一真源（R-07）：domain 校验、presentation 选择、infrastructure 路由三方需要 |
-| `shared/fonts.rs` | 编辑区等宽字体契约（哨兵 + 选项）：设置页（presentation）与装配两侧需要；本模块不引入 egui、零 IO |
-| `shared/geometry.rs` | 文本坐标值对象（字节偏移 / 区间 / 行列）：domain 与 presentation 共用的纯值，零 IO |
-| `shared/ids.rs` | 强类型 ID（Shared Kernel）：四个上下文共用防 `u64` 误传；进程内计数器，零依赖零 IO |
-| `shared/image_asset.rs` | 图片导入端口（R-04b）：app 编排与 infrastructure 实现共享同一契约；写盘在实现侧，端口零 IO |
-| `shared/lru.rs` | 有界 LRU：高亮 / 拼写 / 渲染 / 图片四处缓存（应用层与表现层）的唯一实现，纯逻辑 |
-| `shared/path.rs` | `FilePath` 路径值对象：document / workspace / export / preferences 四上下文共享内核；领域层禁 `PathBuf`，纯规则零 IO |
-| `shared/pattern.rs` | 迷你正则引擎：表现层查找面板与应用层跨文件搜索共用（依赖方向单向，两层不能互引），自研控体积 |
-| `shared/result.rs` | `AppResult` 结果别名：全应用统一错误结果，`error.rs` 的配套，被各层引用 |
-| `shared/system.rs` | 外部打开器**端口**与链接安全校验：app 与 infrastructure 共用契约；执行端已按 R-03 移出，本体零 IO |
-| `shared/text_format.rs` | 可打开文本格式白名单唯一出处：拖放分类（app）、对话框过滤（shared）、状态栏标签（presentation）三处共用 |
-| `shared/text.rs` | 英文分词规则唯一出处：应用层拼写建议与表现层右键菜单共用，与检查器同源 |
-| `shared/theme.rs` | 主题种类唯一真源（R-09）：原散落六处的枚举 / 映射收敛，domain / application / presentation 共用 |
-| `shared/time.rs` | `Clock` 可注入时钟与毫秒标量：领域逻辑禁读系统时间（可单测性），各层共用，零依赖 |
+| `shared/kernel.rs` | 伞形重导出模块（R-02，2026-10-27）：仅 `pub mod …;` + `pub use kernel::*;`，把 `shared/kernel/` 子目录下的端口与值对象拼回 `shared::<名>`，自身无独立职责，不属三问对象 |
+| `shared/support.rs` | 伞形重导出模块（R-02，2026-10-27）：仅 `pub mod …;` + `pub use support::*;`，把 `shared/support/` 子目录下的工具拼回 `shared::<名>`；其下各模块按职责分别登记于 `shared/kernel/`、`shared/support/` |
+| `shared/support/constants.rs` | 跨层阈值常量（大文件 500KB / 防抖 150ms / 滚动容差 0.5pt）：core 的应用层、基础设施层、表现层与 `rustmark-ui`、root 五处消费，改一处漏一处即行为分叉；纯常量零 IO，无业务归属层 |
+| `shared/kernel/dialog.rs` | 对话框端口：presentation（菜单触发）、application（用例取路径）、infrastructure（rfd 实现）三方共用——矩阵禁 presentation→domain、infrastructure→application，共同落点只有 shared |
+| `shared/support/encoding.rs` | 编码**标签**纯值：infrastructure 探测编码（IO），presentation 状态栏展示，两层方向互禁，抽值共享 |
+| `shared/support/error.rs` | `AppError` 跨层统一错误：domain / application 具体错误的汇聚点，全部层与二进制入口共用 |
+| `shared/kernel/event.rs` | 事件总线（Shared Kernel）：事件只携带 ID 与标量，订阅者横跨各层，总线契约须被全部层引用 |
+| `shared/kernel/export_format.rs` | 导出格式与页面尺寸唯一真源（R-07）：domain 校验、presentation 选择、infrastructure 路由三方需要 |
+| `shared/kernel/fonts.rs` | 编辑区等宽字体契约（哨兵 + 选项）：设置页（presentation）与装配两侧需要；本模块不引入 egui、零 IO |
+| `shared/support/geometry.rs` | 文本坐标值对象（字节偏移 / 区间 / 行列）：domain 与 presentation 共用的纯值，零 IO |
+| `shared/support/ids.rs` | 强类型 ID（Shared Kernel）：四个上下文共用防 `u64` 误传；进程内计数器，零依赖零 IO |
+| `shared/kernel/image_asset.rs` | 图片导入端口（R-04b）：app 编排与 infrastructure 实现共享同一契约；写盘在实现侧，端口零 IO |
+| `shared/support/lru.rs` | 有界 LRU：高亮 / 拼写 / 渲染 / 图片四处缓存（应用层与表现层）的唯一实现，纯逻辑 |
+| `shared/support/path.rs` | `FilePath` 路径值对象：document / workspace / export / preferences 四上下文共享内核；领域层禁 `PathBuf`，纯规则零 IO |
+| `shared/support/pattern.rs` | 迷你正则引擎：表现层查找面板与应用层跨文件搜索共用（依赖方向单向，两层不能互引），自研控体积 |
+| `shared/support/result.rs` | `AppResult` 结果别名：全应用统一错误结果，`error.rs` 的配套，被各层引用 |
+| `shared/kernel/system.rs` | 外部打开器**端口**与链接安全校验：app 与 infrastructure 共用契约；执行端已按 R-03 移出，本体零 IO |
+| `shared/support/text_format.rs` | 可打开文本格式白名单唯一出处：拖放分类（app）、对话框过滤（shared）、状态栏标签（presentation）三处共用 |
+| `shared/support/text.rs` | 英文分词规则唯一出处：应用层拼写建议与表现层右键菜单共用，与检查器同源 |
+| `shared/kernel/theme.rs` | 主题种类唯一真源（R-09）：原散落六处的枚举 / 映射收敛，domain / application / presentation 共用 |
+| `shared/kernel/time.rs` | `Clock` 可注入时钟与毫秒标量：领域逻辑禁读系统时间（可单测性），各层共用，零依赖 |
 <!-- /shared:registry -->
 
 > 新增文件的流程：**先答三问，再加一行**；答不出「≥2 层需要」就放回所属层。
@@ -335,10 +337,18 @@ rich / widgets ──► （不得回指 views / state / theme / widgets）
 > `crates/rustmark-core/src/shared/x.rs`（TD-04 前的历史写法，保留兼容）均可。
 >
 > **TD-04（2026-10-26）后落点变更**：`shared/` 目录整体迁到
-> `crates/rustmark-shared/src/shared/`，本表键**不变**（`shared/x.rs`）——
+> `crates/rustmark-shared/src/shared/`，本表键沿用 `shared/x.rs`——
 > 校验器按「根内相对路径」匹配，新 crate 保留了 `shared/` 前缀，登记表
 > 与 `build.rs` 的机械核对零改动。新增文件时若只在核心里写、忘了它其实住在
 > 另一个 crate，构建会报「未登记」——那是提醒，不是误报。
+>
+> **R-02（2026-10-27）内部二分**：`shared/` 下的模块按职责落在两个子目录，
+> 表键随之为 `shared/kernel/x.rs`（端口与值对象：`dialog` `event` `system`
+> `image_asset` `time` `theme` `fonts` `export_format`）或
+> `shared/support/x.rs`（与层无关的工具：常量 / 编码 / 错误 / 几何 / ID /
+> LRU / 路径 / 正则 / 结果 / 分词 / 文本格式）。`shared.rs` 以
+> `pub use kernel::*` / `pub use support::*` 把原 `shared::<名>` 路径拼回，
+> 调用点零改动；`internal_cycle_guard_test` 已扩展为递归收集这两个已知子目录。
 
 ### 4.6 `shared` 内部依赖无环（V11-55 附案②，机械守卫）
 
@@ -452,7 +462,7 @@ crates/rustmark-infra/src/              # infra（crate `rustmark-infra`，V11-6
 └─ infrastructure/{persistence,text,parsing,highlighting,export,events,dialogs,fonts,spell}/  # 保 `infrastructure/` 前缀 → 层判定与禁令表零改动
 
 crates/rustmark-shared/src/             # shared（crate `rustmark-shared`，TD-04）
-└─ lib.rs / shared/{error.rs,result.rs,event.rs,ids.rs,geometry.rs,path.rs,text_format.rs,…}  # 保 `shared/` 前缀
+└─ lib.rs / shared.rs / shared/{kernel/（端口+值对象）,support/（工具）}  # R-02 二分；保 `shared/` 前缀，shared.rs 以 pub use 拼回 `shared::<名>`
 
 crates/rustmark-actions/src/            # actions（crate `rustmark-actions`，V11-57）
 └─ lib.rs / action.rs / action/{impls.rs,menu_group.rs}   # 零依赖词汇表，整根判 Free

@@ -41,8 +41,11 @@
 //!   注释与字符串不产生 token。这不是洁癖——`path.rs` 的文档注释里
 //!   就写着 `crate::shared::text_format::extension_of`（intra-doc 链接），
 //!   用正则扫原文会把文档引用当成真实依赖，phantom 边让守卫常红；
-//! - **shared/ 必须保持扁平**（无子目录）：出现子目录即报红，要求先
-//!   扩展本守卫——缺口要响，不要静。
+//! - **shared/ 允许 `kernel/` 与 `support/` 两个已知子目录**（R-02 二分，
+//!   2026-10-27）：出现其它未授权子目录即报红，要求先扩展本守卫的节点
+//!   收集与形态口径——缺口要响，不要静。物理子目录不改变边口径：模块间
+//!   仍只认 `crate::shared::<mod>` 绝对路径，故 `EXPECTED_EDGES` 与边提取
+//!   逻辑随搬迁零改动，只换扫描根与节点收集方式。
 
 // V11-65：workspace lints 为包级声明，覆盖本测试 crate；规范 §七-20
 // 允许测试代码 unwrap/expect/panic（main.rs 的 crate 级豁免已罩住
@@ -237,34 +240,48 @@ fn find_noncanonical_module_refs(dump: &str, modules: &BTreeSet<String>) -> Vec<
     bad
 }
 
+/// 递归收集 `shared/` 下的模块文件（R-02 起允许 `kernel/` 与 `support/`
+/// 两个已知子目录；其它子目录一律报红，要求先扩展本守卫的节点收集与形态口径）。
+///
+/// 伞形模块 `shared.rs` / `kernel.rs` / `support.rs` 只有 `pub mod` 声明
+/// （无实现内容），不属三问的对象，跳过。
+fn collect_shared_modules(dir: &Path, modules: &mut BTreeSet<String>, files: &mut Vec<PathBuf>) {
+    for entry in fs::read_dir(dir).expect("shared 目录应可读") {
+        let path = entry.expect("目录项应可读").path();
+        if path.is_dir() {
+            // 仅允许 R-02 引入的两个已知二分目录；出现其它子目录即缺口响，不要静。
+            let name = path.file_name().unwrap().to_string_lossy();
+            assert!(
+                name == "kernel" || name == "support",
+                "shared/ 出现未授权子目录 {name}：请先扩展 internal_cycle_guard 的 \
+                 节点收集与形态口径"
+            );
+            collect_shared_modules(&path, modules, files);
+        } else if path.extension().map(|e| e == "rs").unwrap_or(false) {
+            let stem = path.file_stem().unwrap().to_string_lossy();
+            // 跳过伞形模块（只有 `pub mod` 声明，无实现内容，不属三问对象）。
+            if stem == "shared" || stem == "kernel" || stem == "support" {
+                continue;
+            }
+            modules.insert(stem.into_owned());
+            files.push(path);
+        }
+    }
+}
+
 /// 扫描真实工程，产出 shared 内部依赖图（键 = 模块名，值 = 目标模块集）。
 fn scan_shared_graph() -> BTreeMap<String, BTreeSet<String>> {
     let dir = shared_dir();
 
-    // 扁平性断言：出现子目录即要求先扩展本守卫（super 链解析按扁平假设）。
-    for entry in fs::read_dir(&dir).expect("shared 目录应可读") {
-        let path = entry.expect("目录项应可读").path();
-        assert!(
-            !path.is_dir(),
-            "shared/ 出现子目录 {}：请先扩展 internal_cycle_guard 的 \
-             节点收集与形态口径",
-            path.display()
-        );
-    }
-
     let mut modules: BTreeSet<String> = BTreeSet::new();
-    for entry in fs::read_dir(&dir).expect("shared 目录应可读") {
-        let path = entry.expect("目录项应可读").path();
-        if path.extension().map(|e| e == "rs").unwrap_or(false) {
-            modules.insert(path.file_stem().unwrap().to_string_lossy().into_owned());
-        }
-    }
+    let mut module_files: Vec<PathBuf> = Vec::new();
+    collect_shared_modules(&dir, &mut modules, &mut module_files);
     assert!(!modules.is_empty(), "shared/ 未收集到任何 .rs 模块");
 
     let mut graph: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    for module in &modules {
-        let src = fs::read_to_string(dir.join(format!("{module}.rs")))
-            .unwrap_or_else(|e| panic!("读取 {module}.rs 失败：{e}"));
+    for path in &module_files {
+        let module = path.file_stem().unwrap().to_string_lossy().into_owned();
+        let src = fs::read_to_string(path).unwrap_or_else(|e| panic!("读取 {module}.rs 失败：{e}"));
         let dump = arch_check::lex_dump(&src);
 
         let bad = find_noncanonical_module_refs(&dump, &modules);
@@ -275,7 +292,7 @@ fn scan_shared_graph() -> BTreeMap<String, BTreeSet<String>> {
         );
 
         let mut targets = extract_edges(&dump, &modules);
-        targets.remove(module); // 自引用不成边
+        targets.remove(&module); // 自引用不成边
         for target in &targets {
             assert!(
                 modules.contains(target),

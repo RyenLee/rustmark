@@ -1,6 +1,6 @@
 # rustmark 架构整改细化实施方案
 
-> 文档编号：ADR-REM-2026-10-27　|　作者：架构评审（专家视角）　|　状态：进行中（R-01 已落地 2026-10-27；其余批次待排期）
+> 文档编号：ADR-REM-2026-10-27　|　作者：架构评审（专家视角）　|　状态：进行中（R-01、R-02 已落地 2026-10-27；其余批次待排期）
 > 综合来源：架构评审 `architecture-review-2026-10-23.md`、评估报告 `rustmark-evaluation-2026-10-25.md`、合规差额报告、多轮 refactor 波次（V11-56~67）、「去双源」批次（2026-10-26）、专家架构评审（2026-10-27）。
 > 本文件是上述所有讨论的**可执行汇总**。任何一条改造项落地后，请在 `docs/PROGRESS.md` / `docs/v1.1-backlog.md` §3 回填实测数字，并同步本文件的「状态」列。
 
@@ -90,6 +90,7 @@
 - **优先级**：P1（波及全部 6 crate、是端口来源混乱根、根因性强）
 - **预期产出**：shared 内部职责二分；可选升 `rustmark-kernel`；调用点零改动。
 - **验收点**：`tests/shared/internal_cycle_guard_test.rs` 无环断言绿；thresholds 121 条 OK；门禁绿；体积实测（拆 crate 各 +2~3KB 属预期，需记录）。
+- **状态**：✅ **已落地（2026-10-27）**——内部二分完成（步骤 1~3、5）：19 个模块按职责迁入 `shared/kernel/`（端口 + 值对象：`dialog` `event` `system` `image_asset` `time` `theme` `fonts` `export_format`，8 个）与 `shared/support/`（工具：`constants` `encoding` `error` `geometry` `ids` `lru` `path` `pattern` `result` `text` `text_format`，11 个）；`shared.rs` 以 `pub mod kernel; pub mod support; pub use kernel::*; pub use support::*` 拼回原 `shared::<名>` 路径，公开路径零改动；`tests/shared/internal_cycle_guard_test.rs` 的扁平性断言扩展为递归收集 `kernel/`/`support/` 两个已知子目录（跳过伞形模块）；`constraints` §4.5 登记表 21 行路径键同步（含 2 个伞形模块 `kernel.rs`/`support.rs`）；`check_thresholds.py` 8 处 `via:` 路径手改；4 个测试级守卫（`export_format_guard` / `theme_guard` / `field_visibility_guard` / `default_extension_guard`）的硬编码扁平路径同步；全量门禁绿（fmt / check-arch / clippy `-D warnings` / `test --all-targets` 全目标 0 失败 / `test --doc` 1 / `thresholds` 121 / `size_gate` 见 metrics §2.8）。**步骤 4「升 crate（`rustmark-kernel`）」未随本次落地**：当前 `kernel`（端口/值对象）反而依赖 `support`（`dialog→error/path/text_format` 等），若升 crate 会让 `rustmark-kernel` 反向依赖 `rustmark-shared`，方向别扭；且方案标为「评估/可选」，留作独立评估项。
 
 ### R-03 · 表现层合一（视图解耦 EditorApp）　【P1，对应问题 B】
 

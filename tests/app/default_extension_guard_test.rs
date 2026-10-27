@@ -19,7 +19,7 @@
 //!
 //! # 判据
 //!
-//! 扫 `src/`（排除 `shared/text_format.rs` 自身——它是**定义处**，
+//! 扫 `src/`（排除 `shared/support/text_format.rs` 自身——它是**定义处**，
 //! 字面量 `"md"` 在那里是合法的），凡出现「默认扩展名位置硬编码
 //! `.md` 字面量」即违规。
 //!
@@ -31,7 +31,7 @@
 //! 合法出现（不违规）：
 //! - 测试代码里的 `.md`（测试数据不是产品行为）；
 //! - 注释与文档字符串里的 `.md`（说明性文字）；
-//! - `shared/text_format.rs` 自身（白名单定义处）。
+//! - `shared/support/text_format.rs` 自身（白名单定义处）。
 
 use std::path::{Path, PathBuf};
 
@@ -47,7 +47,7 @@ fn scan_hardcoded_default_extension(src_root: &Path) -> Vec<(String, usize, Stri
             .to_string_lossy()
             .replace('\\', "/");
         // 定义处：白名单本身就以 `md` 开头，那里出现字面量是**应该的**。
-        if rel == "shared/text_format.rs" {
+        if rel == "shared/support/text_format.rs" {
             continue;
         }
         let Ok(text) = std::fs::read_to_string(&file) else {
@@ -161,12 +161,13 @@ fn collect_rs_files(dir: &Path) -> Vec<PathBuf> {
     out
 }
 
-/// 四根扫描（D-3 阶段 4a workspace 化 + TD-04 + V11-64）：白名单真源
-/// `shared/text_format.rs` 在 `crates/rustmark-shared/src`，四层在
+/// 四根扫描（D-3 阶段 4a workspace 化 + TD-04 + V11-64 + R-02）：白名单真源
+/// `shared/support/text_format.rs` 在 `crates/rustmark-shared/src`（R-02 起落在
+/// support 子目录），四层在
 /// `crates/rustmark-core/src`，基础设施（文件对话框过滤器等最易硬编码
 /// 扩展名的地方）在 `crates/rustmark-infra/src`，组合根与视图在 `src`；
 /// 四根都扫才等价于拆分前对单一 `src` 的全量覆盖（豁免按层相对路径匹配，
-/// 各根通用；`shared/` `infrastructure/` 前缀随目录保留，豁免键不需要改写）。
+/// 各根通用；`shared/` `infrastructure/` 前缀随目录保留，豁免键同步搬子目录）。
 fn src_roots() -> Vec<PathBuf> {
     let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     vec![

@@ -18,7 +18,7 @@
 //!
 //! - **主题种类枚举只有一处定义**：`pub enum <名字>` 且带
 //!   `Light` / `Dark` / `System` / `Custom` 四个变体之一为特征。
-//!   真源 `shared/theme.rs` 豁免。
+//!   真源 `shared/kernel/theme.rs` 豁免（R-02 起落在 kernel 子目录）。
 //! - **主题字符串不得硬编码在别处**：`"light"` / `"dark"` /
 //!   `"system"` / `"custom"` 这四个**持久化契约值**只许出现在真源、
 //!   领域侧的 serde 属性、以及**明确标注为「比较/判断」**的位置。
@@ -34,7 +34,7 @@
 use std::path::{Path, PathBuf};
 
 /// 真源文件（相对 `src/` 的路径）。
-const SOURCE_OF_TRUTH: &str = "shared/theme.rs";
+const SOURCE_OF_TRUTH: &str = "shared/kernel/theme.rs";
 
 /// 领域侧的转出文件（`pub use` 真源，不算第二份定义）。
 const DOMAIN_REEXPORT_FILE: &str = "domain/preferences/value_objects/theme.rs";
@@ -237,8 +237,8 @@ fn collect_rs_files(dir: &Path) -> Vec<PathBuf> {
 /// 五根扫描（D-3 阶段 4a workspace 化 + V11-62 + TD-04 + V11-64）：四层在
 /// `crates/rustmark-core/src`，组合根与视图在 `src`，从 core 抽出的
 /// `rustmark-ui` 非视图子模块（widgets / state / shortcuts / theme）在
-/// `crates/rustmark-ui/src`，主题真源 `shared/theme.rs` 在
-/// `crates/rustmark-shared/src`（TD-04），基础设施（syntect 配色等最易
+/// `crates/rustmark-ui/src`，主题真源 `shared/kernel/theme.rs` 在
+/// `crates/rustmark-shared/src`（TD-04 抽出，R-02 起落在 kernel 子目录），基础设施（syntect 配色等最易
 /// 另写一份主题枚举的地方）在 `crates/rustmark-infra/src`（V11-64）。
 /// 五根都扫，才等价于拆分前对单一 `src` 的全量覆盖；各根内均按层相对
 /// 路径记键，`shared/` `infrastructure/` 前缀随目录保留。
@@ -332,9 +332,9 @@ fn injected_renamed_theme_enum_is_detected() {
 fn the_source_of_truth_is_not_flagged() {
     let dir = tempfile::tempdir().expect("应可创建临时目录");
     let root = dir.path().join("src");
-    std::fs::create_dir_all(root.join("shared")).expect("应可建目录");
+    std::fs::create_dir_all(root.join("shared/kernel")).expect("应可建目录");
     std::fs::write(
-        root.join("shared/theme.rs"),
+        root.join("shared/kernel/theme.rs"),
         "pub enum ThemeKind {\n    Light,\n    Dark,\n    System,\n    Custom,\n}\n",
     )
     .expect("写 fixture 应成功");
