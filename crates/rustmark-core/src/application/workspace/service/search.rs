@@ -2,8 +2,14 @@
 //!
 //! 命中受上限保护（单文件 [`MAX_HITS_PER_FILE`]、总 [`MAX_TOTAL_HITS`]，
 //! 常量在 facade），并**优先使用未保存草稿的内存内容**，确保检索覆盖
-//! 尚未落盘的修改。文本扫描的三条路径（字面量 / 正则 / 片段窗口）都是
-//! 本模块的自由函数，不依赖服务状态，故与用例方法同文件放置。
+//! 尚未落盘的修改。
+//!
+//! # 模块结构
+//!
+//! 文本扫描的三条路径（字面量 / 正则 / 片段窗口）都是 `&str → Vec` 的纯计算，
+//! 不依赖服务状态，已分到 [`scan`] 子模块——独立成模块才能在**不构造**
+//! 本服务的前提下直接测「行号口径」「窗口覆盖命中」这类不变量。本文件只留
+//! 用例编排：候选收集、上限保护与结果缓存。
 //!
 //! # 结果缓存（revision 键快照 + 查询指纹短路）
 //!
@@ -24,7 +30,6 @@ use std::sync::atomic::Ordering;
 
 use crate::domain::workspace::value_objects::EntryKind;
 use crate::shared::error::AppError;
-use crate::shared::geometry::floor_char_boundary;
 use crate::shared::ids::DocumentId;
 use crate::shared::path::FilePath;
 use crate::shared::pattern::Regex;
@@ -34,6 +39,14 @@ use crate::application::dto::{RangeView, SearchHitView, SearchResultView};
 
 use super::super::queries::*;
 use super::{MAX_HITS_PER_FILE, MAX_TOTAL_HITS, WorkspaceAppService};
+
+use scan::search_text;
+
+/// 文本扫描纯函数（字符比较 / 行号游标 / 两条分支 / 片段窗口）。
+///
+/// 分出去的理由见该模块文档：这些都是 `&str → Vec` 的纯计算，独立成模块
+/// 才能在**不构造** `WorkspaceAppService` 的前提下直接测不变量。
+mod scan;
 
 impl WorkspaceAppService {
     /// 跨文件搜索：覆盖已打开文档与磁盘文件，命中受上限保护。
@@ -330,297 +343,4 @@ pub(super) struct SearchCacheEntry {
     revision: RevisionKey,
     /// 算好的结果；命中时整份克隆返回。
     result: SearchResultView,
-}
-
-/// 单次命中的中间结果（字节偏移 + 行列 + 上下文片段）。
-struct RawHit {
-    start: usize,
-    end: usize,
-    line: usize,
-    col: usize,
-    snippet: String,
-}
-
-/// 大小写不敏感的单字符比较，不分配。
-///
-/// `char::to_lowercase()` 是迭代器，`Iterator::eq` 直接逐项比较。原实现
-/// `tc.to_lowercase().collect::<Vec<char>>() == pc.to_lowercase().collect::<Vec<char>>()`
-/// 会在**每一次**字符试配时申请两个小 Vec——1MB 文档按字符逐一试配即
-/// 数十万次堆分配，独占单次搜索的大头（见 `tests/presentation/search_perf_test.rs`）。
-fn char_eq_ignore_case(a: char, b: char) -> bool {
-    if a == b {
-        return true;
-    }
-    // 只要有一侧是 ASCII，等值判定就退化为 ASCII 忽略大小写比较：
-    // 非 ASCII 字符的小写永远不可能等于 ASCII 字符。
-    if a.is_ascii() || b.is_ascii() {
-        return a.eq_ignore_ascii_case(&b);
-    }
-    a.to_lowercase().eq(b.to_lowercase())
-}
-
-/// 增量行号游标：把命中的字节偏移换算成 0-based 行号与列偏移。
-///
-/// # 为什么是游标而不是每次从头数
-///
-/// 命中位置在单文件内**单调递增**，跨命中累计扫过的字节只需 O(n) 一遍。
-/// 若每条命中都重新 `text[..start]` 数换行再 `rfind`，单文件 50 条命中
-/// 就是 50 遍全文扫描（问题 048 的原始形态）。
-///
-/// # 为什么抽出来
-///
-/// 字面量路径与正则路径各写过一遍这三行推进逻辑。两处的行号口径必须
-/// **完全一致**——同一个文件用不同搜索模式显示不同行号是明确的 bug——
-/// 此前靠「改一处记得改另一处」维持。抽出后只有一处，并由
-/// [`tests::cursor_agrees_with_the_single_source_line_index`] 与
-/// [`crate::shared::text::line_index_at`]（全仓行号口径的唯一出处）对拍。
-#[derive(Default)]
-struct LineCursor {
-    /// 已数到的行号（0-based）。
-    line: usize,
-    /// [`Self::counted_to`] 所在行的行首字节偏移。
-    line_start: usize,
-    /// 已数过换行的右边界（恒为字符边界）。
-    counted_to: usize,
-}
-
-impl LineCursor {
-    /// 把 `[counted_to, to)` 之间的新字节数进去。
-    ///
-    /// `to` 必须是字符边界且 ≥ 已计边界；不满足时（命中位置回退）不做任何事，
-    /// 保证游标只前进不后退——回退会让行号变小，比不精确更糟。
-    fn advance_to(&mut self, text: &str, to: usize) {
-        if to <= self.counted_to {
-            return;
-        }
-        let chunk = &text[self.counted_to..to];
-        self.line += chunk.bytes().filter(|&b| b == b'\n').count();
-        if let Some(pos) = chunk.rfind('\n') {
-            self.line_start = self.counted_to + pos + 1;
-        }
-        self.counted_to = to;
-    }
-
-    /// 命中起点在当前行内的列偏移（字节）。
-    fn col_at(&self, start: usize) -> usize {
-        start - self.line_start
-    }
-}
-
-/// 在文本中搜索：`regex` 为 `Some` 走正则分支，否则按字面量
-/// （支持大小写不敏感与整词匹配）。
-///
-/// 字面量路径字符级扫描：以字符为单位比较，大小写不敏感走 Unicode 小写归一化，
-/// 整词匹配检查命中两侧的字母数字边界。**仅返回前 `max_per_file` 个命中**
-/// （上限保护留给调用方，此处只限制单文件上限以避免超大文件阻塞 UI 帧）。
-fn search_text(
-    text: &str,
-    pattern: &str,
-    case_sensitive: bool,
-    whole_word: bool,
-    regex: Option<&Regex>,
-    max_per_file: usize,
-) -> Vec<RawHit> {
-    if let Some(regex) = regex {
-        return search_text_regex(text, regex, max_per_file);
-    }
-    let chars: Vec<(usize, char)> = text.char_indices().collect();
-    let pat: Vec<char> = pattern.chars().collect();
-    if pat.is_empty() || chars.len() < pat.len() {
-        return Vec::new();
-    }
-
-    let mut hits = Vec::new();
-    // 行号与行首**增量**维护：命中位置按 `i` 单调递增，跨命中累计扫过的
-    // 字节只需 O(n) 一遍（见 [`LineCursor`]）。
-    let mut cursor = LineCursor::default();
-    for i in 0..=(chars.len() - pat.len()) {
-        let mut matched = true;
-        for (j, &pc) in pat.iter().enumerate() {
-            let tc = chars[i + j].1;
-            let eq = if case_sensitive {
-                tc == pc
-            } else {
-                char_eq_ignore_case(tc, pc)
-            };
-            if !eq {
-                matched = false;
-                break;
-            }
-        }
-        if !matched {
-            continue;
-        }
-        if whole_word {
-            let before = i.checked_sub(1).map(|k| chars[k].1);
-            let after = chars.get(i + pat.len()).map(|&(_, c)| c);
-            if before.is_some_and(|c| c.is_alphanumeric())
-                || after.is_some_and(|c| c.is_alphanumeric())
-            {
-                continue;
-            }
-        }
-        let (start_off, _) = chars[i];
-        let (end_off, end_char) = chars[i + pat.len() - 1];
-        let end_off = end_off + end_char.len_utf8();
-
-        // 把到命中起点为止的新字节数进游标（两端都是字符边界）。
-        cursor.advance_to(text, start_off);
-        let col = cursor.col_at(start_off);
-        let snippet = snippet_window(text, cursor.line_start, start_off, end_off);
-
-        hits.push(RawHit {
-            start: start_off,
-            end: end_off,
-            line: cursor.line,
-            col,
-            snippet,
-        });
-        if hits.len() >= max_per_file {
-            break;
-        }
-    }
-    hits
-}
-
-/// 正则模式的单文件搜索（[`search_text`] 的正则分支）。
-///
-/// 与字面量路径同一套约定：命中按字节偏移递增、行号/行首增量维护
-/// （正则命中顺序由 `find_in` 从 `from` 向后扫保证单调）、单文件上限
-/// `max_per_file` 兜底。大小写敏感已固化在编译期的 [`Regex`] 里，
-/// 整词开关不参与（理由见 [`WorkspaceAppService::search`] 的文档）。
-fn search_text_regex(text: &str, regex: &Regex, max_per_file: usize) -> Vec<RawHit> {
-    let mut hits = Vec::new();
-    let mut cursor = LineCursor::default();
-    let mut from = 0usize;
-    while hits.len() < max_per_file {
-        let Some((start_off, end_off)) = regex.find_in(text, from, text.len()) else {
-            break;
-        };
-        // 与字面量路径同一段增量行号逻辑（同一个 [`LineCursor`]）。
-        cursor.advance_to(text, start_off);
-        let col = cursor.col_at(start_off);
-        let snippet = snippet_window(text, cursor.line_start, start_off, end_off);
-
-        hits.push(RawHit {
-            start: start_off,
-            end: end_off,
-            line: cursor.line,
-            col,
-            snippet,
-        });
-        // 前进：普通命中跳到终点；零宽命中（`a*` 可匹配空串）向前推进
-        // 一个字符——原地不动会在同一位置无限重配（`find_in` 只扫
-        // `from` 之后，零宽命中的起点原样返回）。
-        from = if end_off > start_off {
-            end_off
-        } else {
-            let Some(step) = text[start_off..].chars().next().map(char::len_utf8) else {
-                break;
-            };
-            start_off + step
-        };
-    }
-    hits
-}
-
-/// 取命中上下文片段（前后各 24 字节，行内截断）。
-///
-/// 摘要窗口按**字节**取，而 `±40` 后的落点完全可能停在多字节 UTF-8
-/// 字符中间：中文 3 字节、emoji 4 字节，混合排版时 40 的偏移仍可能
-/// 切进字符内部，直接切片会 panic（崩溃记录
-/// docs/logs/crash-20261014135941-29300.txt：`end byte index 305 is not
-/// a char boundary; it is inside '行'`）。切片前把两端都向下对齐到字符
-/// 边界：最多少取半个字符，摘要语义不受影响；`find('\n')` 那条路径
-/// 本就是边界，对齐是恒等的。
-fn snippet_window(text: &str, line_start: usize, start_off: usize, end_off: usize) -> String {
-    let snippet_start = floor_char_boundary(text, line_start.max(start_off.saturating_sub(40)));
-    let snippet_end = floor_char_boundary(
-        text,
-        (text[end_off..]
-            .find('\n')
-            .map(|x| end_off + x)
-            .unwrap_or(text.len()))
-        .min(end_off + 40),
-    );
-    text[snippet_start..snippet_end].to_string()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// 游标与全仓行号真源 [`crate::shared::text::line_index_at`] 逐点相等。
-    ///
-    /// 交叉对拍而不是自设期望值：`line_index_at` 是编辑区行号栏、状态栏与
-    /// 文档统计共用的唯一口径（[`crate::shared::text::line_count`] 的姊妹函数）。
-    /// 搜索结果的「行号」若与它分家，用户点搜索结果就会跳到别处。
-    #[test]
-    fn cursor_agrees_with_the_single_source_line_index() {
-        let text = "第一行\nsecond line\n\n第四行\nlast";
-        let mut cursor = LineCursor::default();
-        for (offset, ch) in text.char_indices() {
-            // 逐字符推进（含行首、换行符本身、文末）。
-            cursor.advance_to(text, offset);
-            assert_eq!(
-                cursor.line,
-                crate::shared::text::line_index_at(text, offset),
-                "offset {offset}（{ch:?}）行号不一致"
-            );
-            assert_eq!(
-                cursor.col_at(offset),
-                offset - text[..offset].rfind('\n').map_or(0, |p| p + 1),
-                "offset {offset} 列偏移不一致"
-            );
-        }
-        // 文末也算一次（`char_indices` 不含 `text.len()` 之后的位置）。
-        cursor.advance_to(text, text.len());
-        assert_eq!(
-            cursor.line,
-            crate::shared::text::line_index_at(text, text.len())
-        );
-    }
-
-    /// 同一行多次命中：列偏移按行首算，不累计。
-    #[test]
-    fn repeated_hits_stay_on_the_same_line() {
-        let text = "aa aa aa\nbb";
-        let mut cursor = LineCursor::default();
-        let mut cols = Vec::new();
-        for start in [0usize, 3, 6] {
-            cursor.advance_to(text, start);
-            cols.push((cursor.line, cursor.col_at(start)));
-        }
-        assert_eq!(cols, vec![(0, 0), (0, 3), (0, 6)]);
-    }
-
-    /// 游标只前进不后退：回退的偏移不得让行号变小。
-    ///
-    /// 正则分支的零宽命中会原地重配（`from` 前推一个字符），若哪天有调用点
-    /// 传了更小的偏移，宁可保持当前位置也不能把行号倒回去。
-    #[test]
-    fn cursor_never_moves_backwards() {
-        let text = "a\nb\nc";
-        let mut cursor = LineCursor::default();
-        cursor.advance_to(text, 4); // 第 2 行（0-based）的 'c'
-        assert_eq!(cursor.line, 2);
-        cursor.advance_to(text, 1); // 回退请求
-        assert_eq!(cursor.line, 2, "回退请求必须被忽略");
-        assert_eq!(cursor.line_start, 4);
-    }
-
-    /// 两条分支共用同一游标：同一个文件、同一种模式，行号必须一致。
-    ///
-    /// 字面量分支与正则分支此前各写一遍推进逻辑——这条用例直接比较两条
-    /// 路径的产出，任何一处偏移口径改动都会立刻在这里分叉。
-    #[test]
-    fn literal_and_regex_paths_report_the_same_lines() {
-        let text = "alpha\nbeta\nalpha beta\nalpha";
-        let literal = search_text(text, "alpha", true, false, None, 100);
-        let regex = Regex::compile("alpha", true).expect("编译正则");
-        let via_regex = search_text(text, "alpha", true, false, Some(&regex), 100);
-        let lines = |hits: &[RawHit]| hits.iter().map(|h| (h.line, h.col)).collect::<Vec<_>>();
-        assert_eq!(lines(&literal), lines(&via_regex));
-        assert_eq!(lines(&literal), vec![(0, 0), (2, 0), (3, 0)]);
-    }
 }
