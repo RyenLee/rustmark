@@ -103,7 +103,10 @@
   `quick_open_view` 4 + `command_palette_view` 1 + `overlays` 1 +
   `toolbar_view` 树 4 + `sidebar_view` 树 5 + `preview_view/inline/math.rs` 1
   = **24 个零 services 视图全部解耦**。守卫 `PENDING_DECOUPLED_VIEWS` 只减不增，
-  余 8 条（`services` 视图 + 6 个未登记子模块，留批 2 / 批 3）。
+  余 8 条（`services` 视图 + 6 个未登记子模块，留批 2 / 批 3）。契约最终 **96 个
+  方法**（ThemeAccess 3 / UiStateAccess 15 / DocumentAccess 13 / CommandPort 61 /
+  ServiceQueries 4）——`ServiceQueries` 交出**服务本身的只读借用**（视图拿得到
+  能力、拿不到所有权），`assets` 刻意不给（`AssetLoader` 在 infra，ui 不可名）。
 - **可观测性（D-5，2026-10-26，`1c58052`）**：`FrameScheduler` 兼作帧耗时观测点——超 16ms 的帧打一条
   `warn`（状态更新 / 绘制 / 未归因三段归因 + 本帧到期任务，120 帧限流；**仅 release 构建输出**），
   `RUST_LOG=…=debug`
@@ -116,11 +119,14 @@
 - **`--workspace` 纪律机制化（2026-10-26，`9c85129`）**：根 manifest 的 `default-members`
   覆盖全部 7 个包，漏带 flag 不再漏测子 crate；两份清单的同步由
   `workspace_topology_test::default_members_cover_every_workspace_member` 集合相等断言钉死。
-- **体积**：`NFR-PERF-01` release exe **10,550,272 B = 10.062 MiB**（2026-10-26 PRIV-01/02 后实测），
-  低于 10.5 MiB 预警线与 11 MiB 红线（`size_gate` exit 0，距红线余 984,064 B）。2026-10-20 的
+- **体积**：`NFR-PERF-01` release exe **10,556,416 B = 10.071 MiB**（2026-10-27 R-03 B1 收官后实测），
+  低于 10.5 MiB 预警线与 11 MiB 红线（`size_gate` exit 0，距预警线余 453,632 B、距红线余 977,920 B）。
+  2026-10-20 的
   「11.36 MiB 超 10 MB 红线」已解除：V11-26 依赖裁剪先把 11.36 → 10.93 MiB（仍高于旧红线），
   随后维护者把红线 10 → 11 MiB（2026-10-24，`scripts/size_gate.sh` 与 metrics §2.8 同步），
-  当前值再降至 10.06 MiB。
+  当前值再降至 10.07 MiB。R-03 B1 的 +7,680 B **全部落在准备项提交**（trait 由 32 扩到 96 方法
+  的一次性扩张 + 3 个 root 私有类型搬进 `rustmark-ui` 的跨 crate LTO 边界成本），
+  此后 6 步纯签名迁移逐字节不变——归因见 metrics §2.8。
 
 ---
 

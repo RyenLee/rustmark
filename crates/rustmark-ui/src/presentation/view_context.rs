@@ -29,10 +29,10 @@
 //! | [`UiStateAccess`] | UI 状态直取（字段级） | 15 |
 //! | [`DocumentAccess`] | 文档 / 标签 / 只读查询 | 13 |
 //! | [`CommandPort`] | 语义命令（含 `execute`） | 61 |
-//! | [`ServiceQueries`] | 组合根服务查询 | 0（批 2 填充） |
+//! | [`ServiceQueries`] | 组合根服务查询（只读借用） | 4（批 2 用） |
 //!
 //! 为什么不摊平成一个大 trait：摊平后 ≈ `EditorApp`（183 方法 + 40 字段）的
-//! 50%，正是「trait 上照抄 `EditorApp` 全部成员」的**假解耦**——接口面没变小，
+//! 一半（96 / 183），正是「trait 上照抄 `EditorApp` 全部成员」的**假解耦**——接口面没变小，
 //! 只是换了个名字。分组之后，「这个视图能碰到什么」一眼可辨，
 //! 且 Rust 1.86 起的 **trait object upcasting**（1.99 已实测）让
 //! `&mut dyn ThemeAccess` 能自动转成 `&mut dyn EditorViewContext`，
@@ -120,13 +120,17 @@ use crate::presentation::state::sidebar_ui_state::{
 use crate::presentation::state::symbol_ui_state::SymbolUiState;
 use crate::presentation::state::workspace_entries::WorkspaceEntries;
 use crate::presentation::theme::builtin::Theme;
+use rustmark_core::application::document::service::DocumentAppService;
 use rustmark_core::application::dto::{
     EditorSettingsView, ExportRequestView, ExportResultView, LintIssueView, OutlineItemView,
     RecentFileView, SettingsView, StatsView, TabSummary, ThemeView,
 };
+use rustmark_core::application::markdown::service::MarkdownAppService;
+use rustmark_core::application::preferences::service::PreferencesAppService;
 use rustmark_core::shared::ids::DocumentId;
 use rustmark_core::shared::kernel::export_format::PageSize;
 use rustmark_core::shared::kernel::fonts::EditorFontChoice;
+use rustmark_core::shared::kernel::system::ExternalOpener;
 use rustmark_core::shared::result::AppResult;
 
 // ===========================================================================
@@ -495,14 +499,41 @@ pub trait CommandPort {
 
 /// 组合根**服务**的只读查询（`app.services.*` 的唯一出口）。
 ///
-/// **批 1 为空**：批 1 的 24 个视图**零 `app.services` 引用**——
-/// 边界正是按「视图是否需要 `services`」划的（见 R-03 B1 方案 §2.2）。
-/// 批 2（编辑区 / 预览 / 滚动同步）才会往里加方法。
+/// # 为什么交出服务本身，而不是造 N 个语义包装方法
 ///
-/// 保留这个空 trait 是为了让「组合根服务查询」这条能力在契约上**占好位**：
-/// 将来它长出方法时，`EditorViewContext` 的 supertrait 列表不用改，
-/// 视图签名也不用改。
-pub trait ServiceQueries {}
+/// 最初的设想是「每个服务配一组语义查询」（`now_ms()` / `highlight_spans()` /
+/// `spell_marks()` …）。实测后发现这层包装**过细**：16 处 `services.` 触点
+/// **全部是只读调用**（`now()` / `map_scroll()` / `highlight()` / `spell_check()` /
+/// `spell_suggestions()` / `encoding_of()` / `has_writing_goal()` /
+/// `goal_progress()` / `open()`），而包装方法要随服务接口一起长、加一个服务
+/// 就多一批样板。
+///
+/// 故本 trait **直接交出服务的只读借用**：视图拿得到能力、拿不到所有权，
+/// 于是没法在视图里装配新依赖（所有权即装配权）。
+///
+/// # 边界：`assets` 故意不给
+///
+/// `services.assets` 的类型 `AssetLoader` 住在 **infra**（root 之外的
+/// 另一层），本 crate **不可名**——给不出访问器。它只被
+/// `preview_view/image_cache.rs` 用到，而该文件因三重阻塞（`image` crate 属
+/// root 独有 / `AssetLoader` 在 infra / `document_dir()` 是 `pub(crate)`）
+/// 留 root + 永久豁免，故不需要这条出口。
+///
+/// 保留这个 trait 作为「组合根服务查询」这条能力的**契约位置**：将来它
+/// 长出方法时，`EditorViewContext` 的 supertrait 列表不用改，视图签名也不用改。
+pub trait ServiceQueries {
+    /// Markdown 用例服务（渲染 / 高亮 / 拼写 / 滚动映射 / 时钟）。
+    fn markdown_service(&self) -> &MarkdownAppService;
+
+    /// 文档用例服务（内容 / 统计 / 编码）。
+    fn document_service(&self) -> &DocumentAppService;
+
+    /// 偏好用例服务（设置 / 写作目标）。
+    fn preferences_service(&self) -> &PreferencesAppService;
+
+    /// 外部打开器端口（预览区点外链时开系统默认程序）。
+    fn external_opener(&self) -> &dyn ExternalOpener;
+}
 
 // ===========================================================================
 // bundle

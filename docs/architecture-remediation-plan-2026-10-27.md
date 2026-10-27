@@ -115,7 +115,8 @@
   - **不是**「一堆字段引用的结构体」：视图既要读写状态又要调命令，而命令实现在 `EditorApp` 上，调用点会同时需要 `&mut self.field` 与 `&mut self`——借用检查器直接拒绝。trait 只给**一个** `&mut`，状态访问与命令都是它的方法。
   - **放 ui 而非 root**：**契约要独立于组合根**——trait 描述「视图能对应用状态做什么」，而应用状态住在 ui 的 `state/` 下，契约与状态同侧才说得清；root 侧只提供实现。**注意**：views 按 ADR-013 决策 3 **留 root**（constraints §10.1 硬约束 2），故「为将来搬迁铺路」这条理由**不成立**，不可据此决策。
   - **端口收 `UiAction`（实测零新增依赖边）**：`UiAction` 属 `rustmark-actions`，但 `rustmark-core/src/lib.rs` 已有 `pub mod actions { pub use rustmark_actions::{MenuGroup, UiAction, action}; }`，ui 侧 `presentation/shortcuts/registry.rs` 已在 re-export ⇒ trait 里引用 `UiAction` **不产生**新的 crate 边，`rustmark-ui/Cargo.toml` 的依赖面仍恰为 `egui + rustmark-core`（`workspace_topology_test` 断言不变）。收它的理由是**不变量**：菜单 / 快捷键 / 命令面板三处必须走**同一条**执行路径（`src/app/frame.rs`：「视图层只负责**画**按钮，点击后同样回到 `EditorApp::execute`」）；`execute` 不进 trait 就得在 root 侧另留分支，等于在视图里复制一份分派。
-  - **形态：5 个能力 trait + 1 个 bundle**：`ThemeAccess`（3）/ `UiStateAccess`（15）/ `DocumentAccess`（13）/ `CommandPort`（61）/ `ServiceQueries`（0，批 2 填充），`EditorViewContext` 是纯 bundle（无自有方法）。摊平成一个大 trait ≈ `EditorApp`（183 方法 + 40 字段）的 50%（92 / 183），正是「trait 上照抄 `EditorApp` 全部成员」的假解耦。Rust 1.86+ 的 trait object upcasting（1.99 已实测）保证将来再拆细粒度窄 trait 时**每视图只改一行签名**。
+  - **形态：5 个能力 trait + 1 个 bundle**：`ThemeAccess`（3）/ `UiStateAccess`（15）/ `DocumentAccess`（13）/ `CommandPort`（61）/ `ServiceQueries`（4，批 2 用），`EditorViewContext` 是纯 bundle（无自有方法）。摊平成一个大 trait ≈ `EditorApp`（183 方法 + 40 字段）的一半（96 / 183），正是「trait 上照抄 `EditorApp` 全部成员」的假解耦。Rust 1.86+ 的 trait object upcasting（1.99 已实测）保证将来再拆细粒度窄 trait 时**每视图只改一行签名**。
+  - **`ServiceQueries` 交出服务本身，而非 N 个语义包装**（v2 修正）：实测 16 处 `services.` 触点**全部是只读调用**（`now()` / `map_scroll()` / `highlight()` / `spell_check()` / `spell_suggestions()` / `encoding_of()` / `has_writing_goal()` / `goal_progress()` / `open()`），故直接给**服务的只读借用**：`markdown_service()` / `document_service()` / `preferences_service()` / `external_opener()`。视图拿得到能力、**拿不到所有权**（所有权即装配权），故不能在视图里装配新依赖。**刻意不给 `assets`**：`AssetLoader` 住在 infra，本 crate 不可名，且唯一使用者 `preview_view/image_cache.rs` 因三重阻塞留 root（见下方「批 1 遗留」）。
   - **object-safety 三条硬约束**（trait 方法**不得含泛型参数**）：`set_diff_error(impl Into<String>)` → `String`；`apply_theme_field(impl FnOnce(&mut ThemeView))` → `&mut dyn FnMut(&mut ThemeView)`；`apply_editor_field` 同理。
   - **访问器统一 `_state` 后缀**：与 `EditorApp` 同名 inherent 方法永不撞名。撞名时 `fn theme(&self) { self.theme() }` 会按「inherent 优先」解析，今天恰好正确、明天 inherent 一删就静默递归。实现侧**一律**写 `EditorApp::x(self, …)` 全路径（名字不同的也写，保持一致），把这个隐患在结构上掐掉。
 - **首批迁移（4 个文件 / 812 行）**：`about_view` / `stats_view` / `symbol_view` / `shortcut_overview_view`——正是 `overlays::show` 的四个 `match` 分支，内聚且可独立验收。`EditorApp` 实现该 trait，故 `&mut EditorApp` 在调用点自动强转 `&mut dyn EditorViewContext`，**已迁移与未迁移视图共存于同一次渲染**（`overlays.rs` 即混合态），这是渐进迁移的关键机制。
@@ -137,10 +138,25 @@
   `lint` / `outline` / `search`）+ `preview_view/inline/math.rs`（1 个文件）。
   **批 1 的 24 个零 services 视图全部解耦**，`PENDING_DECOUPLED_VIEWS` 余 **8** 条
   （全为 `services` 视图 + 6 个未登记子模块，留批 2 / 批 3）。
+- **批 1 遗留（移交给批 2 / 批 3）**：
+  - `preview_view/image_cache.rs` **本轮不迁**，留 root + 批 3 加 `EXEMPT_VIEWS`
+    永久豁免（**不能**简单留在 `PENDING_DECOUPLED_VIEWS` 里——双向棘轮会报
+    「陈旧条目」）。三重阻塞：`image` crate 属 root 独有依赖 / `AssetLoader`
+    在 infra（ui 不可名）/ `document_dir()` 是 `pub(crate)`。
+  - `*_state()` 的**只读变体**按需补，只给真实需要的两个容器补：
+    `status_bar_state_read()`（`status_bar_view.rs` 的读/写交替必然踩独占借用）
+    与 `preview_state_read()`；其余 12 个容器纯写，不补（对称美学不值 14 个方法）。
+  - `flush_edit` 的 `domain_len` 必须是**旧文本长度**，不是当前 `editor_text.len()`
+    ——「退出列表」分支会把文本改短，按新长度钳制会把区间砍短，领域只删掉半个
+    标记（已知症状：`` ` `` 残留成 `. `）。
+  - `editor_text` 的独占借用：egui 0.37 的 `TextEditOutput` **不带生命周期参数**
+    （`galley: Arc<Galley>`），借用在 `.show(ui)` 返回后立即结束 ⇒ 把借用关进
+    显式块即可；但**块内**不得调 `vctx` 其它方法（含 `&self` 的
+    `markdown_service()`），块外预取所需值。
 - **守卫 `check_view_decoupling`**：白名单 `PENDING_DECOUPLED_VIEWS`（32 条）**双向**校验——名单外的 `crate::app` 引用报违规；名单内已解耦的条目也报（防名单腐烂）。词法级判定（`first_crate_app_line`），注释里提到旧路径不误伤。已接入 `scan_project`，故 `check-arch` bin 与 `build.rs` 构建期同时生效。
 - **变异验证**：① 废掉 `first_crate_app_line` → 构建期 panic，列出 32 条陈旧；② 关掉反向陈旧检查 → fixture 红（「名单陈旧应报 1 条，实际：[]」）。
 - **门禁**：fmt / check-arch / thresholds 121 / clippy `-D warnings` / `test --all-targets` **2243** passed（+1 新用例）/ `test --doc` 1 / `size_gate` 见 §metrics。
-- **下一步**：按「零 `app.services` 的独立视图树」分批推进——批 1 = 24 个视图（`welcome_view` 树 / `settings_view` 树 / `diff_view` / `find_replace_view` / `export_view` / `quick_open_view` / `command_palette_view` / `overlays` / `toolbar_view` 树 / `sidebar_view` 树），批 2 = 8 个 `services` 视图 + 6 个未登记子模块，批 3 = 守卫收官（白名单归零 + 「视图不得出现 `EditorApp` 记号」新守卫）。
+- **下一步**：按「零 `app.services` 的独立视图树」分批推进——批 1 = 24 个视图（`welcome_view` 树 / `settings_view` 树 / `diff_view` / `find_replace_view` / `export_view` / `quick_open_view` / `command_palette_view` / `overlays` / `toolbar_view` 树 / `sidebar_view` 树）**✅ 已完成**；批 2 = 8 个 `services` 视图 + 6 个未登记子模块（`ServiceQueries` 的 4 个窄访问器已就位，`*_state()` 只读变体按上条「批 1 遗留」补）；批 3 = 守卫收官（`EXEMPT_VIEWS` 永久豁免 + 白名单归零 + 「视图不得出现 `EditorApp` 记号」新守卫）。
 
 ### R-04 · 抽离 `rustmark-render`（富内容渲染引擎）　【P2，对应问题 F】
 

@@ -57,13 +57,17 @@ use crate::presentation::theme::builtin::Theme;
 use crate::presentation::view_context::{
     CommandPort, DocumentAccess, EditorViewContext, ServiceQueries, ThemeAccess, UiStateAccess,
 };
+use rustmark_core::application::document::service::DocumentAppService;
 use rustmark_core::application::dto::{
     EditorSettingsView, ExportRequestView, ExportResultView, LintIssueView, OutlineItemView,
     RecentFileView, SettingsView, StatsView, TabSummary, ThemeView,
 };
+use rustmark_core::application::markdown::service::MarkdownAppService;
+use rustmark_core::application::preferences::service::PreferencesAppService;
 use rustmark_core::shared::ids::DocumentId;
 use rustmark_core::shared::kernel::export_format::PageSize;
 use rustmark_core::shared::kernel::fonts::EditorFontChoice;
+use rustmark_core::shared::kernel::system::ExternalOpener;
 use rustmark_core::shared::result::AppResult;
 
 // ===========================================================================
@@ -485,10 +489,28 @@ impl CommandPort for EditorApp {
 }
 
 // ===========================================================================
-// T5 · ServiceQueries（批 1 为空）
+// T5 · ServiceQueries
 // ===========================================================================
 
-impl ServiceQueries for EditorApp {}
+impl ServiceQueries for EditorApp {
+    fn markdown_service(&self) -> &MarkdownAppService {
+        // `services.markdown` 是 `Arc<MarkdownAppService>`，返回处的
+        // 解引用强制转换（deref coercion）把它落成 `&MarkdownAppService`。
+        &self.services.markdown
+    }
+
+    fn document_service(&self) -> &DocumentAppService {
+        &self.services.documents
+    }
+
+    fn preferences_service(&self) -> &PreferencesAppService {
+        &self.services.preferences
+    }
+
+    fn external_opener(&self) -> &dyn ExternalOpener {
+        self.services.opener.as_ref()
+    }
+}
 
 // ===========================================================================
 // bundle

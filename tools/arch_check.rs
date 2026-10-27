@@ -1462,8 +1462,9 @@ pub fn check_ui_submodule_sync(manifest: &Path) -> Vec<Violation> {
 /// # 为什么不在本批一次改完
 ///
 /// 36 个文件 / 14k 行，其中 [[main_view]] / [[editor_view]] / [[status_bar_view]]
-/// 等聚合视图依赖 `execute(UiAction)`（`UiAction` 属 `rustmark-actions`，
-/// 本 crate 不依赖它，见 trait 文档）与 `services`（组合根装配产物）。
+/// 等聚合视图依赖 `execute(UiAction)`（`UiAction` 经 `rustmark_core::actions`
+/// 转发可达，本 crate 依赖面不变（egui + core），见 trait 文档「端口里为什么收
+/// `UiAction`」）与 `services`（组合根装配产物）。
 /// 这些必须有独立批次配上端口扩张，硬塞进同一批只会得到一个
 /// 「trait 上照抄了 EditorApp 全部成员」的假解耦。
 ///
