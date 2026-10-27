@@ -35,7 +35,7 @@ enum FlowPart<'a> {
 /// 视觉上等价于 Typora 里「图片前后有文字」的常见观感，且实现可靠。
 #[allow(clippy::too_many_arguments)] // 与 `render_inline_text` 同族：在其九项上下文之上多一组「行内图片」，打包成 struct 会让每个调用方多一次所有权转换
 pub(super) fn draw_text_with_images(
-    app: &mut EditorApp,
+    vctx: &mut dyn EditorViewContext,
     ui: &mut Ui,
     theme: &Theme,
     content: &str,
@@ -49,7 +49,7 @@ pub(super) fn draw_text_with_images(
     if images.is_empty() {
         return render_inline_text(
             ui,
-            app,
+            vctx,
             theme,
             content,
             spans,
@@ -67,7 +67,7 @@ pub(super) fn draw_text_with_images(
                 // 在图之前，用户点到图后面的字时同样期待跳转。
                 last = Some(render_inline_text(
                     ui,
-                    app,
+                    vctx,
                     theme,
                     text,
                     &part_spans,
@@ -77,7 +77,7 @@ pub(super) fn draw_text_with_images(
                     internal_targets,
                 ));
             }
-            FlowPart::Image(spec) => draw_image_spec(app, ui, theme, spec),
+            FlowPart::Image(spec) => draw_image_spec(vctx, ui, theme, spec),
         }
     }
     // 整块只有图（文字全被图片占位吃掉）时没有文字响应，返回一个零尺寸
@@ -152,7 +152,7 @@ fn spans_in_range(spans: &[SpanView], start: usize, end: usize) -> Vec<SpanView>
 /// 这是预览区唯一「点击跳转」的入口——正文段落不给点击，
 /// 否则用户在预览里想选中文本时会被跳转打断。
 pub(super) fn draw_heading(
-    app: &mut EditorApp,
+    vctx: &mut dyn EditorViewContext,
     ui: &mut Ui,
     theme: &Theme,
     block: &BlockView,
@@ -174,14 +174,14 @@ pub(super) fn draw_heading(
     // 没有则走原来的单标签路径。两条路径都带点击感应用于「点击标题跳转」。
     // 标题随正文一起跟随「自动换行」开关。
     // 正文里的链接 / 脚注引用也在此获得点击能力（`internal_targets` 提供跳转目标）。
-    let wrap = app.editor.word_wrap;
+    let wrap = vctx.editor_state_read().word_wrap;
     let max_w = if wrap {
         ui.available_width()
     } else {
         f32::INFINITY
     };
     let resp = draw_text_with_images(
-        app,
+        vctx,
         ui,
         theme,
         &block.content,
@@ -197,7 +197,7 @@ pub(super) fn draw_heading(
         internal_targets,
     );
     if resp.clicked() {
-        app.ui.sync.request_click(block.id);
+        vctx.ui_state().sync.request_click(block.id);
     }
     if resp.hovered() {
         ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::PointingHand);
@@ -215,7 +215,7 @@ pub(super) fn draw_heading(
 /// 段落：按可用宽度折行；行内样式（粗体 / 行内代码 / 键帽 / 高亮 / 上下标）
 /// 由 [`render_inline_text`] 按片段排版。
 pub(super) fn draw_paragraph(
-    app: &mut EditorApp,
+    vctx: &mut dyn EditorViewContext,
     ui: &mut Ui,
     theme: &Theme,
     block: &BlockView,
@@ -229,7 +229,7 @@ pub(super) fn draw_paragraph(
         f32::INFINITY
     };
     draw_text_with_images(
-        app,
+        vctx,
         ui,
         theme,
         &block.content,
@@ -252,7 +252,7 @@ pub(super) fn draw_paragraph(
 /// 与行内样式）都回流在 `content` 里，画在色条右侧的框内；`content` 为空
 /// 的场合（理论上只剩空引用 `>`）只画色条。
 pub(super) fn draw_quote(
-    app: &mut EditorApp,
+    vctx: &mut dyn EditorViewContext,
     ui: &mut Ui,
     theme: &Theme,
     block: &BlockView,
@@ -283,7 +283,7 @@ pub(super) fn draw_quote(
                         f32::INFINITY
                     };
                     draw_text_with_images(
-                        app,
+                        vctx,
                         ui,
                         theme,
                         &block.content,

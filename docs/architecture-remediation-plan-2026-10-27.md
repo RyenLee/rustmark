@@ -188,11 +188,47 @@
     断言「续行 → 退出列表 → 空行」）与
     `enter_ime_test::list_enter_right_after_commit_does_not_pile_markers`
     （中文提交后同一时刻连按回车，零时钟推进）**均通过**。
+  - **步 2.3 预览区（已收官）**：`preview_view.rs` + 7 个子模块
+    （`blocks` / `code` / `list` / `media` / `table` / `toc` +
+    `inline/text_render.rs`）。这些子模块原先经 `use super::*` 从 facade
+    拿到 `EditorApp`（**glob 导入父模块的私有 `use` 别名**），故守卫的
+    `first_crate_app_line` 只看见 facade 那一条 `crate::app`——**连带改形参
+    不是可选项**：`show` 的签名一换，`draw_block` 与其下 18 个绘图函数的
+    `&mut EditorApp` 全部编译不过。
+    契约新增 **7** 个方法（trait 总数 118 → **125**）：
+    `UiStateAccess` +2（`preview_state` / `preview_state_read`）；
+    `DocumentAccess` +1（`document_revision`——只要一个 `u64`，绝不为它做
+    全文快照，问题 043）；`CommandPort` +4（`set_preview_blocks` /
+    `store_preview_render` / `replace_source` / `preview_image_fetcher`）。
+    **`image_cache.rs` 的三重阻塞被一条闭包契约解开**（推翻了批 1 的评估，
+    详见下条「批 1 遗留」的更正）：文件**不搬家**（仍住 root，故 `image`
+    crate 与 `decode()` 原样可用），只把 `image_entry` 的形参从
+    `&EditorApp` 换成 `&dyn EditorViewContext`；`AssetLoader`（infra，ui
+    不可名）与文档目录（`pub(crate)`）封进
+    `preview_image_fetcher(&self) -> ImageFetcher` 返回的
+    `Box<dyn FnOnce() -> Result<Vec<u8>, String> + Send>`——**必须能跨线程**，
+    否则远程图走不了后台下载（F-3），UI 线程会被网络阻塞。
+    于是 `image_cache.rs` 也不再引用 `crate::app`，`EXEMPT_VIEWS` 在本轮
+    **没有任何真实成员**。
+    **形态 B 的两处新形态**：① `markdown_service()` 是 `&self`，写进
+    `match` 判据会让借用覆盖整块 → 先把 `render_preview` 落到 owned 结果；
+    ② `if vctx.preview_state_read().degraded` 同理 → 先落成 `bool`。
+    `&str::clone()` 陷阱在 `list::toggle_task` 再次出现
+    （`vctx.editor_text().clone()` 得到 `&str` 而非 `String`），同样改
+    `to_string()` 并就地注释钉死。
+    顺带把 `media.rs` 的外链打开从 `app.services.opener.open`
+    改走 `external_opener()`（`ServiceQueries` 早已给出，此前只是没人用）。
 - **批 1 遗留（移交给批 2 / 批 3）**：
-  - `preview_view/image_cache.rs` **本轮不迁**，留 root + 批 3 加 `EXEMPT_VIEWS`
-    永久豁免（**不能**简单留在 `PENDING_DECOUPLED_VIEWS` 里——双向棘轮会报
-    「陈旧条目」）。三重阻塞：`image` crate 属 root 独有依赖 / `AssetLoader`
-    在 infra（ui 不可名）/ `document_dir()` 是 `pub(crate)`。
+  - ~~`preview_view/image_cache.rs` **本轮不迁**，留 root + 批 3 加
+    `EXEMPT_VIEWS` 永久豁免；三重阻塞：`image` crate 属 root 独有依赖 /
+    `AssetLoader` 在 infra / `document_dir()` 是 `pub(crate)`。~~
+    **更正（步 2.3 实测）**：三重阻塞里只有第 2 条是真的，而它恰好可以用
+    「返回 `'static + Send` 闭包」的契约封住：
+    - 第 1 条只在「文件搬到 ui crate」时成立——本轮**不搬家**，
+      `image` crate 与 `decode()` 照旧在 root 编译；
+    - 第 3 条同理：文档目录由 root 侧的闭包内部取，ui 不需要名它。
+    故 `image_cache.rs` 已随步 2.3 解耦，`PENDING_DECOUPLED_VIEWS` 只剩
+    `main_view.rs` / `scroll_sync.rs` 两条（步 2.4 清空）。
   - `*_state()` 的**只读变体**按需补，只给真实需要的两个容器补：
     `status_bar_state_read()`（`status_bar_view.rs` 的读/写交替必然踩独占借用）
     与 `preview_state_read()`；其余 12 个容器纯写，不补（对称美学不值 14 个方法）。

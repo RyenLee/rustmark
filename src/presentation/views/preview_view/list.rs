@@ -46,7 +46,7 @@ fn bullet_for(depth: u8) -> &'static str {
 /// 同一个 `items`（见其 `root_list_index`），层级只存在于 `ListItemView::depth`：
 /// 想从 `text` 的前导空格反推是行不通的（pulldown 已把标记与缩进吃掉）。
 pub(super) fn draw_list(
-    app: &mut EditorApp,
+    vctx: &mut dyn EditorViewContext,
     ui: &mut Ui,
     theme: &Theme,
     block: &BlockView,
@@ -71,28 +71,28 @@ pub(super) fn draw_list(
                 )
                 .halign(Align::RIGHT),
             );
-            draw_item_text(app, ui, theme, item, wrap, internal_targets);
+            draw_item_text(vctx, ui, theme, item, wrap, internal_targets);
         });
     }
 }
 
 /// 任务列表：复选框可点击，点击后回写源码。
 pub(super) fn draw_task_list(
-    app: &mut EditorApp,
+    vctx: &mut dyn EditorViewContext,
     ui: &mut Ui,
     theme: &Theme,
     block: &BlockView,
     internal_targets: &[(String, u64)],
 ) {
-    let wrap = app.editor.word_wrap;
+    let wrap = vctx.editor_state_read().word_wrap;
     for item in block.items.iter() {
         let mut checked = item.checked.unwrap_or(false);
         ui.horizontal(|ui| {
             ui.add_space(theme.metrics.space_xl + f32::from(item.depth) * list_indent_step(theme));
             if ui.checkbox(&mut checked, "").changed() {
-                toggle_task(app, item, checked);
+                toggle_task(vctx, item, checked);
             }
-            draw_item_text(app, ui, theme, item, wrap, internal_targets);
+            draw_item_text(vctx, ui, theme, item, wrap, internal_targets);
         });
     }
 }
@@ -101,12 +101,16 @@ pub(super) fn draw_task_list(
 ///
 /// 走与编辑区完全相同的 `ReplaceRangeCommand`，因此可撤销、会推进文档版本号、
 /// 会触发预览重解析——不会出现「预览勾上了、源码没变」的两处真相漂移。
-fn toggle_task(app: &mut EditorApp, item: &ListItemView, checked: bool) {
-    let text = app.editor_text.clone();
+fn toggle_task(vctx: &mut dyn EditorViewContext, item: &ListItemView, checked: bool) {
+    // ⚠ 这里必须是 `to_string()` 而不是 `clone()`：`vctx.editor_text()` 给的是
+    // `&str`，而 `&str` **自身**实现了 `Clone`（`impl Clone for &T`），方法解析
+    // 会先命中它 → `clone()` 得到 `&str` 而非 `String`，于是 `text` 变成对
+    // 上下文的**长期借用**，把后面 `replace_source` 的可变借用全堵死。
+    let text = vctx.editor_text().to_string();
     let Some(from) = task_marker_offset(&text, item.start, item.end) else {
         return;
     };
-    app.replace_source(from, from + 3, if checked { "[x]" } else { "[ ]" });
+    vctx.replace_source(from, from + 3, if checked { "[x]" } else { "[ ]" });
 }
 
 /// 在文本的一段区间里定位任务标记 `[ ]` / `[x]`，返回其**绝对**字节偏移。
@@ -130,7 +134,7 @@ pub fn task_marker_offset(text: &str, start: usize, end: usize) -> Option<usize>
 /// 列表项文本：走行内富文本（`- **粗体**` 必须与正文里的粗体一致），
 /// 已勾选的项叠上删除线 + 次级色。
 fn draw_item_text(
-    app: &mut EditorApp,
+    vctx: &mut dyn EditorViewContext,
     ui: &mut Ui,
     theme: &Theme,
     item: &ListItemView,
@@ -146,7 +150,7 @@ fn draw_item_text(
     // 项文本里可能混着图片（`- ![图标](u.png) 说明`）：列表项是文本容器，
     // 图片只能插在文本流里（见 `draw_text_with_images`）。
     draw_text_with_images(
-        app,
+        vctx,
         ui,
         theme,
         &item.text,

@@ -88,9 +88,9 @@ pub mod test_only {
 
 use egui::{Align, CornerRadius, Layout, RichText, ScrollArea, Stroke, Ui};
 
-use crate::app::frame::EditorApp;
 use crate::presentation::state::scroll_sync_state::{BlockRect, Side};
 use crate::presentation::theme::builtin::Theme;
+use crate::presentation::view_context::EditorViewContext;
 use rustmark_core::application::dto::BlockView;
 use rustmark_core::application::markdown::queries::RenderPreviewQuery;
 
@@ -141,8 +141,8 @@ pub const TABLE_MIN_COL_W: f32 = 64.0;
 // ============================================================================
 
 /// 绘制预览区。
-pub fn show(app: &mut EditorApp, ui: &mut Ui) {
-    let theme = app.theme().clone();
+pub fn show(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
+    let theme = vctx.theme_state().clone();
     ui.painter()
         .rect_filled(ui.max_rect(), CornerRadius::ZERO, theme.bg_primary);
 
@@ -153,7 +153,7 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
     // 两栏的内容区从同一条水平线起、高度一致（问题 2）。
     pane_header(ui, &theme);
 
-    let Some(doc_id) = app.active_doc else {
+    let Some(doc_id) = vctx.active_doc() else {
         ui.weak("没有打开的文档");
         return;
     };
@@ -162,19 +162,13 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
     //    这是预览 ↔ 激活 tab 联动的**唯一入口**（见 `PreviewUiState::sync_document`）：
     //    重置会把 `last_key` 清成 `None`，于是下一句的 `first` 为真，本帧必定重解析，
     //    绝不会出现「上一份文档的块多显示一帧」。
-    app.preview.sync_document(doc_id.as_u64());
+    vctx.preview_state().sync_document(doc_id.as_u64());
 
     // 1) 取文档版本号 → 由 UI State 判定是否该重解析（换文档与外观变化立即生效，
     //    同一份文档的内容变化需等 150ms 防抖窗口）。
     //    只取版本号而不做全文快照：`content_and_revision` 会把整篇文本从
     //    rope 快照出来，每帧一次只为拿一个 u64（问题 043）。
-    let version = app
-        .services
-        .registry
-        .read()
-        .ok()
-        .and_then(|reg| reg.revision_of(doc_id))
-        .unwrap_or(0);
+    let version = vctx.document_revision(doc_id).unwrap_or(0);
 
     // 缓存键必须带上**文档标识**：`version` 是每份文档各自的计数器，
     // 两份都还没编辑过的文档版本号相同，只比对版本号会让切 tab 后的预览
@@ -184,19 +178,23 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
         version,
         &theme,
     );
-    let now_ms = app.services.markdown.now().millis();
-    let first = app.preview.last_key.is_none();
-    let want = app.preview.should_render(key, now_ms, false);
+    let now_ms = vctx.markdown_service().now().millis();
+    // 两条判据都只要一个 `bool`，走只读出口——别为它拿 `&mut`，
+    // 那会把后面同帧的 `document_revision` / `editor_state_read` 一并堵死。
+    let first = vctx.preview_state_read().last_key.is_none();
+    let want = vctx.preview_state_read().should_render(key, now_ms, false);
 
     if first || want {
-        match app
-            .services
-            .markdown
-            .render_preview(RenderPreviewQuery { doc_id, version })
-        {
+        // **形态 B**：`markdown_service()` 是 `&self` 借用，若把它写进 `match`
+        // 判据，借用会覆盖整个 match 块，块内 `set_preview_blocks` 的可变借用
+        // 直接撞车。故先落到一个 owned 结果上，借用随语句结束。
+        let rendered = vctx
+            .markdown_service()
+            .render_preview(RenderPreviewQuery { doc_id, version });
+        match rendered {
             Ok(view) => {
-                app.set_preview_blocks(view.blocks);
-                app.preview.set_degraded(view.truncated);
+                vctx.set_preview_blocks(view.blocks);
+                vctx.preview_state().set_degraded(view.truncated);
             }
             Err(e) => {
                 // 渲染失败不终止：预览区退化成一句话，编辑区照常可用。
@@ -204,11 +202,14 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
                 return;
             }
         }
-        app.preview.record_render(key, now_ms);
+        vctx.preview_state().record_render(key, now_ms);
     }
 
     // 降级提示（FR-06）：源过大时不解析，明确告知而非静默空白。
-    if app.preview.degraded {
+    // 先落到 `bool` 再进 `if`：判据里的 `&self` 借用会覆盖整块，块内若再调
+    // `vctx` 的其它方法就是第二个借用。
+    let degraded = vctx.preview_state_read().degraded;
+    if degraded {
         ui.weak("文档过大，预览已降级");
     }
 
@@ -219,8 +220,8 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
     // 内部跳转目标（标题 slug / 脚注标号 → 块 id）必须在 `mem::take` 之前收集：
     // `take` 会把块序列借走，之后无法再读 `app.preview.blocks`。
     // 预览里点击 `#锚点` 或脚注引用 `[^n]` 时据此跳到对应块。
-    let internal_targets: Vec<(String, u64)> = app
-        .preview
+    let internal_targets: Vec<(String, u64)> = vctx
+        .preview_state_read()
         .blocks
         .iter()
         .filter_map(|b| {
@@ -235,7 +236,7 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
         .collect();
     // D-3 阶段 3：取走/放回经 `take_blocks` / `store_preview_render` 对称走
     // state 方法，字段的可变引用不出 state（语义与原先的 `mem::take` 相同）。
-    let blocks = app.preview.take_blocks();
+    let blocks = vctx.preview_state().take_blocks();
 
     // 目录条目：由**当前块序列**现场收集（标题会随编辑增删，存一份副本必然过期）。
     // 含 `toc` 块自身之外的标题，顺序与文档一致。
@@ -254,14 +255,13 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
     // 主循环里相应跳过，正文里只留上标编号。
     let footnotes: Vec<&BlockView> = blocks.iter().filter(|b| b.kind == "footnote").collect();
 
-    let start_y = if app.preview.scroll_y.is_finite() {
-        app.preview.scroll_y
-    } else {
-        0.0
+    let start_y = {
+        let scroll_y = vctx.preview_state_read().scroll_y;
+        if scroll_y.is_finite() { scroll_y } else { 0.0 }
     };
     // 脚注区与正文一致地跟随「自动换行」开关（在闭包外取，避免与闭包内的
-    // `&mut app` 重 Borrow 冲突）。
-    let wrap_for_footnotes = app.editor.word_wrap;
+    // `vctx` 重 Borrow 冲突）。
+    let wrap_for_footnotes = vctx.editor_state_read().word_wrap;
     // 预览区需要**双向**滚动：纵向看长文，横向看超宽内容（不折行的代码块、
     // 比面板宽的图表）。`ScrollArea::both()` 的 `direction_enabled` 是
     // `[true, true]`，故两个方向都开滚动条。
@@ -326,7 +326,7 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
                         if wrap_for_footnotes {
                             ui.set_max_width(viewport_w);
                         }
-                        draw_block(app, ui, &theme, block, &headings, &internal_targets)
+                        draw_block(vctx, ui, &theme, block, &headings, &internal_targets)
                     });
                     let rect = res.response.rect;
                     let base = *origin.get_or_insert(rect.top());
@@ -347,7 +347,7 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
                         ui.set_max_width(viewport_w);
                     }
                     toc::draw_footnote_section(
-                        app,
+                        vctx,
                         ui,
                         &theme,
                         &footnotes,
@@ -360,8 +360,8 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
             .inner
         });
 
-    app.store_preview_render(blocks, out.inner, out.state.clamped_offset().y);
-    app.ui
+    vctx.store_preview_render(blocks, out.inner, out.state.clamped_offset().y);
+    vctx.ui_state()
         .sync
         .set_geometry(Side::Preview, out.content_size.y, out.inner_rect.height());
 }
@@ -387,7 +387,7 @@ fn pane_header(ui: &mut Ui, theme: &Theme) {
 
 /// 按块类型分发渲染器。
 fn draw_block(
-    app: &mut EditorApp,
+    vctx: &mut dyn EditorViewContext,
     ui: &mut Ui,
     theme: &Theme,
     block: &BlockView,
@@ -398,22 +398,22 @@ fn draw_block(
     // 降级源码卡都在面板宽度内折行，不出现横向滚动条；关 → 不折行，
     // 长行靠预览区底部横向滚动条查看（与编辑区行为一致）。
     // 表格在关闭时按自然宽排开（问题 068），而不是被压进面板宽度。
-    let wrap = app.editor.word_wrap;
+    let wrap = vctx.editor_state_read().word_wrap;
     match block.kind.as_str() {
-        "heading" => blocks::draw_heading(app, ui, theme, block, internal_targets),
-        "paragraph" => blocks::draw_paragraph(app, ui, theme, block, wrap, internal_targets),
-        "quote" => blocks::draw_quote(app, ui, theme, block, wrap, internal_targets),
-        "code_block" => code::draw_code_block(app, ui, theme, block, wrap),
-        "list" => list::draw_list(app, ui, theme, block, wrap, internal_targets),
-        "task_list" => list::draw_task_list(app, ui, theme, block, internal_targets),
+        "heading" => blocks::draw_heading(vctx, ui, theme, block, internal_targets),
+        "paragraph" => blocks::draw_paragraph(vctx, ui, theme, block, wrap, internal_targets),
+        "quote" => blocks::draw_quote(vctx, ui, theme, block, wrap, internal_targets),
+        "code_block" => code::draw_code_block(vctx, ui, theme, block, wrap),
+        "list" => list::draw_list(vctx, ui, theme, block, wrap, internal_targets),
+        "task_list" => list::draw_task_list(vctx, ui, theme, block, internal_targets),
         "table" => {
             // 结构化缺失（理论上不该发生）时退回纯文本，总比空白好。
             match &block.table {
-                Some(table) => table::draw_table(app, ui, theme, table, wrap, internal_targets),
-                None => blocks::draw_paragraph(app, ui, theme, block, wrap, internal_targets),
+                Some(table) => table::draw_table(vctx, ui, theme, table, wrap, internal_targets),
+                None => blocks::draw_paragraph(vctx, ui, theme, block, wrap, internal_targets),
             }
         }
-        "image" => media::draw_image(app, ui, theme, block),
+        "image" => media::draw_image(vctx, ui, theme, block),
         "rule" => toc::draw_rule(ui, theme),
         // 脚注定义不在正文位置渲染：统一收集到预览末尾的「脚注」区
         // （见 `show` 里的收集与 `toc::draw_footnote_section`）。
@@ -421,12 +421,12 @@ fn draw_block(
         // 脚注也只会安静不画，而不会把 `[^1]: 原文` 当 raw 文本泼在正文里。
         "footnote" => {}
         "definition_list" => {
-            toc::draw_definition_list(app, ui, theme, block, wrap, internal_targets)
+            toc::draw_definition_list(vctx, ui, theme, block, wrap, internal_targets)
         }
         "math" => embedded::draw_math(ui, theme, block, wrap),
         "diagram" => embedded::draw_diagram(ui, theme, block, wrap),
-        "toc" => toc::draw_toc(app, ui, theme, block, headings, internal_targets),
-        other => toc::draw_raw(app, ui, theme, block, other, wrap, internal_targets),
+        "toc" => toc::draw_toc(vctx, ui, theme, block, headings, internal_targets),
+        other => toc::draw_raw(vctx, ui, theme, block, other, wrap, internal_targets),
     }
 }
 

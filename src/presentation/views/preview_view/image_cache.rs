@@ -15,7 +15,7 @@ use std::collections::HashSet;
 
 use egui::Ui;
 
-use crate::app::frame::EditorApp;
+use crate::presentation::view_context::EditorViewContext;
 use rustmark_core::shared::lru::LruMap;
 
 /// 一张图片的加载结果。
@@ -306,7 +306,9 @@ fn drain_remote_results(ctx: &egui::Context) -> bool {
 /// `pub(super)`：唯一生产调用点是 `media::draw_image`，经
 /// `super::image_cache::image_entry` 取用（TD-02 拆分自 facade）。
 ///
-/// 三种来源（本地路径 / 远程 URL / data URI）由 `AssetLoader` 统一处理，
+/// 三种来源（本地路径 / 远程 URL / data URI）的**字节取用**由
+/// [`EditorViewContext::preview_image_fetcher`] 统一交给组合根
+/// （`AssetLoader` 住 infra、文档目录是组合根的 `pub(crate)`，本层都名不到）；
 /// 本函数只负责「解码 → 纹理」与失败降级。
 ///
 /// # 远程图片为什么异步（F-3）
@@ -315,14 +317,15 @@ fn drain_remote_results(ctx: &egui::Context) -> bool {
 /// 含远程图的文档首绘预览时整个界面卡住。故远程走「后台线程下载 + 解码 →
 /// 通道回执 → UI 线程建纹理」：绘制路径只发一个「加载中」占位，
 /// 完成后由后台线程 `request_repaint` 唤醒下一帧换上真图。
-pub(super) fn image_entry(ui: &Ui, app: &EditorApp, url: &str) -> ImageEntry {
+/// 取字节的闭包是 `'static + Send` 的，正好能整个搬进后台线程。
+pub(super) fn image_entry(ui: &Ui, vctx: &dyn EditorViewContext, url: &str) -> ImageEntry {
     // 回执先入账：后台线程在本帧之前完成的加载，此刻就能当缓存命中返回。
     drain_remote_results(ui.ctx());
     // 远程图片开关（PRIV-01）**在缓存查找之前**判：关闭后这张图在本会话里
     // 一律按「不可加载」呈现，既不发请求、也不复用此前已缓存的纹理——
     // 「关了还看得见」会让用户无法确认自己是否真的断开了外联。
     // 占位不进缓存：重新打开开关时下一帧就会重新走正常加载路径。
-    if is_remote_url(url) && !app.editor.load_remote_images {
+    if is_remote_url(url) && !vctx.editor_state_read().load_remote_images {
         return ImageEntry {
             texture: None,
             size: [0.0, 0.0],
@@ -338,17 +341,12 @@ pub(super) fn image_entry(ui: &Ui, app: &EditorApp, url: &str) -> ImageEntry {
     if is_remote_url(url) {
         let in_flight = BACKGROUND_INFLIGHT.with(|f| f.borrow().contains(url.trim()));
         if !in_flight {
-            // 从 `Services` 拷贝一份加载器进线程（Copy，不借用 app）。
-            let loader = app.services.assets;
-            let u = url.to_string();
+            // 取字节的闭包是 `'static + Send` 的：整个搬进后台线程，
+            // 组合根那边的加载器不会被借出 `image_entry` 的栈帧。
+            let fetch = vctx.preview_image_fetcher(url);
             let spawned = spawn_background(
                 url,
-                Box::new(move || {
-                    loader
-                        .load(&u, None)
-                        .map_err(|e| e.to_string())
-                        .and_then(|asset| decode(&asset.bytes))
-                }),
+                Box::new(move || fetch().and_then(|bytes| decode(&bytes))),
                 ui.ctx().clone(),
             );
             // 仅在真正起了一条线程时才登记「在飞」；槽位满（`spawn_background`
@@ -366,7 +364,6 @@ pub(super) fn image_entry(ui: &Ui, app: &EditorApp, url: &str) -> ImageEntry {
         return entry;
     }
 
-    let base_dir = app.document_dir();
     // 「加载失败」与「解码失败」是两类不同的错误（前者 AssetError、后者 String），
     // 但对预览的意义相同——都降级成占位。故在这里统一成一条消息。
     //
@@ -383,14 +380,12 @@ pub(super) fn image_entry(ui: &Ui, app: &EditorApp, url: &str) -> ImageEntry {
     // 本地 / data URI：先取到字节；超过 [`BACKGROUND_DECODE_BYTES`] 的大图
     // 不在 UI 线程解码（E-13），改走后台解码、本帧出「加载中」占位，避免
     // 帧尖刺。远程地址已在上面的分支处理。
-    let loader = app.services.assets;
-    let entry = match loader.load(url, base_dir.as_deref()) {
-        Err(e) => failed(e.to_string()),
-        Ok(asset) => {
-            if asset.bytes.len() > BACKGROUND_DECODE_BYTES {
+    let entry = match vctx.preview_image_fetcher(url)() {
+        Err(e) => failed(e),
+        Ok(bytes) => {
+            if bytes.len() > BACKGROUND_DECODE_BYTES {
                 let in_flight = BACKGROUND_INFLIGHT.with(|f| f.borrow().contains(url.trim()));
                 if !in_flight {
-                    let bytes = asset.bytes;
                     let spawned =
                         spawn_background(url, Box::new(move || decode(&bytes)), ui.ctx().clone());
                     if spawned {
@@ -406,7 +401,7 @@ pub(super) fn image_entry(ui: &Ui, app: &EditorApp, url: &str) -> ImageEntry {
                 return placeholder;
             }
             // 小图：同步解码（几十毫秒量级，当帧出纹理）。
-            match decode(&asset.bytes) {
+            match decode(&bytes) {
                 Ok(img) => {
                     let size = [img.width() as f32, img.height() as f32];
                     // 必须在 `load_texture` 移动 `img` 之前结算字节数。

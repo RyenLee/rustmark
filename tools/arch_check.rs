@@ -1484,9 +1484,6 @@ pub fn check_ui_submodule_sync(manifest: &Path) -> Vec<Violation> {
 /// + `preview_view/inline/math.rs`（1 个文件）已迁——批 1 的 24 个文件收官。
 pub const PENDING_DECOUPLED_VIEWS: &[&str] = &[
     "src/presentation/views/main_view.rs",
-    "src/presentation/views/preview_view.rs",
-    "src/presentation/views/preview_view/image_cache.rs",
-    "src/presentation/views/preview_view/inline/text_render.rs",
     "src/presentation/views/scroll_sync.rs",
 ];
 

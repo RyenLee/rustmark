@@ -6,9 +6,9 @@
 use egui::text::{CCursor, CharIndex, LayoutJob};
 use egui::{CursorIcon, Galley, Pos2, Rect, Response, Sense, Ui};
 
-use crate::app::frame::EditorApp;
 use crate::presentation::theme::builtin::Theme;
 use crate::presentation::theme::mapper::{SpanHit, SpanPolicy, build_job};
+use crate::presentation::view_context::EditorViewContext;
 use rustmark_core::application::dto::SpanView;
 use rustmark_core::shared::system;
 
@@ -37,7 +37,7 @@ use super::text_format::{Typography, done_overlay, span_format};
 #[allow(clippy::too_many_arguments)] // 预览内联渲染的完整上下文（UI/主题/文本/片段/排版/交互/宽度/跳转表）本就九项；打包成 struct 会让每个调用方多一次所有权转换，且掩盖「漏传即错」
 pub(crate) fn render_inline_text(
     ui: &mut Ui,
-    app: &mut EditorApp,
+    vctx: &mut dyn EditorViewContext,
     theme: &Theme,
     content: &str,
     spans: &[SpanView],
@@ -49,7 +49,7 @@ pub(crate) fn render_inline_text(
     if spans.iter().any(|s| s.style == "math") {
         return render_with_math(
             ui,
-            app,
+            vctx,
             theme,
             content,
             spans,
@@ -101,7 +101,7 @@ pub(crate) fn render_inline_text(
             link_hovered = true;
         }
         if resp.clicked() {
-            handle_span_click(app, sv, content, internal_targets);
+            handle_span_click(vctx, sv, content, internal_targets);
         }
     }
     if link_hovered {
@@ -163,7 +163,7 @@ fn span_rects(galley: &Galley, hits: &[SpanHit]) -> Vec<(usize, Rect)> {
 /// 外链改走 opener 端口后，「点击 link 会调 open、不安全地址不调」要在集成测试里断言）。
 #[doc(hidden)]
 pub fn handle_span_click(
-    app: &mut EditorApp,
+    vctx: &mut dyn EditorViewContext,
     sv: &SpanView,
     content: &str,
     internal_targets: &[(String, u64)],
@@ -176,20 +176,20 @@ pub fn handle_span_click(
             let url = url.trim();
             if let Some(anchor) = url.strip_prefix('#') {
                 if let Some((_, id)) = internal_targets.iter().find(|(k, _)| k == anchor) {
-                    app.ui.sync.request_click(*id);
+                    vctx.ui_state().sync.request_click(*id);
                 }
                 return;
             }
             if system::is_safe_to_open(url) {
                 // 打开失败不打扰用户：链接打不开时预览区照常显示，
                 // 弹窗反而挡住阅读（与旧实现 `let _ =` 的取舍一致）。
-                let _ = app.services.opener.open(url);
+                let _ = vctx.external_opener().open(url);
             }
         }
         "footnote_ref" => {
             let label = footnote_ref_mark(&content[sv.range.start..sv.range.end]);
             if let Some((_, id)) = internal_targets.iter().find(|(k, _)| k == label) {
-                app.ui.sync.request_click(*id);
+                vctx.ui_state().sync.request_click(*id);
             }
         }
         _ => {}

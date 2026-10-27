@@ -24,7 +24,7 @@ pub(super) fn draw_rule(ui: &mut Ui, theme: &Theme) {
 /// 标题会随编辑增删、改名，任何副本都会在下一帧过期；而目录**本来就该**
 /// 与当前文档结构一致（这正是它存在的意义）。
 pub(super) fn draw_toc(
-    app: &mut EditorApp,
+    vctx: &mut dyn EditorViewContext,
     ui: &mut Ui,
     theme: &Theme,
     block: &BlockView,
@@ -77,7 +77,7 @@ pub(super) fn draw_toc(
                     })
                     .inner;
                 if resp.clicked() {
-                    app.ui.sync.request_click(h.id);
+                    vctx.ui_state().sync.request_click(h.id);
                 }
                 if resp.hovered() {
                     ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::PointingHand);
@@ -102,7 +102,7 @@ pub(super) fn draw_toc(
 /// 滚到该脚注定义的源码行。正文里的上标编号暂不做点击（行内片段的
 /// 逐Span 命中需要 galley 字形级命中测试，成本与收益不成比例）。
 pub(super) fn draw_footnote_section(
-    app: &mut EditorApp,
+    vctx: &mut dyn EditorViewContext,
     ui: &mut Ui,
     theme: &Theme,
     footnotes: &[&BlockView],
@@ -143,7 +143,7 @@ pub(super) fn draw_footnote_section(
                 .sense(egui::Sense::click()),
             );
             if resp.clicked() {
-                app.ui.sync.request_click(block.id);
+                vctx.ui_state().sync.request_click(block.id);
             }
             if resp.hovered() {
                 ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::PointingHand);
@@ -157,7 +157,7 @@ pub(super) fn draw_footnote_section(
                 };
                 render_inline_text(
                     ui,
-                    app,
+                    vctx,
                     theme,
                     &block.content,
                     &block.spans,
@@ -181,7 +181,7 @@ pub(super) fn draw_footnote_section(
 /// 不套项目符号：定义列表的语义是「词条—释义」，画成 `• 术语: 定义`
 /// 就与普通无序列表混同了，而且术语与释义的从属关系在横向上会被拉平。
 pub(super) fn draw_definition_list(
-    app: &mut EditorApp,
+    vctx: &mut dyn EditorViewContext,
     ui: &mut Ui,
     theme: &Theme,
     block: &BlockView,
@@ -200,7 +200,7 @@ pub(super) fn draw_definition_list(
         };
         render_inline_text(
             ui,
-            app,
+            vctx,
             theme,
             &entry.term,
             &entry.term_spans,
@@ -238,7 +238,7 @@ pub(super) fn draw_definition_list(
                     };
                     render_inline_text(
                         ui,
-                        app,
+                        vctx,
                         theme,
                         &body.text,
                         &body.spans,
@@ -267,7 +267,7 @@ pub(super) fn draw_definition_list(
 /// 开 → `Wrap`（在钳制后的视口宽内折行），关 → `Extend`（单行排开，
 /// 撑出预览区的横向滚动条）。
 pub(super) fn draw_raw(
-    _app: &mut EditorApp,
+    _vctx: &mut dyn EditorViewContext,
     ui: &mut Ui,
     theme: &Theme,
     block: &BlockView,

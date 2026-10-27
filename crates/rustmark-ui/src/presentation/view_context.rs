@@ -111,7 +111,9 @@ use crate::presentation::state::editor_ui_state::{EditorUiState, SpellSuggestMen
 use crate::presentation::state::export_ui_state::ExportUiState;
 use crate::presentation::state::find_replace_ui_state::FindReplaceUiState;
 use crate::presentation::state::pending_dialog::PendingDialog;
+use crate::presentation::state::preview_ui_state::PreviewUiState;
 use crate::presentation::state::quick_open_ui_state::QuickOpenUiState;
+use crate::presentation::state::scroll_sync_state::BlockRect;
 use crate::presentation::state::settings_ui_state::{SettingsTab, SettingsUiState};
 use crate::presentation::state::shortcut_overview_ui_state::ShortcutOverviewUiState;
 use crate::presentation::state::sidebar_ui_state::{
@@ -124,8 +126,8 @@ use crate::presentation::theme::builtin::Theme;
 use egui::Context;
 use rustmark_core::application::document::service::DocumentAppService;
 use rustmark_core::application::dto::{
-    EditorSettingsView, ExportRequestView, ExportResultView, LintIssueView, OutlineItemView,
-    RecentFileView, SettingsView, StatsView, TabSummary, ThemeView,
+    BlockView, EditorSettingsView, ExportRequestView, ExportResultView, LintIssueView,
+    OutlineItemView, RecentFileView, SettingsView, StatsView, TabSummary, ThemeView,
 };
 use rustmark_core::application::markdown::service::MarkdownAppService;
 use rustmark_core::application::preferences::service::PreferencesAppService;
@@ -163,6 +165,21 @@ pub struct TextEdit {
     /// 编辑后选区锚点应落在的**字符**索引（`None` 表示无选区）。
     pub anchor_char: Option<usize>,
 }
+
+/// 预览图片的字节取用器：调用一次即取回原始字节（解码由视图侧做）。
+///
+/// # 为什么是闭包而不是一条 `&self` 查询
+///
+/// 远程图片必须在**后台线程**里下载（F-3：同步下载会把 UI 线程阻塞到
+/// 响应或超时，含远程图的文档首绘预览时整个界面卡住）。而取字节要凑齐
+/// 「`AssetLoader`（住 infra）+ 文档目录（组合根 `pub(crate)`）+ 两者如何
+/// 组合」三样，本 crate 一样都名不到。闭包把这三样封成 `'static + Send`
+/// 的一个能力，视图拿得到能力、拿不到加载器本体。
+///
+/// 返回 `Result<Vec<u8>, String>` 而非 `AppResult`：这个值的消费方是
+/// **后台线程与失败占位文案**，不需要错误分类——`AssetError` 与解码失败
+/// 对预览的意义同为「降级成占位」。
+pub type ImageFetcher = Box<dyn FnOnce() -> Result<Vec<u8>, String> + Send>;
 
 // ===========================================================================
 // T1 · ThemeAccess —— 主题与快捷键注册表
@@ -277,6 +294,19 @@ pub trait UiStateAccess {
     /// **块内不得调 `vctx` 的其它方法**（含 `&self` 的 `markdown_service()`）——
     /// 那会把独占借用拖成第二个借用，直接撞车。需要的数据**块外预取**。
     fn editor_text_mut(&mut self) -> &mut String;
+
+    /// 预览区状态（块序列 / 块矩形 / 缓存键 / 滚动偏移 / 降级标记）。
+    ///
+    /// 可变出口：`show` 一帧里要连续做「换文档即重置 → 判缓存键 →
+    /// 取走块序列 → 帧末落定三样」四件事，其中三步都是写。
+    fn preview_state(&mut self) -> &mut PreviewUiState;
+
+    /// 预览区状态的只读视图。
+    ///
+    /// 与 [`Self::preview_state`] 成对：只读场景（取块序列、读滚动偏移与
+    /// 降级标记）走它，避免为一个 `bool` 去拿独占借用——那会把同帧内
+    /// 其它只读查询（`editor_state_read` / `theme_state`）一并堵死。
+    fn preview_state_read(&self) -> &PreviewUiState;
 }
 
 // ===========================================================================
@@ -352,6 +382,13 @@ pub trait DocumentAccess {
 
     /// 当前文档的类型显示名（`Markdown` / `纯文本` …）。
     fn current_document_kind(&self) -> &'static str;
+
+    /// 指定文档的**修订版本号**（每次领域内容变化自增）；文档未打开为 `None`。
+    ///
+    /// 预览区的重解析判据只要这一个 `u64`——**不要**给它全文快照：
+    /// `content_and_revision` 会把整篇文本从 rope 里快照出来，每帧一次
+    /// 只为拿一个版本号（问题 043）。
+    fn document_revision(&self, id: DocumentId) -> Option<u64>;
 }
 
 // ===========================================================================
@@ -648,6 +685,52 @@ pub trait CommandPort {
     /// 与 [`Self::flush_edit`] 的区别：本方法**不移动光标**——
     /// 用户此刻的焦点在菜单上，编辑区光标应保持原位。
     fn replace_spelling(&mut self, start: usize, end: usize, replacement: &str) -> AppResult<()>;
+
+    // ---------- 预览区 ----------
+
+    /// 写入一次预览渲染的块序列（`render_preview` 刚返回时）。
+    ///
+    /// 与 [`Self::store_preview_render`] 的分工：这里只写 `blocks`
+    /// （`degraded` 由 [`UiStateAccess::preview_state`] 自己的 `set_degraded`
+    /// 另设）；那次是**每帧**渲染结束后把 blocks / rects / scroll_y 三样一起落定。
+    fn set_preview_blocks(&mut self, blocks: Vec<BlockView>);
+
+    /// 落定一次帧末渲染的产出：块序列放回 + 本帧块矩形 + 滚动偏移。
+    ///
+    /// 三者是**同一事件**的三个侧面（这一帧预览画完了）。不提供「只写其中一个」
+    /// 的入口：散成三次写会让「漏写 rects」无声发生——滚动同步拿着上一帧的
+    /// 矩形换算下一帧偏移，大图刚解码那一帧就跳错块。
+    fn store_preview_render(
+        &mut self,
+        blocks: Vec<BlockView>,
+        rects: Vec<BlockRect>,
+        scroll_y: f32,
+    );
+
+    /// 替换源码的一段字节区间（预览区点击任务复选框回写）。
+    ///
+    /// 与 [`Self::flush_edit`] 的区别：本方法**不移动光标也不设 pending**——
+    /// 用户此刻的焦点在预览区，编辑区光标应保持原位。
+    fn replace_source(&mut self, byte_start: usize, byte_end: usize, text: &str);
+
+    /// 预览图片的**字节取用器**：一个可跨线程的闭包，调用即得原始字节。
+    ///
+    /// # 为什么是一条返回闭包的契约，而不是「交出加载器」
+    ///
+    /// 取一张预览图要凑齐三样东西，而它们**都在 ui crate 不可名的层**：
+    ///
+    /// 1. `AssetLoader` 住 **infra**（本 crate 的依赖面只有 egui + core，
+    ///    由 `tests/workspace_topology_test.rs` 断言）；
+    /// 2. 文档目录是组合根的 `pub(crate)` 方法；
+    /// 3. 两者如何组合（远程传 `None`、本地传文档目录）是组合根的装配知识。
+    ///
+    /// 把三样封进一个 `'static + Send` 的闭包后，视图只拿到「能取字节」这个
+    /// **能力**，拿不到加载器本体——与 [`ServiceQueries`] 交出服务只读借用
+    /// 是同一条原则（所有权即装配权）。
+    ///
+    /// 闭包必须能**在线程里跑**：远程图片走后台下载 + 解码（F-3），
+    /// 若只给一条 `&self` 同步查询，UI 线程就会被网络阻塞。
+    fn preview_image_fetcher(&self, url: &str) -> ImageFetcher;
 }
 
 // ===========================================================================

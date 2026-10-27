@@ -127,12 +127,17 @@ fn first_number(s: &str) -> Option<f32> {
 /// 渲染尺寸按「源码语法参数（`=30x30`）→ URL 查询参数（OSS 处理串）→
 /// 纹理实际尺寸 → 面板宽度上限」的优先级计算（问题 3）；对齐按
 /// `#pic_center` / `#pic_left` / `#pic_right` 选择，未写标记时左对齐。
-pub(super) fn draw_image(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, block: &BlockView) {
+pub(super) fn draw_image(
+    vctx: &mut dyn EditorViewContext,
+    ui: &mut Ui,
+    theme: &Theme,
+    block: &BlockView,
+) {
     // 图片块只是「一张图 + 块级字段」的组合，真正的绘制在
     // [`draw_image_spec`] 里——混排在文字里的图片复用同一条路径
     // （问题 032：否则行内图片与图片块的渲染效果会分叉）。
     draw_image_spec(
-        app,
+        vctx,
         ui,
         theme,
         &ImageSpecView {
@@ -153,7 +158,7 @@ pub(super) fn draw_image(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, block:
 /// 参数来源有两个：源码私有扩展（`=30x30` / `#pic_center`）与 URL 查询参数
 /// （OSS 处理串），前者优先（见 [`effective_size_param`]）。
 pub(super) fn draw_image_spec(
-    app: &mut EditorApp,
+    vctx: &mut dyn EditorViewContext,
     ui: &mut Ui,
     theme: &Theme,
     spec: &ImageSpecView,
@@ -174,7 +179,7 @@ pub(super) fn draw_image_spec(
     // 图片按「预览区可用宽度」与上限 `IMAGE_MAX_W` 的较小值缩放：窄面板里图片
     // 缩到区域宽（不再溢出被裁），宽面板里也不超过上限（问题 2：预览未适配区域宽度）。
     let max_w = ui.available_width().min(IMAGE_MAX_W);
-    let entry = super::image_cache::image_entry(ui, app, &url);
+    let entry = super::image_cache::image_entry(ui, vctx, &url);
     let param = effective_size_param(*width, *height, &url);
     let align = image_align_of(Some(align.as_str()));
     // 整块按 `#pic_*` 标记对齐；未写标记时左对齐——与 CSDN 预览一致
@@ -261,7 +266,7 @@ pub(super) fn draw_image_spec(
                         {
                             // 同 inline.rs 的行内链接：走 opener 端口而非
                             // 直调 shared 的自由函数（R-03 把进程调用移出 shared）。
-                            let _ = app.services.opener.open(&url);
+                            let _ = vctx.external_opener().open(&url);
                         }
                     },
                 );

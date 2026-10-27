@@ -45,7 +45,9 @@ use crate::presentation::state::editor_ui_state::{EditorUiState, SpellSuggestMen
 use crate::presentation::state::export_ui_state::ExportUiState;
 use crate::presentation::state::find_replace_ui_state::FindReplaceUiState;
 use crate::presentation::state::pending_dialog::PendingDialog;
+use crate::presentation::state::preview_ui_state::PreviewUiState;
 use crate::presentation::state::quick_open_ui_state::QuickOpenUiState;
+use crate::presentation::state::scroll_sync_state::BlockRect;
 use crate::presentation::state::settings_ui_state::{SettingsTab, SettingsUiState};
 use crate::presentation::state::shortcut_overview_ui_state::ShortcutOverviewUiState;
 use crate::presentation::state::sidebar_ui_state::{
@@ -56,14 +58,14 @@ use crate::presentation::state::symbol_ui_state::SymbolUiState;
 use crate::presentation::state::workspace_entries::WorkspaceEntries;
 use crate::presentation::theme::builtin::Theme;
 use crate::presentation::view_context::{
-    CommandPort, DocumentAccess, EditorViewContext, ServiceQueries, TextEdit, ThemeAccess,
-    UiStateAccess,
+    CommandPort, DocumentAccess, EditorViewContext, ImageFetcher, ServiceQueries, TextEdit,
+    ThemeAccess, UiStateAccess,
 };
 use egui::Context;
 use rustmark_core::application::document::service::DocumentAppService;
 use rustmark_core::application::dto::{
-    EditorSettingsView, ExportRequestView, ExportResultView, LintIssueView, OutlineItemView,
-    RecentFileView, SettingsView, StatsView, TabSummary, ThemeView,
+    BlockView, EditorSettingsView, ExportRequestView, ExportResultView, LintIssueView,
+    OutlineItemView, RecentFileView, SettingsView, StatsView, TabSummary, ThemeView,
 };
 use rustmark_core::application::markdown::service::MarkdownAppService;
 use rustmark_core::application::preferences::service::PreferencesAppService;
@@ -172,6 +174,14 @@ impl UiStateAccess for EditorApp {
     fn editor_text_mut(&mut self) -> &mut String {
         &mut self.editor_text
     }
+
+    fn preview_state(&mut self) -> &mut PreviewUiState {
+        &mut self.preview
+    }
+
+    fn preview_state_read(&self) -> &PreviewUiState {
+        &self.preview
+    }
 }
 
 // ===========================================================================
@@ -249,6 +259,16 @@ impl DocumentAccess for EditorApp {
 
     fn current_document_kind(&self) -> &'static str {
         EditorApp::current_document_kind(self)
+    }
+
+    fn document_revision(&self, id: DocumentId) -> Option<u64> {
+        // 原调用点是 `services.registry.read().ok().and_then(|reg| reg.revision_of(id))`：
+        // 读锁获取失败（中毒）按「拿不到版本号」处理，调用方回退到 0。
+        self.services
+            .registry
+            .read()
+            .ok()
+            .and_then(|reg| reg.revision_of(id))
     }
 }
 
@@ -583,6 +603,48 @@ impl CommandPort for EditorApp {
 
     fn replace_spelling(&mut self, start: usize, end: usize, replacement: &str) -> AppResult<()> {
         EditorApp::replace_spelling(self, start, end, replacement)
+    }
+
+    // ---------- 预览区 ----------
+
+    fn set_preview_blocks(&mut self, blocks: Vec<BlockView>) {
+        EditorApp::set_preview_blocks(self, blocks);
+    }
+
+    fn store_preview_render(
+        &mut self,
+        blocks: Vec<BlockView>,
+        rects: Vec<BlockRect>,
+        scroll_y: f32,
+    ) {
+        EditorApp::store_preview_render(self, blocks, rects, scroll_y);
+    }
+
+    fn replace_source(&mut self, byte_start: usize, byte_end: usize, text: &str) {
+        // `replace_source` 在 `EditorApp` 上是 `pub(crate)`——本文件与它同 crate，
+        // 故可见性够用；trait 方法本身的可见性由 trait 决定，不受影响。
+        EditorApp::replace_source(self, byte_start, byte_end, text);
+    }
+
+    fn preview_image_fetcher(&self, url: &str) -> ImageFetcher {
+        // 三样东西在这里凑齐后才装箱：加载器（infra 类型，ui 不可名）、
+        // 文档目录（`pub(crate)`）、以及「远程不传基准目录」这条装配知识。
+        let loader = self.services.assets;
+        let base_dir = EditorApp::document_dir(self);
+        let url = url.to_string();
+        // 与 `image_cache::is_remote_url` 同一判据：远程地址是绝对的，
+        // 不该拿本地文档目录去解析（传进 `load` 只会让相对路径规则参与进来）。
+        let remote = {
+            let trimmed = url.trim();
+            trimmed.starts_with("http://") || trimmed.starts_with("https://")
+        };
+        Box::new(move || {
+            let dir = if remote { None } else { base_dir.as_deref() };
+            loader
+                .load(&url, dir)
+                .map(|asset| asset.bytes)
+                .map_err(|e| e.to_string())
+        })
     }
 }
 
