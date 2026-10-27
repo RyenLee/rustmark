@@ -16,7 +16,7 @@
 //! 本文件只留**用例类型与编排**：`FindOptions`、`Finder`（编译好的模式 +
 //! 命中列表 + 循环定位 + 替换预览）与 `find_matches` / `Match` / `ReplaceSummary`。
 //! 具体的文本匹配算法（两条字面量路径、正则路径、词边界与字符边界判定）
-//! 是 `(&str, 选项) -> Option/Vec` 的纯计算，已分到 [`matching`] 子模块——
+//! 是 `(&str, 选项) -> Option/Vec` 的纯计算，已分到 `matching` 子模块——
 //! 「忽略大小写」那里有**两条**实现并存，独立成模块才能逐条测、逐条变异。
 
 use crate::shared::pattern::{Pattern, PatternError, Regex};
