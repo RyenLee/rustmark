@@ -38,12 +38,12 @@
 
 use egui::{Align, Align2, Color32, Context, Layout, RichText, Ui};
 
-use crate::app::frame::EditorApp;
 use crate::presentation::state::dialog_ui_state::Overlay;
 use crate::presentation::state::find_replace_ui_state::{
     FIND_INPUT_ID, OptionKind, REPLACE_INPUT_ID,
 };
 use crate::presentation::theme::builtin::Theme;
+use crate::presentation::view_context::EditorViewContext;
 
 /// 面板宽度（原型 `.find-panel { width: 340px }`）。
 const PANEL_W: f32 = 340.0;
@@ -55,8 +55,8 @@ const PANEL_W: f32 = 340.0;
 const COUNT_W: f32 = 56.0;
 
 /// 绘制查找替换面板（仅在 [`Overlay::Find`] 位于栈顶时由 [`super::overlays`] 调用）。
-pub fn show(app: &mut EditorApp, ctx: &Context) {
-    if !app.dialog.is_open(Overlay::Find) {
+pub fn show(vctx: &mut dyn EditorViewContext, ctx: &Context) {
+    if !vctx.dialog_state().is_open(Overlay::Find) {
         return;
     }
     let mut open = true;
@@ -67,36 +67,36 @@ pub fn show(app: &mut EditorApp, ctx: &Context) {
         .resizable(false)
         .default_width(PANEL_W)
         .anchor(Align2::RIGHT_TOP, egui::vec2(16.0, 8.0))
-        .show(ctx, |ui| draw(app, ui));
+        .show(ctx, |ui| draw(vctx, ui));
     if !open {
         // 走 `DialogUiState` 而不是就地清状态：否则 `dialog.is_open(Overlay::Find)`
         // 与实际显示会不一致（下一次别的动作触发 `open_overlay` 时
         // 面板会「莫名其妙又出现」）。
-        app.dialog.close(Overlay::Find);
+        vctx.dialog_state().close(Overlay::Find);
     }
 }
 
 /// 面板主体。
-fn draw(app: &mut EditorApp, ui: &mut Ui) {
-    let theme = app.theme().clone();
+fn draw(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
+    let theme = vctx.theme_state().clone();
     ui.set_width(PANEL_W);
 
-    draw_find_row(app, ui, &theme);
-    draw_error(app, ui, &theme);
-    if app.find.replace_open {
-        draw_replace_row(app, ui);
+    draw_find_row(vctx, ui, &theme);
+    draw_error(vctx, ui, &theme);
+    if vctx.find_state().replace_open {
+        draw_replace_row(vctx, ui);
     }
-    draw_nav_row(app, ui);
+    draw_nav_row(vctx, ui);
     ui.separator();
-    draw_summary(app, ui, &theme);
+    draw_summary(vctx, ui, &theme);
 }
 
 /// 第一行：查找框 + 三个开关 + 计数。
-fn draw_find_row(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
+fn draw_find_row(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
     ui.horizontal(|ui| {
         // D-3 阶段 3：clone → 就地编辑 → 变化才值写回（写回在重扫之前，
         // `sync_find` 读到的必须是新查询）。
-        let mut find_text = app.find.find_text.clone();
+        let mut find_text = vctx.find_state().find_text.clone();
         let response = ui
             .add(
                 egui::TextEdit::singleline(&mut find_text)
@@ -107,18 +107,18 @@ fn draw_find_row(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
             .on_hover_text("输入后自动查找；Enter 跳到下一个");
         // 只在「用户尚未表态」时抢焦点，且**每帧**都请求：
         // egui 的 `request_focus` 只对当帧有效，隔帧调用会失效。
-        if app.find.find_focused && !response.has_focus() {
+        if vctx.find_state().find_focused && !response.has_focus() {
             response.request_focus();
         }
         if response.has_focus() {
-            app.set_find_focused(true);
+            vctx.set_find_focused(true);
         }
         if response.changed() {
             // D-3 阶段 3：值写回先行（字段的可变引用不出 state）。
-            app.find.set_find_text(find_text);
+            vctx.find_state().set_find_text(find_text);
             // 改了查询必须重扫：面板显示的 `n/m` 与「下一个」跳转目标
             // 都来自 `finder`，不重扫就会「计数说 12 条、点下去跳到旧位置」。
-            app.sync_find();
+            vctx.sync_find();
         }
 
         // Enter / Shift+Enter 跳到下一个 / 上一个（对齐原型
@@ -132,30 +132,30 @@ fn draw_find_row(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
             let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
             if enter {
                 if ui.input(|i| i.modifiers.shift) {
-                    app.find_step(false);
-                } else if app.find.replace_open && ui.input(|i| i.modifiers.ctrl) {
+                    vctx.find_step(false);
+                } else if vctx.find_state().replace_open && ui.input(|i| i.modifiers.ctrl) {
                     // `Ctrl+Enter` = 替换当前（主流编辑器的惯例）。
-                    app.find_replace_current();
+                    vctx.find_replace_current();
                 } else {
-                    app.find_step(true);
+                    vctx.find_step(true);
                 }
             }
         }
 
         option_button(
             ui,
-            app,
+            vctx,
             OptionKind::CaseSensitive,
             "Aa",
             "区分大小写",
             theme,
         );
-        option_button(ui, app, OptionKind::Regex, ".*", "正则表达式", theme);
-        option_button(ui, app, OptionKind::WholeWord, "字", "全字匹配", theme);
+        option_button(ui, vctx, OptionKind::Regex, ".*", "正则表达式", theme);
+        option_button(ui, vctx, OptionKind::WholeWord, "字", "全字匹配", theme);
 
         ui.allocate_ui(egui::vec2(COUNT_W, ui.spacing().interact_size.y), |ui| {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let label = app.find.count_label();
+                let label = vctx.find_state().count_label();
                 if !label.is_empty() {
                     ui.label(RichText::new(label).color(theme.text_secondary));
                 }
@@ -167,16 +167,16 @@ fn draw_find_row(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
 /// 一个选项开关按钮（`Aa` / `.*` / 全字）。
 fn option_button(
     ui: &mut Ui,
-    app: &mut EditorApp,
+    vctx: &mut dyn EditorViewContext,
     which: OptionKind,
     text: &str,
     tip: &str,
     theme: &Theme,
 ) {
     let active = match which {
-        OptionKind::CaseSensitive => app.find.options.case_sensitive,
-        OptionKind::Regex => app.find.options.regex,
-        OptionKind::WholeWord => app.find.options.whole_word,
+        OptionKind::CaseSensitive => vctx.find_state().options.case_sensitive,
+        OptionKind::Regex => vctx.find_state().options.regex,
+        OptionKind::WholeWord => vctx.find_state().options.whole_word,
     };
     let response = ui
         .add(
@@ -189,9 +189,9 @@ fn option_button(
         )
         .on_hover_text(tip);
     if response.clicked() {
-        app.find.toggle(which);
+        vctx.find_state().toggle(which);
         // 选项变了必须重扫：同一段文本在 `Aa` 开关下命中数完全不同。
-        app.sync_find();
+        vctx.sync_find();
     }
 }
 
@@ -199,19 +199,20 @@ fn option_button(
 ///
 /// 用 `theme.error` 而不是 egui 的默认红：主题 token 是唯一配色来源，
 /// 且浅色主题下 egui 默认红会与背景撞得看不清。
-fn draw_error(app: &EditorApp, ui: &mut Ui, theme: &Theme) {
-    if let Some(error) = &app.find.error {
+fn draw_error(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
+    let error = vctx.find_state().error.clone();
+    if let Some(error) = error {
         ui.label(RichText::new(error).color(theme.error).small());
     }
 }
 
 /// 第二行：替换框 + 替换 / 全部替换。
-fn draw_replace_row(app: &mut EditorApp, ui: &mut Ui) {
-    let has_current = app.find.current_match().is_some();
-    let has_any = app.find.match_count() > 0;
+fn draw_replace_row(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
+    let has_current = vctx.find_state().current_match().is_some();
+    let has_any = vctx.find_state().match_count() > 0;
     ui.horizontal(|ui| {
         // D-3 阶段 3：clone → 就地编辑 → 变化才值写回。
-        let mut replace_text = app.find.replace_text.clone();
+        let mut replace_text = vctx.find_state().replace_text.clone();
         let response = ui
             .add(
                 egui::TextEdit::singleline(&mut replace_text)
@@ -221,12 +222,12 @@ fn draw_replace_row(app: &mut EditorApp, ui: &mut Ui) {
             )
             .on_hover_text("留空即删除命中内容");
         if response.changed() {
-            app.find.set_replace_text(replace_text);
+            vctx.find_state().set_replace_text(replace_text);
         }
         if response.has_focus() {
             // 替换框吃掉焦点时必须**放弃**抢焦点，否则用户在替换框里
             // 每敲一个字符都会被拽回查找框，一个字也打不进去。
-            app.set_find_focused(false);
+            vctx.set_find_focused(false);
         }
 
         if ui
@@ -234,21 +235,21 @@ fn draw_replace_row(app: &mut EditorApp, ui: &mut Ui) {
             .on_hover_text("替换当前命中并跳到下一条")
             .clicked()
         {
-            app.find_replace_current();
+            vctx.find_replace_current();
         }
         if ui
             .add_enabled(has_any, egui::Button::new("全部"))
             .on_hover_text("替换全部命中（算作一次撤销）")
             .clicked()
         {
-            app.find_replace_all();
+            vctx.find_replace_all();
         }
     });
 }
 
 /// 第三行：上一个 / 下一个 / 关闭。
-fn draw_nav_row(app: &mut EditorApp, ui: &mut Ui) {
-    let has_match = app.find.match_count() > 0;
+fn draw_nav_row(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
+    let has_match = vctx.find_state().match_count() > 0;
     let mut close = false;
     ui.horizontal(|ui| {
         if ui
@@ -256,14 +257,14 @@ fn draw_nav_row(app: &mut EditorApp, ui: &mut Ui) {
             .on_hover_text("Shift+Enter")
             .clicked()
         {
-            app.find_step(false);
+            vctx.find_step(false);
         }
         if ui
             .add_enabled(has_match, egui::Button::new("↓ 下一个"))
             .on_hover_text("Enter")
             .clicked()
         {
-            app.find_step(true);
+            vctx.find_step(true);
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             // 用 ×(U+00D7) 而非 ✕(U+2715)：后者无字形覆盖，会渲染成方框。
@@ -271,30 +272,30 @@ fn draw_nav_row(app: &mut EditorApp, ui: &mut Ui) {
         });
     });
     if close {
-        app.dialog.close(Overlay::Find);
+        vctx.dialog_state().close(Overlay::Find);
         // 关闭后焦点归编辑区：用户多半是「找一下换个词继续写」。
         // 走 egui 的 `request_focus` 而非只设 `editor.focused = true`——
         // 后者只是个 UI 标记，egui 内部焦点仍停在面板上，
         // 用户接着按键会打进面板而不是编辑器。
-        ui.ctx()
-            .memory_mut(|m| m.request_focus(EditorApp::editor_id()));
+        ui.ctx().memory_mut(|m| {
+            m.request_focus(crate::presentation::state::editor_ui_state::editor_id())
+        });
     }
 }
 
 /// 底部一行：选项状态与上次替换结果。
-fn draw_summary(app: &EditorApp, ui: &mut Ui, theme: &Theme) {
-    if app.find.options.active_count() > 0 {
+fn draw_summary(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
+    let active_count = vctx.find_state().options.active_count();
+    if active_count > 0 {
         ui.label(
-            RichText::new(format!(
-                "已启用 {} 个匹配选项",
-                app.find.options.active_count()
-            ))
-            .small()
-            .color(theme.text_secondary),
+            RichText::new(format!("已启用 {active_count} 个匹配选项"))
+                .small()
+                .color(theme.text_secondary),
         );
     }
-    if let Some(count) = app.find.last_replace_count {
-        let grows = app.find.last_replace_grows;
+    let last_replace_count = vctx.find_state().last_replace_count;
+    let grows = vctx.find_state().last_replace_grows;
+    if let Some(count) = last_replace_count {
         let mut text = format!("上次替换 {count} 处");
         if grows {
             text.push_str(" · 替换文本仍会再次命中，再点会越变越长");

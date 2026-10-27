@@ -17,10 +17,10 @@
 
 use egui::{Align, Context, Layout, RichText, ScrollArea, Ui, Vec2};
 
-use crate::app::frame::EditorApp;
 use crate::presentation::state::dialog_ui_state::Overlay;
 use crate::presentation::state::diff_ui_state::{CharSeg, CharSegKind, DisplayRow};
 use crate::presentation::theme::builtin::Theme;
+use crate::presentation::view_context::EditorViewContext;
 use rustmark_core::shared::path::file_name_of;
 
 /// 对话框默认尺寸（对齐原型 `BaseModal :width="760" :height="560"`）。
@@ -34,7 +34,7 @@ const GUTTER: f32 = 46.0;
 const SIGN_W: f32 = 16.0;
 
 /// 绘制差异对比浮层。
-pub fn show(app: &mut EditorApp, ctx: &Context) {
+pub fn show(vctx: &mut dyn EditorViewContext, ctx: &Context) {
     let mut open = true;
     egui::Window::new(Overlay::Diff.title())
         .id(egui::Id::unique("rustmark.overlay.diff"))
@@ -43,64 +43,67 @@ pub fn show(app: &mut EditorApp, ctx: &Context) {
         .resizable(true)
         .default_width(WIDTH)
         .default_height(HEIGHT)
-        .show(ctx, |ui| body(app, ui));
+        .show(ctx, |ui| body(vctx, ui));
     if !open {
-        app.dialog.close(Overlay::Diff);
+        vctx.dialog_state().close(Overlay::Diff);
     }
 }
 
 /// 主体。
-fn body(app: &mut EditorApp, ui: &mut Ui) {
-    let theme = app.theme().clone();
-    header(app, ui, &theme);
+fn body(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
+    let theme = vctx.theme_state().clone();
+    header(vctx, ui, &theme);
     ui.separator();
 
     // 没有对照文件时**只显示选择器**并明说原因，
     // 而不是显示一个空列表让用户以为「两文件完全一致」。
-    let Some(right_path) = app.diff_ui.right_path.clone() else {
+    //
+    // 路径先取出再判空：`let ... else` 的判据临时量作用域覆盖整个 `else`
+    // 块，若借用活到那里，块里的 `picker(vctx, …)` 就再也借不到 `vctx`。
+    let right_path = vctx.diff_ui_state().right_path.clone();
+    let Some(right_path) = right_path else {
         ui.add_space(theme.metrics.space_md);
-        picker(app, ui, &theme);
+        picker(vctx, ui, &theme);
         return;
     };
 
     // 实时重算：左侧可能因用户正在编辑而每帧都变。
-    let left = app.current_content().unwrap_or_default();
-    let right = match app.read_workspace_file(&right_path) {
+    let left = vctx.current_content().unwrap_or_default();
+    let right = match vctx.read_workspace_file(&right_path) {
         Ok(text) => text,
         Err(e) => {
-            app.set_diff_error(format!("读取对照文件失败：{e}"));
+            vctx.set_diff_error(format!("读取对照文件失败：{e}"));
             String::new()
         }
     };
-    app.diff_ui.recompute(&left, &right);
+    vctx.diff_ui_state().recompute(&left, &right);
 
-    if let Some(err) = app.diff_ui.error.clone() {
+    if let Some(err) = vctx.diff_ui_state().error.clone() {
         ui.colored_label(theme.error, format!("⚠ {err}"));
         ui.add_space(theme.metrics.space_xs);
     }
     ui.horizontal(|ui| {
         // D-3 阶段 3：读出 → 就地切换 → 变化才值写回（字段的可变引用不出 state）。
-        let mut only_changes = app.diff_ui.only_changes;
+        let mut only_changes = vctx.diff_ui_state().only_changes;
         if ui.checkbox(&mut only_changes, "只看差异行").changed() {
-            app.diff_ui.set_only_changes(only_changes);
+            vctx.diff_ui_state().set_only_changes(only_changes);
         }
-        ui.label(
-            RichText::new(format!(
-                "+{}  −{}",
-                app.diff_ui.stat.added, app.diff_ui.stat.removed
-            ))
-            .color(theme.text_secondary),
-        );
-        if app.diff_ui.is_identical() {
+        // 两个计数取自同一份状态：一次借用读完，避免两次可变借用重叠。
+        let (added, removed) = {
+            let state = vctx.diff_ui_state();
+            (state.stat.added, state.stat.removed)
+        };
+        ui.label(RichText::new(format!("+{added}  −{removed}")).color(theme.text_secondary));
+        if vctx.diff_ui_state().is_identical() {
             ui.colored_label(theme.success, "两侧内容完全一致");
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if ui.button("换一个文件").clicked() {
                 // 清选择 + 清结果行是一件事，缺一半会让旧结果与错误提示同框。
-                app.clear_diff_selection();
+                vctx.clear_diff_selection();
             }
             if ui.button("关闭").clicked() {
-                app.dialog.close(Overlay::Diff);
+                vctx.dialog_state().close(Overlay::Diff);
             }
         });
     });
@@ -108,7 +111,7 @@ fn body(app: &mut EditorApp, ui: &mut Ui) {
 
     // 降级时**明说**：不提示的话用户会以为「这个文件全变了」，
     // 而真相是「我们算不动，只整段标了」。
-    if app.diff_ui.degraded {
+    if vctx.diff_ui_state().degraded {
         ui.colored_label(
             theme.warning,
             "文件过大，已降级为整段对比：只能看出「变了」，看不出改了哪些行。",
@@ -116,27 +119,31 @@ fn body(app: &mut EditorApp, ui: &mut Ui) {
         ui.add_space(theme.metrics.space_xs);
     }
 
-    // 取一份快照再渲染：`visible_rows` 借用了 `app.diff_ui`，
+    // 取一份快照再渲染：`visible_rows` 借用了差异状态，
     // 而绘制过程要 `&mut Ui` —— 两者可共存，但先把数据拷出来
-    // 可以让 `rows` 保持纯函数（不碰 app），测试也能直接验它。
-    let visible = app.diff_ui.visible_rows();
-    let owned: Vec<DisplayRow> = visible.into_iter().cloned().collect();
+    // 可以让 `rows` 保持纯函数（不碰状态），测试也能直接验它。
+    //
+    // 拷贝在块内完成：`visible_rows` 返回的是**借用**行，块一结束借用即失效。
+    let owned: Vec<DisplayRow> = {
+        let state = vctx.diff_ui_state();
+        state.visible_rows().into_iter().cloned().collect()
+    };
     rows(ui, &theme, &owned);
 }
 
 /// 头部：两侧文件名。
-fn header(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
+fn header(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
     ui.horizontal(|ui| {
         ui.label(RichText::new("当前").size(11.0).color(theme.text_secondary));
         ui.label(
-            RichText::new(app.diff_ui.left_title.clone())
+            RichText::new(vctx.diff_ui_state().left_title.clone())
                 .size(12.0)
                 .strong(),
         );
         ui.label(RichText::new("⇄").size(12.0).color(theme.text_secondary));
         ui.label(RichText::new("对照").size(11.0).color(theme.text_secondary));
         ui.label(
-            RichText::new(app.diff_ui.right_title.clone())
+            RichText::new(vctx.diff_ui_state().right_title.clone())
                 .size(12.0)
                 .strong(),
         );
@@ -144,10 +151,10 @@ fn header(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
 }
 
 /// 对照文件选择器。
-fn picker(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
+fn picker(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
     ui.label(RichText::new("选择一个工作区里的文件与当前文档对比：").size(12.0));
-    let files: Vec<(String, bool)> = app
-        .workspace_entries
+    let files: Vec<(String, bool)> = vctx
+        .workspace_entries_state()
         .items
         .iter()
         .filter(|(_, is_dir)| !*is_dir)
@@ -175,7 +182,8 @@ fn picker(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
                     .clicked()
                 {
                     let title = name.to_string();
-                    app.diff_ui.open(title.clone(), path.clone(), title);
+                    vctx.diff_ui_state()
+                        .open(title.clone(), path.clone(), title);
                     // 内容在下一帧的头部重算时填充：这里刚把路径写进去，
                     // 立刻读盘会让这一帧的列表还拿不到 rows。
                 }

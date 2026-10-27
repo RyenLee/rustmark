@@ -16,12 +16,13 @@
 
 use egui::{Align, Context, Layout, RichText, ScrollArea, Ui};
 
-use crate::app::frame::EditorApp;
 use crate::presentation::state::dialog_ui_state::Overlay;
+use crate::presentation::state::pending_dialog::PendingDialog;
 use crate::presentation::state::quick_open_ui_state::{
     MAX_CANDIDATES, QuickOpenItem, candidates_from_workspace, filter_candidates,
 };
 use crate::presentation::theme::builtin::Theme;
+use crate::presentation::view_context::EditorViewContext;
 use crate::presentation::widgets;
 
 /// 对话框默认尺寸（对齐原型 `.palette { width: 480px }`）。
@@ -35,7 +36,7 @@ const ROW_H: f32 = 28.0;
 pub const QUICK_OPEN_INPUT_ID: &str = "rustmark.quick_open.search";
 
 /// 绘制快速打开浮层。
-pub fn show(app: &mut EditorApp, ctx: &Context) {
+pub fn show(vctx: &mut dyn EditorViewContext, ctx: &Context) {
     let mut open = true;
     egui::Window::new(Overlay::QuickOpen.title())
         .id(egui::Id::unique("rustmark.overlay.quick_open"))
@@ -44,28 +45,28 @@ pub fn show(app: &mut EditorApp, ctx: &Context) {
         .resizable(true)
         .default_width(WIDTH)
         .default_height(HEIGHT)
-        .show(ctx, |ui| body(app, ui));
+        .show(ctx, |ui| body(vctx, ui));
     // 面板一打开焦点就落在搜索框：用户的下一个动作一定是打字。
     //
     // 只给一次（边沿触发）：「当前没焦点就请求」那种写法恒为真——
     // `Memory::has_focus` 认不到窗口（`Area`）的 id，于是每帧都抢焦点，
     // 用户点不开别处。详见 `DialogUiState::take_open_focus`。
-    if app.dialog.take_open_focus(Overlay::QuickOpen) {
+    if vctx.dialog_state().take_open_focus(Overlay::QuickOpen) {
         ctx.memory_mut(|m| m.request_focus(egui::Id::unique(QUICK_OPEN_INPUT_ID)));
     }
     if !open {
-        app.quick_open_ui.open();
-        app.dialog.close(Overlay::QuickOpen);
+        vctx.quick_open_ui_state().open();
+        vctx.dialog_state().close(Overlay::QuickOpen);
     }
-    handle_keys(app, ctx);
+    handle_keys(vctx, ctx);
 }
 
 /// 处理面板内的 ↑↓ / Enter / Esc。
 ///
 /// 判据是「**本帧**有按键事件」而非「焦点在搜索框」——
 /// 后者在 egui 里每帧都成立，会导致按住 ↑ 时反复触底。
-fn handle_keys(app: &mut EditorApp, ctx: &Context) {
-    if !app.dialog.is_open(Overlay::QuickOpen) {
+fn handle_keys(vctx: &mut dyn EditorViewContext, ctx: &Context) {
+    if !vctx.dialog_state().is_open(Overlay::QuickOpen) {
         return;
     }
     let events = ctx.input(|i| i.events.clone());
@@ -80,55 +81,65 @@ fn handle_keys(app: &mut EditorApp, ctx: &Context) {
         }
         match key {
             egui::Key::ArrowDown => {
-                let total = candidates(app).len();
-                app.quick_open_ui.move_selection(1, total);
+                let total = candidates(vctx).len();
+                vctx.quick_open_ui_state().move_selection(1, total);
             }
             egui::Key::ArrowUp => {
-                let total = candidates(app).len();
-                app.quick_open_ui.move_selection(-1, total);
+                let total = candidates(vctx).len();
+                vctx.quick_open_ui_state().move_selection(-1, total);
             }
             egui::Key::Enter => {
-                let list = candidates(app);
-                chosen = list.get(app.quick_open_ui.selected).cloned();
+                let list = candidates(vctx);
+                let selected = vctx.quick_open_ui_state().selected;
+                chosen = list.get(selected).cloned();
             }
             egui::Key::Escape => closed = true,
             _ => {}
         }
     }
     if closed {
-        app.quick_open_ui.open();
-        app.dialog.close(Overlay::QuickOpen);
+        vctx.quick_open_ui_state().open();
+        vctx.dialog_state().close(Overlay::QuickOpen);
         return;
     }
     if let Some(item) = chosen {
-        apply_pick(app, &item);
+        apply_pick(vctx, &item);
     }
 }
 
 /// 候选列表（工作区条目 + 最近文件，按查询过滤）。
-pub fn candidates(app: &EditorApp) -> Vec<QuickOpenItem> {
-    let root = app.workspace_entries.root.clone().unwrap_or_default();
+///
+/// 收 `&mut dyn` 而非 `&dyn`：查询词取自快速打开状态（可写的那一份），
+/// 而 `&dyn` 上调不动 `&mut self` 的方法。**它本身不写任何状态**——
+/// 可变的只是「读得到哪一份状态」这件事。
+pub fn candidates(vctx: &mut dyn EditorViewContext) -> Vec<QuickOpenItem> {
+    let root = vctx
+        .workspace_entries_state()
+        .root
+        .clone()
+        .unwrap_or_default();
     let all = candidates_from_workspace(
         &root,
-        &app.workspace_entries.items,
-        &app.recent_files(),
+        &vctx.workspace_entries_state().items,
+        &vctx.recent_files(),
         // 过滤前给足额度：过滤发生在候选构造**之后**，
         // 若构造时就截到 12 条，输入查询后连匹配项都凑不满。
         MAX_CANDIDATES * 8,
     );
-    filter_candidates(&all, &app.quick_open_ui.query, MAX_CANDIDATES)
+    let query = vctx.quick_open_ui_state().query.clone();
+    filter_candidates(&all, &query, MAX_CANDIDATES)
 }
 
 /// 主体。
-fn body(app: &mut EditorApp, ui: &mut Ui) {
-    let theme = app.theme().clone();
-    search_box(app, ui);
-    let list = candidates(app);
+fn body(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
+    let theme = vctx.theme_state().clone();
+    search_box(vctx, ui);
+    let list = candidates(vctx);
     // 候选数可能因查询而变少 → 夹紧选中项，否则会「高亮一个不存在的行」。
-    app.quick_open_ui.clamp(list.len());
-    results(app, ui, &theme, &list);
+    vctx.quick_open_ui_state().clamp(list.len());
+    results(vctx, ui, &theme, &list);
     ui.separator();
-    footer(app, ui, &theme, list.is_empty());
+    footer(vctx, ui, &theme, list.is_empty());
 }
 
 /// 页脚：系统文件对话框入口 + 操作提示。
@@ -140,12 +151,12 @@ fn body(app: &mut EditorApp, ui: &mut Ui) {
 /// 永远不可达的分支（`openable_overlay` 先把 `Ctrl+O` 拦走了）。
 /// 面板内留一个显式按钮，是把「工作区外的文件也能打开」这件事
 /// 交给用户一次点击，而不是让它消失。
-fn footer(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, empty: bool) {
+fn footer(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme, empty: bool) {
     ui.horizontal(|ui| {
         if ui.button("浏览本机文件…").clicked() {
-            app.quick_open_ui.open();
-            app.dialog.close(Overlay::QuickOpen);
-            app.request_dialog(crate::app::frame::PendingDialog::OpenFile);
+            vctx.quick_open_ui_state().open();
+            vctx.dialog_state().close(Overlay::QuickOpen);
+            vctx.request_dialog(PendingDialog::OpenFile);
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             // 空列表时说「↑ ↓ 选择」是骗人：没有可选项。
@@ -169,14 +180,15 @@ fn footer(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, empty: bool) {
 /// 手绘那份是多余的：`TextEdit` 自己会按焦点态渲染查询文本与占位提示，
 /// 颜色也已由 `.text_color` / 主题的 `weak_text_color` 给出。
 /// 这里只保留框底与点击聚焦。
-fn search_box(app: &mut EditorApp, ui: &mut Ui) {
-    let mut query = app.quick_open_ui.query.clone();
+fn search_box(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
+    let mut query = vctx.quick_open_ui_state().query.clone();
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), SEARCH_H),
         egui::Sense::click(),
     );
+    let theme = vctx.theme_state().clone();
     ui.painter()
-        .rect_filled(rect, egui::CornerRadius::ZERO, app.theme().bg_primary);
+        .rect_filled(rect, egui::CornerRadius::ZERO, theme.bg_primary);
     // 真实输入能力靠 `TextEdit`：外层仍然自己画边框与分隔线。
     let edit = ui.put(
         rect,
@@ -184,11 +196,11 @@ fn search_box(app: &mut EditorApp, ui: &mut Ui) {
             .id(egui::Id::unique(QUICK_OPEN_INPUT_ID))
             .frame(egui::Frame::NONE)
             .desired_width(rect.width())
-            .text_color(app.theme().text_primary)
+            .text_color(theme.text_primary)
             .hint_text("按文件名快速打开…"),
     );
     if edit.changed() {
-        app.quick_open_ui.set_query(&query);
+        vctx.quick_open_ui_state().set_query(&query);
     }
     if response.clicked() {
         ui.memory_mut(|m| m.request_focus(egui::Id::unique(QUICK_OPEN_INPUT_ID)));
@@ -201,7 +213,7 @@ fn search_box(app: &mut EditorApp, ui: &mut Ui) {
 /// 旧实现用 `layout_no_wrap` 画全名，长文件名会直接盖在分组文字上
 /// （与欢迎页最近文件同一缺陷类）。截断只做一个 galley（缺陷类 033：
 /// 多个截断标签会把固定宽容器撑出面板）。
-fn results(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, list: &[QuickOpenItem]) {
+fn results(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme, list: &[QuickOpenItem]) {
     if list.is_empty() {
         ui.add_space(theme.metrics.space_xl);
         ui.centered_and_justified(|ui| {
@@ -210,7 +222,7 @@ fn results(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, list: &[QuickOpenIte
         return;
     }
     let mut picked: Option<usize> = None;
-    let selected = app.quick_open_ui.selected;
+    let selected = vctx.quick_open_ui_state().selected;
     ScrollArea::vertical()
         .id_salt("rustmark.quick_open.list")
         .max_height(HEIGHT - SEARCH_H - 80.0)
@@ -233,7 +245,7 @@ fn results(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, list: &[QuickOpenIte
                 // 二进制打不开；不置灰的话用户会以为「点了没反应」。
                 // 选中态一律用正文色：全仓纪律（037 / 039）——选中底色在
                 // 用户自定义主题里可以是实色强调蓝，强调色文字压上去会糊掉。
-                let openable = app.can_open_as_text(&item.path);
+                let openable = vctx.can_open_as_text(&item.path);
                 let name_color = if openable {
                     theme.text_primary
                 } else {
@@ -283,7 +295,7 @@ fn results(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, list: &[QuickOpenIte
             }
         });
     if let Some(i) = picked {
-        apply_pick(app, &list[i]);
+        apply_pick(vctx, &list[i]);
     }
 }
 
@@ -295,19 +307,19 @@ fn results(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, list: &[QuickOpenIte
 ///    改一处忘一处就会出现「鼠标点得开、键盘打不开」。
 /// 2. 关闭浮层与打开文件要放在同一处：顺序错了会闪现
 ///    「新文件已载入而浮层还盖在上面」，用户以为没生效而连点。
-fn apply_pick(app: &mut EditorApp, item: &QuickOpenItem) {
+fn apply_pick(vctx: &mut dyn EditorViewContext, item: &QuickOpenItem) {
     // 格式白名单外：**不关浮层**、不开文档，只说明原因（问题 045）。
     // 关掉浮层会让这次点击看起来「生效了」——用户以为文件开了，
     // 却发现标签没变。留在浮层上，他还能立刻改选另一个文件。
-    if !app.can_open_as_text(&item.path) {
-        app.report_unsupported_format(&item.path);
+    if !vctx.can_open_as_text(&item.path) {
+        vctx.report_unsupported_format(&item.path);
         return;
     }
-    app.quick_open_ui.open();
-    app.dialog.close(Overlay::QuickOpen);
+    vctx.quick_open_ui_state().open();
+    vctx.dialog_state().close(Overlay::QuickOpen);
     // 失败由 `open_path` **自己**报到状态栏（见其文档），
     // 这里不重复报——两处都报会出现两条几乎一样的消息。
-    let _ = app.open_path(&item.path);
+    let _ = vctx.open_path(&item.path);
 }
 
 #[cfg(test)]

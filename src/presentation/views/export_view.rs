@@ -30,12 +30,13 @@
 
 use egui::{Align, Color32, Context, Layout, RichText, Ui};
 
-use crate::app::frame::{EditorApp, PendingDialog};
 use crate::presentation::state::dialog_ui_state::Overlay;
 use crate::presentation::state::export_ui_state::{
     is_available, page_size_label, pdf_caveat, unavailable_reason,
 };
+use crate::presentation::state::pending_dialog::PendingDialog;
 use crate::presentation::theme::builtin::Theme;
+use crate::presentation::view_context::EditorViewContext;
 use rustmark_core::application::dto::ExportRequestView;
 use rustmark_core::shared::export_format::{ExportFormat, PageSize};
 
@@ -58,7 +59,7 @@ pub const OUTPUT_DIR_INPUT_ID: &str = "rustmark.export.dir";
 pub const FILE_STEM_INPUT_ID: &str = "rustmark.export.stem";
 
 /// 绘制导出对话框。
-pub fn show(app: &mut EditorApp, ctx: &Context) {
+pub fn show(vctx: &mut dyn EditorViewContext, ctx: &Context) {
     let mut open = true;
     egui::Window::new(Overlay::Export.title())
         .id(egui::Id::unique("rustmark.overlay.export"))
@@ -67,7 +68,7 @@ pub fn show(app: &mut EditorApp, ctx: &Context) {
         .resizable(true)
         .default_width(WIDTH)
         .default_height(HEIGHT)
-        .show(ctx, |ui| body(app, ui));
+        .show(ctx, |ui| body(vctx, ui));
     if !open {
         // 关闭时若还在导出中，中断不了底层任务，但必须把 UI 从
         // 「导出中」状态里放出来——否则对话框再打开时会一直显示
@@ -85,8 +86,8 @@ pub fn show(app: &mut EditorApp, ctx: &Context) {
         // 用户关掉对话框时那一帧已经发出去了，丢弃它等于让后端
         // 白做一次回读，而用户永远等不到文件。任务继续在后台兑现，
         // 结果由 `pump_capture` 写进状态；下次打开对话框能看到提示。
-        app.export_ui.close();
-        app.dialog.close(Overlay::Export);
+        vctx.export_ui_state().close();
+        vctx.dialog_state().close(Overlay::Export);
     }
     // 打开后把焦点交给输出路径输入框：导出是一次性动作，
     // 用户最可能先改的就是「存到哪」。
@@ -96,26 +97,29 @@ pub fn show(app: &mut EditorApp, ctx: &Context) {
     // 成为「有焦点的控件」，那个条件恒为真 → 每帧都抢 → 用户点进下面的
     // 「文件名」框会被立刻拽回来，一个字也打不进去。
     // 详见 `DialogUiState::take_open_focus` 的文档。
-    if app.dialog.take_open_focus(Overlay::Export) {
+    if vctx.dialog_state().take_open_focus(Overlay::Export) {
         ctx.memory_mut(|m| m.request_focus(egui::Id::unique(OUTPUT_DIR_INPUT_ID)));
     }
 }
 
 /// 主体。
-fn body(app: &mut EditorApp, ui: &mut Ui) {
-    let theme = app.theme().clone();
-    format_row(app, ui, &theme);
+fn body(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
+    let theme = vctx.theme_state().clone();
+    format_row(vctx, ui, &theme);
     ui.add_space(theme.metrics.space_sm);
-    path_rows(app, ui, &theme);
+    path_rows(vctx, ui, &theme);
     ui.separator();
-    match app.export_ui.format {
+    // 格式先取出再分发：`&mut dyn` 上的一次借用若活到 `match` 语句末尾，
+    // 各个分支就再也借不到同一个 `vctx`（可变借用唯一）。
+    let format = vctx.export_ui_state().format;
+    match format {
         ExportFormat::Markdown => markdown_note(ui, &theme),
-        ExportFormat::Pdf => pdf_options(app, ui, &theme),
-        _ => common_options(app, ui, &theme),
+        ExportFormat::Pdf => pdf_options(vctx, ui, &theme),
+        _ => common_options(vctx, ui, &theme),
     }
     ui.separator();
-    messages(app, ui, &theme);
-    footer(app, ui, &theme);
+    messages(vctx, ui, &theme);
+    footer(vctx, ui, &theme);
 }
 
 /// 选中态格式标签的文字色。
@@ -129,11 +133,11 @@ pub(crate) fn selected_format_label_color(theme: &Theme) -> Color32 {
 }
 
 /// 格式单选组。
-fn format_row(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
+fn format_row(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
     ui.horizontal_wrapped(|ui| {
         ui.label("格式");
         for format in ExportFormat::ALL {
-            let selected = app.export_ui.format == *format;
+            let selected = vctx.export_ui_state().format == *format;
             let available = is_available(*format);
             let label = match unavailable_reason(*format) {
                 Some(_) => format!("{}（暂未开放）", format.label()),
@@ -147,49 +151,53 @@ fn format_row(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
                 RichText::new(label).color(theme.text_secondary)
             };
             if ui.selectable_label(selected, text).clicked() && !selected {
-                app.export_ui.set_format(*format);
+                vctx.export_ui_state().set_format(*format);
             }
         }
     });
 }
 
 /// 输出目录与文件名。
-fn path_rows(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
+fn path_rows(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
     ui.horizontal(|ui| {
         ui.label("输出路径");
         // D-3 阶段 3：clone → 就地编辑 → 变化才值写回（同帧完成，闭包外的
         // 目录检查读到的已是新值；路径级字符串每帧一次 clone 可忽略）。
-        let mut output_dir = app.export_ui.output_dir.clone();
+        let mut output_dir = vctx.export_ui_state().output_dir.clone();
         ui.add(
             egui::TextEdit::singleline(&mut output_dir)
                 .id(egui::Id::unique(OUTPUT_DIR_INPUT_ID))
                 .hint_text("导出到（留空则用当前目录）")
                 .desired_width(280.0),
         );
-        if output_dir != app.export_ui.output_dir {
-            app.export_ui.set_output_dir(output_dir);
+        if output_dir != vctx.export_ui_state().output_dir {
+            vctx.export_ui_state().set_output_dir(output_dir);
         }
         // 「选择文件夹」：输出目录很可能是用户不记得的绝对路径，
         // 纯手填容易填错。按钮走原生目录选择对话框（后台线程执行，
         // 见 `dialog_runner`），结果由 `apply_dialog_outcome` 回填到
         // `output_dir`——它按「导出浮层是否打开」区分去向，不会误改工作区。
         if ui.button("选择文件夹…").clicked() {
-            app.request_dialog(PendingDialog::PickFolder);
+            vctx.request_dialog(PendingDialog::PickFolder);
         }
     });
     // 输出目录存在性检查：不存在时**当场**说清「导出会自动创建」，
     // 而不是等提交后拿到一条底层的「找不到路径」。自动创建在
     // `EditorApp::export_current_document` 里真正兑现（幂等）。
-    let dir = app.export_ui.output_dir.trim();
-    if !dir.is_empty() && !std::path::Path::new(dir).is_dir() {
-        ui.colored_label(
-            theme.warning,
-            format!("输出目录不存在：{dir}（导出时会自动创建）"),
-        );
+    // 借用在块内结束：`trim()` 的结果借用自状态里的 `String`，
+    // 出了块就失效——故检查必须在块内做完。
+    {
+        let dir = vctx.export_ui_state().output_dir.trim().to_string();
+        if !dir.is_empty() && !std::path::Path::new(&dir).is_dir() {
+            ui.colored_label(
+                theme.warning,
+                format!("输出目录不存在：{dir}（导出时会自动创建）"),
+            );
+        }
     }
     // D-3 阶段 3：clone → 就地编辑 → 变化才值写回；写回在 refresh 之前，
     // 重算的路径用的是新文件名。
-    let mut file_stem = app.export_ui.file_stem.clone();
+    let mut file_stem = vctx.export_ui_state().file_stem.clone();
     let stem_changed = ui
         .horizontal(|ui| {
             ui.label("文件名");
@@ -203,16 +211,15 @@ fn path_rows(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
         .inner
         .changed();
     if stem_changed {
-        app.export_ui.set_file_stem(file_stem);
-        app.export_ui.refresh_resolved_path();
+        vctx.export_ui_state().set_file_stem(file_stem);
+        vctx.export_ui_state().refresh_resolved_path();
     }
-    if let Some(reason) = unavailable_reason(app.export_ui.format) {
+    let format = vctx.export_ui_state().format;
+    if let Some(reason) = unavailable_reason(format) {
         ui.colored_label(theme.text_secondary, reason);
     } else {
-        ui.colored_label(
-            theme.text_secondary,
-            format!("将导出到 {}", app.export_ui.resolved_path),
-        );
+        let resolved_path = vctx.export_ui_state().resolved_path.clone();
+        ui.colored_label(theme.text_secondary, format!("将导出到 {resolved_path}"));
     }
 }
 
@@ -226,19 +233,19 @@ fn markdown_note(ui: &mut Ui, theme: &Theme) {
 }
 
 /// 通用格式选项（HTML / 图片）。
-fn common_options(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
-    let format = app.export_ui.format;
+fn common_options(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
+    let format = vctx.export_ui_state().format;
     if format == ExportFormat::Image {
         // 图片走截图路径：内容、目录、分页对它都没有意义。
         // 仍显示这些开关只会让用户以为勾了会影响结果。
         // 唯一有意义的选项是「整篇长图」：决定截图的范围模式。
-        let mut long = app.export_ui.long_image;
+        let mut long = vctx.export_ui_state().long_image;
         ui.horizontal_wrapped(|ui| {
             if ui
                 .checkbox(&mut long, "整篇长图（滚动截取全部内容）")
                 .changed()
             {
-                app.set_export_long_image(long);
+                vctx.set_export_long_image(long);
             }
         });
         image_note(ui, theme, long);
@@ -246,14 +253,14 @@ fn common_options(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
     }
     ui.horizontal_wrapped(|ui| {
         if format.supports_toc() {
-            let mut on = app.export_ui.include_toc;
+            let mut on = vctx.export_ui_state().include_toc;
             if ui.checkbox(&mut on, "包含目录").changed() {
-                app.set_export_include_toc(on);
+                vctx.set_export_include_toc(on);
             }
         }
-        let mut embed = app.export_ui.embed_images;
+        let mut embed = vctx.export_ui_state().embed_images;
         if ui.checkbox(&mut embed, "内联图片（data URI）").changed() {
-            app.set_export_embed_images(embed);
+            vctx.set_export_embed_images(embed);
         }
     });
     // PRIV-02：HTML 的 CDN 注入是**自动**的（正文含公式 / 图表才注入），没有
@@ -286,30 +293,30 @@ fn image_note(ui: &mut Ui, theme: &Theme, long_image: bool) {
 }
 
 /// PDF 专属选项（纸张 / 分页 / 目录）。
-fn pdf_options(app: &mut EditorApp, ui: &mut Ui, _theme: &Theme) {
+fn pdf_options(vctx: &mut dyn EditorViewContext, ui: &mut Ui, _theme: &Theme) {
     ui.horizontal_wrapped(|ui| {
         ui.label("纸张");
         for size in PageSize::ALL {
-            let selected = app.export_ui.page_size == *size;
+            let selected = vctx.export_ui_state().page_size == *size;
             if ui
                 .selectable_label(selected, page_size_label(*size))
                 .clicked()
                 && !selected
             {
-                app.set_export_page_size(*size);
+                vctx.set_export_page_size(*size);
             }
         }
     });
     ui.horizontal_wrapped(|ui| {
-        let mut paginate = app.export_ui.paginate;
+        let mut paginate = vctx.export_ui_state().paginate;
         if ui.checkbox(&mut paginate, "按标题分页").changed() {
-            app.set_export_paginate(paginate);
+            vctx.set_export_paginate(paginate);
         }
-        let mut toc = app.export_ui.include_toc;
+        let mut toc = vctx.export_ui_state().include_toc;
         if ui.checkbox(&mut toc, "包含目录（需分页）").changed() {
             // 「PDF 的目录必须配分页」这条领域规则已随方法下沉到
             // `EditorApp::set_pdf_include_toc`，视图不再自己补 `paginate`。
-            app.set_pdf_include_toc(toc);
+            vctx.set_pdf_include_toc(toc);
         }
     });
     ui.colored_label(
@@ -318,49 +325,51 @@ fn pdf_options(app: &mut EditorApp, ui: &mut Ui, _theme: &Theme) {
     );
     // V11-04：PDF 的产出方式与其它格式完全不同（经系统打印对话框），
     // 必须**在用户点导出之前**讲清楚，否则他会以为导出失败。
-    if let Some(caveat) = pdf_caveat(app.export_ui.format) {
+    let format = vctx.export_ui_state().format;
+    if let Some(caveat) = pdf_caveat(format) {
         ui.colored_label(_theme.text_secondary, caveat);
     }
 }
 
 /// 错误 / 成功提示。
-fn messages(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
-    if let Some(error) = app.export_ui.error.clone() {
+fn messages(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
+    let error = vctx.export_ui_state().error.clone();
+    if let Some(error) = error {
         ui.colored_label(theme.error, format!("⚠ {error}"));
     }
-    if let Some(notice) = app.export_ui.notice.clone() {
+    let notice = vctx.export_ui_state().notice.clone();
+    if let Some(notice) = notice {
         ui.colored_label(theme.success, notice);
     }
-    if let Some(reason) = app.export_ui.blocked_reason()
-        && app.export_ui.error.is_none()
+    // 阻断原因与「是否已有错误」分别取：同一条 `&&` 里两次可变借用会重叠。
+    let blocked_reason = vctx.export_ui_state().blocked_reason();
+    let has_error = vctx.export_ui_state().error.is_some();
+    if let Some(reason) = blocked_reason
+        && !has_error
     {
         ui.weak(reason);
     }
 }
 
 /// 页脚：取消 / 导出。
-fn footer(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
+fn footer(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
     ui.horizontal(|ui| {
-        ui.weak(format!(
-            "扩展名必须是 .{}",
-            app.export_ui.format.extension()
-        ));
+        let extension = vctx.export_ui_state().format.extension();
+        ui.weak(format!("扩展名必须是 .{extension}"));
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let label = if app.export_ui.running {
-                "导出中…"
-            } else {
-                "导出"
-            };
+            let running = vctx.export_ui_state().running;
+            let label = if running { "导出中…" } else { "导出" };
             let button = egui::Button::new(RichText::new(label).color(theme.accent));
-            if ui.add_enabled(app.export_ui.can_submit(), button).clicked() {
+            let can_submit = vctx.export_ui_state().can_submit();
+            if ui.add_enabled(can_submit, button).clicked() {
                 // `pixels_per_point` 在点击时刻读取并传下去：长图模式
                 // 要在登记阶段就用它估算成品高度、提前拦截超限请求。
                 let ppp = ui.ctx().pixels_per_point();
-                run_export(app, ppp);
+                run_export(vctx, ppp);
             }
             if ui.button("取消").clicked() {
-                app.export_ui.close();
-                app.dialog.close(Overlay::Export);
+                vctx.export_ui_state().close();
+                vctx.dialog_state().close(Overlay::Export);
             }
         });
     });
@@ -370,58 +379,66 @@ fn footer(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
 ///
 /// 编排全在 [`EditorApp::export_current_document`]（应用层两段式），
 /// 这里只把 UI 状态翻译成 DTO 并把结果翻译成提示文案。
-fn run_export(app: &mut EditorApp, pixels_per_point: f32) {
-    app.export_ui.begin();
-    let path = app.export_ui.resolved_path.clone();
+fn run_export(vctx: &mut dyn EditorViewContext, pixels_per_point: f32) {
+    vctx.export_ui_state().begin();
+    let path = vctx.export_ui_state().resolved_path.clone();
 
     // 图片走**截图**路径：像素来自 GPU 对当前帧的回读，
     // 由 `pump_capture` 在下一帧兑现，不经过同步的 `export_current_document`。
-    if app.export_ui.format == ExportFormat::Image {
+    let is_image = vctx.export_ui_state().format == ExportFormat::Image;
+    if is_image {
         // 勾了「整篇长图」走多段滚动拼接；否则单帧视口截图。
         // 两条路径都在帧循环里异步兑现（`pump_capture`），错误文案同理。
-        let result = if app.export_ui.long_image {
-            app.begin_long_capture(&path, pixels_per_point)
+        let long_image = vctx.export_ui_state().long_image;
+        let result = if long_image {
+            vctx.begin_long_capture(&path, pixels_per_point)
         } else {
-            app.begin_viewport_capture(&path)
+            vctx.begin_viewport_capture(&path)
         };
         match result {
             Ok(()) => {
                 // 结果（成功/失败）在后续帧由 `pump_capture` 写入；
                 // 这里保持 `running`，按钮据此显示「导出中…」并禁用重复提交。
             }
-            Err(e) => app.export_ui.fail(e.to_string()),
+            Err(e) => vctx.export_ui_state().fail(e.to_string()),
         }
         return;
     }
 
-    let request = ExportRequestView {
-        format: app.export_ui.format.as_str().to_string(),
-        include_toc: app.export_ui.include_toc,
-        embed_images: app.export_ui.embed_images,
-        theme: app.export_ui.theme.clone(),
-        page_size: app.export_ui.page_size.as_str().to_string(),
-        paginate: app.export_ui.paginate,
+    // 请求 DTO 的六个字段取自同一份状态：一次借用读完，
+    // 避免两次可变借用在同一表达式里重叠。
+    let request = {
+        let state = vctx.export_ui_state();
+        ExportRequestView {
+            format: state.format.as_str().to_string(),
+            include_toc: state.include_toc,
+            embed_images: state.embed_images,
+            theme: state.theme.clone(),
+            page_size: state.page_size.as_str().to_string(),
+            paginate: state.paginate,
+        }
     };
-    match app.export_current_document(request, &path) {
+    match vctx.export_current_document(request, &path) {
         Ok(result) => {
-            if app.export_ui.format == ExportFormat::Pdf && result.bytes == 0 {
+            let is_pdf = vctx.export_ui_state().format == ExportFormat::Pdf;
+            if is_pdf && result.bytes == 0 {
                 // PDF 有两种产出方式，靠 `bytes` 区分：
                 // - 直接落盘（无头内核）：`bytes > 0`，走下面的通用文案；
                 // - 经系统打印对话框：本进程拿不到最终大小，`bytes` 恒为 0。
                 //   显示「已导出 xxx（0 字节）」会让人以为失败，故改述实际行动。
-                app.export_ui.succeed(format!(
+                vctx.export_ui_state().succeed(format!(
                     "已生成打印用 HTML 并调起系统打印（目标 {}）：请在对话框中选择「另存为 PDF」",
                     result.output_path.as_str()
                 ));
             } else {
-                app.export_ui.succeed(format!(
+                vctx.export_ui_state().succeed(format!(
                     "已导出 {}（{} 字节）",
                     result.output_path.as_str(),
                     result.bytes
                 ));
             }
         }
-        Err(e) => app.export_ui.fail(e.to_string()),
+        Err(e) => vctx.export_ui_state().fail(e.to_string()),
     }
 }
 

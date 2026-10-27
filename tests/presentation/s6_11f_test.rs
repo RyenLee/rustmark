@@ -369,8 +369,8 @@ fn overview_state_open_resets_the_filter() {
 fn quick_open_candidates_come_from_the_loaded_workspace() {
     let ws = tempfile::tempdir().expect("工作区");
     std::fs::write(ws.path().join("readme.md"), "# r\n").expect("应可写");
-    let (_cfg, _ws2, app) = app_with_workspace(ws.path());
-    let candidates = quick_open_view::candidates(&app);
+    let (_cfg, _ws2, mut app) = app_with_workspace(ws.path());
+    let candidates = quick_open_view::candidates(&mut app);
     assert!(
         candidates.iter().any(|c| c.name == "readme.md"),
         "工作区里的文件必须出现在候选里，实际：{:?}",
@@ -418,7 +418,7 @@ fn quick_open_falls_back_to_recent_files_without_a_workspace() {
         Arc::new(FakeDialog::new()),
     )
     .expect("装配应成功");
-    let app = EditorApp::new(services, false);
+    let mut app = EditorApp::new(services, false);
     // 直接构造一条最近文件记录（走仓储公开的 search 路径会太绕）。
     let file = dir.path().join("recent.md");
     std::fs::write(&file, "# r\n").expect("应可写");
@@ -431,7 +431,7 @@ fn quick_open_falls_back_to_recent_files_without_a_workspace() {
             },
         )
         .expect("应可登记");
-    let candidates = quick_open_view::candidates(&app);
+    let candidates = quick_open_view::candidates(&mut app);
     assert!(
         candidates.iter().any(|c| c.path == path_str),
         "无工作区时应能用最近文件，实际候选：{:?}",
@@ -446,9 +446,9 @@ fn quick_open_candidate_count_is_bounded() {
     for i in 0..40 {
         std::fs::write(ws.path().join(format!("f{i}.md")), "x\n").expect("应可写");
     }
-    let (_cfg, _ws2, app) = app_with_workspace(ws.path());
+    let (_cfg, _ws2, mut app) = app_with_workspace(ws.path());
     assert!(
-        quick_open_view::candidates(&app).len() <= MAX_CANDIDATES,
+        quick_open_view::candidates(&mut app).len() <= MAX_CANDIDATES,
         "候选必须截断到上限"
     );
 }
@@ -461,7 +461,7 @@ fn quick_open_matches_out_of_order_characters() {
     let (_cfg, _ws2, mut app) = app_with_workspace(ws.path());
     app.execute(UiAction::OpenDocument);
     app.quick_open_ui.set_query("abc");
-    let hits = quick_open_view::candidates(&app);
+    let hits = quick_open_view::candidates(&mut app);
     assert_eq!(hits.len(), 1, "子串匹配下 'abc' 命中不了 'a-b-c-file'");
 }
 
@@ -482,7 +482,7 @@ fn quick_open_refuses_non_text_candidates_without_closing() {
 
     // 选中「shot.png」。按**完整路径**定位下标，不假设顺序——
     // 排序规则变了不该让这条用例变成在测排序。
-    let list = quick_open_view::candidates(&app);
+    let list = quick_open_view::candidates(&mut app);
     let index = list
         .iter()
         .position(|item| item.path.ends_with("shot.png"))

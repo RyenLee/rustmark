@@ -1474,20 +1474,18 @@ pub fn check_ui_submodule_sync(manifest: &Path) -> Vec<Violation> {
 ///
 /// **批 1 · 步 1.1（2026-10-27）**：`welcome_view` 树（3 个文件）已迁。
 /// **批 1 · 步 1.2（2026-10-27）**：`settings_view` 树（5 个文件）已迁。
+/// **批 1 · 步 1.3（2026-10-27）**：`diff_view` / `find_replace_view` /
+/// `export_view` / `quick_open_view`（4 个文件）已迁。
 pub const PENDING_DECOUPLED_VIEWS: &[&str] = &[
     "src/presentation/views/command_palette_view.rs",
-    "src/presentation/views/diff_view.rs",
     "src/presentation/views/editor_view.rs",
     "src/presentation/views/editor_view/spell.rs",
-    "src/presentation/views/export_view.rs",
-    "src/presentation/views/find_replace_view.rs",
     "src/presentation/views/main_view.rs",
     "src/presentation/views/overlays.rs",
     "src/presentation/views/preview_view.rs",
     "src/presentation/views/preview_view/image_cache.rs",
     "src/presentation/views/preview_view/inline/math.rs",
     "src/presentation/views/preview_view/inline/text_render.rs",
-    "src/presentation/views/quick_open_view.rs",
     "src/presentation/views/scroll_sync.rs",
     "src/presentation/views/sidebar_view.rs",
     "src/presentation/views/sidebar_view/files.rs",

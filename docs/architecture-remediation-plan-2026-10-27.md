@@ -126,10 +126,11 @@
   **P-2** `EditorApp::editor_id()`（关联函数、无 `self`，trait 方法没法在 `dyn` 上调）落为 ui 侧自由函数
   `editor_ui_state::editor_id()`，root 保留转发保旧路径；**P-3** 纠偏两处错误前提文档
   （「塞进 `UiAction` 就要新增 ui→actions 边」不成立 /「视图最终整体迁进 ui」与 ADR-013 决策 3 冲突）。
-  迁移进度 **2/7**——步 1.1 `welcome_view` 树（3 个文件：`welcome_view.rs` /
+  迁移进度 **3/7**——步 1.1 `welcome_view` 树（3 个文件：`welcome_view.rs` /
   `welcome_view/actions.rs` / `welcome_view/hints.rs`）、步 1.2 `settings_view`
   树（5 个文件：`settings_view.rs` + `about` / `appearance` / `editor_prefs` /
-  `shortcuts`）。
+  `shortcuts`）、步 1.3 `diff_view` / `find_replace_view` / `export_view` /
+  `quick_open_view`（4 个文件）。
 - **守卫 `check_view_decoupling`**：白名单 `PENDING_DECOUPLED_VIEWS`（32 条）**双向**校验——名单外的 `crate::app` 引用报违规；名单内已解耦的条目也报（防名单腐烂）。词法级判定（`first_crate_app_line`），注释里提到旧路径不误伤。已接入 `scan_project`，故 `check-arch` bin 与 `build.rs` 构建期同时生效。
 - **变异验证**：① 废掉 `first_crate_app_line` → 构建期 panic，列出 32 条陈旧；② 关掉反向陈旧检查 → fixture 红（「名单陈旧应报 1 条，实际：[]」）。
 - **门禁**：fmt / check-arch / thresholds 121 / clippy `-D warnings` / `test --all-targets` **2243** passed（+1 新用例）/ `test --doc` 1 / `size_gate` 见 §metrics。
