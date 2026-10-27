@@ -28,11 +28,11 @@
 //! | [`ThemeAccess`] | 主题 + 快捷键注册表 | 3 |
 //! | [`UiStateAccess`] | UI 状态直取（字段级） | 15 |
 //! | [`DocumentAccess`] | 文档 / 标签 / 只读查询 | 13 |
-//! | [`CommandPort`] | 语义命令（含 `execute`） | 47 |
+//! | [`CommandPort`] | 语义命令（含 `execute`） | 61 |
 //! | [`ServiceQueries`] | 组合根服务查询 | 0（批 2 填充） |
 //!
 //! 为什么不摊平成一个大 trait：摊平后 ≈ `EditorApp`（183 方法 + 40 字段）的
-//! 62%，正是「trait 上照抄 `EditorApp` 全部成员」的**假解耦**——接口面没变小，
+//! 50%，正是「trait 上照抄 `EditorApp` 全部成员」的**假解耦**——接口面没变小，
 //! 只是换了个名字。分组之后，「这个视图能碰到什么」一眼可辨，
 //! 且 Rust 1.86 起的 **trait object upcasting**（1.99 已实测）让
 //! `&mut dyn ThemeAccess` 能自动转成 `&mut dyn EditorViewContext`，
