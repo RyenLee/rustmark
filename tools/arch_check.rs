@@ -40,7 +40,7 @@
 // 正是历史上「定时功能完全不生效」那三次的根因。它**不设豁免**。
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// 一处架构违规。
 #[derive(Debug)]
@@ -146,8 +146,11 @@ const PRESENTATION_STATE_VIEWS_FORBIDDEN: &[&str] = &["crate::presentation::view
 
 /// `presentation/rich/` 不得依赖的四个兄弟子层（R-13）。
 ///
-/// ADR-007 已用编译期手段保证 `rich/` 对 egui 零依赖（自绘排版），
-/// 本项把「不得依赖 `views/` / `state/` / `theme/` / `widgets/`」机械化。
+/// 注意本项**不含 egui**：它禁的是 `rich/` 对四个兄弟子层的方向性依赖，
+/// 「`rich/` 主体 egui-free」由另一条独立判据守护
+/// （[`check_rich_egui_isolation`]，白名单仅 `render/egui.rs` 一个后端）。
+/// 两者叠加才等于「rich 是自洽的渲染算法」——只禁兄弟子层的话，
+/// 一行 `use egui` 就能把 egui 拖回排版代码里，而编译与单测全绿。
 ///
 /// # 为什么 `rich/` 要比别的叶子更严
 ///
@@ -305,7 +308,9 @@ enum Layer {
     PresentationViews,
     /// `presentation/rich/` 子层（R-13）：自绘排版（数学 / Mermaid）。
     ///
-    /// ADR-007 已用编译期手段保证它对 egui 零依赖，本项把「不得依赖
+    /// 排版产物是 egui-free 的几何命令（`render::RenderCommand`），唯一
+    /// 允许 `use egui` 的是后端 `render/egui.rs`（R-04 步 4 的 rich-egui
+    /// 白名单断言）。本子层禁令在父层之上叠加，并把「不得依赖
     /// `views/` / `state/` / `theme/` / `widgets/`」机械化。
     PresentationRich,
     /// `presentation/widgets/` 子层（R-13）：可复用控件。
@@ -1348,6 +1353,182 @@ fn check_view_file_sizes(views_root: &Path) -> Vec<Violation> {
     out
 }
 
+/// workspace 的 src 根们：`(根路径, 报告显示前缀, 强制层)`。
+///
+/// [`scan_project`] 与 [`check_rich_egui_isolation_with`] 共用同一份清单。
+///
+/// # 为什么抽出来
+///
+/// 两处各写一遍的情况下，新增 crate 只改一处就会让另一处**少扫一个根**，
+/// 而校验器少扫一个根的表现是**漏报**（违规文件压根没被读），
+/// 比多报危险得多——多报立刻看得见，漏报要等注入用例才现形。
+fn src_roots(manifest: &Path) -> Vec<(PathBuf, &'static str, Option<Layer>)> {
+    vec![
+        (manifest.join("src"), "", None),
+        (
+            manifest.join("crates").join("rustmark-core").join("src"),
+            "crates/rustmark-core/src/",
+            None,
+        ),
+        (
+            manifest.join("crates").join("rustmark-actions").join("src"),
+            "crates/rustmark-actions/src/",
+            Some(Layer::Free),
+        ),
+        (
+            manifest.join("crates").join("rustmark-icons").join("src"),
+            "crates/rustmark-icons/src/",
+            None,
+        ),
+        (
+            manifest.join("crates").join("rustmark-ui").join("src"),
+            "crates/rustmark-ui/src/",
+            None,
+        ),
+        (
+            manifest.join("crates").join("rustmark-shared").join("src"),
+            "crates/rustmark-shared/src/",
+            None,
+        ),
+        (
+            manifest.join("crates").join("rustmark-infra").join("src"),
+            "crates/rustmark-infra/src/",
+            None,
+        ),
+    ]
+}
+
+// ============================================================================
+// R-04 步4：`presentation/rich/` 主体 egui-free（唯一白名单 render/egui.rs）
+// ============================================================================
+
+/// `presentation/rich/` 相对各 src 根的目录名。
+const RICH_DIR: &str = "presentation/rich";
+
+/// 唯一允许 `use egui` 的 `rich/` 文件：渲染端口层的 egui 后端。
+///
+/// 它持有 `RenderBackend` 实现与 `apply_egui`，把 egui-free 的
+/// `RenderCommand` 翻译成 `Painter` 调用——**只此一处**需要认识 egui。
+const RICH_EGUI_BACKEND: &str = "presentation/rich/render/egui.rs";
+
+/// rich-egui 白名单（初始仅 [`RICH_EGUI_BACKEND`] 一条）。
+///
+/// 新增一条等于承认「又有一处排版代码离不开 egui」，那应当去做端口化
+/// （几何走 `render::Pt` / `Rgb8` / `geom::Rect`），而不是登记了事——
+/// 登记是「把例外变成惯例」的入口，与 V11-63 那条棘轮清单的教训同源。
+const RICH_EGUI_ALLOWLIST: &[&str] = &[RICH_EGUI_BACKEND];
+
+/// `presentation/rich/` 除唯一后端外不得引用 egui（R-04 步4）。
+///
+/// # 为什么在层禁令之外单列一条
+///
+/// [`PRESENTATION_RICH_FORBIDDEN`] 只禁四个**兄弟子层**
+/// （`views` / `state` / `theme` / `widgets`），与 egui 无关；而
+/// `rich/` 是渲染算法，它「不碰 egui」这件事此前只写在模块文档里——
+/// 文档不进门禁，改一行 `use egui` 编译照过、单测照绿。本条把这句话
+/// 机械化：凡 `rich/**` 下出现 `use egui` 或全限定 `egui::` 限定符、
+/// 且文件不在白名单 → 报违规，行号指到该 import / 限定符所在行。
+///
+/// # 为什么走词法器而不是 `str::contains`
+///
+/// `rich/` 的模块文档大量解释「为什么不碰 egui」（实测 20+ 处，如
+/// `math.rs` 的 `不碰 egui::Painter`），字面扫描会把解释性文字判成违规。
+/// 复用 [`Lexer`] 后注释 / 字符串 / 字符字面量天然不参与，与
+/// [`check_view_no_composition_root_marker`] 同一手法。
+pub fn check_rich_egui_isolation(manifest: &Path) -> Vec<Violation> {
+    check_rich_egui_isolation_with(manifest, RICH_EGUI_ALLOWLIST)
+}
+
+/// 同 [`check_rich_egui_isolation`]，白名单由调用方给出。
+///
+/// 白名单带参是为了**两个方向都能被夹具构造**：「白名单外的文件引用 egui
+/// 必报」与「白名单内的后端引用 egui 放行」——后者同样要钉住，否则有人
+/// 把整段守卫改成「一律不报」时，只有前一类用例会红，白名单本身形同虚设。
+pub fn check_rich_egui_isolation_with(manifest: &Path, allowlist: &[&str]) -> Vec<Violation> {
+    let mut violations = Vec::new();
+    for (root, display_prefix, _) in src_roots(manifest) {
+        let rich_root = root.join(RICH_DIR);
+        if !rich_root.is_dir() {
+            continue;
+        }
+        let mut files = Vec::new();
+        collect_rs_files(&rich_root, &mut files);
+        files.sort();
+        for path in &files {
+            let rel = path
+                .strip_prefix(&root)
+                .unwrap_or(path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            if allowlist.contains(&rel.as_str()) {
+                continue;
+            }
+            let Ok(content) = fs::read_to_string(path) else {
+                continue;
+            };
+            let lexed = Lexer::new(&content).run();
+            let Some(line) = first_egui_ref_line(&lexed) else {
+                continue;
+            };
+            violations.push(Violation {
+                file: format!("{display_prefix}{rel}"),
+                line,
+                detail: format!(
+                    "R-04：`{rel}` 引用了 egui —— `presentation/rich/` 是 egui-free 的渲染层，\
+                     几何一律走 `render::Pt` / `render::Rgb8` / `render::geom::Rect`，\
+                     绘制命令由 `render::apply_egui` 发出；唯一允许 `use egui` 的是后端 \
+                     `{RICH_EGUI_BACKEND}`（`RenderBackend` 实现与 `apply_egui`）"
+                ),
+            });
+        }
+    }
+    violations
+}
+
+/// 首个「引用 egui」的行号（词法级，**注释与字符串天然不参与**）。
+///
+/// # 覆盖的两类形态
+///
+/// 1. `use` 声明：交给 [`parse_use_tree`] 展平成完整路径后前缀匹配
+///    （`use egui::Painter;` / `use egui::{A, B};` / `use egui::text::LayoutJob;`
+///    一并覆盖，与 [`first_crate_app_ref_line`] 同一套路）；
+/// 2. 非 `use` 位置的全限定路径 `egui::Color32::WHITE`（`use` 都不写、
+///    直接全限定引用，是绕过「只查 import」的最省事写法，必须一并拦）。
+///
+/// # 为什么排除「前面是 `::`」的 `egui`
+///
+/// `self::egui::…` / `crate::…::egui::…` 里的 `egui` 是**本 crate 的子模块**
+/// （`render.rs` 用它重导出后端），不是 egui crate——算它违规会逼着
+/// 调用方发明别的写法，而那条边本来就不存在。
+fn first_egui_ref_line(lexed: &Lexed) -> Option<usize> {
+    let tokens = &lexed.tokens;
+    let mut i = 0usize;
+    while i < tokens.len() {
+        let t = &tokens[i];
+        if t.kind == TokKind::Ident && t.text == "use" {
+            let (paths, end) = parse_use_tree(tokens, i + 1, &[]);
+            if let Some(line) = paths
+                .iter()
+                .find(|(path, _)| matches_ban(path, "egui"))
+                .map(|(_, line)| *line)
+            {
+                return Some(line);
+            }
+            i = if end > i { end } else { i + 1 };
+            continue;
+        }
+        if t.kind == TokKind::Ident
+            && t.text == "egui"
+            && tokens.get(i + 1).map(|n| n.kind) == Some(TokKind::PathSep)
+            && !(i > 0 && tokens.get(i - 1).map(|n| n.kind) == Some(TokKind::PathSep))
+        {
+            return Some(t.line);
+        }
+        i += 1;
+    }
+    None
+}
+
 // ============================================================================
 // R-03 B2：ui 子模块 ↔ root 逐项 re-export ↔ §10.1 三方对账
 // ============================================================================
@@ -1890,6 +2071,12 @@ pub fn scan_with_tests(src_root: &Path, tests_root: &Path) -> Vec<Violation> {
 /// [`scan`] / [`scan_with_tests`] 的签名与口径**保持不变**：fixture 的
 /// 合成目录用例靠它们表达「只扫一个根」的范围差异；真实工程的入口
 /// （`build.rs` / `check-arch` / fixture 的零违规守卫）一律用本函数。
+///
+/// # 根清单只有一份（[`src_roots`]）
+///
+/// 新增 crate 时只改 [`src_roots`] 一处：它与 [`check_rich_egui_isolation_with`]
+/// 共用同一份清单，两处各写一遍的后果是「新根进了 `scan_project` 却没进
+/// rich 守卫」，表现为**漏报**——校验器里漏报比多报危险得多。
 pub fn scan_project(manifest: &Path) -> Vec<Violation> {
     let registry = load_registry_at(manifest);
     let shared_registry = load_shared_registry_at(manifest);
@@ -1922,48 +2109,7 @@ pub fn scan_project(manifest: &Path) -> Vec<Violation> {
     // （docs/workspace-topology.expected.txt）。词法规则只多挡
     // dev-dependency 一种形状，不值得为之新增层类别——校验器教条是
     // 「确需新的层类别，先改约束文档与校验器」。
-    for (root, display_prefix, forced_layer) in [
-        (manifest.join("src"), "", None),
-        (
-            manifest.join("crates").join("rustmark-core").join("src"),
-            "crates/rustmark-core/src/",
-            None,
-        ),
-        (
-            manifest.join("crates").join("rustmark-actions").join("src"),
-            "crates/rustmark-actions/src/",
-            Some(Layer::Free),
-        ),
-        (
-            manifest.join("crates").join("rustmark-icons").join("src"),
-            "crates/rustmark-icons/src/",
-            None,
-        ),
-        (
-            manifest.join("crates").join("rustmark-ui").join("src"),
-            "crates/rustmark-ui/src/",
-            None,
-        ),
-        // 第六根（TD-04，2026-10-26）：共享内核抽为 `rustmark-shared`。
-        // 文件保留 `shared/` 路径前缀（与 ui 保留 `presentation/` 同理），
-        // `layer_of("shared/x.rs")` 自然判 [`Layer::Shared`]——不设强制层，
-        // §4.5 登记守卫的 `rel.starts_with("shared/")` 也随路径原样生效。
-        (
-            manifest.join("crates").join("rustmark-shared").join("src"),
-            "crates/rustmark-shared/src/",
-            None,
-        ),
-        // 第七根（V11-64，2026-10-26）：基础设施层抽为 `rustmark-infra`。
-        // 同样保留 `infrastructure/` 路径前缀，`layer_of("infrastructure/x.rs")`
-        // 自然判 [`Layer::Infrastructure`]，`INFRASTRUCTURE_FORBIDDEN` 与
-        // 所有既有登记键零改动；不设强制层——强制 Free 会**抹掉**层禁令，
-        // 而这里恰恰要靠层禁令继续挡住「基础设施反向依赖 domain/application」。
-        (
-            manifest.join("crates").join("rustmark-infra").join("src"),
-            "crates/rustmark-infra/src/",
-            None,
-        ),
-    ] {
+    for (root, display_prefix, forced_layer) in src_roots(manifest) {
         let mut files = Vec::new();
         collect_rs_files(&root, &mut files);
         files.sort();
@@ -2044,6 +2190,9 @@ pub fn scan_project(manifest: &Path) -> Vec<Violation> {
 
     // R-03 B2：ui 子模块 ↔ root 逐项 re-export ↔ §10.1 crate 地图三方对账。
     violations.extend(check_ui_submodule_sync(manifest));
+
+    // R-04 步4：`rich/` 主体 egui-free（唯一后端 `render/egui.rs` 在白名单里）。
+    violations.extend(check_rich_egui_isolation(manifest));
 
     // R-03 B1：视图解耦进度（`views/**` 不得直取组合根 `crate::app`）。
     violations.extend(check_view_decoupling(manifest));

@@ -1226,10 +1226,11 @@ fn views_may_depend_on_state() {
 
 /// `rich/` 不得依赖四个兄弟子层（`views` / `state` / `theme` / `widgets`）。
 ///
-/// ADR-007 已用编译期手段保证 `rich/` 对 egui 零依赖，本项把其余四个
-/// 方向机械化。`rich/` 是**渲染算法**：一旦能读 `state/`，「排版结果随
-/// UI 状态变化」就会进来——同一段文档在侧栏开着与关着时排版不同，
-/// 而这种差异不报错、也看不出原因。
+/// 注意本项**不含 egui**：禁兄弟子层与「rich 主体 egui-free」是两条独立
+/// 判据，后者见 [`rich_may_not_reference_egui_outside_the_backend`]
+/// （白名单仅 `render/egui.rs`）。`rich/` 是**渲染算法**：一旦能读
+/// `state/`，「排版结果随 UI 状态变化」就会进来——同一段文档在侧栏开着
+/// 与关着时排版不同，而这种差异不报错、也看不出原因。
 #[test]
 fn rich_may_not_depend_on_its_siblings() {
     let dir = tempfile::tempdir().unwrap();
@@ -1253,6 +1254,141 @@ fn rich_may_not_depend_on_its_siblings() {
         violations.len(),
         banned.len(),
         "rich 对四个兄弟子层的依赖应全部报出，实际：{:?}",
+        described(&violations)
+    );
+}
+
+// ============================================================================
+// R-04 步4：`presentation/rich/` 主体 egui-free（唯一白名单 render/egui.rs）
+// ============================================================================
+
+/// `rich/` 下非白名单文件写了 `use egui` → 必须报，行号指到 import 那一行。
+///
+/// # 为什么这条不能靠编译期保证
+///
+/// `rich/` 与 egui 在同一个 workspace 里，`use egui::Painter;` 编译得过、
+/// 单测照绿，唯一代价是「排版代码从此离不开 egui」——导出 / headless 复用
+/// 要拖进整个 egui。文档里写「不碰 egui」挡不住这一行。
+#[test]
+fn rich_may_not_reference_egui_outside_the_backend() {
+    let dir = tempfile::tempdir().unwrap();
+    let manifest = dir.path();
+    let root = manifest.join("src");
+    write_fixture(
+        &root,
+        "presentation/rich/math/paint.rs",
+        "//! x\nuse egui::Painter;\n",
+    );
+
+    let violations = arch_check::check_rich_egui_isolation(manifest);
+    assert_eq!(
+        violations.len(),
+        1,
+        "rich/math 下的 `use egui` 应被报出，实际：{:?}",
+        described(&violations)
+    );
+    assert!(
+        violations[0]
+            .file
+            .contains("presentation/rich/math/paint.rs"),
+        "{:?}",
+        violations[0]
+    );
+    assert_eq!(
+        violations[0].line, 2,
+        "行号应指到 import 所在行，实际：{:?}",
+        violations[0]
+    );
+}
+
+/// 不写 import、直接全限定引用 `egui::Color32` → 同样必须报。
+///
+/// 只查 `use` 的守卫会被这一行绕过，而它是最省事的「偷渡」写法：
+/// 一个文件里出现十几次 `egui::`，却一条 import 都没有。
+#[test]
+fn rich_may_not_reference_egui_by_qualified_path_without_import() {
+    let dir = tempfile::tempdir().unwrap();
+    let manifest = dir.path();
+    let root = manifest.join("src");
+    write_fixture(
+        &root,
+        "presentation/rich/mermaid/paint.rs",
+        "//! x\npub fn f() {\n    let _: egui::Color32 = egui::Color32::WHITE;\n}\n",
+    );
+
+    let violations = arch_check::check_rich_egui_isolation(manifest);
+    assert_eq!(
+        violations.len(),
+        1,
+        "全限定 `egui::` 也应被报出，实际：{:?}",
+        described(&violations)
+    );
+    assert_eq!(
+        violations[0].line, 3,
+        "行号应指到限定符所在行，实际：{:?}",
+        violations[0]
+    );
+}
+
+/// 反向：**白名单内**的后端可以 `use egui`（否则整条规则无从落地）。
+///
+/// 少了这一条，「把守卫改成一律放行」也能过——白名单本身没被钉住时，
+/// 它就只是一句注释。
+#[test]
+fn the_render_backend_may_use_egui() {
+    let dir = tempfile::tempdir().unwrap();
+    let manifest = dir.path();
+    let root = manifest.join("src");
+    write_fixture(
+        &root,
+        "presentation/rich/render/egui.rs",
+        "use egui::Painter;\n",
+    );
+    // 注释里提到 egui 不算引用（`rich/` 的模块文档里这类解释性文字有 20+ 处）。
+    write_fixture(
+        &root,
+        "presentation/rich/math.rs",
+        "//! 不碰 `egui::Painter`：度量注入。\n// 旧实现直接调 egui。\n",
+    );
+
+    let violations = arch_check::check_rich_egui_isolation(manifest);
+    assert!(
+        violations.is_empty(),
+        "白名单后端与注释里的 egui 字样都不应报，实际：{:?}",
+        described(&violations)
+    );
+}
+
+/// 新判据与既有的 `PRESENTATION_RICH_FORBIDDEN`（禁兄弟子层）**叠加**，
+/// 不是替换：同时犯两条的文件应各报一处。
+#[test]
+fn the_egui_ban_stacks_with_the_sibling_layer_ban() {
+    let dir = tempfile::tempdir().unwrap();
+    let manifest = dir.path();
+    let root = manifest.join("src");
+    write_fixture(
+        &root,
+        "presentation/rich/mermaid/paint.rs",
+        "//! x\nuse crate::presentation::views::preview_view;\nuse egui::Painter;\n",
+    );
+
+    let violations = arch_check::scan_project(manifest);
+    assert_eq!(
+        violations.len(),
+        2,
+        "同一文件同时犯「依赖 views」与「引用 egui」应各报一处，实际：{:?}",
+        described(&violations)
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.detail.contains("crate::presentation::views")),
+        "应保留禁兄弟子层的那条，实际：{:?}",
+        described(&violations)
+    );
+    assert!(
+        violations.iter().any(|v| v.detail.contains("R-04")),
+        "应叠加 rich-egui 那条，实际：{:?}",
         described(&violations)
     );
 }

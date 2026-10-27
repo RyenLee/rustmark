@@ -18,7 +18,10 @@
 mod egui;
 pub mod geom;
 
-pub use egui::{EguiBackend, apply_egui, rgb8_from_color32};
+// `self::egui` 而非 `egui`：`egui` 是本模块的子模块名，写成裸 `egui::`
+// 会与 egui crate 同名而读不出差别——且 rich-egui 守卫（`check_rich_egui_isolation`）
+// 按「首段是否 `egui`」判定，重导出自家后端不该被当成「引用了 egui」。
+pub use self::egui::{EguiBackend, apply_egui, rgb8_from_color32};
 pub use geom::Rect;
 
 use std::ops::{Add, Div, Mul, Neg, Sub};
