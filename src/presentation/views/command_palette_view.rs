@@ -23,10 +23,10 @@
 
 use egui::{Align, Context, Layout, ScrollArea, Ui};
 
-use crate::app::frame::EditorApp;
 use crate::presentation::state::command_palette_ui_state::CommandRow;
 use crate::presentation::state::dialog_ui_state::Overlay;
 use crate::presentation::theme::builtin::Theme;
+use crate::presentation::view_context::EditorViewContext;
 use crate::presentation::widgets;
 
 /// 对话框默认尺寸（对齐原型 `.palette { width: 540px }`）。
@@ -40,7 +40,7 @@ const ROW_H: f32 = 34.0;
 pub const COMMAND_PALETTE_INPUT_ID: &str = "rustmark.command_palette.search";
 
 /// 绘制命令面板。
-pub fn show(app: &mut EditorApp, ctx: &Context) {
+pub fn show(vctx: &mut dyn EditorViewContext, ctx: &Context) {
     let mut open = true;
     egui::Window::new(Overlay::CommandPalette.title())
         .id(egui::Id::unique("rustmark.overlay.command_palette"))
@@ -49,28 +49,28 @@ pub fn show(app: &mut EditorApp, ctx: &Context) {
         .resizable(true)
         .default_width(WIDTH)
         .default_height(HEIGHT)
-        .show(ctx, |ui| body(app, ui));
+        .show(ctx, |ui| body(vctx, ui));
     // 打开即聚焦搜索框：用户的下一个动作一定是打字。
     //
     // 只给一次（边沿触发）：「当前没有焦点才请求」那种写法恒为真——
     // `Memory::has_focus` 认不到窗口（`Area`）的 id，于是每帧都抢焦点，
     // 用户没法把焦点移到面板里的别处。详见 `DialogUiState::take_open_focus`。
-    if app.dialog.take_open_focus(Overlay::CommandPalette) {
+    if vctx.dialog_state().take_open_focus(Overlay::CommandPalette) {
         ctx.memory_mut(|m| m.request_focus(egui::Id::unique(COMMAND_PALETTE_INPUT_ID)));
     }
     if !open {
-        app.command_palette_ui.open();
-        app.dialog.close(Overlay::CommandPalette);
+        vctx.command_palette_ui_state().open();
+        vctx.dialog_state().close(Overlay::CommandPalette);
     }
-    handle_keys(app, ctx);
+    handle_keys(vctx, ctx);
 }
 
 /// 处理面板内的 ↑↓ / Enter / Esc。
 ///
 /// 判据是「**本帧**有按键事件」而非「焦点在搜索框」——
 /// 后者在 egui 里每帧都成立，会导致按住 ↑ 时反复触底。
-fn handle_keys(app: &mut EditorApp, ctx: &Context) {
-    if !app.dialog.is_open(Overlay::CommandPalette) {
+fn handle_keys(vctx: &mut dyn EditorViewContext, ctx: &Context) {
+    if !vctx.dialog_state().is_open(Overlay::CommandPalette) {
         return;
     }
     let events = ctx.input(|i| i.events.clone());
@@ -85,28 +85,31 @@ fn handle_keys(app: &mut EditorApp, ctx: &Context) {
         }
         match key {
             egui::Key::ArrowDown => {
-                let total = rows(app).len();
-                app.command_palette_ui.move_selection(1, total);
+                let total = rows(&*vctx).len();
+                vctx.command_palette_ui_state().move_selection(1, total);
             }
             egui::Key::ArrowUp => {
-                let total = rows(app).len();
-                app.command_palette_ui.move_selection(-1, total);
+                let total = rows(&*vctx).len();
+                vctx.command_palette_ui_state().move_selection(-1, total);
             }
             egui::Key::Enter => {
-                let list = rows(app);
-                chosen = list.get(app.command_palette_ui.selected).cloned();
+                // 先把列表取出来（自有 `Vec`，不借 `vctx`），再读选中下标——
+                // `rows` 收 `&dyn`，与后面的 `command_palette_ui_state()` 不冲突。
+                let list = rows(&*vctx);
+                let selected = vctx.command_palette_ui_state().selected;
+                chosen = list.get(selected).cloned();
             }
             egui::Key::Escape => closed = true,
             _ => {}
         }
     }
     if closed {
-        app.command_palette_ui.open();
-        app.dialog.close(Overlay::CommandPalette);
+        vctx.command_palette_ui_state().open();
+        vctx.dialog_state().close(Overlay::CommandPalette);
         return;
     }
     if let Some(row) = chosen {
-        apply_pick(app, &row);
+        apply_pick(vctx, &row);
     }
 }
 
@@ -114,11 +117,15 @@ fn handle_keys(app: &mut EditorApp, ctx: &Context) {
 ///
 /// 结果数可能超出一屏，故**不截断**——命令面板的价值就在「能翻到
 /// 第 30 条」，截到 12 条会让它退化成快速打开面板。
-pub fn rows(app: &EditorApp) -> Vec<CommandRow> {
-    app.dispatcher()
+///
+/// 纯读，故收 `&dyn`（不可变重借用）：查询词经
+/// `command_palette_query()` 这条 `&self` 只读出口拿，动作表经
+/// `dispatcher_state()` 拿——两者都不改状态。
+pub fn rows(vctx: &dyn EditorViewContext) -> Vec<CommandRow> {
+    vctx.dispatcher_state()
         .registry()
         .table()
-        .search(&app.command_palette_ui.query)
+        .search(vctx.command_palette_query())
         .into_iter()
         .map(|s| CommandRow {
             entry: s.entry,
@@ -128,13 +135,13 @@ pub fn rows(app: &EditorApp) -> Vec<CommandRow> {
 }
 
 /// 主体。
-fn body(app: &mut EditorApp, ui: &mut Ui) {
-    let theme = app.theme().clone();
-    search_box(app, ui);
-    let list = rows(app);
+fn body(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
+    let theme = vctx.theme_state().clone();
+    search_box(vctx, ui);
+    let list = rows(&*vctx);
     // 结果数随查询变化 → 夹紧选中项，否则会「高亮一个不存在的行」。
-    app.command_palette_ui.clamp(list.len());
-    results(app, ui, &theme, &list);
+    vctx.command_palette_ui_state().clamp(list.len());
+    results(vctx, ui, &theme, &list);
     ui.separator();
     footer(ui, &theme, list.is_empty());
 }
@@ -160,14 +167,17 @@ fn footer(ui: &mut Ui, theme: &Theme, empty: bool) {
 }
 
 /// 搜索框。
-fn search_box(app: &mut EditorApp, ui: &mut Ui) {
-    let mut query = app.command_palette_ui.query.clone();
+fn search_box(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
+    let mut query = vctx.command_palette_ui_state().query.clone();
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), SEARCH_H),
         egui::Sense::click(),
     );
-    ui.painter()
-        .rect_filled(rect, egui::CornerRadius::ZERO, app.theme().bg_primary);
+    ui.painter().rect_filled(
+        rect,
+        egui::CornerRadius::ZERO,
+        vctx.theme_state().bg_primary,
+    );
     // 真实输入能力靠 `TextEdit`：外层仍然自己画背景与分隔线。
     let edit = ui.put(
         rect,
@@ -175,11 +185,11 @@ fn search_box(app: &mut EditorApp, ui: &mut Ui) {
             .id(egui::Id::unique(COMMAND_PALETTE_INPUT_ID))
             .frame(egui::Frame::NONE)
             .desired_width(rect.width() - 24.0)
-            .text_color(app.theme().text_primary)
+            .text_color(vctx.theme_state().text_primary)
             .hint_text("输入命令，如「保存」「主题」「预览」…"),
     );
     if edit.changed() {
-        app.command_palette_ui.set_query(&query);
+        vctx.command_palette_ui_state().set_query(&query);
     }
     if response.clicked() {
         ui.memory_mut(|m| m.request_focus(egui::Id::unique(COMMAND_PALETTE_INPUT_ID)));
@@ -187,7 +197,7 @@ fn search_box(app: &mut EditorApp, ui: &mut Ui) {
 }
 
 /// 结果列表。返回被点击的行下标（`None` = 未点击）。
-fn results(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, list: &[CommandRow]) {
+fn results(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme, list: &[CommandRow]) {
     if list.is_empty() {
         ui.add_space(theme.metrics.space_xl);
         ui.centered_and_justified(|ui| {
@@ -203,7 +213,7 @@ fn results(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, list: &[CommandRow])
         return;
     }
     let mut picked: Option<usize> = None;
-    let selected = app.command_palette_ui.selected;
+    let selected = vctx.command_palette_ui_state().selected;
     ScrollArea::vertical()
         .id_salt("rustmark.command_palette.list")
         .max_height(HEIGHT - SEARCH_H - 80.0)
@@ -237,7 +247,7 @@ fn results(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, list: &[CommandRow])
             }
         });
     if let Some(i) = picked {
-        apply_pick(app, &list[i]);
+        apply_pick(vctx, &list[i]);
     }
 }
 
@@ -364,7 +374,8 @@ fn draw_meta(ui: &mut Ui, theme: &Theme, row: &CommandRow, rect: egui::Rect) {
 
 /// 执行选中的命令，并关闭面板。
 ///
-/// 走 [`EditorApp::execute`] 而**不是**直接调动作的具体逻辑：
+/// 走 [`CommandPort::execute`]（trait 路径即 `EditorViewContext` 的
+/// supertrait）而**不是**直接调动作的具体逻辑：
 /// 面板与菜单共用分发器，才能保证「面板里能干的，菜单里也能干」。
 ///
 /// 顺序：先关面板再执行。反过来的话，执行动作若又打开别的浮层
@@ -377,10 +388,10 @@ fn draw_meta(ui: &mut Ui, theme: &Theme, row: &CommandRow, rect: egui::Rect) {
 /// 私有就没法从集成测试驱动——第一版测试因此只能调
 /// `EditorApp::execute`，**整条 `apply_pick` 路径一次都没跑到**，
 /// 却因为别的原因变红，看起来「验过了」。
-pub fn apply_pick(app: &mut EditorApp, row: &CommandRow) {
-    app.command_palette_ui.open();
-    app.dialog.close(Overlay::CommandPalette);
-    app.execute(row.action());
+pub fn apply_pick(vctx: &mut dyn EditorViewContext, row: &CommandRow) {
+    vctx.command_palette_ui_state().open();
+    vctx.dialog_state().close(Overlay::CommandPalette);
+    vctx.execute(row.action());
 }
 
 #[cfg(test)]

@@ -26,7 +26,7 @@
 //! | 能力 trait | 覆盖什么 | 批 1 方法数 |
 //! |---|---|---|
 //! | [`ThemeAccess`] | 主题 + 快捷键注册表 | 3 |
-//! | [`UiStateAccess`] | UI 状态直取（字段级） | 14 |
+//! | [`UiStateAccess`] | UI 状态直取（字段级） | 15 |
 //! | [`DocumentAccess`] | 文档 / 标签 / 只读查询 | 12 |
 //! | [`CommandPort`] | 语义命令（含 `execute`） | 45 |
 //! | [`ServiceQueries`] | 组合根服务查询 | 0（批 2 填充） |
@@ -174,6 +174,14 @@ pub trait UiStateAccess {
 
     /// 命令面板状态。
     fn command_palette_ui_state(&mut self) -> &mut CommandPaletteUiState;
+
+    /// 命令面板的查询词（只读）。
+    ///
+    /// [`Self::command_palette_ui_state`] 是 `&mut self` 方法，**纯读**的
+    /// 过滤路径（命令面板按查询词过滤动作表）拿不到它；本视图的
+    /// `rows()` 不改任何状态，故给一条 `&self` 只读出口——否则为了
+    /// 读一个词就得把整个上下文可变地借走。
+    fn command_palette_query(&self) -> &str;
 
     /// 差异对比浮层状态。
     fn diff_ui_state(&mut self) -> &mut DiffUiState;

@@ -121,6 +121,10 @@ impl UiStateAccess for EditorApp {
         &mut self.command_palette_ui
     }
 
+    fn command_palette_query(&self) -> &str {
+        &self.command_palette_ui.query
+    }
+
     fn diff_ui_state(&mut self) -> &mut DiffUiState {
         &mut self.diff_ui
     }
