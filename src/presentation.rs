@@ -18,6 +18,7 @@ pub use rustmark_ui::presentation::rich;
 pub use rustmark_ui::presentation::shortcuts;
 pub use rustmark_ui::presentation::state;
 pub use rustmark_ui::presentation::theme;
+pub use rustmark_ui::presentation::view_context;
 pub use rustmark_ui::presentation::widgets;
 
 // V11-58：向量图标资源（16×16 规格数据 + Painter 渲染器）抽去独立 crate

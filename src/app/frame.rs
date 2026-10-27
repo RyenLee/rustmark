@@ -129,6 +129,7 @@ mod state;
 mod status_bar;
 mod tabs;
 mod ui;
+mod view_context;
 mod workspace;
 pub(crate) use drag_drop::classify_dropped;
 pub(crate) use scheduler::{Deadline, FramePhase, FrameScheduler};

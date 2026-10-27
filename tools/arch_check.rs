@@ -1349,6 +1349,9 @@ const CONSTRAINTS_DOC: &str = "docs/architecture-constraints.md";
 const CRATE_MAP_HEADING: &str = "### 10.1";
 const CRATE_MAP_NEXT_HEADING: &str = "### 10.2";
 
+/// 视图层根（R-03 B1）。
+const VIEWS_DIR: &str = "src/presentation/views";
+
 /// R-03 B2（2026-10-27，对应问题 B 的短期项）：ui 子模块与 root 显式
 /// re-export、§10.1 crate 地图的机械同步。
 ///
@@ -1440,6 +1443,163 @@ pub fn check_ui_submodule_sync(manifest: &Path) -> Vec<Violation> {
     }
 
     violations
+}
+
+/// 仍允许直取组合根 `crate::app` 的视图文件（R-03 B1 迁移白名单）。
+///
+/// # 这份名单是「只减不增」的进度表
+///
+/// R-03 B1 要把 `src/presentation/views/` 下的视图逐个改成收
+/// `&mut dyn EditorViewContext`（见 `rustmark_ui::presentation::view_context`），
+/// 改完的视图不再认识 `EditorApp`。名单里每划掉一行，就是一次可验证的推进；
+/// 反过来，任何**新增**的 `crate::app` 引用都必须落在这里——否则
+/// [`check_view_decoupling`] 直接报。
+///
+/// 键是 manifest 相对路径（`src/presentation/views/…`）。用全路径而非
+/// 「相对 views 的短名」，是因为违规消息要能直接定位到文件，
+/// 且与 `docs/thresholds.baseline.yaml` 的 `source:` 口径同形。
+///
+/// # 为什么不在本批一次改完
+///
+/// 36 个文件 / 14k 行，其中 [[main_view]] / [[editor_view]] / [[status_bar_view]]
+/// 等聚合视图依赖 `execute(UiAction)`（`UiAction` 属 `rustmark-actions`，
+/// 本 crate 不依赖它，见 trait 文档）与 `services`（组合根装配产物）。
+/// 这些必须有独立批次配上端口扩张，硬塞进同一批只会得到一个
+/// 「trait 上照抄了 EditorApp 全部成员」的假解耦。
+///
+/// # 已完成（2026-10-27 首批）
+///
+/// `about_view` / `stats_view` / `symbol_view` / `shortcut_overview_view`
+/// ——四个浮层面板，正是 `overlays::show` 的四个 `match` 分支。
+pub const PENDING_DECOUPLED_VIEWS: &[&str] = &[
+    "src/presentation/views/command_palette_view.rs",
+    "src/presentation/views/diff_view.rs",
+    "src/presentation/views/editor_view.rs",
+    "src/presentation/views/editor_view/spell.rs",
+    "src/presentation/views/export_view.rs",
+    "src/presentation/views/find_replace_view.rs",
+    "src/presentation/views/main_view.rs",
+    "src/presentation/views/overlays.rs",
+    "src/presentation/views/preview_view.rs",
+    "src/presentation/views/preview_view/image_cache.rs",
+    "src/presentation/views/preview_view/inline/math.rs",
+    "src/presentation/views/preview_view/inline/text_render.rs",
+    "src/presentation/views/quick_open_view.rs",
+    "src/presentation/views/scroll_sync.rs",
+    "src/presentation/views/settings_view.rs",
+    "src/presentation/views/settings_view/about.rs",
+    "src/presentation/views/settings_view/appearance.rs",
+    "src/presentation/views/settings_view/editor_prefs.rs",
+    "src/presentation/views/settings_view/shortcuts.rs",
+    "src/presentation/views/sidebar_view.rs",
+    "src/presentation/views/sidebar_view/files.rs",
+    "src/presentation/views/sidebar_view/lint.rs",
+    "src/presentation/views/sidebar_view/outline.rs",
+    "src/presentation/views/sidebar_view/search.rs",
+    "src/presentation/views/status_bar_view.rs",
+    "src/presentation/views/toolbar_view.rs",
+    "src/presentation/views/toolbar_view/controls.rs",
+    "src/presentation/views/toolbar_view/menu_bar.rs",
+    "src/presentation/views/toolbar_view/tab_strip.rs",
+    "src/presentation/views/welcome_view.rs",
+    "src/presentation/views/welcome_view/actions.rs",
+    "src/presentation/views/welcome_view/hints.rs",
+];
+
+/// 视图解耦进度守卫（R-03 B1）：`views/**` 不得再直取组合根 `crate::app`。
+///
+/// 用真实工程的 [`PENDING_DECOUPLED_VIEWS`] 作白名单。
+pub fn check_view_decoupling(manifest: &Path) -> Vec<Violation> {
+    check_view_decoupling_with(manifest, PENDING_DECOUPLED_VIEWS)
+}
+
+/// 同 [`check_view_decoupling`]，但白名单由调用方给出。
+///
+/// # 为什么要这个「带参版本」
+///
+/// 白名单里是**真实工程的 32 条路径**，而夹具是临时目录（既没有这些文件、
+/// 也不该被真实的迁移进度牵着走）。若守卫硬编码唯一名单，
+/// 夹具一跑就会因为「32 条全部不再引用」刷出 32 条陈旧违规——
+/// 守卫反而没法被测。
+///
+/// 拆成带参版本后，夹具可以用「空名单 / 只含自己那条」精确构造两个方向，
+/// 与 [`check_file`] 收 `registry` 参数是同一思路。
+pub fn check_view_decoupling_with(manifest: &Path, allowlist: &[&str]) -> Vec<Violation> {
+    let views_root = manifest.join(VIEWS_DIR);
+    if !views_root.is_dir() {
+        // 合成夹具可能根本没有视图层——不报（同 §4.5 登记制只挂真实工程）。
+        return Vec::new();
+    }
+
+    let mut files = Vec::new();
+    collect_rs_files(&views_root, &mut files);
+    files.sort();
+
+    let mut violations = Vec::new();
+    let mut actually_coupled: Vec<String> = Vec::new();
+
+    for path in &files {
+        let rel = path
+            .strip_prefix(manifest)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        let Ok(content) = fs::read_to_string(path) else {
+            continue;
+        };
+        let lexed = Lexer::new(&content).run();
+        let Some(line) = first_crate_app_line(&lexed) else {
+            continue;
+        };
+        actually_coupled.push(rel.clone());
+        if !allowlist.contains(&rel.as_str()) {
+            violations.push(Violation {
+                file: rel,
+                line,
+                detail: "R-03 B1：视图不得直取组合根 `crate::app` —— 改为收 \
+                         `&mut dyn EditorViewContext`（`rustmark_ui::presentation::view_context`）。\
+                         确需暂时保留的，登记进 `tools/arch_check.rs` 的 \
+                         `PENDING_DECOUPLED_VIEWS`（只减不增）"
+                    .to_string(),
+            });
+        }
+    }
+
+    // 反向：名单里的条目若已不再引用，说明迁移完成但忘了划掉。
+    // 少了这一条，名单会越攒越长，最后没人知道进度到底在哪。
+    for listed in allowlist {
+        if !actually_coupled.iter().any(|a| a == listed) {
+            violations.push(Violation {
+                file: (*listed).to_string(),
+                line: 1,
+                detail: "R-03 B1：白名单条目已不再引用 `crate::app` —— 迁移已完成，\
+                         请从 `PENDING_DECOUPLED_VIEWS` 删除该条（名单只减不增）"
+                    .to_string(),
+            });
+        }
+    }
+
+    violations
+}
+
+/// 返回首个 `crate::app` 出现的行号（词法级，**注释天然不参与**）。
+///
+/// 用词法器而不是 `str::contains`：视图的文档注释里大量提到
+/// `EditorApp` / `crate::app`（解释「为什么不这么做」），按字面扫描会把
+/// 说明文字当成违规。R-01 的 `check_root_federated_layers` 出于同样理由走 token 流。
+fn first_crate_app_line(lexed: &Lexed) -> Option<usize> {
+    let tokens = &lexed.tokens;
+    for i in 0..tokens.len().saturating_sub(2) {
+        let hit = tokens[i].kind == TokKind::Ident
+            && tokens[i].text == "crate"
+            && tokens[i + 1].kind == TokKind::PathSep
+            && tokens[i + 2].kind == TokKind::Ident
+            && tokens[i + 2].text == "app";
+        if hit {
+            return Some(tokens[i].line);
+        }
+    }
+    None
 }
 
 /// 提取 `pub mod X;` 的 X（跳过行注释与 `pub mod x { … }` 内联块）。
@@ -1758,6 +1918,9 @@ pub fn scan_project(manifest: &Path) -> Vec<Violation> {
 
     // R-03 B2：ui 子模块 ↔ root 逐项 re-export ↔ §10.1 crate 地图三方对账。
     violations.extend(check_ui_submodule_sync(manifest));
+
+    // R-03 B1：视图解耦进度（`views/**` 不得直取组合根 `crate::app`）。
+    violations.extend(check_view_decoupling(manifest));
 
     violations
 }

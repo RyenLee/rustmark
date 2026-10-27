@@ -628,13 +628,13 @@ rustmark（root：组合根 + views + bin）
 
 | crate | 角色 | 实测规模（2026-10-26，`src/` 口径） | 外部依赖面 |
 |---|---|---|---|
-| `rustmark`（root） | 组合根 + 视图层 + 工具 bin | 91 文件 / 21,953 行 | eframe / egui / image / rfd / anyhow / env_logger / log / wgpu(build) + 4 个本地 crate（core / infra / icons / ui） |
+| `rustmark`（root） | 组合根 + 视图层 + 工具 bin | 92 文件 / 22,113 行（2026-10-27 实测） | eframe / egui / image / rfd / anyhow / env_logger / log / wgpu(build) + 4 个本地 crate（core / infra / icons / ui） |
 | `rustmark-core` | 六边形脊柱：domain / application（表现层非视图子模块已于 V11-62 全抽去 `rustmark-ui`，infrastructure 于 V11-64 全抽去 `rustmark-infra`；`presentation` 退化为 doc-only 空壳）；**零 egui 依赖**（V11-63） | **99 文件 / 14,576 行** | **4 个**直接外部依赖（serde / thiserror / log / ahash）+ 2 个本地（actions / shared） |
 | `rustmark-infra` | 基础设施层：外部库适配与 IO（解析 / 高亮 / 文本缓冲 / 对话框 / 远程图片 / 图片解码 / 导出 / 字体装配）。**端口与领域类型仍住 core**（V11-64） | 55 文件 / 11,011 行 | **11 个**直接外部依赖（pulldown-cmark / syntect / image / ropey / rfd / serde / toml / thiserror / ureq / rustls-native-certs / log）+ 1 个本地（core） |
 | `rustmark-actions` | 动作词汇表契约（V11-57） | 4 文件 / 687 行 | **零依赖** |
 | `rustmark-shared` | 共享内核：纯值 / 端口 / 唯一真源（TD-04） | 21 文件 / 3,153 行 | ahash + serde + thiserror（**零本地**） |
 | `rustmark-icons` | 16×16 图标规格 + Painter 渲染器（V11-58） | 1 文件 / 613 行 | egui + rustmark-actions |
-| `rustmark-ui` | 表现层非视图部分：widgets（批次 1）/ state（批次 2）/ shortcuts（批次 3）/ theme（批次 4）/ rich（批次 5，V11-62 收官） | 71 文件 / 17,301 行 | egui + rustmark-core |
+| `rustmark-ui` | 表现层非视图部分：widgets（批次 1）/ state（批次 2）/ shortcuts（批次 3）/ theme（批次 4）/ rich（批次 5，V11-62 收官）/ view_context（R-03 B1：视图窄接口 `EditorViewContext`） | 72 文件 / 17,401 行（2026-10-27 实测） | egui + rustmark-core |
 
 规模口径：`find <源码根> -name '*.rs' -exec cat {} + | wc -l`（**不用 `xargs wc -l`**——超 ~100 文件会分批而 `tail -1` 只抓末批小计），只含 `src/`、
 不含 `tests/`，命令随文可复跑。core 与评审快照（46,375 行 / 238 文件）的差额 =
@@ -723,6 +723,16 @@ V11-62 全落地，阶段 3 的 `rustmark-infra` 行已由 V11-64 提前兑现�
    `rustmark-ui` 行；`check-arch` 的 `check_ui_submodule_sync` 拿三处真源
    （ui 侧 `pub mod` ↔ root 逐项 re-export ↔ 本节 §10.1）对账，缺一即报。
    「views 留 root」的已知约束见上一条硬约束 2（ADR-013 决策 3），不靠人记。
+5. **视图窄接口（R-03 B1，2026-10-27 起）**：`src/presentation/views/**` 下的
+   视图**不得**直取组合根 `crate::app`——一律收 `&mut dyn EditorViewContext`
+   （trait 定义在 `rustmark-ui::presentation::view_context`，实现在 root 的
+   `src/app/frame/view_context.rs`）。`check-arch` 的 `check_view_decoupling`
+   以 `tools/arch_check.rs` 的 `PENDING_DECOUPLED_VIEWS` 为**只减不增**的
+   迁移进度表：名单外的引用即报；名单内已解耦的条目也报（防止名单腐烂）。
+   注意这与 `allowed_for` 的**按层放行**（`Presentation*` 层允许
+   `crate::app::frame` 前缀）不是一回事：后者是层的粗粒度豁免，前者是
+   逐文件的迁移棘轮。全部视图迁完后，`allowed_for` 里的 `crate::app::frame`
+   应随之删除——两处并存是过渡态，不是终局。
 
 ### 10.2 模块归属判据（四问 + 两条强信号）
 

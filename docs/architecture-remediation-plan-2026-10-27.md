@@ -1,6 +1,6 @@
 # rustmark 架构整改细化实施方案
 
-> 文档编号：ADR-REM-2026-10-27　|　作者：架构评审（专家视角）　|　状态：进行中（R-01、R-02、R-03 B2 已落地 2026-10-27；其余批次待排期）
+> 文档编号：ADR-REM-2026-10-27　|　作者：架构评审（专家视角）　|　状态：进行中（R-01、R-02、R-03 B2 已落地；R-03 B1 首批 4 视图已落地——均为 2026-10-27；其余批次待排期）
 > 综合来源：架构评审 `architecture-review-2026-10-23.md`、评估报告 `rustmark-evaluation-2026-10-25.md`、合规差额报告、多轮 refactor 波次（V11-56~67）、「去双源」批次（2026-10-26）、专家架构评审（2026-10-27）。
 > 本文件是上述所有讨论的**可执行汇总**。任何一条改造项落地后，请在 `docs/PROGRESS.md` / `docs/v1.1-backlog.md` §3 回填实测数字，并同步本文件的「状态」列。
 
@@ -106,7 +106,21 @@
 - **优先级**：P1（root 臃肿直接原因、视图不可独立测；短期 B2 成本低先做）
 - **预期产出**：B2=显式 re-export + 守卫；B1=视图窄接口 + views 迁 ui + root 瘦身。
 - **验收点**：B2——re-export 显式、守卫绿；B1——`src/presentation/views` 清空或仅留装配、`crate::app` 在视图 0 处、root 行数下降、视图可独立单测。
-- **状态**：**B2 ✅ 已落地（2026-10-27）**——`src/presentation.rs:11` 的整组 `pub use rustmark_ui::presentation::{rich, shortcuts, state, theme, widgets};` 改为 5 行**逐项显式**；`tools/arch_check.rs` 新增 `pub fn check_ui_submodule_sync(manifest)` 并接入 `scan_project`：以 ui 侧 `pub mod X;` 为真源，对账 root 逐项 re-export 与 constraints §10.1，出现整组 `::{…}` 即报（与 `mod.rs` 同型：整组会让新子模块被静默带入，编译测试全绿而清单失配）；fixture `ui_submodule_must_be_synced_to_root_and_crate_map` 覆盖三场景（缺 root / 缺 §10.1 / 整组形式）+ 变异验证（关掉逐项断言 → 红）；constraints §10.1 补硬约束 4 并引用既有「views 留 root」条款。门禁全绿（fmt / check-arch / thresholds 121 / clippy `-D warnings` / `test --all-targets` 2242 passed / `test --doc` 1 / `size_gate` 10,548,736 B 逐字节不变——纯 re-export + 构建期守卫，不进 release 产物）。**B1 未开工**（43 视图解耦 `EditorApp`，属阶段 3，需先做窄接口设计评审）。
+- **状态**：**B2 ✅ 已落地（2026-10-27）**——`src/presentation.rs:11` 的整组 `pub use rustmark_ui::presentation::{rich, shortcuts, state, theme, widgets};` 改为 5 行**逐项显式**；`tools/arch_check.rs` 新增 `pub fn check_ui_submodule_sync(manifest)` 并接入 `scan_project`：以 ui 侧 `pub mod X;` 为真源，对账 root 逐项 re-export 与 constraints §10.1，出现整组 `::{…}` 即报（与 `mod.rs` 同型：整组会让新子模块被静默带入，编译测试全绿而清单失配）；fixture `ui_submodule_must_be_synced_to_root_and_crate_map` 覆盖三场景（缺 root / 缺 §10.1 / 整组形式）+ 变异验证（关掉逐项断言 → 红）；constraints §10.1 补硬约束 4 并引用既有「views 留 root」条款。门禁全绿（fmt / check-arch / thresholds 121 / clippy `-D warnings` / `test --all-targets` 2242 passed / `test --doc` 1 / `size_gate` 10,548,736 B 逐字节不变——纯 re-export + 构建期守卫，不进 release 产物）。**B1 首批 ✅ 已落地（2026-10-27）**——详见下方「B1 进展」。**B1 未收官**（余 32 个视图，需按端口扩张分批推进）。
+
+#### R-03 B1 进展（2026-10-27 首批）
+
+- **实测口径更正**：方案原写「43 个视图」，实测 **36 个文件**引用 `crate::app`（`views/` 共 55 个 `.rs` / 14,138 行，其余不碰组合根）。以实测替代沿用。
+- **接口形态**：`rustmark-ui::presentation::view_context::EditorViewContext`（trait）。
+  - **不是**「一堆字段引用的结构体」：视图既要读写状态又要调命令，而命令实现在 `EditorApp` 上，调用点会同时需要 `&mut self.field` 与 `&mut self`——借用检查器直接拒绝。trait 只给**一个** `&mut`，状态访问与命令都是它的方法。
+  - **放 ui 而非 root**：视图最终迁入 ui，trait 若留 root 则搬迁时反向依赖成环；放 ui 后**视图签名零改动**即可搬迁。
+  - **端口不收 `UiAction`**：`UiAction` 属 `rustmark-actions`，ui 当前只依赖 egui + core（`workspace_topology_test` 断言）。塞进来要新增一条 crate 边，为一批视图付全局依赖账——`execute` 类聚合视图留待后续批次。
+  - **访问器统一 `_state` 后缀**：与 `EditorApp` 同名 inherent 方法永不撞名。撞名时 `fn theme(&self) { self.theme() }` 会按「inherent 优先」解析，今天恰好正确、明天 inherent 一删就静默递归。实现侧对 8 个同名命令一律写 `EditorApp::x(self, …)` 全路径，把这个隐患在结构上掐掉。
+- **首批迁移（4 个文件 / 812 行）**：`about_view` / `stats_view` / `symbol_view` / `shortcut_overview_view`——正是 `overlays::show` 的四个 `match` 分支，内聚且可独立验收。`EditorApp` 实现该 trait，故 `&mut EditorApp` 在调用点自动强转 `&mut dyn EditorViewContext`，**已迁移与未迁移视图共存于同一次渲染**（`overlays.rs` 即混合态），这是渐进迁移的关键机制。
+- **守卫 `check_view_decoupling`**：白名单 `PENDING_DECOUPLED_VIEWS`（32 条）**双向**校验——名单外的 `crate::app` 引用报违规；名单内已解耦的条目也报（防名单腐烂）。词法级判定（`first_crate_app_line`），注释里提到旧路径不误伤。已接入 `scan_project`，故 `check-arch` bin 与 `build.rs` 构建期同时生效。
+- **变异验证**：① 废掉 `first_crate_app_line` → 构建期 panic，列出 32 条陈旧；② 关掉反向陈旧检查 → fixture 红（「名单陈旧应报 1 条，实际：[]」）。
+- **门禁**：fmt / check-arch / thresholds 121 / clippy `-D warnings` / `test --all-targets` **2243** passed（+1 新用例）/ `test --doc` 1 / `size_gate` 见 §metrics。
+- **下一步**：按「无 `execute` 的独立视图树」继续推进（`settings_view` 树 / `diff_view` / `find_replace_view` / `export_view` / `welcome_view` 树），再攻 `execute` 类聚合视图（需先决定 `ui → actions` 是否成边，或改由 root 侧保留 `execute` 分支）。
 
 ### R-04 · 抽离 `rustmark-render`（富内容渲染引擎）　【P2，对应问题 F】
 

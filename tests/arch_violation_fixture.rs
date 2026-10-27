@@ -431,6 +431,97 @@ fn ui_submodule_must_be_synced_to_root_and_crate_map() {
     );
 }
 
+/// R-03 B1：视图不得直取组合根 `crate::app`；迁移白名单**只减不增**。
+///
+/// # 为什么两个方向都要钉
+///
+/// 只钉「新引用要报」的话，白名单会变成**只进不出**的列表：每迁完一个
+/// 视图忘了划掉那一行，也没有任何东西会提醒——半年后没人知道 B1
+/// 到底走到哪一步。反向那条（「名单里的文件已不再引用」必须报）
+/// 才让这张表成为可读的进度。
+///
+/// # 为什么另钉一条注释豁免
+///
+/// 视图的模块文档大量讨论「为什么不再用 `EditorApp`」「旧的
+/// `crate::app::frame` 长什么样」。若按字面 `contains` 扫描，
+/// **解释性文字会被当成违规**，逼得人不敢写文档。守卫走词法器
+/// （[`arch_check::first_crate_app_line`]）而非字符串匹配，
+/// 注释天然不参与——这条用例就是它的护栏。
+#[test]
+fn view_files_must_not_reach_the_composition_root() {
+    let dir = tempfile::tempdir().unwrap();
+    let manifest = dir.path();
+    let view = "src/presentation/views/stats_view.rs";
+
+    // —— ① 注入必报：空名单 + 直取 `crate::app` ——
+    write_fixture(
+        manifest,
+        view,
+        "//! x\nuse crate::app::frame::EditorApp;\npub fn show(_: &mut EditorApp) {}\n",
+    );
+    let violations = arch_check::check_view_decoupling_with(manifest, &[]);
+    assert_eq!(
+        violations.len(),
+        1,
+        "未登记的 `crate::app` 应报 1 条，实际：{:?}",
+        described(&violations)
+    );
+    assert_eq!(
+        violations[0].file, view,
+        "违规应定位到该视图文件：{:?}",
+        violations[0]
+    );
+    assert_eq!(
+        violations[0].line, 2,
+        "行号应指到 `use` 那一行，实际：{:?}",
+        violations[0]
+    );
+    assert!(
+        violations[0].detail.contains("EditorViewContext"),
+        "提示应给出正确改法（收 &mut dyn EditorViewContext）：{:?}",
+        violations[0].detail
+    );
+
+    // —— ② 注入不报：只有注释提到 `crate::app` ——
+    write_fixture(
+        manifest,
+        view,
+        "//! 本视图不再 use crate::app::frame::EditorApp。\n\
+         //! 历史路径 crate::app::frame 已由窄接口替代。\n\
+         pub fn show() {}\n",
+    );
+    let violations = arch_check::check_view_decoupling_with(manifest, &[]);
+    assert!(
+        violations.is_empty(),
+        "注释里的路径不该被判违规，实际：{:?}",
+        described(&violations)
+    );
+
+    // —— ③ 白名单放行 ——
+    write_fixture(manifest, view, "//! x\nuse crate::app::frame::EditorApp;\n");
+    let violations = arch_check::check_view_decoupling_with(manifest, &[view]);
+    assert!(
+        violations.is_empty(),
+        "已登记的文件应放行，实际：{:?}",
+        described(&violations)
+    );
+
+    // —— ④ 反向必报：名单陈旧（已解耦但没划掉） ——
+    write_fixture(manifest, view, "//! x\npub fn show() {}\n");
+    let violations = arch_check::check_view_decoupling_with(manifest, &[view]);
+    assert_eq!(
+        violations.len(),
+        1,
+        "名单陈旧应报 1 条，实际：{:?}",
+        described(&violations)
+    );
+    assert!(
+        violations[0].detail.contains("只减不增"),
+        "提示应说明名单只减不增：{:?}",
+        violations[0].detail
+    );
+}
+
 /// 表现层的「更窄豁免前缀」**不**适用于 `tests/` 侧。
 ///
 /// # 为什么单独一条

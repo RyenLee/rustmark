@@ -19,10 +19,10 @@
 
 use egui::{Context, Layout, RichText, ScrollArea, Ui};
 
-use crate::app::frame::EditorApp;
 use crate::presentation::state::dialog_ui_state::Overlay;
 use crate::presentation::state::symbol_ui_state::{SymbolGroup, SymbolItem};
 use crate::presentation::theme::builtin::Theme;
+use crate::presentation::view_context::EditorViewContext;
 
 /// 对话框默认尺寸（对齐原型 `BaseModal :width="520" :height="430"`）。
 const WIDTH: f32 = 520.0;
@@ -35,7 +35,7 @@ const CELL: f32 = 34.0;
 pub const SYMBOL_INPUT_ID: &str = "rustmark.symbol.search";
 
 /// 绘制符号面板。
-pub fn show(app: &mut EditorApp, ctx: &Context) {
+pub fn show(vctx: &mut dyn EditorViewContext, ctx: &Context) {
     let mut open = true;
     egui::Window::new(Overlay::Symbol.title())
         .id(egui::Id::unique("rustmark.overlay.symbol"))
@@ -44,24 +44,24 @@ pub fn show(app: &mut EditorApp, ctx: &Context) {
         .resizable(true)
         .default_width(WIDTH)
         .default_height(HEIGHT)
-        .show(ctx, |ui| body(app, ui));
+        .show(ctx, |ui| body(vctx, ui));
     // 打开即聚焦筛选框，且**只给一次**（边沿触发）。
     // 「当前没焦点就请求」的写法恒为真（`Memory::has_focus` 认不到窗口 id），
     // 会每帧抢焦点、让用户没法把焦点移到面板里的别处。
     // 详见 `DialogUiState::take_open_focus`。
-    if app.dialog.take_open_focus(Overlay::Symbol) {
+    if vctx.dialog_state().take_open_focus(Overlay::Symbol) {
         ctx.memory_mut(|m| m.request_focus(egui::Id::unique(SYMBOL_INPUT_ID)));
     }
     if !open {
-        app.symbol_ui.open();
-        app.dialog.close(Overlay::Symbol);
+        vctx.symbol_ui_state().open();
+        vctx.dialog_state().close(Overlay::Symbol);
     }
-    handle_keys(app, ctx);
+    handle_keys(vctx, ctx);
 }
 
 /// 处理面板内的 ↑↓ / Enter / Esc。
-fn handle_keys(app: &mut EditorApp, ctx: &Context) {
-    if !app.dialog.is_open(Overlay::Symbol) {
+fn handle_keys(vctx: &mut dyn EditorViewContext, ctx: &Context) {
+    if !vctx.dialog_state().is_open(Overlay::Symbol) {
         return;
     }
     let events = ctx.input(|i| i.events.clone());
@@ -76,66 +76,70 @@ fn handle_keys(app: &mut EditorApp, ctx: &Context) {
         }
         match key {
             egui::Key::ArrowDown | egui::Key::ArrowRight => {
-                let total = app.symbol_ui.visible().len();
-                app.symbol_ui.move_selection(1, total);
+                let total = vctx.symbol_ui_state().visible().len();
+                vctx.symbol_ui_state().move_selection(1, total);
             }
             egui::Key::ArrowUp | egui::Key::ArrowLeft => {
-                let total = app.symbol_ui.visible().len();
-                app.symbol_ui.move_selection(-1, total);
+                let total = vctx.symbol_ui_state().visible().len();
+                vctx.symbol_ui_state().move_selection(-1, total);
             }
             egui::Key::Enter => {
-                chosen = app.symbol_ui.visible().get(app.symbol_ui.selected).copied();
+                // 分两行取值：`vctx.symbol_ui_state()` 是可变的独占借用，
+                // 写在同一个表达式里两次会让借用检查器无法收窄第一个借用。
+                let visible = vctx.symbol_ui_state().visible();
+                let selected = vctx.symbol_ui_state().selected;
+                chosen = visible.get(selected).copied();
             }
             egui::Key::Escape => closed = true,
             _ => {}
         }
     }
     if closed {
-        app.symbol_ui.open();
-        app.dialog.close(Overlay::Symbol);
+        vctx.symbol_ui_state().open();
+        vctx.dialog_state().close(Overlay::Symbol);
         return;
     }
     if let Some(item) = chosen {
-        apply_insert(app, item);
+        apply_insert(vctx, item);
     }
 }
 
 /// 主体。
-fn body(app: &mut EditorApp, ui: &mut Ui) {
-    let theme = app.theme().clone();
-    tabs(app, ui, &theme);
+fn body(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
+    let theme = vctx.theme_state().clone();
+    tabs(vctx, ui, &theme);
     ui.add_space(theme.metrics.space_xs);
-    search_box(app, ui);
-    let visible = app.symbol_ui.visible();
-    app.symbol_ui.clamp(visible.len());
+    search_box(vctx, ui);
+    let visible = vctx.symbol_ui_state().visible();
+    vctx.symbol_ui_state().clamp(visible.len());
     ui.add_space(theme.metrics.space_sm);
-    grid(app, ui, &theme, &visible);
+    grid(vctx, ui, &theme, &visible);
     ui.separator();
-    footer(app, ui, &theme, &visible);
+    footer(vctx, ui, &theme, &visible);
 }
 
 /// 分组标签。
-fn tabs(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
+fn tabs(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
     ui.horizontal_wrapped(|ui| {
         for group in SymbolGroup::ALL {
-            let selected = app.symbol_ui.group == *group;
+            let selected = vctx.symbol_ui_state().group == *group;
             let text = if selected {
                 RichText::new(group.label()).color(theme.accent)
             } else {
                 RichText::new(group.label())
             };
             if ui.selectable_label(selected, text).clicked() {
-                app.symbol_ui.set_group(*group);
+                vctx.symbol_ui_state().set_group(*group);
             }
         }
     });
 }
 
 /// 搜索框。
-fn search_box(app: &mut EditorApp, ui: &mut Ui) {
+fn search_box(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
     ui.horizontal(|ui| {
         ui.label(RichText::new("搜索").size(12.0));
-        let mut query = app.symbol_ui.query.clone();
+        let mut query = vctx.symbol_ui_state().query.clone();
         if ui
             .add(
                 egui::TextEdit::singleline(&mut query)
@@ -145,13 +149,13 @@ fn search_box(app: &mut EditorApp, ui: &mut Ui) {
             )
             .changed()
         {
-            app.symbol_ui.set_query(&query);
+            vctx.symbol_ui_state().set_query(&query);
         }
     });
 }
 
 /// 符号网格。
-fn grid(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, visible: &[SymbolItem]) {
+fn grid(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme, visible: &[SymbolItem]) {
     if visible.is_empty() {
         ui.add_space(theme.metrics.space_xl);
         ui.centered_and_justified(|ui| {
@@ -159,7 +163,7 @@ fn grid(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, visible: &[SymbolItem])
         });
         return;
     }
-    let selected = app.symbol_ui.selected;
+    let selected = vctx.symbol_ui_state().selected;
     let mut picked: Option<usize> = None;
     ScrollArea::vertical()
         .id_salt("rustmark.symbol.grid")
@@ -181,7 +185,7 @@ fn grid(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, visible: &[SymbolItem])
                 });
         });
     if let Some(item) = picked.and_then(|i| visible.get(i)) {
-        apply_insert(app, *item);
+        apply_insert(vctx, *item);
     }
 }
 
@@ -231,9 +235,9 @@ fn cell(ui: &mut Ui, theme: &Theme, item: &SymbolItem, selected: bool) -> bool {
 }
 
 /// 页脚：预览与关闭。
-fn footer(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, visible: &[SymbolItem]) {
+fn footer(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme, visible: &[SymbolItem]) {
     ui.horizontal(|ui| {
-        let selected = app.symbol_ui.selected;
+        let selected = vctx.symbol_ui_state().selected;
         match visible.get(selected) {
             // 预览**原始文本**（含换行转义）：预览成渲染后的一行
             // 会让用户看不出插入的是三行代码块。
@@ -245,8 +249,8 @@ fn footer(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, visible: &[SymbolItem
         };
         ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
             if ui.button("关闭").clicked() {
-                app.symbol_ui.open();
-                app.dialog.close(Overlay::Symbol);
+                vctx.symbol_ui_state().open();
+                vctx.dialog_state().close(Overlay::Symbol);
             }
         });
     });
@@ -257,12 +261,12 @@ fn footer(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, visible: &[SymbolItem
 /// 关闭面板而非保持打开：连续插入多个符号的场景很罕见，
 /// 而保持打开会让用户「以为插入没生效」（浮层还盖着编辑区）。
 /// 需要多个时重新按 `Ctrl+Shift+E` 即可。
-fn apply_insert(app: &mut EditorApp, item: SymbolItem) {
+fn apply_insert(vctx: &mut dyn EditorViewContext, item: SymbolItem) {
     // 插入失败**不关**面板：内容没进去就消失界面，
     // 用户会以为是程序崩溃了。错误已由 `insert_at_cursor` 报到状态栏。
-    if app.insert_at_cursor(item.text).is_ok() {
-        app.symbol_ui.open();
-        app.dialog.close(Overlay::Symbol);
+    if vctx.insert_at_cursor(item.text).is_ok() {
+        vctx.symbol_ui_state().open();
+        vctx.dialog_state().close(Overlay::Symbol);
     }
 }
 

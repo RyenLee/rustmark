@@ -18,9 +18,9 @@
 
 use egui::{Align, Context, Layout, RichText, Ui};
 
-use crate::app::frame::EditorApp;
 use crate::presentation::state::dialog_ui_state::Overlay;
 use crate::presentation::theme::builtin::Theme;
+use crate::presentation::view_context::EditorViewContext;
 use rustmark_core::application::dto::StatsView;
 use rustmark_core::shared::text::thousands;
 
@@ -46,7 +46,7 @@ fn row(ui: &mut Ui, theme: &Theme, label: &str, value: &str, hint: Option<&str>)
 }
 
 /// 绘制文档统计浮层。
-pub fn show(app: &mut EditorApp, ctx: &Context) {
+pub fn show(vctx: &mut dyn EditorViewContext, ctx: &Context) {
     let mut open = true;
     egui::Window::new(Overlay::Stats.title())
         .id(egui::Id::unique("rustmark.overlay.stats"))
@@ -55,20 +55,20 @@ pub fn show(app: &mut EditorApp, ctx: &Context) {
         .resizable(true)
         .default_width(WIDTH)
         .default_height(HEIGHT)
-        .show(ctx, |ui| body(app, ui));
+        .show(ctx, |ui| body(vctx, ui));
     if !open {
         // 统计是**只读**的，关掉不需要任何回滚——但仍要把它从
         // 对话框状态里摘掉，否则状态栏再点一次「字数」打不开。
-        app.dialog.close(Overlay::Stats);
+        vctx.dialog_state().close(Overlay::Stats);
     }
 }
 
 /// 主体。
-fn body(app: &mut EditorApp, ui: &mut Ui) {
-    let theme = app.theme().clone();
+fn body(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
+    let theme = vctx.theme_state().clone();
     // 没有活动文档时**明说**而不是显示一堆 0：0 字的文件与
     // 「根本没打开文档」在界面上必须可区分。
-    let Some(stats) = app.current_stats() else {
+    let Some(stats) = vctx.current_stats() else {
         ui.add_space(theme.metrics.space_xl);
         ui.centered_and_justified(|ui| {
             ui.colored_label(theme.text_secondary, "尚未打开任何文档，无可统计内容。");

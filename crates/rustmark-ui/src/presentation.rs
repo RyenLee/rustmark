@@ -13,4 +13,5 @@ pub mod rich;
 pub mod shortcuts;
 pub mod state;
 pub mod theme;
+pub mod view_context;
 pub mod widgets;

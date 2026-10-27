@@ -15,13 +15,13 @@
 
 use egui::{Align, Context, Layout, RichText, ScrollArea, Ui};
 
-use crate::app::frame::EditorApp;
 use crate::presentation::shortcuts::registry::{MenuGroup, UiAction};
 use crate::presentation::state::dialog_ui_state::Overlay;
 use crate::presentation::state::shortcut_overview_ui_state::{
     ShortcutOverviewUiState, ShortcutSection,
 };
 use crate::presentation::theme::builtin::Theme;
+use crate::presentation::view_context::EditorViewContext;
 
 /// 对话框默认尺寸（对齐原型 `BaseModal :width="440" :height="520"`）。
 const WIDTH: f32 = 460.0;
@@ -31,7 +31,7 @@ const HEIGHT: f32 = 520.0;
 pub const FILTER_INPUT_ID: &str = "rustmark.shortcut_overview.filter";
 
 /// 绘制快捷键一览浮层。
-pub fn show(app: &mut EditorApp, ctx: &Context) {
+pub fn show(vctx: &mut dyn EditorViewContext, ctx: &Context) {
     let mut open = true;
     egui::Window::new(Overlay::ShortcutOverview.title())
         .id(egui::Id::unique("rustmark.overlay.shortcut_overview"))
@@ -40,37 +40,40 @@ pub fn show(app: &mut EditorApp, ctx: &Context) {
         .resizable(true)
         .default_width(WIDTH)
         .default_height(HEIGHT)
-        .show(ctx, |ui| body(app, ui));
+        .show(ctx, |ui| body(vctx, ui));
     // 焦点只在「浮层刚打开」时给一次，否则会让用户无法把焦点移到过滤框
     // 之外（表现为「点哪儿都不上焦点」）。
     //
     // 判据必须是**打开事件**（`take_open_focus` 的边沿），而不是
     // 「过滤框当前没有焦点」——后者恒为真：`Memory::has_focus` 认不到
     // 窗口（`Area`）的 id。详见 `DialogUiState::take_open_focus` 的文档。
-    if app.dialog.take_open_focus(Overlay::ShortcutOverview) {
+    if vctx
+        .dialog_state()
+        .take_open_focus(Overlay::ShortcutOverview)
+    {
         ctx.memory_mut(|m| m.request_focus(egui::Id::unique(FILTER_INPUT_ID)));
     }
     if !open {
-        app.dialog.close(Overlay::ShortcutOverview);
+        vctx.dialog_state().close(Overlay::ShortcutOverview);
     }
 }
 
 /// 主体。
-fn body(app: &mut EditorApp, ui: &mut Ui) {
-    let theme = app.theme().clone();
-    filter_row(app, ui);
+fn body(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
+    let theme = vctx.theme_state().clone();
+    filter_row(vctx, ui);
     ui.add_space(theme.metrics.space_sm);
-    let sections = collect(app);
+    let sections = collect(&*vctx);
     list(ui, &theme, &sections);
     ui.separator();
-    footer(app, ui, &theme, &sections);
+    footer(vctx, ui, &theme, &sections);
 }
 
 /// 过滤框。
-fn filter_row(app: &mut EditorApp, ui: &mut Ui) {
+fn filter_row(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
     ui.horizontal(|ui| {
         ui.label(RichText::new("筛选").size(12.0));
-        let mut query = app.shortcut_overview_ui.query.clone();
+        let mut query = vctx.shortcut_overview_ui_state().query.clone();
         if ui
             .add(
                 egui::TextEdit::singleline(&mut query)
@@ -80,21 +83,21 @@ fn filter_row(app: &mut EditorApp, ui: &mut Ui) {
             )
             .changed()
         {
-            app.set_shortcut_overview_query(query);
+            vctx.set_shortcut_overview_query(query);
         }
     });
 }
 
 /// 从**生效**注册表收集分组。
-pub fn collect(app: &EditorApp) -> Vec<ShortcutSection> {
-    let table = app.dispatcher().registry().table();
+pub fn collect(vctx: &dyn EditorViewContext) -> Vec<ShortcutSection> {
+    let table = vctx.dispatcher_state().registry().table();
     let groups: Vec<(MenuGroup, Vec<_>)> = MenuGroup::ALL
         .iter()
         .map(|group| (*group, table.group(*group)))
         .collect();
     crate::presentation::state::shortcut_overview_ui_state::sections(
         groups,
-        app.shortcut_overview_ui.query(),
+        vctx.shortcut_overview_ui_state().query(),
     )
 }
 
@@ -147,7 +150,12 @@ fn kbd(ui: &mut Ui, theme: &Theme, text: &str) {
 }
 
 /// 页脚：统计与关闭。
-fn footer(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, sections: &[ShortcutSection]) {
+fn footer(
+    vctx: &mut dyn EditorViewContext,
+    ui: &mut Ui,
+    theme: &Theme,
+    sections: &[ShortcutSection],
+) {
     let shown: usize = sections.iter().map(|s| s.rows.len()).sum();
     ui.horizontal(|ui| {
         ui.colored_label(
@@ -156,7 +164,7 @@ fn footer(app: &mut EditorApp, ui: &mut Ui, theme: &Theme, sections: &[ShortcutS
         );
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if ui.button("关闭").clicked() {
-                app.dialog.close(Overlay::ShortcutOverview);
+                vctx.dialog_state().close(Overlay::ShortcutOverview);
             }
         });
     });
