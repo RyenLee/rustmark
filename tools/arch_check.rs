@@ -1478,6 +1478,7 @@ pub fn check_ui_submodule_sync(manifest: &Path) -> Vec<Violation> {
 /// `export_view` / `quick_open_view`（4 个文件）已迁。
 /// **批 1 · 步 1.4（2026-10-27）**：`command_palette_view`（1 个文件）已迁。
 /// **批 1 · 步 1.5（2026-10-27）**：`overlays`（1 个文件，10 个分支全通）已迁。
+/// **批 1 · 步 1.6（2026-10-27）**：`toolbar_view` 树（4 个文件）已迁。
 pub const PENDING_DECOUPLED_VIEWS: &[&str] = &[
     "src/presentation/views/editor_view.rs",
     "src/presentation/views/editor_view/spell.rs",
@@ -1493,10 +1494,6 @@ pub const PENDING_DECOUPLED_VIEWS: &[&str] = &[
     "src/presentation/views/sidebar_view/outline.rs",
     "src/presentation/views/sidebar_view/search.rs",
     "src/presentation/views/status_bar_view.rs",
-    "src/presentation/views/toolbar_view.rs",
-    "src/presentation/views/toolbar_view/controls.rs",
-    "src/presentation/views/toolbar_view/menu_bar.rs",
-    "src/presentation/views/toolbar_view/tab_strip.rs",
 ];
 
 /// 视图解耦进度守卫（R-03 B1）：`views/**` 不得再直取组合根 `crate::app`。

@@ -2,10 +2,10 @@
 
 use egui::{Align, CornerRadius, Layout, RichText, Ui};
 
-use crate::app::frame::EditorApp;
 use crate::presentation::icons;
 use crate::presentation::shortcuts::registry::UiAction;
 use crate::presentation::theme::builtin::{Metrics, Theme};
+use crate::presentation::view_context::EditorViewContext;
 
 use super::menu_bar::{menu_item, menu_row_width};
 
@@ -182,9 +182,9 @@ fn group_divider(ui: &mut Ui, theme: &Theme, h: f32) {
 ///
 /// 工具栏位于**编辑区顶部**（上下布局：工具栏在上、文本在下），作用域与编辑区
 /// 内容一致，见 `editor_view::show`。
-pub fn draw_editor_toolbar(app: &mut EditorApp, ui: &mut Ui) {
-    // 主题先取出来（`app` 在闭包里还要可变借用，不能同时持有 `&Theme`）。
-    let theme = app.theme().clone();
+pub fn draw_editor_toolbar(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
+    // 主题先取出来（`vctx` 在闭包里还要可变借用，不能同时持有 `&Theme`）。
+    let theme = vctx.theme_state().clone();
     let h = control_height(&theme.metrics);
     let mut pending: Option<UiAction> = None;
 
@@ -210,7 +210,7 @@ pub fn draw_editor_toolbar(app: &mut EditorApp, ui: &mut Ui) {
                     let hit = if title == FLAT_GROUP {
                         draw_flat_actions(ui, &theme, &actions, h)
                     } else {
-                        draw_group_dropdown(app, ui, &theme, title, &actions, h)
+                        draw_group_dropdown(vctx, ui, &theme, title, &actions, h)
                     };
                     pending = pending.or(hit);
                 }
@@ -220,7 +220,7 @@ pub fn draw_editor_toolbar(app: &mut EditorApp, ui: &mut Ui) {
     // 统一在此执行：菜单项与工具栏、快捷键、命令面板走**同一条**路径，
     // 这正是「三入口一致」得以成立的地方。
     if let Some(action) = pending {
-        app.execute(action);
+        vctx.execute(action);
     }
 }
 
@@ -269,7 +269,7 @@ fn icon_button(ui: &mut Ui, theme: &Theme, action: UiAction, h: f32) -> egui::Re
 ///
 /// 按钮上**只有图形**（见 [`icon_button`]），完整说法由**悬停提示**补足：
 /// 可发现性靠悬停保证，不靠把按钮撑宽。返回被点击的动作（没有则为 `None`），
-/// 由调用方统一走 `app.execute`。
+/// 由调用方统一走 `vctx.execute`。
 fn draw_flat_actions(ui: &mut Ui, theme: &Theme, actions: &[UiAction], h: f32) -> Option<UiAction> {
     let mut hit = None;
     for (i, action) in actions.iter().enumerate() {
@@ -302,7 +302,7 @@ fn draw_flat_actions(ui: &mut Ui, theme: &Theme, actions: &[UiAction], h: f32) -
 /// `visuals.widgets.{inactive,hovered,active}`——主题映射已把三者统一
 /// （见本文件头「视觉规范」一节），因此不是把颜色抄两遍。
 fn draw_group_dropdown(
-    app: &mut EditorApp,
+    vctx: &mut dyn EditorViewContext,
     ui: &mut Ui,
     theme: &Theme,
     title: &str,
@@ -324,9 +324,10 @@ fn draw_group_dropdown(
     // `egui::menu`（根模块）是**已废弃**的旧菜单 API；新 API 在 `containers::menu`。
     egui::containers::menu::MenuButton::from_button(button).ui(ui, |ui: &mut Ui| {
         // 先量、后画：见 `menu_row_width` 的注释（弹出层宽度 ≠ 内容宽度）。
-        let row_w = menu_row_width(ui, app, actions);
+        // `&*vctx` 是不可变重借用——菜单项只读主题与注册表。
+        let row_w = menu_row_width(ui, &*vctx, actions);
         for action in actions {
-            if menu_item(ui, app, *action, row_w).clicked() {
+            if menu_item(ui, &*vctx, *action, row_w).clicked() {
                 clicked = Some(*action);
             }
         }

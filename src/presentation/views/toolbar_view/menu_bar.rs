@@ -2,8 +2,8 @@
 
 use egui::{Align, Layout, Ui};
 
-use crate::app::frame::EditorApp;
 use crate::presentation::shortcuts::registry::{MenuGroup, UiAction};
+use crate::presentation::view_context::EditorViewContext;
 
 /// 菜单项文案与其右侧快捷键之间的**最小**空隙（点）。
 ///
@@ -33,8 +33,8 @@ const MENU_ROW_H: f32 = 20.0;
 /// 且顶栏与编辑区工具栏两处都如此）。先把行的可用高度给足（垂直预算本就
 /// 规定菜单栏占 `Metrics::topbar_height`），所有按钮在同一高度内居中，
 /// 自然等高同排。
-pub(super) fn draw_app_menu_bar(app: &mut EditorApp, ui: &mut Ui) {
-    let m = app.theme().metrics;
+pub(super) fn draw_app_menu_bar(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
+    let m = vctx.theme_state().metrics;
     let mut pending: Option<UiAction> = None;
     ui.allocate_ui(egui::vec2(ui.available_width(), m.topbar_height), |ui| {
         ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
@@ -48,14 +48,16 @@ pub(super) fn draw_app_menu_bar(app: &mut EditorApp, ui: &mut Ui) {
                     .filter(|action| action.group() == *group)
                     .collect();
                 // 先量、后画：见 `menu_row_width` 的注释（弹出层宽度 ≠ 内容宽度）。
-                let row_w = menu_row_width(ui, app, &actions);
+                // `&*vctx` 是不可变重借用——`menu_row_width` 只读主题与注册表，
+                // 而外层稍后还要可变地借 `vctx` 去 `execute`。
+                let row_w = menu_row_width(ui, &*vctx, &actions);
 
                 let mut clicked = None;
                 egui::ComboBox::from_id_salt(("menu", group))
                     .selected_text(group.label())
                     .show_ui(ui, |ui| {
                         for action in &actions {
-                            if menu_item(ui, app, *action, row_w).clicked() {
+                            if menu_item(ui, &*vctx, *action, row_w).clicked() {
                                 clicked = Some(*action);
                             }
                         }
@@ -67,7 +69,7 @@ pub(super) fn draw_app_menu_bar(app: &mut EditorApp, ui: &mut Ui) {
     // 统一在此执行：菜单项与工具栏、快捷键、命令面板走**同一条**路径，
     // 这正是「三入口一致」得以成立的地方。
     if let Some(action) = pending {
-        app.execute(action);
+        vctx.execute(action);
     }
 }
 
@@ -98,9 +100,9 @@ pub(super) fn draw_app_menu_bar(app: &mut EditorApp, ui: &mut Ui) {
 ///
 /// `pub` 是为了让几何用例能直接调用它，断言「算出来的行宽确实容得下
 /// 该组最宽的一项」（见 `tests/presentation/top_menu_test.rs`）。
-pub fn menu_row_width(ui: &Ui, app: &EditorApp, actions: &[UiAction]) -> f32 {
-    let font = egui::FontId::proportional(app.theme().metrics.ui_font_size);
-    let registry = app.dispatcher().registry();
+pub fn menu_row_width(ui: &Ui, vctx: &dyn EditorViewContext, actions: &[UiAction]) -> f32 {
+    let font = egui::FontId::proportional(vctx.theme_state().metrics.ui_font_size);
+    let registry = vctx.dispatcher_state().registry();
     // 亮色/暗色都无所谓：这里只用 `Galley` 的尺寸，颜色不参与度量。
     let probe_color = egui::Color32::WHITE;
     let widest = ui.fonts_mut(|fonts| {
@@ -142,11 +144,11 @@ pub fn menu_row_width(ui: &Ui, app: &EditorApp, actions: &[UiAction]) -> f32 {
 /// 宽度是算出来的，因此不依赖任何布局施舍。
 pub(super) fn menu_item(
     ui: &mut Ui,
-    app: &EditorApp,
+    vctx: &dyn EditorViewContext,
     action: UiAction,
     row_w: f32,
 ) -> egui::Response {
-    let font = egui::FontId::proportional(app.theme().metrics.ui_font_size);
+    let font = egui::FontId::proportional(vctx.theme_state().metrics.ui_font_size);
     let row_h = MENU_ROW_H.max(ui.spacing().interact_size.y);
     let (rect, response) = ui.allocate_exact_size(egui::vec2(row_w, row_h), egui::Sense::click());
 
@@ -169,7 +171,7 @@ pub(super) fn menu_item(
         );
         // 快捷键列右对齐，且**必须**来自注册表而非硬编码字符串——
         // 硬编码是原型 B-02「菜单写了但没注册」的温床。
-        let combo = app.dispatcher().registry().display_for(action);
+        let combo = vctx.dispatcher_state().registry().display_for(action);
         if !combo.is_empty() {
             ui.painter().text(
                 rect.right_center() - egui::vec2(MENU_ROW_PAD, 0.0),

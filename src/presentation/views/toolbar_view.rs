@@ -46,9 +46,9 @@ pub use menu_bar::{MENU_LABEL_SHORTCUT_GAP, MENU_ROW_PAD, menu_row_width};
 
 use egui::Ui;
 
-use crate::app::frame::EditorApp;
 use crate::presentation::icons;
 use crate::presentation::shortcuts::registry::UiAction;
+use crate::presentation::view_context::EditorViewContext;
 use crate::presentation::widgets;
 
 /// 绘制全局顶栏：应用级菜单栏 + 标签条 + 路径面包屑。
@@ -58,13 +58,13 @@ use crate::presentation::widgets;
 /// 应用级菜单栏占 `topbar_height`、标签条占 `tabstrip_height`、面包屑占 `tabbar_height`。
 /// 三者之和即顶部面板高度，改主题尺寸时只有一条通路
 /// （避免「菜单栏改了，别处没改」的错位）。
-pub fn show(app: &mut EditorApp, ui: &mut Ui) {
-    let metrics = app.theme().metrics;
+pub fn show(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
+    let metrics = vctx.theme_state().metrics;
     let height = metrics.topbar_height + metrics.tabstrip_height + metrics.tabbar_height;
     egui::Panel::top("rustmark.topbar")
         .exact_size(height)
         .show(ui, |ui| {
-            menu_bar::draw_app_menu_bar(app, ui);
+            menu_bar::draw_app_menu_bar(vctx, ui);
             // 分隔线：仅画 1px 发丝线、不再占布局高度。默认 `ui.separator()`
             // 预留 ~9–11pt（1px 线 + 上下各 ~4pt 留白），而该留白**不在顶栏
             // 预算内**（`topbar+tabstrip+tabbar=100`）。菜单栏实测又常溢出其
@@ -72,8 +72,8 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
             // 字脚后底部探出面板底缘 1pt 被裁（问题 060）。改成分隔线只留
             // 1pt 高度，省下的空间还给标签条与面包屑。
             ui.add(egui::Separator::default().spacing(1.0));
-            tab_strip::draw_tab_strip(app, ui);
-            draw_breadcrumb(app, ui);
+            tab_strip::draw_tab_strip(vctx, ui);
+            draw_breadcrumb(vctx, ui);
         });
 }
 
@@ -105,9 +105,9 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
 /// `horizontal_top`：子控件贴顶对齐、占据整条窄带，文字顶缘落在行首，
 /// 底部留 1pt 余量不再越界。这是项目 egui 布局纪律「顶层横向排布必须
 /// `horizontal_top`」在面包屑处的落地。
-fn draw_breadcrumb(app: &mut EditorApp, ui: &mut Ui) {
-    let path = app.current_document_path();
-    let theme = app.theme().clone();
+fn draw_breadcrumb(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
+    let path = vctx.current_document_path();
+    let theme = vctx.theme_state().clone();
     let clip = ui.clip_rect();
     // 面板内容左内边距（TopDown 布局下光标 x 即内容左界）。
     let inset = ui.cursor().left() - clip.left();
@@ -116,7 +116,7 @@ fn draw_breadcrumb(app: &mut EditorApp, ui: &mut Ui) {
         // 侧栏切换按钮在行**最左端**（问题 063）：展开时紧贴侧栏右缘、
         // 收起时贴窗口左上角——两种状态下按钮都长在侧栏边上，而不是孤悬
         // 在窗口另一头。必须先画它，后面的文档图标与路径才排在它右侧。
-        draw_sidebar_toggle(app, ui, clip, inset);
+        draw_sidebar_toggle(vctx, ui, clip, inset);
         // 文档图标：向量手绘，替代原 📄 字形。废止字形的理由与工具栏图标
         // 同源（emoji 依赖字体覆盖，见 `presentation::icons` 的模块文档），
         // 且从此与文件树里手绘的页面图标共用同一套规格表。
@@ -170,17 +170,22 @@ const SIDEBAR_TOGGLE_W: f32 = 18.0;
 ///
 /// 状态复用 `sidebar_visible`（与 Ctrl+\ / 视图菜单同一路径，不引入第二
 /// 份「收起」状态）；动作走 [`UiAction::ToggleSidebar`] 汇入
-/// `EditorApp::execute`——三入口（按钮 / 快捷键 / 菜单）行为一致由
+/// `EditorViewContext::execute`——三入口（按钮 / 快捷键 / 菜单）行为一致由
 /// 既有回归钉住。矩形左界按 `clip_rect` 推（问题 059：环境可用宽不可信，
 /// 左界同理不取 `cursor().left()` 而取面板左内边距，行首两者相等）。
-fn draw_sidebar_toggle(app: &mut EditorApp, ui: &mut Ui, clip: egui::Rect, inset: f32) {
+fn draw_sidebar_toggle(
+    vctx: &mut dyn EditorViewContext,
+    ui: &mut Ui,
+    clip: egui::Rect,
+    inset: f32,
+) {
     let btn_rect = egui::Rect::from_min_size(
         egui::pos2(clip.left() + inset, ui.cursor().top().max(clip.top())),
         egui::vec2(SIDEBAR_TOGGLE_W, SIDEBAR_TOGGLE_W),
     );
     let response = ui.allocate_rect(btn_rect, egui::Sense::click());
     if response.clicked() {
-        app.execute(UiAction::ToggleSidebar);
+        vctx.execute(UiAction::ToggleSidebar);
     }
     // 悬停底色与 056 的图标按钮同源：取 egui widget 视觉的 weak_bg_fill，
     // 与 Button 的悬停反馈像素级一致。
@@ -190,9 +195,9 @@ fn draw_sidebar_toggle(app: &mut EditorApp, ui: &mut Ui, clip: egui::Rect, inset
             .rect_filled(btn_rect, egui::CornerRadius::same(4), hover_bg);
     }
     let color = if response.hovered() {
-        app.theme().text_primary
+        vctx.theme_state().text_primary
     } else {
-        app.theme().text_secondary
+        vctx.theme_state().text_secondary
     };
     icons::paint_icon(
         ui.painter(),
@@ -203,7 +208,7 @@ fn draw_sidebar_toggle(app: &mut EditorApp, ui: &mut Ui, clip: egui::Rect, inset
             accent: color,
         },
     );
-    response.on_hover_text(if app.ui.sidebar_visible {
+    response.on_hover_text(if vctx.ui_state().sidebar_visible {
         "收起侧栏（Ctrl+\\）"
     } else {
         "展开侧栏（Ctrl+\\）"
