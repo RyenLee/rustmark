@@ -1,6 +1,6 @@
 # rustmark 架构整改细化实施方案
 
-> 文档编号：ADR-REM-2026-10-27　|　作者：架构评审（专家视角）　|　状态：进行中（R-01、R-02、R-03 B2 已落地；R-03 B1 首批 4 视图已落地——均为 2026-10-27；其余批次待排期）
+> 文档编号：ADR-REM-2026-10-27　|　作者：架构评审（专家视角）　|　状态：进行中（R-01、R-02、R-03 B2、**R-03 B1 全三批**已落地——均为 2026-10-27；R-04 起待排期）
 > 综合来源：架构评审 `architecture-review-2026-10-23.md`、评估报告 `rustmark-evaluation-2026-10-25.md`、合规差额报告、多轮 refactor 波次（V11-56~67）、「去双源」批次（2026-10-26）、专家架构评审（2026-10-27）。
 > 本文件是上述所有讨论的**可执行汇总**。任何一条改造项落地后，请在 `docs/PROGRESS.md` / `docs/v1.1-backlog.md` §3 回填实测数字，并同步本文件的「状态」列。
 
@@ -75,7 +75,7 @@
 - **负责角色**：Root（主）＋ Arch（守卫设计）＋ Docs
 - **优先级**：P0（影响全局、是后续拆库绊脚石、靠词法守卫兜底）
 - **预期产出**：`src/lib.rs` 收敛；`crate::domain` 0 处；新增 arch 断言 + 变异用例；依赖图在 `Cargo.toml` 完全可见。
-- **验收点**：`cargo tree -p rustmark` 显示 root 仅依赖声明项；`check-arch` 新断言绿；全量门禁绿；体积逐字节不变（纯重构）。
+- **验收点**：`cargo tree -p rustmark` 显示 root 仅依赖声明项；`check-arch` 新断言绿；全量门禁绿；体积字节数不变（纯重构）。
 - **状态**：✅ **已落地（2026-10-27）**——`src/` 37 文件共 109 处 `crate::domain` / `crate::shared` / `crate::application` → 显式 `rustmark_core::<层>::…`；`src/lib.rs` 的 `pub use` 标注为**公开 API shim**（仅维持对外/历史 `rustmark::<层>` 路径，根源码禁走）；`tools/arch_check.rs` 新增 `check_root_federated_layers` 守卫（root 仅拦 `crate::domain|shared|application` 字面三连，绕过 `rustmark_core::→crate::` 归一化，不影响 `crate::infrastructure` 装配路径、不误伤显式 `rustmark_core::<层>`）+ 3 个单元/变异用例（正向捕获 / 负向放行 / 注释豁免全绿）；全量门禁绿（fmt / check-arch / clippy `-D warnings` / `test --all-targets` 2241 passed / `test --doc` 1 / `thresholds` 121 / `size_gate` 10,548,736 B）。注：方案原文步骤 1 的「删除整层转发」改为**保留 re-export 作 shim + 守卫禁源码直取**的混合收敛，规避 524 处 `rustmark::<层>` 集成测试引用的大面积破坏性改动，收益（消除未声明逻辑依赖、依赖图可见）相同。
 
 ### R-02 · 拆分 `rustmark-shared` 为 kernel + support　【P1，对应问题 E】
@@ -106,7 +106,7 @@
 - **优先级**：P1（root 臃肿直接原因、视图不可独立测；短期 B2 成本低先做）
 - **预期产出**：B2=显式 re-export + 守卫；B1=视图窄接口 + views 迁 ui + root 瘦身。
 - **验收点**：B2——re-export 显式、守卫绿；B1——`src/presentation/views` 清空或仅留装配、`crate::app` 在视图 0 处、root 行数下降、视图可独立单测。
-- **状态**：**B2 ✅ 已落地（2026-10-27）**——`src/presentation.rs:11` 的整组 `pub use rustmark_ui::presentation::{rich, shortcuts, state, theme, widgets};` 改为 5 行**逐项显式**；`tools/arch_check.rs` 新增 `pub fn check_ui_submodule_sync(manifest)` 并接入 `scan_project`：以 ui 侧 `pub mod X;` 为真源，对账 root 逐项 re-export 与 constraints §10.1，出现整组 `::{…}` 即报（与 `mod.rs` 同型：整组会让新子模块被静默带入，编译测试全绿而清单失配）；fixture `ui_submodule_must_be_synced_to_root_and_crate_map` 覆盖三场景（缺 root / 缺 §10.1 / 整组形式）+ 变异验证（关掉逐项断言 → 红）；constraints §10.1 补硬约束 4 并引用既有「views 留 root」条款。门禁全绿（fmt / check-arch / thresholds 121 / clippy `-D warnings` / `test --all-targets` 2242 passed / `test --doc` 1 / `size_gate` 10,548,736 B 逐字节不变——纯 re-export + 构建期守卫，不进 release 产物）。**B1 首批 ✅ 已落地（2026-10-27）**——详见下方「B1 进展」。**B1 未收官**（余 32 个视图，需按端口扩张分批推进）。
+- **状态**：**B2 ✅ 已落地（2026-10-27）**——`src/presentation.rs:11` 的整组 `pub use rustmark_ui::presentation::{rich, shortcuts, state, theme, widgets};` 改为 5 行**逐项显式**；`tools/arch_check.rs` 新增 `pub fn check_ui_submodule_sync(manifest)` 并接入 `scan_project`：以 ui 侧 `pub mod X;` 为真源，对账 root 逐项 re-export 与 constraints §10.1，出现整组 `::{…}` 即报（与 `mod.rs` 同型：整组会让新子模块被静默带入，编译测试全绿而清单失配）；fixture `ui_submodule_must_be_synced_to_root_and_crate_map` 覆盖三场景（缺 root / 缺 §10.1 / 整组形式）+ 变异验证（关掉逐项断言 → 红）；constraints §10.1 补硬约束 4 并引用既有「views 留 root」条款。门禁全绿（fmt / check-arch / thresholds 121 / clippy `-D warnings` / `test --all-targets` 2242 passed / `test --doc` 1 / `size_gate` 10,548,736 B 字节数不变——纯 re-export + 构建期守卫，不进 release 产物）。**B1 首批 ✅ 已落地（2026-10-27）**——详见下方「B1 进展」。**B1 未收官**（余 32 个视图，需按端口扩张分批推进）。
 
 #### R-03 B1 进展（2026-10-27 首批）
 
@@ -192,7 +192,8 @@
     （`blocks` / `code` / `list` / `media` / `table` / `toc` +
     `inline/text_render.rs`）。这些子模块原先经 `use super::*` 从 facade
     拿到 `EditorApp`（**glob 导入父模块的私有 `use` 别名**），故守卫的
-    `first_crate_app_line` 只看见 facade 那一条 `crate::app`——**连带改形参
+    路径判据（当时叫 `first_crate_app_line`，批 3 重构后为
+    `first_crate_app_ref_line`）只看见 facade 那一条 `crate::app`——**连带改形参
     不是可选项**：`show` 的签名一换，`draw_block` 与其下 18 个绘图函数的
     `&mut EditorApp` 全部编译不过。
     契约新增 **7** 个方法（trait 总数 118 → **125**）：
@@ -235,8 +236,8 @@
     ——同一表达式里就是两次借用。先把两个 `f32` 读出来（`Copy`）再调。
     同理 `sync.enabled && preview_visible && !focus_mode` 与
     `preview.degraded` 分属两个容器，`&&` 前半段关进块、后半段在外层求值。
-    **白名单归零**：`PENDING_DECOUPLED_VIEWS = &[]`，常量与双向校验保留
-    （批 3 新增视图时「零容忍」直接生效）。
+    **白名单归零**：`PENDING_DECOUPLED_VIEWS = &[]`；批 3 已把常量本身
+    删除（见下「批 3 进展」）。
 - **批 1 遗留（移交给批 2 / 批 3）**：
   - ~~`preview_view/image_cache.rs` **本轮不迁**，留 root + 批 3 加
     `EXEMPT_VIEWS` 永久豁免；三重阻塞：`image` crate 属 root 独有依赖 /
@@ -258,10 +259,59 @@
     （`galley: Arc<Galley>`），借用在 `.show(ui)` 返回后立即结束 ⇒ 把借用关进
     显式块即可；但**块内**不得调 `vctx` 其它方法（含 `&self` 的
     `markdown_service()`），块外预取所需值。
-- **守卫 `check_view_decoupling`**：白名单 `PENDING_DECOUPLED_VIEWS`（32 条）**双向**校验——名单外的 `crate::app` 引用报违规；名单内已解耦的条目也报（防名单腐烂）。词法级判定（`first_crate_app_line`），注释里提到旧路径不误伤。已接入 `scan_project`，故 `check-arch` bin 与 `build.rs` 构建期同时生效。
-- **变异验证**：① 废掉 `first_crate_app_line` → 构建期 panic，列出 32 条陈旧；② 关掉反向陈旧检查 → fixture 红（「名单陈旧应报 1 条，实际：[]」）。
-- **门禁**：fmt / check-arch / thresholds 121 / clippy `-D warnings` / `test --all-targets` **2243** passed（+1 新用例）/ `test --doc` 1 / `size_gate` 见 §metrics。
-- **下一步**：按「零 `app.services` 的独立视图树」分批推进——批 1 = 24 个视图（`welcome_view` 树 / `settings_view` 树 / `diff_view` / `find_replace_view` / `export_view` / `quick_open_view` / `command_palette_view` / `overlays` / `toolbar_view` 树 / `sidebar_view` 树）**✅ 已完成**；批 2 = 8 个 `services` 视图 + 6 个未登记子模块 **✅ 已完成（白名单归零、`views/**` 零 `crate::app`）**；批 3 = 守卫收官（「视图不得出现 `EditorApp` 记号」新守卫 + `PENDING_DECOUPLED_VIEWS` 常量退役评估；`EXEMPT_VIEWS` 因 `image_cache.rs` 已解耦而**无成员**，是否保留该机制待裁决）。
+- **守卫（批 3 收官后的最终形态）——两条判据缺一不可**：
+  - `check_view_decoupling`（**路径**判据）：`views/**` 出现 `crate::app` 即报。
+    白名单 `PENDING_DECOUPLED_VIEWS` **已整个删除**（批 2 清零，批 3 删常量），
+    生产入口 `check_view_decoupling(manifest)` 直接传 `&[]`。带参版本
+    `check_view_decoupling_with(manifest, &[])` 保留——**双向校验逻辑本身要能被测**，
+    否则夹具无法构造「名单外引用」与「名单陈旧」两个方向。
+  - `check_view_no_composition_root_marker`（**记号**判据）：`views/**` 递归覆盖
+    全部 `.rs`，出现 `EditorApp` **标识符**即报，报错行号指到首个记号所在行。
+    补的是路径判据的结构性盲区：子模块经 `use super::*` 拿到父模块的私有 `use`
+    别名后，本文件零 `crate::app` 却能写 `app: &mut EditorApp`。
+  - 两条都走词法器（复用 `Lexer`，注释与字符串天然不产生 token），故视图文档里
+    **20 处**「为什么不再用 `EditorApp`」全部不触发。
+  - 路径枚举**只经 `parse_use_tree`** 展开（`use` 树展平器只有一份）；批 1 那套
+    「`crate` `::` `app` 相邻三连」字面匹配已删除。
+- **P0 修复记录（2026-10-27，验收方一手复现）**：在已迁的 `welcome_view.rs` 注入
+  `use crate::{app::frame::EditorApp};` + 一个持有形参的探针函数 →
+  `build.rs` 层 exit 0、bin 层 `check-arch: OK`，**两层全绿**（视图可真实持有组合根）。
+  根因：旧字面匹配的第三连是 `{` 而非 `app`，必然不命中；而 `parse_use_tree` 早在
+  文件里，只被层禁令用着。修复 = 改走 `parse_use_tree` + 删旧函数。修复后同注入
+  两处同时报红（层禁令报 `presentation/views` 依赖 `crate::app`、路径判据报
+  `check_view_decoupling`、记号判据报 `EditorApp`，共 3 条）。
+- **变异验证（批 3 四项，全做完）**：
+  1. 关掉记号守卫（`if true { return Vec::new(); }`）→ fixture **114 passed / 2 failed**
+     （`view_files_must_not_mention_the_composition_root_type` +
+     `the_marker_guard_is_wired_into_scan_project`）；
+  2. 关掉路径判据的 `use` 展开分支 → fixture **115 / 1 failed**，红在
+     「花括号 `use` 展开后仍是 `crate::app`」那一条（P0 回归护栏）；
+  3. 关掉无参入口 `check_view_decoupling` → fixture **115 / 1 failed**
+     （`the_retired_whitelist_does_not_weaken_the_path_guard`，证明打在白名单退役后的
+     生产路径上）；
+  4. 真实工程注入 `fn __mutation_marker(_: &EditorApp) {}` 到 `stats_view.rs` →
+     `check-arch` 报 `src/presentation/views/stats_view.rs`（记号线）；回退后
+     `check-arch: OK`，`grep -r EditorApp src/presentation/views/` 仍是
+     **20 处 / 14 文件、全在注释**、守卫绿。
+  **取证姿势（写进守卫维护说明）**：变异态下直接 `cargo build --bin check-arch`
+  时 `build.rs` 会先 panic，**bin 根本不重建**，跑旧 exe 会得到假绿；必须
+  `SKIP_ARCH_CHECK=1 cargo build --bin check-arch` 再独立运行。
+- **`allowed_for` 撤回 `Layer::PresentationViews` 的 `crate::app::frame` 豁免**
+  （`docs/architecture-constraints.md` §10.1 硬约束 5 / §4.2 同步）：当初给它豁免的
+  条件是「全部视图迁完」，已兑现，故删——留下的豁免只剩坏处（漏写 `use` 无人提示）。
+  其余表现层子层照旧（它们已迁进 ui crate，反向依赖物理上写不出来）。
+- **门禁**：fmt / check-arch / thresholds 121 / clippy `-D warnings` /
+  `test --all-targets` **2250 passed / 0 failed / 4 ignored**（2243 基线 + **7** 条新用例：
+  守卫夹具 +3、`tests/app/preview_image_fetcher_test.rs` +4）/ `test --doc` 1 /
+  `size_gate` 见 §metrics。
+- **体积**：批 1 `+7,680 B`（其中 `+7,168 B` 全在准备项 `9f8b735`，其后步 1.1–1.7
+  七个纯签名迁移步合计净 `+512 B`，单步在 −2,048…+1,024 之间跳 = PE 节对齐抖动）、
+  批 2 `+2,048 B`，合计 **+9,728 B**（10,548,736 → 10,558,464 B）。批 3 为零——
+  守卫只在 `check-arch` bin / `build.rs` 运行，不进编辑器产物。
+- **下一步**：批 1 / 批 2 / 批 3 **均已完成**，R-03 B1 收官。剩余可选项是 R-03 B1 的
+  「views 迁 ui crate」——它与「视图解耦 `EditorApp`」是两件事，成本账见
+  `docs/v1.1-backlog.md` §3；`EXEMPT_VIEWS` 机制**不实现**（无真实成员，
+  空表会把「一名都不许有」读成「暂时没人管」）。
 
 ### R-04 · 抽离 `rustmark-render`（富内容渲染引擎）　【P2，对应问题 F】
 
@@ -294,7 +344,7 @@
 - **负责角色**：Core ＋ QA
 - **优先级**：P3（层方向正确，纯可维护性，非紧急）
 - **预期产出**：超大服务降行数、纯函数可测；公开路径零变化（重导出）。
-- **验收点**：目标文件 ≤ ~400 行；新增纯函数单测绿；体积逐字节不变。
+- **验收点**：目标文件 ≤ ~400 行；新增纯函数单测绿；体积字节数不变。
 
 ### R-07 · infra 高复杂度大文件模块内拆分　【P3，对应问题 H】
 
@@ -334,7 +384,7 @@
 
 | 阶段 | 包含项 | 建议周期（参考） | 进入判据 | 退出判据 |
 |---|---|---|---|---|
-| **阶段 1 · 地基（P0）** | R-01 | 1 个工作单元 | 五门禁全绿快照 | R-01 验收点全过；arch 新断言 + 变异绿；体积逐字节不变 |
+| **阶段 1 · 地基（P0）** | R-01 | 1 个工作单元 | 五门禁全绿快照 | R-01 验收点全过；arch 新断言 + 变异绿；体积字节数不变 |
 | **阶段 2 · 契约分离（P1）** | R-02、R-03(B2) | 1~2 个工作单元 | 阶段 1 完成 | shared 内部二分 + re-export 显式 + 守卫绿 |
 | **阶段 3 · 表现层合一（P1 根治）** | R-03(B1) | 2~3 个工作单元（43 文件分批） | 阶段 2 完成、窄接口设计评审通过 | views 迁 ui、root 瘦身、视图可独立测 |
 | **阶段 4 · 子域抽离（P2）** | R-04、R-05 | 2 个工作单元（可并行） | 阶段 2/3 稳定 | render 端口化/升 crate；icons 不依赖 actions |
@@ -357,7 +407,7 @@
 |---|---|---|
 | **静默失效（双源）** | 抽函数/迁模块时两处实现分家，不编译不红 | 抽纯函数时立即补不变量单测 + 变异（去双源批次实证）；契约测试逐字段比较，不双走同一 `From` |
 | **文档漂移** | §10 crate 地图 / thresholds `source` 路径随搬迁失配 | `--fix` 只回行号，路径手改；R-09 固化同步步骤；`check_thresholds.py` 每轮必跑 |
-| **体积/编译代价** | 端口化 +17KB、拆 crate 各 +2~3KB（LTO 边界） | 每次 release 实测记录；纯重构应逐字节不变，变了必解释 |
+| **体积/编译代价** | 端口化 +17KB、拆 crate 各 +2~3KB（LTO 边界） | 每次 release 实测记录；纯重构应字节数不变，变了必解释 |
 | **可见性/搬迁坑** | 结构体搬子模块时原私有字段全要 `pub(super)`；CRLF 行号差 1 | 字节级归一 LF，行号以 `wc` 为准；按既有搬迁三件套（扫描根+layer_of+依赖边）执行 |
 | **远端不可达** | 本地领先 ~80 提交未 push，长期分叉 | 维护者本机定期 push；agent 不主动 push |
 | **回归（门禁假绿）** | `autotests=false` 下未登记 `[[test]]` 不编译却全绿 | D-6 守卫拦截；新增 `[[test]]` 必带 lint 头 |
@@ -373,7 +423,7 @@
 - `cargo test --workspace --all-targets --no-fail-fast`：passed 数 ≥ 当前基线 2227（功能项只增不减），0 failed
 - `cargo test --workspace --doc` +1 计入基线
 - `python tools/check_thresholds.py` 121 条 OK（路径/行号正确）
-- `bash scripts/size_gate.sh` exit 0（纯重构应 **10,550,272 B** 逐字节不变；拆 crate 允许 +2~3KB 并需记录）
+- `bash scripts/size_gate.sh` exit 0（纯重构应 **10,550,272 B** 字节数不变；拆 crate 允许 +2~3KB 并需记录）
 - `python tools/release_dryrun.py` 15/15
 
 ### 6.2 逐项验收（映射到 R-01~R-09）
@@ -384,7 +434,7 @@
 | R-03 | B2：re-export 显式 + 守卫绿；B1：`src/presentation/views` 清空/仅装配、`crate::app` 在视图 0 处、root 行数下降、视图可独立测 |
 | R-04 | `rich/` 端口化；若升 crate 则 `cargo tree -p rustmark-render` 无 egui |
 | R-05 | `cargo tree -p rustmark-icons` 无 `rustmark-actions`；icons 单测绿 |
-| R-06 | `search`/`stats`/`find` 目标文件 ≤ ~400 行；纯函数单测绿；体积逐字节不变 |
+| R-06 | `search`/`stats`/`find` 目标文件 ≤ ~400 行；纯函数单测绿；体积字节数不变 |
 | R-07 | `incremental` 等目标文件 ≤ ~400 行；单测绿 |
 | R-08 | actions/icons 无新增跨职责依赖 |
 | R-09 | 文档五查通过；无体积/阈值漂移 |
@@ -404,6 +454,6 @@
 2. **守卫必变异**：新增/修改 `check-arch` 断言必须做变异验证（删断言/断路径 → 红）。
 3. **不主动 push**：远端由维护者本机执行。
 4. **文档同步**：约束 §10、backlog §3、metrics、PROGRESS 随代码回填实测数字。
-5. **体积/基线不得"沿用"**：必须实测；纯重构逐字节不变是正常证据。
+5. **体积/基线不得"沿用"**：必须实测；纯重构字节数不变是正常证据。
 
 > 本文件与 `docs/architecture-constraints.md`、`docs/v1.1-backlog.md`、`docs/PROGRESS.md` 联动维护。改造项状态变更请同步回填。

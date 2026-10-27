@@ -128,6 +128,28 @@
   `preview_image_fetcher(&self) -> ImageFetcher` 返回的
   `Box<dyn FnOnce() -> Result<Vec<u8>, String> + Send>`，远程图的后台下载（F-3）
   因此不受影响。原计划的 `EXEMPT_VIEWS` 永久豁免**没有实际成员**。
+- **R-03 B1 批 3（守卫收官，2026-10-27）**：**R-03 B1 全部三批完成**。
+  ① 白名单 `PENDING_DECOUPLED_VIEWS` **整条删除**——它已无成员，保留一张空表会把
+  「一名都不许有」读成「暂时没人管」；生产入口 `check_view_decoupling(manifest)`
+  直接传 `&[]`，带参版本留给夹具（双向校验逻辑本身要能被测）。
+  ② 新增 `check_view_no_composition_root_marker`：`views/**` 递归覆盖全部 `.rs`，
+  出现 `EditorApp` **标识符**即报。补的是路径判据的结构性盲区——子模块经
+  `use super::*` 拿到父模块私有 `use` 别名后，本文件零 `crate::app` 却能写
+  `app: &mut EditorApp`（`preview_view/{blocks,code,list,media,table,toc}.rs`
+  六个文件从未进过白名单、也从未被报过）。
+  ③ **P0 修复（验收方一手复现）**：路径判据原用「`crate` `::` `app` 相邻三连」
+  字面匹配，`use crate::{app::frame::EditorApp};` 的第三连是 `{`，**必然不命中**
+  ——视图可真实持有组合根而 `build.rs` 与 `check-arch` **两层全绿**。改走
+  `parse_use_tree` 展开（同一个文件里早有这个展平器，只有这条守卫没用它），
+  旧函数删除，从根上不给「两套扫描器分叉」留第二次机会。
+  ④ `allowed_for` 的 `crate::app::frame` 窄豁免**从 `views/` 撤回**（其余表现层
+  子层照旧）——撤回条件「全部视图迁完」已兑现，留下的豁免只剩坏处。
+  ⑤ 变异验证 4 项全捕获：关记号守卫 → fixture 114/2 failed；关 `use` 展开分支 →
+  115/1 failed（红在花括号那条）；关无参入口 → 115/1 failed；真实工程注入
+  `fn __mutation_marker(_: &EditorApp) {}` → 报 `stats_view.rs`，回退后注释里的
+  **20 处 `EditorApp`（14 文件）** 仍全部不触发。
+  **取证姿势**：变异态下直接 `cargo build --bin check-arch` 会让 `build.rs` 先 panic、
+  bin 不重建 → 跑旧 exe 假绿；必须 `SKIP_ARCH_CHECK=1` 构建后再独立运行。
 - **可观测性（D-5，2026-10-26，`1c58052`）**：`FrameScheduler` 兼作帧耗时观测点——超 16ms 的帧打一条
   `warn`（状态更新 / 绘制 / 未归因三段归因 + 本帧到期任务，120 帧限流；**仅 release 构建输出**），
   `RUST_LOG=…=debug`
@@ -140,14 +162,17 @@
 - **`--workspace` 纪律机制化（2026-10-26，`9c85129`）**：根 manifest 的 `default-members`
   覆盖全部 7 个包，漏带 flag 不再漏测子 crate；两份清单的同步由
   `workspace_topology_test::default_members_cover_every_workspace_member` 集合相等断言钉死。
-- **体积**：`NFR-PERF-01` release exe **10,558,464 B = 10.070 MiB**（2026-10-27 R-03 B1 批 2 收官后实测），
+- **体积**：`NFR-PERF-01` release exe **10,558,464 B = 10.069 MiB**（2026-10-27 R-03 B1 批 2 收官后实测），
   低于 10.5 MiB 预警线与 11 MiB 红线（`size_gate` exit 0，距预警线余 451,584 B、距红线余 975,872 B）。
   2026-10-20 的
   「11.36 MiB 超 10 MB 红线」已解除：V11-26 依赖裁剪先把 11.36 → 10.93 MiB（仍高于旧红线），
   随后维护者把红线 10 → 11 MiB（2026-10-24，`scripts/size_gate.sh` 与 metrics §2.8 同步），
-  当前值再降至 10.07 MiB。R-03 B1 的 +7,680 B **全部落在准备项提交**（trait 由 32 扩到 96 方法
-  的一次性扩张 + 3 个 root 私有类型搬进 `rustmark-ui` 的跨 crate LTO 边界成本），
-  此后 6 步纯签名迁移逐字节不变——归因见 metrics §2.8。
+  当前值再降至 10.07 MiB。**R-03 B1 的 +9,728 B 拆两段**：批 1 **+7,680 B**（其中 **+7,168 B 全部落在
+  准备项提交 `9f8b735`**——trait 32 → 92 方法的一次性扩张 + 3 个 root 私有类型搬进 `rustmark-ui`；
+  其后步 1.1–1.7 七个纯签名迁移步合计**净 +512 B**，单步在 −2,048…+1,024 之间跳，全部是
+  **PE 节对齐粒度**的抖动）、批 2 **+2,048 B**（步 2.1 +512 / 步 2.2 ±0 / 步 2.3 +1,024 / 步 2.4 +512）。
+  归因口径见 metrics §2.8：主因是**一次性元数据 + 薄转发桩**（批 2 的 40 个新函数平均只吃 57.6 B
+  代码），不是「trait 越大派发越贵」（给 96 方法的 trait 再加 4 方法 + 4 impl 实测 **±0 B**）。
 
 ---
 

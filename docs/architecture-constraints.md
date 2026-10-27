@@ -92,7 +92,7 @@ presentation ──► application ──► domain ◄── infrastructure
 | domain | `egui`、`eframe`、`rfd`、`syntect`、`pulldown_cmark`、`std::fs`、`std::io`、`anyhow`、`crate::app`、`crate::application`、`crate::infrastructure`、`crate::presentation`、直接打印（`print!` / `println!` / `eprint!` / `eprintln!` / `dbg!`） |
 | application | `egui`、`eframe`、`rfd`、`syntect`、`pulldown_cmark`、`std::fs`、`std::io`、`crate::app`、`crate::infrastructure`、`crate::presentation` |
 | infrastructure | `crate::app`、`crate::application`、`crate::presentation`、`egui`（V11-63 端口化收口后**无条件生效**，无文件级豁免） |
-| presentation | `crate::domain`（含聚合与值对象）、`crate::infrastructure`、`crate::app`（**唯一例外 `crate::app::frame`**，见 4.2） |
+| presentation | `crate::domain`（含聚合与值对象）、`crate::infrastructure`、`crate::app`（**唯一例外 `crate::app::frame`**，见 4.2；**`views/` 子层不在此例外内**，R-03 B1 收官时撤回） |
 | shared | `egui`、`eframe`、`rfd`、`syntect`、`pulldown_cmark`、`std::process`（R-03）、全部业务层（`crate::domain` / `crate::application` / `crate::infrastructure` / `crate::presentation` / `crate::app`） |
 
 允许：domain 可用 `shared`、`ropey`、`regex`、`chrono`、`serde(derive)`、`thiserror`。
@@ -147,8 +147,17 @@ rich / widgets ──► （不得回指 views / state / theme / widgets）
 四个子层全部**叠加**父层 `presentation` 的禁令（`crate::domain` /
 `crate::infrastructure` / `crate::app`），不是替换。
 
-`views/` 与其余子层同样享有 4.2 的 `crate::app::frame` 窄豁免——豁免跟着
-子层细化走，窄前缀本身不变。
+~~`views/` 与其余子层同样享有 4.2 的 `crate::app::frame` 窄豁免——豁免跟着
+子层细化走，窄前缀本身不变。~~
+
+> **R-03 B1 收官时撤回 `views/` 的这一条（2026-10-27）**：`views/` 现在**不**
+> 享有 `crate::app::frame` 窄豁免，其余表现层子层照旧。理由是当初给它豁免的
+> 条件已经兑现——`src/presentation/views/**` 现在零 `crate::app` 引用（trait
+> 133 方法全部经 `EditorViewContext`）。留下的豁免只剩坏处：漏写一条 `use` 到
+> `crate::app::frame` 不会有任何提示，规则从「不该这么做」退化成「随你」。
+> 这是**兑现**，不是规则反悔，见 §10.1 硬约束 5。另四个子层
+> （`state/theme/shortcuts/rich/widgets`）已迁入 `rustmark-ui` crate，
+> 反向依赖在物理上写不出来，故其豁免保留不动（删了只是文档噪音）。
 
 > **分工澄清（E-08，2026-10-26）**：`views` 在 root（`src/presentation/views/`）、
 > `state/theme/shortcuts/rich/widgets` 在 `rustmark-ui` crate。因此 ui 内写
@@ -220,11 +229,17 @@ rich / widgets ──► （不得回指 views / state / theme / widgets）
 
 ### 4.2 表现层的唯一例外：`crate::app::frame`
 
-表现层的视图函数普遍以 `&EditorApp` 接收应用状态
-（`crate::app::frame::EditorApp`）——这是**被认可的下行通道**：组合根把状态句柄
-交给视图，视图读状态、发动作。
+> **适用范围已收窄（R-03 B1 收官，2026-10-27）**：本节讲的是 `Layer::Presentation`
+> 与 `state/theme/shortcuts/rich/widgets` 子层。`src/presentation/views/**` 已
+> **撤回**这条豁免（理由见 §4.1 下的撤回说明与 §10.1 硬约束 5），视图一律收
+> `&mut dyn EditorViewContext`。下面「54 个表现层文件」是撤回前的统计，保留作
+> 历史依据；现行数字以 `check-arch` 实测为准。
 
-若一刀切禁掉 `crate::app`，54 个表现层文件会同时报错。那不是「更严的架构」，
+表现层的非视图代码仍以 `&EditorApp` 接收应用状态
+（`crate::app::frame::EditorApp`）——这是**被认可的下行通道**：组合根把状态句柄
+交给表现层，表现层读状态、发动作。
+
+若一刀切禁掉 `crate::app`，这些表现层文件会同时报错。那不是「更严的架构」，
 而是**一条没人能遵守的规则**——规则一旦无法遵守，例外就会蔓延成惯例，
 最后连真正要拦的反向依赖也一起淹掉。
 
@@ -723,16 +738,34 @@ V11-62 全落地，阶段 3 的 `rustmark-infra` 行已由 V11-64 提前兑现�
    `rustmark-ui` 行；`check-arch` 的 `check_ui_submodule_sync` 拿三处真源
    （ui 侧 `pub mod` ↔ root 逐项 re-export ↔ 本节 §10.1）对账，缺一即报。
    「views 留 root」的已知约束见上一条硬约束 2（ADR-013 决策 3），不靠人记。
-5. **视图窄接口（R-03 B1，2026-10-27 起）**：`src/presentation/views/**` 下的
+5. **视图窄接口（R-03 B1，2026-10-27 收官）**：`src/presentation/views/**` 下的
    视图**不得**直取组合根 `crate::app`——一律收 `&mut dyn EditorViewContext`
-   （trait 定义在 `rustmark-ui::presentation::view_context`，实现在 root 的
-   `src/app/frame/view_context.rs`）。`check-arch` 的 `check_view_decoupling`
-   以 `tools/arch_check.rs` 的 `PENDING_DECOUPLED_VIEWS` 为**只减不增**的
-   迁移进度表：名单外的引用即报；名单内已解耦的条目也报（防止名单腐烂）。
-   注意这与 `allowed_for` 的**按层放行**（`Presentation*` 层允许
-   `crate::app::frame` 前缀）不是一回事：后者是层的粗粒度豁免，前者是
-   逐文件的迁移棘轮。全部视图迁完后，`allowed_for` 里的 `crate::app::frame`
-   应随之删除——两处并存是过渡态，不是终局。
+   （trait 定义在 `rustmark-ui::presentation::view_context`，**133** 个方法分五个
+   能力面：`ThemeAccess` / `UiStateAccess` / `DocumentAccess` / `CommandPort` /
+   `ServiceQueries`；实现在 root 的 `src/app/frame/view_context.rs`）。
+   **两道守卫同时生效，缺一不可**：
+   - `check_view_decoupling`（**路径**判据）：`views/**` 出现 `crate::app` 即报。
+     路径枚举**只经 `parse_use_tree` 展开**——`use crate::{app::frame::EditorApp};`
+     这种花括号形态能绕过「`crate` `::` `app` 相邻三连」的字面匹配，实测让
+     `build.rs` 与 `check-arch` **两层全绿**（P0，2026-10-27 修复）。禁止再写
+     第二套扫描器。
+   - `check_view_no_composition_root_marker`（**记号**判据）：`views/**` 出现
+     `EditorApp` **标识符**即报。补的是路径判据的结构性盲区——子模块经
+     `use super::*` 拿到父模块的私有 `use` 别名后，本文件一行 `crate::app` 都没有
+     却能声明 `app: &mut EditorApp`（`preview_view/{blocks,code,list,media,table,toc}.rs`
+     六个文件正是如此，它们从未进过白名单、也从未被报过一次）。两条判据都走
+     词法器，故视图文档里讨论「为什么不再用 `EditorApp`」的 20 处注释不触发。
+   **白名单已退役**：`PENDING_DECOUPLED_VIEWS`（最初 32 条、「只减不增」的迁移
+   进度表）在批 2 收官时清零，常量整个删除，`check_view_decoupling` 直接传
+   `&[]`。不保留空表——空表读起来像「暂时没人管」，传 `&[]` 表达的是
+   「一名都不许有」。
+   **`crate::app::frame` 的按层放行已从 `views/` 撤回**：`allowed_for` 不再给
+   `Layer::PresentationViews` 豁免（其余表现层子层照旧，见 §4.2）。当初并存是
+   过渡态，撤回条件是「全部视图迁完」，该条件已兑现——这是**兑现**，不是规则反悔。
+   **维护说明（变异验证的姿势）**：要证明守卫真能抓，必须
+   `SKIP_ARCH_CHECK=1 cargo build --bin check-arch` 再独立运行。直接
+   `cargo build --bin check-arch` 会让 `build.rs` 先 panic 退出，**bin 根本不会
+   重建**，跑的是旧 exe ——结果是假绿。
 
 ### 10.2 模块归属判据（四问 + 两条强信号）
 

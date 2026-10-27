@@ -61,7 +61,7 @@
 > 会吞到文件里下一个 `'`，字符字面量之后的 token 静默丢失（全仓约 200 处转义
 > 字符字面量处于该路径：crates 98 / src 17 / tests 85，剔注释与字符串实测；
 > 泄漏长期不可见）；修复后真实工程复扫仍零违规。release exe
-> **10,520,576 B** 逐字节不变。下文「2153」及更早数字表述一律按 **2164** 执行。
+> **10,520,576 B** 字节数不变。下文「2153」及更早数字表述一律按 **2164** 执行。
 >
 > **守卫加固包 · 守卫③（2026-10-25）：纯文档，基线不变**。constraints §3 依赖
 > 矩阵下补 `shared` 定位声明（「被跨层复用的纯函数 / 纯数据结构模块合法居
@@ -117,7 +117,7 @@
 > 不变量断言：`shared::text::thousands` 2 条、`diff_view::gutter_numbers` 3 条、
 > `search::LineCursor` 4 条（与 `shared::text::line_index_at` 对拍）、
 > `dto_default_palette_is_derived_from_the_domain_default` 1 条。
-> release **10,550,272 B 逐字节不变**（纯重构）。
+> release **10,550,272 B 字节数不变**（纯重构）。
 
 **通用验收（每项必含）**：上表五项全绿 + `cargo fmt --check` 绿 + 所有命令带
 `--workspace`（root `Cargo.toml` 注释警告：否则 core 单测静默退出测试集，
@@ -326,7 +326,7 @@ V11-59 ─────────────────────┼──�
 > 4. **公开路径零变化**：ui 侧逐名重导出，`rustmark::presentation::state::find_replace_ui_state::Finder`
 >    等路径不变，`tests/e2e` / `tests/integration/large_file_test` 与 root 的 3 个调用点零改动。
 > 5. **测试**：新增 core 内联 8 条（零宽、循环回卷、大小写双向、正则字符类双折叠、全字边界、替换增生双向、
->    空模式）；基线 2203 → **2211**（+8），doc 1 → 合计 2212；release 10,550,272 B **逐字节不变**
+>    空模式）；基线 2203 → **2211**（+8），doc 1 → 合计 2212；release 10,550,272 B **字节数不变**
 >    （纯搬迁，`#[cfg(test)]` 不进产物）。
 
 ### V11-62 · presentation 非视图子模块 → `rustmark-ui` ｜ 优先级：中（触发式）｜ 2–3 人日 ｜ 并行组 D
@@ -362,7 +362,7 @@ V11-59 ─────────────────────┼──�
 > - **归一化边界（坑）**：arch_check 只把 `rustmark_core::` 归一为 `crate::`；`rustmark_ui::` **不归一**（root 拼接 core 全部模块 vs 只拼 ui 的 widgets，两种拼写不等价）。fixture 合成内容同步改三行拼接。
 > - **新 crate 必备件（坑）**：lib.rs 须带 `#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]`——workspace lints 的 panic=warn 会打死迁入的带 `panic!` 测试代码。
 > - **守卫与 fixture**：arch_check 加第五根（ui 根不强制层，lib.rs 自然 Free）；build.rs 加 rerun-if-changed；field_visibility_guard 扩到 3 根（键格式 `<短名>/<路径>`）；fixture 新增第十七节 3 例（ui 前缀不误判 / ui 根洗不掉子层禁令 / views 误搬 ui 照旧报）。
-> - **五门禁实测**：fmt OK；check-arch OK（未发现分层依赖违规）；clippy OK；`--all-targets` **2143 passed / 0 failed / 4 ignored** + `--doc` 1 = 合计 2144（基线 2140，+4 = 3 fixture + 1 拓扑断言）；topology CI 式 diff CLEAN；release exe **10,485,248 B 与基线逐字节相同**（红线 10,485,760 B，余 512 B）。
+> - **五门禁实测**：fmt OK；check-arch OK（未发现分层依赖违规）；clippy OK；`--all-targets` **2143 passed / 0 failed / 4 ignored** + `--doc` 1 = 合计 2144（基线 2140，+4 = 3 fixture + 1 拓扑断言）；topology CI 式 diff CLEAN；release exe **10,485,248 B 与基线字节数相同**（红线 10,485,760 B，余 512 B）。
 > - **三组变异验证全捕获**：① 注释掉 arch_check 第五根 → 两个「ui 根禁令」用例双红；② 向 ui/presentation.rs 注入 `pub struct` + `pub` 字段 → guard 报 `ui/presentation.rs::...`；③ 向 ui Cargo.toml 注入第三个依赖 `log` → 依赖面断言红。
 > - **文档同步**：constraints §4.1/§7/§10.1/§10.3（含三阶段演进图重算）；topology 期望文件重算；本 backlog 波次表；本节。
 > - **批次 2–5 计划（原定）**：theme（3,482 行，**必须扩 theme_guard src_roots**——SOURCE_OF_TRUTH 随迁）→ shortcuts（1,532）→ state（6,682，field guard 白名单重点核对）→ rich（5,918）。views 始终留 root。**【实际执行顺序因依赖环调整见下】**
@@ -374,7 +374,7 @@ V11-59 ─────────────────────┼──�
 > - **跨 crate 可见性摩擦（R-11 保证的代价，实证 2 处）**：① `ActionEntry`/`ActionTable` 从 `pub(crate)` 升 `pub` 并 re-export；② `ActionEntry::group` 与 `RecentFileView::last_opened` 字段升 `pub`。三处均登记 field_visibility_guard 白名单（548 → **550**，接口面增长留痕）。
 > - **白名单改键**：168 条 state 条目 `presentation/state/...` → `ui/presentation/state/...`（ui 根批次 1 已铺，覆盖无断档）；guard 文档注释「暂无 ui 条目」失实表述同步修正；fixture 中「state 现住 core 根」注释同步改「ui 根」。
 > - **五门禁实测（代码全绿）**：fmt OK；check-arch OK；clippy OK；`--all-targets` **2143 passed / 0 failed / 4 ignored** + `--doc` 1 = 2144（state 15 个内联测试块 core→ui 总量守恒）；topology CI 式 diff CLEAN（本地边仍 6 条，state 走既有 ui→core 边）。
-> - **⚠️ release exe 越旧红线，触发 NFR 红线决策**：批次 2 树 **10,487,808 B**，较批次 1 基线（10,485,248 B，worktree @ `9ab57ae` 共享 target 重建逐字节相同）**+2,560 B**。旧红线 10 MiB（余 512 B）耗尽越线。worktree A/B 实证 +2,560 B 确由跨 crate 搬迁在 `opt-level=z` + fat LTO + `codegen-units=1` 下的 LTO 边界成本产生，无针对性修法。**维护者决策：NFR 红线 10 → 11 MiB、预警 8 → 10 MiB（原红线降级为预警）**，已同步 `scripts/size_gate.sh`、`docs/metrics.md` §2.8 + NFR-PERF-01、`docs/architecture-constraints.md` §预算、TD-01。新红线 11 MiB 下距红线余 **1,046,528 B（0.91 MiB）**，可容纳批次 3–5。
+> - **⚠️ release exe 越旧红线，触发 NFR 红线决策**：批次 2 树 **10,487,808 B**，较批次 1 基线（10,485,248 B，worktree @ `9ab57ae` 共享 target 重建字节数相同）**+2,560 B**。旧红线 10 MiB（余 512 B）耗尽越线。worktree A/B 实证 +2,560 B 确由跨 crate 搬迁在 `opt-level=z` + fat LTO + `codegen-units=1` 下的 LTO 边界成本产生，无针对性修法。**维护者决策：NFR 红线 10 → 11 MiB、预警 8 → 10 MiB（原红线降级为预警）**，已同步 `scripts/size_gate.sh`、`docs/metrics.md` §2.8 + NFR-PERF-01、`docs/architecture-constraints.md` §预算、TD-01。新红线 11 MiB 下距红线余 **1,046,528 B（0.91 MiB）**，可容纳批次 3–5。
 > - **文档同步**：constraints §7（state 移出 core 模块树）/§10.1；metrics.md §2.8 + NFR-PERF-01 + TD-01；本 backlog 波次表与本节。
 >
 > **动作 2 批次 3 已落地（shortcuts，2026-10-25，`6778f20`）。** 顺序（方案 A）：state → **shortcuts** → theme → rich。批次 3 实测如下。
@@ -415,16 +415,16 @@ V11-59 ─────────────────────┼──�
 > - **可见性收尾**：`image_entry` 转 `pub(super) fn`；`ImageEntry` 本体与 4 字段转 `pub(super)`（编译器 E0616/E0446 实证：media.rs 读 `entry.loading` / `entry.error` 等跨子模块够不着私有项）；`media.rs` 调用点改 `super::image_cache::image_entry(...)`。
 > - **公开路径零变化**：`preview_view::{show, image_cache_state, is_remote_url, ImageEntryState}` 经 facade `pub use image_cache::{…}` 重导出，集成测试 `tests/presentation/preview_view_test.rs`（`use …preview_view::{image_cache_state, is_remote_url}`）零改动。行尾统一 LF（git autocrlf 检出的 CRLF 混存随重写清除，index 恒 LF 不受影响）。
 > - **五门禁实测**：fmt OK；check-arch OK（未发现分层依赖违规——簇内 import `crate::app::frame::EditorApp` / `crate::shared::lru::LruMap` 原样随迁，零新依赖边）；clippy OK（CLIPPY_EXIT=0）；`--all-targets` **2143 passed / 0 failed / 4 ignored** + `--doc` 1 = **2144 守恒**（外置测试块不改变用例数）；topology CLEAN（本地边仍 6 条，纯 crate 内文件搬迁）。
-> - **release exe 10,487,296 B**：与 V11-62 收官基线**逐字节相同**（纯 crate 内拆分零 codegen 变化），size_gate exit 0（仅预警，距红线余 1,047,040 B）。
+> - **release exe 10,487,296 B**：与 V11-62 收官基线**字节数相同**（纯 crate 内拆分零 codegen 变化），size_gate exit 0（仅预警，距红线余 1,047,040 B）。
 > - **文档同步**：constraints §7（D-4 阈值段：TD-02 闭环 + 现存超阈值文件清单）+ §10.1（root 84/21,073、规模口径注记）；本登记簿 TD-02 行。
 >
 > **D-4 第二例已闭环（toolbar_view.rs 拆分，2026-10-25，`22d4550`）。** TD-02 闭环时 constraints §7 标注的「下一候选」，按同一阈值（> 600 行）专项执行。实测如下。
 >
 > - **拆分形态**：695 行 → 入口 `toolbar_view.rs` **211 行**（header + `show` + `draw_breadcrumb` + `SIDEBAR_TOGGLE_W` + `draw_sidebar_toggle`）+ `toolbar_view/tab_strip.rs` **498 行**（`draw_tab_strip` 及其硬规则 doc、15 个标签条常量、`paint_nav_arrow`）。提取依据全部实测：15 个常量的使用点 100% 落在 `draw_tab_strip` 内（`BREADCRUMB_ROW_H` 虽名为面包屑，唯一使用点是标签条钳高 L118），`paint_nav_arrow` 唯一调用点在簇内（L428）；无内联测试故不需要 `tests.rs` 外置。
 > - **可见性**：`draw_tab_strip` 转 `pub(super) fn`——E0603 实证「子模块私有项对父模块不可见」（可见性只向下传递，与 TD-02 的 E0446 方向相反）；簇内其余项（`paint_nav_arrow`、15 常量）保持私有。零 `pub` 项提取，公开路径零变化（外部仅 `tab_strip_test.rs` 注释按值钉常量）。
-> - **附带修正**：`draw_tab_strip` doc 标题「四条硬规则」实列五条（037/038/040/041），随迁改「五条」；其余移动代码逐字节一致（手术脚本断言）。
+> - **附带修正**：`draw_tab_strip` doc 标题「四条硬规则」实列五条（037/038/040/041），随迁改「五条」；其余移动代码字节数一致（手术脚本断言）。
 > - **五门禁实测**：fmt OK；check-arch OK（纯目录内拆分，层判定按路径段命中 views 不变）；clippy OK（EXIT=0，仅 27 条 lock 文件噪声）；`--all-targets` **2149 passed / 0 failed / 4 ignored** + `--doc` 1 = **2150 守恒**；topology CLEAN（本地边仍 6 条）。
-> - **release exe 10,520,576 B**：与拆分前基线**逐字节相同**（纯 crate 内文件重组零 codegen 变化），size_gate exit 0（低于 10.5 MiB 预警线）。
+> - **release exe 10,520,576 B**：与拆分前基线**字节数相同**（纯 crate 内文件重组零 codegen 变化），size_gate exit 0（低于 10.5 MiB 预警线）。
 > - **文档同步**：constraints §7（D-4 阈值段第二例 + 现存超阈值清单）+ §10.1（root 85/21,188、core 170/27,892、ui 73/17,651 今日实测——`c08fd13` 增量一并归因）；本登记簿 TD-09 行。
 
 ### V11-63 · infrastructure 去 egui 化 ｜ 优先级：低（触发式）｜ 2–3 人日 ｜ 并行组 D
