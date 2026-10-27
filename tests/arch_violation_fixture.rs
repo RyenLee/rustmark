@@ -445,8 +445,19 @@ fn ui_submodule_must_be_synced_to_root_and_crate_map() {
 /// 视图的模块文档大量讨论「为什么不再用 `EditorApp`」「旧的
 /// `crate::app::frame` 长什么样」。若按字面 `contains` 扫描，
 /// **解释性文字会被当成违规**，逼得人不敢写文档。守卫走词法器
-/// （[`arch_check::first_crate_app_line`]）而非字符串匹配，
+/// （[`arch_check::first_crate_app_ref_line`]）而非字符串匹配，
 /// 注释天然不参与——这条用例就是它的护栏。
+///
+/// # 为什么钉死花括号形式（P0 回归）
+///
+/// 本用例出现过一次**真实漏检**：旧判据匹配 `crate` `::` `app` 三个**相邻**
+/// token，而 `use crate::{app::frame::EditorApp};` 的 token 流是
+/// `crate` `::` `{` `app`——第三个是 `{`，必然不命中。验收方在已迁的
+/// `welcome_view.rs` 里注入下面 ⑤ 那两行 → `build.rs` 层 exit 0、
+/// bin 层 `check-arch: OK`，**两道门禁全绿**：视图可以真实持有组合根而无人
+/// 报警。根因不是判据松，是**两套扫描器并存**（`parse_use_tree` 早就支持
+/// 花括号展开，只有这条守卫没用它）。⑤ / ⑥ / ⑦ 三条就是防止回退：
+/// 改回字面匹配，它们立刻转红。
 #[test]
 fn view_files_must_not_reach_the_composition_root() {
     let dir = tempfile::tempdir().unwrap();
@@ -519,6 +530,244 @@ fn view_files_must_not_reach_the_composition_root() {
         violations[0].detail.contains("只减不增"),
         "提示应说明名单只减不增：{:?}",
         violations[0].detail
+    );
+
+    // —— ⑤ 花括号形式必报（P0 回归：旧判据在这里全绿） ——
+    //    这一条就是验收方的一手复现：`use crate::{app::frame::EditorApp};`
+    //    token 流里 `crate` 后面紧跟的是 `{` 而不是 `app`。
+    write_fixture(
+        manifest,
+        view,
+        "//! x\nuse crate::{app::frame::EditorApp};\n\
+         fn _probe_holds_editor_app(a: &mut EditorApp) -> &mut EditorApp { a }\n",
+    );
+    let violations = arch_check::check_view_decoupling_with(manifest, &[]);
+    assert_eq!(
+        violations.len(),
+        1,
+        "花括号 `use` 展开后仍是 `crate::app`，必须报（这正是曾经绕过的形态），实际：{:?}",
+        described(&violations)
+    );
+    assert_eq!(
+        violations[0].line, 2,
+        "行号应指到花括号 `use` 那一行，实际：{:?}",
+        violations[0]
+    );
+
+    // —— ⑥ 嵌套花括号必报：`use crate::{app::{…, …}};` ——
+    //    展开器要递归进组中组；只要有一条路径落在 `crate::app` 下就报。
+    write_fixture(
+        manifest,
+        view,
+        "//! x\nuse crate::{app::{frame::EditorApp, bootstrap::Services}};\n",
+    );
+    let violations = arch_check::check_view_decoupling_with(manifest, &[]);
+    assert_eq!(
+        violations.len(),
+        1,
+        "嵌套花括号组里的 `crate::app::*` 必须报（一条文件只报一条），实际：{:?}",
+        described(&violations)
+    );
+
+    // —— ⑦ 跨行 use 树：行号指向真正写了 `app` 的那一行 ——
+    //    Rust 允许把组拆成多行；行号若取 `use` 关键字那行，读者要多跳几行
+    //    才能看到出事的段，故取**末段所在行**。
+    write_fixture(
+        manifest,
+        view,
+        "//! x\nuse crate::{\n    presentation::widgets,\n    app::frame::EditorApp,\n};\n",
+    );
+    let violations = arch_check::check_view_decoupling_with(manifest, &[]);
+    assert_eq!(
+        violations.len(),
+        1,
+        "跨行 use 树里的 `crate::app` 同样必须报，实际：{:?}",
+        described(&violations)
+    );
+    assert_eq!(
+        violations[0].line, 4,
+        "行号应指到 `app::frame::EditorApp` 那一行（末段所在行），实际：{:?}",
+        violations[0]
+    );
+
+    // —— ⑧ 花括号里没有 `crate::app` 时不误报 ——
+    //    上一条的对照：同一形态、只把 `app` 换成别的模块，必须放行。
+    //    少了这条，「花括号一律报」这种粗暴实现也能让 ⑤⑥⑦ 全绿。
+    write_fixture(
+        manifest,
+        view,
+        "//! x\nuse crate::{presentation::widgets, infrastructure::assets::Loader};\n",
+    );
+    let violations = arch_check::check_view_decoupling_with(manifest, &[]);
+    assert!(
+        violations.is_empty(),
+        "花括号组里没有 `crate::app` 就不该报，实际：{:?}",
+        described(&violations)
+    );
+}
+
+/// 白名单退役后，无参 `check_view_decoupling` 仍必须抓「名单外引用」。
+///
+/// # 为什么这条必要
+///
+/// 3.1 把 `PENDING_DECOUPLED_VIEWS` 常量整个删了、`check_view_decoupling`
+/// 改成传 `&[]`。若这次改动写错（比如误改成直接 `return Vec::new()`、
+/// 或把 `allowlist.contains` 的判定弄反），上面那条用例仍会因为传的是显式
+/// 空切片而全绿——**变异验证必须打在「无参入口」上**，那才是生产路径。
+///
+/// 真实工程当前干净，所以这条只能用合成夹具证明「守卫还活着」。
+#[test]
+fn the_retired_whitelist_does_not_weaken_the_path_guard() {
+    let dir = tempfile::tempdir().unwrap();
+    let manifest = dir.path();
+    write_fixture(
+        manifest,
+        "src/presentation/views/stats_view.rs",
+        "//! x\nuse crate::app::frame::EditorApp;\n",
+    );
+
+    // 走**无参**入口（生产路径）：白名单已退役，任何 `crate::app` 都该报。
+    let violations = arch_check::check_view_decoupling(manifest);
+    assert_eq!(
+        violations.len(),
+        1,
+        "白名单退役后无参入口仍须抓住 `crate::app`，实际：{:?}",
+        described(&violations)
+    );
+    assert!(
+        violations[0].detail.contains("EditorViewContext"),
+        "提示应给出正确改法：{:?}",
+        violations[0].detail
+    );
+}
+
+/// 视图不得出现组合根 `EditorApp` 记号（批 3 · 3.2 的守卫）。
+///
+/// # 这条守卫堵的是路径守卫的盲区
+///
+/// `check_view_decoupling` 只认路径 `crate::app`。子模块经 `use super::*`
+/// 拿到父模块的私有 `use` 别名后，就能在不写一行 `crate::app` 的情况下
+/// 声明 `app: &mut EditorApp`——批 2 之前 `preview_view` 的
+/// `blocks` / `code` / `list` / `media` / `table` / `toc` 六个文件正是如此，
+/// 它们**从未进过白名单、也从未被报过**。本用例把那个形状做成夹具钉死。
+///
+/// # 另一半同样重要：注释不得误伤
+///
+/// 收官时视图层实测有 **20 处 `EditorApp`，全在注释里**（解释「为什么不再用」）。
+/// 按字面 `contains` 扫描会把文档判成违规，逼得人不敢写文档。
+/// 下面第 ② 组用例就是这条护栏：四种注释形态 + 字符串字面量都必须放过。
+#[test]
+fn view_files_must_not_mention_the_composition_root_type() {
+    let dir = tempfile::tempdir().unwrap();
+    let manifest = dir.path();
+
+    // —— ① 注入必报：`use` 引入 + 形参，两个记号都算 ——
+    let facade = "src/presentation/views/stats_view.rs";
+    write_fixture(
+        manifest,
+        facade,
+        "//! x\nuse crate::app::frame::EditorApp;\npub fn show(_app: &mut EditorApp) {}\n",
+    );
+    let violations = arch_check::check_view_no_composition_root_marker(manifest);
+    assert_eq!(
+        violations.len(),
+        1,
+        "带 `EditorApp` 记号的视图应报 1 条，实际：{:?}",
+        described(&violations)
+    );
+    assert_eq!(
+        violations[0].file, facade,
+        "违规应定位到该视图文件：{:?}",
+        violations[0]
+    );
+    assert_eq!(
+        violations[0].line, 2,
+        "行号应指到首个记号所在行（`use` 那行），实际：{:?}",
+        violations[0]
+    );
+    assert!(
+        violations[0].detail.contains("EditorViewContext"),
+        "提示应给出正确改法（收 &mut dyn EditorViewContext）：{:?}",
+        violations[0].detail
+    );
+
+    // —— ② 注入必报：**隐式子模块**的形状（无 `crate::app`，只有类型记号）——
+    //    这正是路径守卫的盲区：`preview_view/blocks.rs` 这类文件当年就是这样。
+    let submodule = "src/presentation/views/preview_view/blocks.rs";
+    std::fs::remove_file(manifest.join(facade)).unwrap();
+    write_fixture(
+        manifest,
+        submodule,
+        "//! 子模块（经 `use super::*` 拿到 EditorApp，本文件无 `crate::app`）\n\
+         pub(super) fn draw(app: &mut EditorApp) {}\n",
+    );
+    let path_guard = arch_check::check_view_decoupling(manifest);
+    assert!(
+        path_guard.is_empty(),
+        "前置：路径守卫对 `use super::*` 形态本就失明（这正是要补的缺口），实际：{:?}",
+        described(&path_guard)
+    );
+    let marker_guard = arch_check::check_view_no_composition_root_marker(manifest);
+    assert_eq!(
+        marker_guard.len(),
+        1,
+        "记号守卫必须补上路径守卫的缺口，实际：{:?}",
+        described(&marker_guard)
+    );
+    assert_eq!(
+        marker_guard[0].line, 2,
+        "行号应指到形参那一行，实际：{:?}",
+        marker_guard[0]
+    );
+
+    // —— ③ 注入不报：四种注释形态 + 字符串字面量 ——
+    //    文档注释里讨论「为什么不再用 EditorApp」是**健康**的（真实工程 20 处），
+    //    词法器必须把它们全部剥掉；字符串字面量里出现同名字样同理。
+    write_fixture(
+        manifest,
+        submodule,
+        "//! 模块文档提到 EditorApp：历史包袱，已不再使用。\n\
+         /// 函数文档也提到 EditorApp。\n\
+         // 行注释：`EditorApp` / `crate::app` 都不该被判违规。\n\
+         /* 块注释里也写了 EditorApp */\n\
+         pub fn draw(vctx: &mut dyn EditorViewContext) {\n\
+         \x20   let _ = \"EditorApp\";\n\
+         \x20   let _ = vctx;\n\
+         }\n",
+    );
+    let violations = arch_check::check_view_no_composition_root_marker(manifest);
+    assert!(
+        violations.is_empty(),
+        "注释与字符串里的 `EditorApp` 不该被判违规，实际：{:?}",
+        described(&violations)
+    );
+}
+
+/// `scan_project` 必须**同时**挂上路径守卫与记号守卫。
+///
+/// 「函数写好了但没接进扫描」是本项目踩过的坑（守卫本身不产生编译错误）。
+/// 这条只验接入：注入一个只有类型记号的视图，`scan_project` 要报出来。
+#[test]
+fn the_marker_guard_is_wired_into_scan_project() {
+    let dir = tempfile::tempdir().unwrap();
+    let manifest = dir.path();
+    // `scan_project` 需要若干真实层根才不早退，故铺最小的 src + 登记表。
+    write_fixture(manifest, "src/lib.rs", "//! x\n");
+    write_registry(manifest, &[]);
+    write_fixture(
+        manifest,
+        "src/presentation/views/stats_view.rs",
+        "//! x\npub fn show(app: &mut EditorApp) {}\n",
+    );
+
+    let violations = arch_check::scan_project(manifest);
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.file == "src/presentation/views/stats_view.rs"
+                && v.detail.contains("EditorApp")),
+        "记号守卫必须接进 scan_project，实际：{:?}",
+        described(&violations)
     );
 }
 
@@ -1078,16 +1327,23 @@ fn the_layer_root_files_are_judged_too() {
     );
 }
 
-/// `views/` 的 `crate::app::frame` 窄豁免在细粒度化后仍然有效。
+/// `views/` 的 `crate::app::frame` 窄豁免**已随迁移收官撤回**。
 ///
-/// # 为什么这条是 R-13 的关键回归
+/// # 这条用例的方向为什么反过来了
 ///
-/// 细化层判定时若忘了给 `views/` 同步窄豁免，**35 个视图文件会同时报错**
-/// （实测：全是 `use crate::app::frame::EditorApp` / `frame::PendingDialog`）。
-/// 那不是「更严的架构」，而是规则没跟上自己的细化。这条钉住
-/// 「豁免跟着子层细化走，窄前缀本身不变」。
+/// R-13 时它叫 `views_keep_the_narrow_app_frame_allowance`，钉的是
+/// 「细化层判定别漏给 `views/` 同步豁免，否则 35 个视图同时报错」——
+/// 那是对的，因为当时视图确实在收 `&EditorApp`。
+///
+/// R-03 B1 收官后视图层零 `crate::app` 引用，留下的豁免只剩坏处：
+/// 漏写 `use` 到 `crate::app::frame` 不会有任何提示，规则从「不该这么做」
+/// 退化成「随你」。故按 `docs/architecture-constraints.md` §10.1 硬约束 5
+/// 撤回。本用例随之反转为「必须报」——**方向反转本身就是兑现证据**。
+///
+/// 若哪天视图真的又需要它，正确处理是重新评估 `EditorViewContext` 是否缺
+/// 能力，而不是把豁免加回来：加回豁免会让记号守卫仍然绿，问题被永久掩盖。
 #[test]
-fn views_keep_the_narrow_app_frame_allowance() {
+fn views_no_longer_get_the_app_frame_allowance() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("src");
     write_fixture(
@@ -1097,9 +1353,17 @@ fn views_keep_the_narrow_app_frame_allowance() {
     );
 
     let violations = arch_check::scan(&root);
+    assert_eq!(
+        violations.len(),
+        2,
+        "视图碰 `crate::app::frame` 现在应各报一条（豁免已撤回）。实际：{:?}",
+        described(&violations)
+    );
     assert!(
-        violations.is_empty(),
-        "views 用 app::frame 是既有豁免，细粒度化后应继续放行。实际：{:?}",
+        violations
+            .iter()
+            .all(|v| v.detail.contains("crate::app") || v.detail.contains("组合根")),
+        "提示应说明视图不得直取组合根：{:?}",
         described(&violations)
     );
 }
@@ -1652,16 +1916,25 @@ fn app_layer_may_use_ui_and_infra() {
 
 /// 表现层从 `crate::app::frame` 取状态句柄是**被认可的下行通道**。
 ///
-/// 现实：54 个表现层文件都这么干。规则若一刀切禁掉 `crate::app`，
+/// 现实：表现层 54 个文件都这么干。规则若一刀切禁掉 `crate::app`，
 /// 就会变成「一条没人能遵守的规则」——例外随之蔓延成惯例，
 /// 连真正要拦的反向依赖也一起淹掉。
+///
+/// # 落点为什么是 `presentation/shell.rs` 而不是 `presentation/views/`
+///
+/// R-03 B1 收官后 `views/` 的窄豁免已撤回（见
+/// `views_no_longer_get_the_app_frame_allowance`），`Layer::PresentationViews`
+/// 不再放行 `crate::app::frame`。但**机制本身仍在**——`Layer::Presentation`
+/// （`presentation/` 直下、非 `views/`）保留豁免，`shell.rs` 这类外壳
+/// 仍在收 `&EditorApp`。换落点而不是删用例：否则撤回豁免时很容易
+/// 顺手把「窄前缀」机制整个删掉，下次真需要时又得重新发明。
 #[test]
 fn presentation_may_reach_the_app_frame_handle() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("src");
     write_fixture(
         &root,
-        "presentation/views/main_view.rs",
+        "presentation/shell.rs",
         "//! x\nuse crate::app::frame::EditorApp;\nuse crate::app::frame::PendingDialog;\n",
     );
 
@@ -1700,6 +1973,14 @@ fn presentation_may_not_reach_the_rest_of_the_composition_root() {
 // ============================================================================
 // 七之补、R-12：presentation 不得直写 app 状态字段（赋值形态）
 // ============================================================================
+//
+// 本节四个夹具的形参一律写成**裸 `EditorApp`**（不带 `crate::app::frame::`
+// 前缀）。原因：本节判的是 R-12（「不得直写 app 状态字段」），不是层级依赖；
+// 而 R-03 B1 收官后 `views/` 的 `crate::app::frame` 窄豁免已撤回，带前缀的
+// 形参会额外触发一条层级违规，把 `violations.len() == 1` 的断言撑成 2 条，
+// 让用例红在**另一个**规则上。裸记号恰好也是真实代码的形状（子模块经
+// `use super::*` 拿到别名），故这不是「为了过测而削足」，是把用例的判据
+// 收敛到它真正要钉的那一条。
 
 /// **R-12 点名判据**：`presentation/views/x.rs` 写 `app.a.b = z;`
 /// → 必须报「不得直写 app 状态字段」。
@@ -1714,7 +1995,7 @@ fn presentation_direct_write_of_app_state_field_is_detected() {
     write_fixture(
         &root,
         "presentation/views/foo_view.rs",
-        "//! x\nfn f(app: &mut crate::app::frame::EditorApp) {\n    app.a.b = 1;\n}\n",
+        "//! x\nfn f(app: &mut EditorApp) {\n    app.a.b = 1;\n}\n",
     );
 
     let violations = arch_check::scan(&root);
@@ -1740,7 +2021,7 @@ fn presentation_single_level_write_of_app_state_field_is_detected() {
     write_fixture(
         &root,
         "presentation/views/foo_view.rs",
-        "//! x\nfn f(app: &mut crate::app::frame::EditorApp) {\n    app.editor_text = String::new();\n}\n",
+        "//! x\nfn f(app: &mut EditorApp) {\n    app.editor_text = String::new();\n}\n",
     );
 
     let violations = arch_check::scan(&root);
@@ -1767,7 +2048,7 @@ fn presentation_may_borrow_app_state_field_for_egui() {
     write_fixture(
         &root,
         "presentation/views/foo_view.rs",
-        "//! x\nfn f(app: &mut crate::app::frame::EditorApp) {\n    \
+        "//! x\nfn f(app: &mut EditorApp) {\n    \
          TextEdit::singleline(&mut app.a.b);\n}\n",
     );
 
@@ -1789,7 +2070,7 @@ fn presentation_may_compare_app_state_field() {
     write_fixture(
         &root,
         "presentation/views/foo_view.rs",
-        "//! x\nfn f(app: &mut crate::app::frame::EditorApp) {\n    \
+        "//! x\nfn f(app: &mut EditorApp) {\n    \
          let selected = app.a.b == 1;\n}\n",
     );
 

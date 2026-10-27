@@ -6,8 +6,13 @@
 //    全部剔除——否则「注释里提到 `crate::domain`」「错误信息里写了 `crate::domain`」
 //    会被误判成跨层依赖。
 // 2. **`use` 展开**：`use` 声明按 use-tree 语法展开成**完整路径**，覆盖
-//    `pub use` / `use a::{b, c}` / `use a::b as c` / `use a::*` / 跨行 / 前导 `::`。
-//    `extern crate a;`（2015 版式，`#[macro_use]` 场景）同等对待。
+//    `pub use` / `use a::{b, c}`（含嵌套组）/ `use a::b as c` / `use a::*` /
+//    跨行 / 前导 `::`。`extern crate a;`（2015 版式，`#[macro_use]` 场景）
+//    同等对待。**展开器只有一份**（[`parse_use_tree`]）：层禁令
+//    （[`collect_candidates`]）与视图解耦守卫（[`check_view_decoupling_with`]）
+//    都必须经它判路径。历史教训——批 1 的视图守卫曾另开一套「相邻三连
+//    token」字面匹配，被 `use crate::{app::frame::EditorApp};` 一句话绕过，
+//    两层门禁全绿。
 // 3. **限定路径**：非 `use` 位置的 `a::b::C` 同样参与判定——
 //    `fn f(d: crate::domain::x::Y)` 也是跨层依赖。
 // 4. **匹配**：与各层禁止清单做「路径段前缀」匹配（`crate::domain` 命中
@@ -468,18 +473,26 @@ fn forbidden_for(layer: Layer) -> Vec<&'static str> {
 /// `dialog_runner` / `startup_timing` 这些**启动与基础设施编排**的东西——
 /// 那些是组合根的私事，视图伸手去拿就等于绕过了组合根。
 ///
-/// # R-13 起 `views/` 也要这份豁免
+/// # R-13 起 `views/` 也要这份豁免 —— **已于 R-03 B1 收官时撤回**
 ///
-/// `views/` 独立成子层后，`allowed_for` 若不同步跟上，
-/// **35 个视图文件会同时报错**（实测：全是 `use crate::app::frame::EditorApp`
-/// 与 `frame::PendingDialog`）——那不是「更严的架构」，而是规则没跟上
-/// 自己的细化。方案的既定原则（「超预期则放宽到具体文件而非放弃规则」）
-/// 在这里落地为：**豁免跟着子层细化走，窄前缀本身不变**。
+/// `views/` 独立成子层时，若 `allowed_for` 不同步跟上，**35 个视图文件会同时
+/// 报错**（当时实测：全是 `use crate::app::frame::EditorApp` 与
+/// `frame::PendingDialog`）。故 R-13 把 `Layer::PresentationViews` 也加进了
+/// 这个豁免分支，原则是「豁免跟着子层细化走」。
+///
+/// R-03 B1 收官（2026-10-27）后视图层**零 `crate::app` 引用**，这条豁免成了
+/// 纯粹的历史包袱：留着它，下一个写视图的人漏写 `use` 到 `crate::app::frame`
+/// 也不会有任何提示，规则就从「不该这么做」退化成「随你」。故按
+/// `docs/architecture-constraints.md` §10.1 硬约束 5 的既定计划**撤回**——
+/// 这是当初留下它的条件（「迁移完成」）已经兑现，不是规则反悔。
+///
+/// 其余表现层子层（`state` / `rich` / `widgets` / `icons`）已迁入 ui crate，
+/// 反向依赖 `crate::app` 在物理上就写不出来，故它们的豁免分支保留不动
+/// （撤掉不改变判定结果，只是让结论更难读懂）。
 fn allowed_for(layer: Layer) -> &'static [&'static str] {
     match layer {
         Layer::Presentation
         | Layer::PresentationState
-        | Layer::PresentationViews
         | Layer::PresentationRich
         | Layer::PresentationWidgets
         | Layer::PresentationIcons => &["crate::app::frame"],
@@ -1445,68 +1458,52 @@ pub fn check_ui_submodule_sync(manifest: &Path) -> Vec<Violation> {
     violations
 }
 
-/// 仍允许直取组合根 `crate::app` 的视图文件（R-03 B1 迁移白名单）。
+/// 视图解耦守卫（R-03 B1，**已收官**）：`views/**` 不得直取组合根 `crate::app`。
 ///
-/// # 这份名单是「只减不增」的进度表
+/// # 白名单已经退役（2026-10-27）
 ///
-/// R-03 B1 要把 `src/presentation/views/` 下的视图逐个改成收
-/// `&mut dyn EditorViewContext`（见 `rustmark_ui::presentation::view_context`），
-/// 改完的视图不再认识 `EditorApp`。名单里每划掉一行，就是一次可验证的推进；
-/// 反过来，任何**新增**的 `crate::app` 引用都必须落在这里——否则
-/// [`check_view_decoupling`] 直接报。
+/// 这条守卫曾配一张「只减不增」的进度表 `PENDING_DECOUPLED_VIEWS`
+/// （最初 32 条，逐批划掉；`crate::app` 前缀豁免的兑现方式）。批 2 收官时
+/// 最后一条也已解耦，故**常量本身删除**，这里直接传空名单。
 ///
-/// 键是 manifest 相对路径（`src/presentation/views/…`）。用全路径而非
-/// 「相对 views 的短名」，是因为违规消息要能直接定位到文件，
-/// 且与 `docs/thresholds.baseline.yaml` 的 `source:` 口径同形。
+/// 为什么不保留一张空表：空表读起来像「暂时没人管」，而传 `&[]` 表达的是
+/// 「一名都不许有」——同一个判定结果，两种不同的含义，不要让下一个人误解。
 ///
-/// # 为什么不在本批一次改完
+/// # 为什么要配合 [`check_view_no_composition_root_marker`]
 ///
-/// 36 个文件 / 14k 行，其中 [[main_view]] / [[editor_view]] / [[status_bar_view]]
-/// 等聚合视图依赖 `execute(UiAction)`（`UiAction` 经 `rustmark_core::actions`
-/// 转发可达，本 crate 依赖面不变（egui + core），见 trait 文档「端口里为什么收
-/// `UiAction`」）与 `services`（组合根装配产物）。
-/// 这些必须有独立批次配上端口扩张，硬塞进同一批只会得到一个
-/// 「trait 上照抄了 EditorApp 全部成员」的假解耦。
+/// 这条守卫只认**路径** `crate::app`。子模块若经 `use super::*` 拿到父模块的
+/// 私有 `use` 别名，就一行 `crate::app` 都没有——`preview_view` 的
+/// `blocks` / `code` / `list` / `media` / `table` / `toc` 六个文件正是如此。
+/// 那条记号守卫补的就是这个缺口。
 ///
-/// # 已完成（2026-10-27 首批）
+/// # 变异验证的姿势（踩过的坑，务必照做）
 ///
-/// `about_view` / `stats_view` / `symbol_view` / `shortcut_overview_view`
-/// ——四个浮层面板，正是 `overlays::show` 的四个 `match` 分支。
+/// 想证明「守卫真的能抓」时必须**先注入违规、再把 bin 单独编出来**：
 ///
-/// **批 1 · 步 1.1（2026-10-27）**：`welcome_view` 树（3 个文件）已迁。
-/// **批 1 · 步 1.2（2026-10-27）**：`settings_view` 树（5 个文件）已迁。
-/// **批 1 · 步 1.3（2026-10-27）**：`diff_view` / `find_replace_view` /
-/// `export_view` / `quick_open_view`（4 个文件）已迁。
-/// **批 1 · 步 1.4（2026-10-27）**：`command_palette_view`（1 个文件）已迁。
-/// **批 1 · 步 1.5（2026-10-27）**：`overlays`（1 个文件，10 个分支全通）已迁。
-/// **批 1 · 步 1.6（2026-10-27）**：`toolbar_view` 树（4 个文件）已迁。
-/// **批 1 · 步 1.7（2026-10-27）**：`sidebar_view` 树（5 个文件）与
-/// `preview_view/inline/math.rs`（1 个文件）已迁——批 1 的 24 个文件收官。
-/// **批 2（2026-10-27）**：`status_bar_view` / `editor_view` 树 /
-/// `preview_view` 树 / `main_view` / `scroll_sync` 全部解耦，白名单归零。
+/// ```text
+/// SKIP_ARCH_CHECK=1 cargo build --bin check-arch   # 绕过 build.rs 的先决 panic
+/// cargo run --bin check-arch                        # 或直接跑 target/<triple>/debug/check-arch
+/// ```
 ///
-/// 保留这个常量与 `check_view_decoupling` 的**双向**校验：批 3 新增视图时
-/// 只要有人写了 `crate::app` 就直接报违规；空表意味着「零容忍」。
-pub const PENDING_DECOUPLED_VIEWS: &[&str] = &[];
-
-/// 视图解耦进度守卫（R-03 B1）：`views/**` 不得再直取组合根 `crate::app`。
-///
-/// 用真实工程的 [`PENDING_DECOUPLED_VIEWS`] 作白名单。
+/// 若在变异态下直接 `cargo build --bin check-arch`，`build.rs` 会先 panic
+/// 退出（它 `include!` 同一份校验器，注入的违规同样会命中），于是**bin 根本
+/// 没有被重建**，你跑的是上一次的旧 exe——结果是「绿」，但那是对旧代码的绿。
+/// 这条假绿曾让一次真实的守卫失效被漏过一轮。`SKIP_ARCH_CHECK` 只跳过
+/// `build.rs` 里的那次扫描，`include!` 的源码仍是同一份，故 bin 行为不变。
 pub fn check_view_decoupling(manifest: &Path) -> Vec<Violation> {
-    check_view_decoupling_with(manifest, PENDING_DECOUPLED_VIEWS)
+    check_view_decoupling_with(manifest, &[])
 }
 
 /// 同 [`check_view_decoupling`]，但白名单由调用方给出。
 ///
-/// # 为什么要这个「带参版本」
+/// # 为什么在守卫收官后仍保留这个带参版本
 ///
-/// 白名单里是**真实工程的 32 条路径**，而夹具是临时目录（既没有这些文件、
-/// 也不该被真实的迁移进度牵着走）。若守卫硬编码唯一名单，
-/// 夹具一跑就会因为「32 条全部不再引用」刷出 32 条陈旧违规——
-/// 守卫反而没法被测。
+/// 白名单常量已删除，但**双向校验逻辑本身要能被测**：
+/// 夹具是临时目录（既没有真实视图文件、也不该被真实工程的进度牵着走），
+/// 必须能注入「合成名单」才能精确构造两个方向——
+/// 「名单外引用 `crate::app` 必报」与「名单陈旧必报」。
 ///
-/// 拆成带参版本后，夹具可以用「空名单 / 只含自己那条」精确构造两个方向，
-/// 与 [`check_file`] 收 `registry` 参数是同一思路。
+/// 与 [`check_file`] 收 `registry` 参数是同一思路：判定逻辑与真实工程的数据解耦。
 pub fn check_view_decoupling_with(manifest: &Path, allowlist: &[&str]) -> Vec<Violation> {
     let views_root = manifest.join(VIEWS_DIR);
     if !views_root.is_dir() {
@@ -1531,7 +1528,7 @@ pub fn check_view_decoupling_with(manifest: &Path, allowlist: &[&str]) -> Vec<Vi
             continue;
         };
         let lexed = Lexer::new(&content).run();
-        let Some(line) = first_crate_app_line(&lexed) else {
+        let Some(line) = first_crate_app_ref_line(&lexed) else {
             continue;
         };
         actually_coupled.push(rel.clone());
@@ -1541,8 +1538,7 @@ pub fn check_view_decoupling_with(manifest: &Path, allowlist: &[&str]) -> Vec<Vi
                 line,
                 detail: "R-03 B1：视图不得直取组合根 `crate::app` —— 改为收 \
                          `&mut dyn EditorViewContext`（`rustmark_ui::presentation::view_context`）。\
-                         确需暂时保留的，登记进 `tools/arch_check.rs` 的 \
-                         `PENDING_DECOUPLED_VIEWS`（只减不增）"
+                         白名单已退役（批 2 收官），一名都不许有；确需临时保留请先与架构负责人确认"
                     .to_string(),
             });
         }
@@ -1556,7 +1552,7 @@ pub fn check_view_decoupling_with(manifest: &Path, allowlist: &[&str]) -> Vec<Vi
                 file: (*listed).to_string(),
                 line: 1,
                 detail: "R-03 B1：白名单条目已不再引用 `crate::app` —— 迁移已完成，\
-                         请从 `PENDING_DECOUPLED_VIEWS` 删除该条（名单只减不增）"
+                         请从白名单里删除该条（名单只减不增）"
                     .to_string(),
             });
         }
@@ -1565,22 +1561,169 @@ pub fn check_view_decoupling_with(manifest: &Path, allowlist: &[&str]) -> Vec<Vi
     violations
 }
 
-/// 返回首个 `crate::app` 出现的行号（词法级，**注释天然不参与**）。
+/// 视图层不得出现组合根记号 `EditorApp`（R-03 B1 收官守卫）。
+///
+/// # 为什么在 `crate::app` 路径守卫之外还要这一条
+///
+/// [`check_view_decoupling`] 只认**路径** `crate::app`。而子模块通常经
+/// `use super::*` 拿到父模块的私有 `use` 别名——Rust 的可见性规则让子模块
+/// 看得见父模块的私有项，于是 `preview_view` 的 `blocks` / `code` / `list` /
+/// `media` / `table` / `toc` 六个文件**自己一行 `crate::app` 都没有**，
+/// 却能直接写 `app: &mut EditorApp`。路径守卫对它们完全失明：这六个文件
+/// 从未进过白名单，也从未被报过一次违规——批 2 的迁移是被 `show` 的签名
+/// 拖着走的，不是被守卫逼出来的。
+///
+/// 类型记号是更强的判据：只要视图里出现 `EditorApp` 这个**标识符**，
+/// 无论它是 `use`、形参、返回值还是 `EditorApp::method()` 调用，
+/// 都说明该视图还认识组合根。
+///
+/// # 为什么必须走词法器（20 处注释的教训）
+///
+/// 视图的模块文档大量讨论「为什么不再用 `EditorApp`」——收官时实测
+/// **20 处，全在注释里**。按字面 `contains` 扫描会把解释性文字判成违规，
+/// 逼得人不敢写文档（这正是 [`first_crate_app_ref_line`] 当初就走 token 流的理由）。
+/// 本函数复用同一个 [`Lexer`]：它直接跳过行注释 / 块注释 / 字符串 /
+/// 字符字面量，故 `TokKind::Ident && text == "EditorApp"` 只可能来自真实代码。
+///
+/// # 为什么覆盖 `VIEWS_DIR` 下**全部** `.rs`（递归）
+///
+/// 缺口恰恰在隐式子模块里：不递归就只会检查 facade，而这六个子模块
+/// 才是本次要堵的地方。测试模块（`tests.rs`）一并纳入——它们同样是视图层代码。
+pub fn check_view_no_composition_root_marker(manifest: &Path) -> Vec<Violation> {
+    let views_root = manifest.join(VIEWS_DIR);
+    if !views_root.is_dir() {
+        // 合成夹具可能根本没有视图层——不报（与 `check_view_decoupling_with` 同）。
+        return Vec::new();
+    }
+
+    let mut files = Vec::new();
+    collect_rs_files(&views_root, &mut files);
+    files.sort();
+
+    let mut violations = Vec::new();
+    for path in &files {
+        let Ok(content) = fs::read_to_string(path) else {
+            continue;
+        };
+        let lexed = Lexer::new(&content).run();
+        let Some(line) = first_ident_line(&lexed, "EditorApp") else {
+            continue;
+        };
+        let rel = path
+            .strip_prefix(manifest)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        violations.push(Violation {
+            file: rel,
+            line,
+            detail: "R-03 B1：视图不得出现组合根 `EditorApp` 记号 —— `EditorApp` 是组合根，\
+                     视图只应通过 `EditorViewContext` 契约\
+                     （`rustmark_ui::presentation::view_context`）访问应用状态：\
+                     形参改收 `&mut dyn EditorViewContext`；只读查询走 `ThemeAccess` / \
+                     `UiStateAccess` / `DocumentAccess` / `ServiceQueries`；\
+                     状态与命令走 `CommandPort`"
+                .to_string(),
+        });
+    }
+
+    violations
+}
+
+/// 返回首个指定标识符出现的行号（词法级，**注释与字符串天然不参与**）。
+///
+/// 与 [`first_crate_app_ref_line`] 同一手法，只是判据换成「单个标识符」：
+/// 路径守卫看得见 `crate::app`，看不见经 `use super::*` 带进来的
+/// `EditorApp`（见 [`check_view_no_composition_root_marker`]）。
+fn first_ident_line(lexed: &Lexed, name: &str) -> Option<usize> {
+    lexed
+        .tokens
+        .iter()
+        .find(|t| t.kind == TokKind::Ident && t.text == name)
+        .map(|t| t.line)
+}
+
+/// 视图解耦守卫的判据：组合根在 `crate` 下的模块路径。
+const COMPOSITION_ROOT_PATH: &str = "crate::app";
+
+/// 返回首个「引用组合根 `crate::app`」的行号（词法级，**注释与字符串天然不参与**）。
 ///
 /// 用词法器而不是 `str::contains`：视图的文档注释里大量提到
 /// `EditorApp` / `crate::app`（解释「为什么不这么做」），按字面扫描会把
 /// 说明文字当成违规。R-01 的 `check_root_federated_layers` 出于同样理由走 token 流。
-fn first_crate_app_line(lexed: &Lexed) -> Option<usize> {
+///
+/// # 为什么判据是「路径」而不是「相邻三连 token」
+///
+/// 旧实现叫 `first_crate_app_line`，判的是 `crate` `::` `app` 三个**相邻**
+/// token。花括号形式 `use crate::{app::frame::EditorApp};` 的 token 流是
+/// `crate` `::` `{` `app`——第三个是 `LBrace`，**必然不命中**，于是
+/// 「视图可以真实持有 `EditorApp`，`build.rs` 与 `check-arch` 两层全绿」。
+///
+/// 这不是判据强弱问题，是**两套扫描器并存**：本文件早有 [`parse_use_tree`]
+/// 能把 `use a::{b, c}` 展平成完整路径，分层校验（[`collect_candidates`]）
+/// 一直用它，只有这条守卫另开了一套更弱的字面匹配。同源问题在
+/// `push_candidates` 的归一化误伤、R-01 守卫的独立词法扫描上已出现过两次，
+/// 故此处**直接复用它**，并把旧函数删除——不给分叉留第二次机会。
+///
+/// # 覆盖的两类形态
+///
+/// 1. `use` 声明：交给 [`parse_use_tree`] 展平成 [`FlatPath`]，再逐条做
+///    **路径段前缀**匹配（[`matches_ban`]）。嵌套组、`as` 别名、glob、
+///    跨行、前导 `::` 一并覆盖。
+/// 2. 非 `use` 位置的限定路径 `crate::app::frame::EditorApp`：按 `::` 连读成
+///    一条路径后同样做前缀匹配。首段前是 `.` 的不算（`x.y::z` 里 `y::z`
+///    不是依赖，与 [`collect_candidates`] 同一条排除）。
+///
+/// `extern crate app;` 不需要特殊处理：它引入的是**外部 crate** 名，写法上
+/// 根本表达不出 `crate::app` 这条路径（`extern crate` 后不接路径）。
+///
+/// 行号取**末段所在行**：`use` 树跨行时指向真正写了 `app` 的那一行，
+/// 比「`use` 关键字所在行」更贴近读者要改的位置。
+fn first_crate_app_ref_line(lexed: &Lexed) -> Option<usize> {
     let tokens = &lexed.tokens;
-    for i in 0..tokens.len().saturating_sub(2) {
-        let hit = tokens[i].kind == TokKind::Ident
-            && tokens[i].text == "crate"
-            && tokens[i + 1].kind == TokKind::PathSep
-            && tokens[i + 2].kind == TokKind::Ident
-            && tokens[i + 2].text == "app";
-        if hit {
-            return Some(tokens[i].line);
+    let mut i = 0usize;
+    while i < tokens.len() {
+        let t = &tokens[i];
+
+        // ① `use` 声明：整体展开成完整路径。
+        if t.kind == TokKind::Ident && t.text == "use" {
+            let (paths, end) = parse_use_tree(tokens, i + 1, &[]);
+            if let Some(line) = paths
+                .iter()
+                .find(|(path, _)| matches_ban(path, COMPOSITION_ROOT_PATH))
+                .map(|(_, line)| *line)
+            {
+                return Some(line);
+            }
+            i = if end > i { end } else { i + 1 };
+            continue;
         }
+
+        // ② 其它位置的限定路径 `a::b::C`（与 `collect_candidates` 同一判据）。
+        if t.kind == TokKind::Ident
+            && tokens.get(i + 1).map(|n| n.kind) == Some(TokKind::PathSep)
+            && tokens.get(i + 2).map(|n| n.kind) == Some(TokKind::Ident)
+            && !(i > 0 && tokens.get(i - 1).map(|n| n.kind) == Some(TokKind::Dot))
+        {
+            let mut j = i + 1;
+            while tokens.get(j).map(|n| n.kind) == Some(TokKind::PathSep)
+                && tokens.get(j + 1).map(|n| n.kind) == Some(TokKind::Ident)
+            {
+                j += 2;
+            }
+            let segs: Vec<&str> = tokens[i..j]
+                .iter()
+                .filter(|x| x.kind == TokKind::Ident)
+                .map(|x| x.text.as_str())
+                .collect();
+            if matches_ban(&segs.join("::"), COMPOSITION_ROOT_PATH) {
+                return Some(t.line);
+            }
+            i = j;
+            continue;
+        }
+
+        i += 1;
     }
     None
 }
@@ -1904,6 +2047,9 @@ pub fn scan_project(manifest: &Path) -> Vec<Violation> {
 
     // R-03 B1：视图解耦进度（`views/**` 不得直取组合根 `crate::app`）。
     violations.extend(check_view_decoupling(manifest));
+    // 路径守卫看不见「经 `use super::*` 带进来的 `EditorApp`」，
+    // 由记号守卫补这个缺口（见其文档：六个隐式子模块从未被路径守卫报过）。
+    violations.extend(check_view_no_composition_root_marker(manifest));
 
     violations
 }
