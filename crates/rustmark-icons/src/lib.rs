@@ -1,14 +1,13 @@
 //! # rustmark-icons —— 向量图标资源 crate（V11-58 从 core 抽出）
 //!
 //! 16×16 设计栅格上的图标规格数据（[`IconOp`] 表）+ 渲染器（[`paint_icon`]），
-//! 零领域逻辑、零 IO：绘制只依赖 egui 本身，动作映射只依赖
-//! [`rustmark_actions`] 的 `UiAction` 词汇表。
+//! 零领域逻辑、零 IO：绘制只依赖 egui 本身，动作图标走自有的
+//! [`IconKey`] 词汇表（不再依赖动作词汇表 `rustmark-actions`）。
 //!
 //! # 依赖方向
 //!
 //! ```text
 //! rustmark（root）──► rustmark-icons ──► egui
-//!                        └──────────► rustmark-actions
 //! ```
 //!
 //! root 经 `pub use rustmark_icons as icons;` 把本 crate 拼回
@@ -19,7 +18,8 @@
 //!
 //! # 为什么废止「字形图标」
 //!
-//! 原实现（`UiAction::icon`）用**字体字形**当图标（`B` / `I` / `<>` / `🔗`…）。
+//! 原实现（动作自带 `icon` 方法，返回字形）用**字体字形**当图标
+//! （`B` / `I` / `<>` / `🔗`…）。
 //! 它在两个方向上都不及格：
 //!
 //! 1. **依赖字体覆盖**：字形一旦落在已装载字体之外，界面上就是一个豆腐块
@@ -62,10 +62,6 @@ use egui::epaint::{
     CubicBezierShape, PathShape, PathStroke, QuadraticBezierShape, Stroke, StrokeKind,
 };
 use egui::{Color32, CornerRadius, Painter, Pos2, Rect, Shape, Vec2};
-
-// V11-58：随词汇表抽出的动作枚举住 `rustmark-actions`（原
-// `crate::presentation::shortcuts::registry::UiAction`，core 侧已无 icons）。
-use rustmark_actions::UiAction;
 
 // ============================================================================
 // 图元 DSL
@@ -196,13 +192,34 @@ pub struct IconColors {
 /// 设计栅格边长。
 pub(crate) const GRID: f32 = 16.0;
 
+/// 图标键：icons 自有的「动作图标」词汇表（R-05 从 `rustmark-actions` 的
+/// `UiAction` 解耦而来）。
+///
+/// `rustmark-icons` 不再依赖动作词汇表——它只认自己的键；「哪个动作对应哪枚
+/// 图标」由调用方（表现层工具栏）经 `icon_key_for` 映射，不在资源 crate 里
+/// 绑定动作域。新增动作图标 = 加一个变体 + 在 [`build_specs`] 里给一张规格表，
+/// 渲染器与调用方都不动。
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum IconKey {
+    /// 加粗。
+    Bold,
+    /// 斜体。
+    Italic,
+    /// 删除线。
+    Strikethrough,
+    /// 行内代码。
+    InlineCode,
+    /// 插入链接。
+    InsertLink,
+}
+
 /// 图标标识：按**场景**扩展（动作图标、文档图标……）。
 ///
 /// 新增场景 = 加一个变体 + 在 [`spec`] 里给一张规格表，渲染器与调用方都不动。
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Icon {
-    /// 与某个 [`UiAction`] 绑定的图标（语义必须与该动作一致）。
-    Action(UiAction),
+    /// 与某个 `IconKey` 绑定的图标（语义必须与该动作一致）。
+    Action(IconKey),
     /// 文档 / 文件（面包屑等「这是一个文件」的场景）。
     Document,
     /// 侧栏（收起/展开切换）：「主内容 + 左栏」的布局语言。
@@ -272,7 +289,7 @@ fn build_specs() -> Vec<(Icon, Vec<IconOp>)> {
         // **加粗**：字母 B 的**加粗**字身。用粗字身而不是细字身，图形自己
         // 就在说「粗」——语义不靠配色传达，缩小到 16pt 仍可辨。
         (
-            Icon::Action(UiAction::Bold),
+            Icon::Action(IconKey::Bold),
             vec![
                 line((4.6, 2.6), (4.6, 13.4), 2.3, Tone::Primary),
                 cubic(
@@ -289,7 +306,7 @@ fn build_specs() -> Vec<(Icon, Vec<IconOp>)> {
         ),
         // **斜体**：右斜的 I，带上下衬线。倾斜本身就是「斜」的字形语言。
         (
-            Icon::Action(UiAction::Italic),
+            Icon::Action(IconKey::Italic),
             vec![
                 line((5.8, 3.9), (12.6, 2.5), 1.5, Tone::Primary),
                 line((9.2, 3.2), (6.8, 12.8), 1.6, Tone::Primary),
@@ -298,7 +315,7 @@ fn build_specs() -> Vec<(Icon, Vec<IconOp>)> {
         ),
         // **删除线**：字母 S 拦腰一道横线——「文字被划掉」的直译。
         (
-            Icon::Action(UiAction::Strikethrough),
+            Icon::Action(IconKey::Strikethrough),
             vec![
                 cubic(
                     [(11.8, 4.4), (8.8, 2.8), (5.6, 4.2), (6.2, 7.4)],
@@ -316,7 +333,7 @@ fn build_specs() -> Vec<(Icon, Vec<IconOp>)> {
         // **行内代码**：一对尖括号 + 一道斜杠。斜杠取强调色——同一枚图标里
         // 主色/强调色两种角色，示范「配色组合」的用法。
         (
-            Icon::Action(UiAction::InlineCode),
+            Icon::Action(IconKey::InlineCode),
             vec![
                 poly(
                     vec![(5.4, 3.8), (2.4, 8.0), (5.4, 12.2)],
@@ -338,7 +355,7 @@ fn build_specs() -> Vec<(Icon, Vec<IconOp>)> {
         // **插入链接**：两枚相扣的链环。左环主色、右环强调色——「链接」由
         // 两个部件咬合而成，双色让咬合处一眼可辨。
         (
-            Icon::Action(UiAction::InsertLink),
+            Icon::Action(IconKey::InsertLink),
             vec![
                 poly(
                     arc(5.6, 8.0, 3.1, 30.0, 330.0),
@@ -522,11 +539,11 @@ mod tests {
     #[test]
     fn every_icon_with_a_spec_is_nonempty() {
         for icon in [
-            Icon::Action(UiAction::Bold),
-            Icon::Action(UiAction::Italic),
-            Icon::Action(UiAction::Strikethrough),
-            Icon::Action(UiAction::InlineCode),
-            Icon::Action(UiAction::InsertLink),
+            Icon::Action(IconKey::Bold),
+            Icon::Action(IconKey::Italic),
+            Icon::Action(IconKey::Strikethrough),
+            Icon::Action(IconKey::InlineCode),
+            Icon::Action(IconKey::InsertLink),
             Icon::Document,
             Icon::Sidebar,
         ] {
@@ -540,8 +557,8 @@ mod tests {
     /// 若干 `Vec` 分配（弧线采样点尤其明显）。
     #[test]
     fn spec_lookup_is_stable_and_allocation_free() {
-        let a = spec(Icon::Action(UiAction::Bold));
-        let b = spec(Icon::Action(UiAction::Bold));
+        let a = spec(Icon::Action(IconKey::Bold));
+        let b = spec(Icon::Action(IconKey::Bold));
         assert!(
             std::ptr::eq(a, b),
             "同一图标的两次取值不是同一块内存——缓存没生效"

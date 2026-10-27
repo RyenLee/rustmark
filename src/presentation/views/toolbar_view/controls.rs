@@ -258,7 +258,11 @@ fn icon_button(ui: &mut Ui, theme: &Theme, action: UiAction, h: f32) -> egui::Re
         accent: theme.accent,
     };
     let icon_rect = egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(ICON_SIZE));
-    icons::paint_icon(ui.painter(), icons::Icon::Action(action), icon_rect, colors);
+    // R-05：动作 → 图标键 的映射上移到 `presentation::icon_key_for`。
+    // 无图标键的动作（返回 `None`）跳过绘制，与旧行为一致。
+    if let Some(key) = crate::presentation::icon_key_for(action) {
+        icons::paint_icon(ui.painter(), icons::Icon::Action(key), icon_rect, colors);
+    }
     response
 }
 

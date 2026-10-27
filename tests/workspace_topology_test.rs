@@ -120,16 +120,18 @@ fn actions_crate_declares_no_dependencies() {
     }
 }
 
-/// `rustmark-icons` 的依赖面必须恰为 **egui + rustmark-actions**
-/// （V11-58 验收第 1 条的机械化）。
+/// `rustmark-icons` 的依赖面必须恰为 **egui**（R-05，2026-10-27）。
 ///
-/// 图标是「16×16 规格数据 + Painter 渲染器」：绘制原语只要 egui，动作映射
-/// （`Icon::Action(UiAction)`）只要词汇表。任何第三个依赖都说明资源 crate
-/// 在长领域逻辑——「抽出」只换了住处、没换职责。判据同样走 manifest 文本：
-/// 收集 `[dependencies]` 段内的键与期望集合做**相等**断言，再全文禁掉其余
-/// 依赖段（dev / build / target-specific 一个都不许有）。
+/// 图标是「16×16 规格数据 + Painter 渲染器」：绘制原语只要 egui。R-05 前
+/// `icons` 曾 `use rustmark_actions::UiAction`（`Icon::Action(UiAction)`），
+/// 资源 crate 反向依赖动作词汇表；R-05 把映射上移到表现层调用方
+/// （`rustmark::presentation::icon_key_for`），`icons` 改认自有的 `IconKey`
+/// 词汇表，依赖面收敛为纯 egui。任何第二个依赖都说明资源 crate 在长领域
+/// 逻辑——「抽出」只换了住处、没换职责。判据同样走 manifest 文本：收集
+/// `[dependencies]` 段内的键与期望集合做**相等**断言，再全文禁掉其余依赖段
+/// （dev / build / target-specific 一个都不许有）。
 #[test]
-fn icons_crate_dependency_face_is_egui_plus_actions() {
+fn icons_crate_dependency_face_is_egui_only() {
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("crates")
         .join("rustmark-icons")
@@ -154,14 +156,11 @@ fn icons_crate_dependency_face_is_egui_plus_actions() {
             deps.insert(name.trim().to_string());
         }
     }
-    let expected: BTreeSet<String> = ["egui", "rustmark-actions"]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
+    let expected: BTreeSet<String> = ["egui"].iter().map(|s| s.to_string()).collect();
     assert_eq!(
         deps, expected,
-        "rustmark-icons 的依赖面必须恰为 egui + rustmark-actions——\
-         资源 crate 不长领域逻辑，要加依赖先来改这条断言"
+        "rustmark-icons 的依赖面必须恰为 egui——资源 crate 不长领域逻辑，\
+         要加依赖先来改这条断言"
     );
 
     for raw in text.lines() {

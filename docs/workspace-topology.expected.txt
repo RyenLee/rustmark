@@ -65,6 +65,15 @@
 # rustmark_infra::infrastructure;` 桥接后对视图零改动。
 # 同批：core 的依赖面从「四层 + 全部外部适配库」收窄为
 # rustmark-{actions,shared} + ahash/log/serde/thiserror，infra 承接原有外部库。
+#
+# 基线更新：2026-10-27，R-05 解耦 `rustmark-icons` 与 `rustmark-actions` 后拓扑 =
+# 本地依赖边 **9 → 8 条**（无环）：删除 `rustmark-icons → rustmark-actions` 一条
+# 边，`icons` 依赖面收敛为纯 egui（由 tests/workspace_topology_test.rs 的
+# icons_crate_dependency_face_is_egui_only 断言）。当前边表：
+#   root → {rustmark-core, rustmark-infra, rustmark-icons, rustmark-ui}   （4 条）
+#   rustmark-core   → {rustmark-actions, rustmark-shared}                  （2 条）
+#   rustmark-infra  → rustmark-core                                       （1 条）
+#   rustmark-ui     → rustmark-core                                       （1 条）
 rustmark v0.2.0
 ├── anyhow v1.0.104
 ├── eframe v0.37.0
@@ -95,8 +104,7 @@ rustmark-core v0.2.0
 └── thiserror v2.0.21
 
 rustmark-icons v0.2.0
-├── egui v0.37.0
-└── rustmark-actions v0.2.0
+└── egui v0.37.0
 
 rustmark-infra v0.2.0
 ├── image v0.25.10

@@ -1,5 +1,8 @@
 //! 表现层：egui 视图、UI State、主题与快捷键（阶段 06）。
 
+use crate::presentation::icons::IconKey;
+use crate::presentation::shortcuts::registry::UiAction;
+
 pub mod views;
 
 // D-3 阶段 4a：非视图子模块 re-export 拼回 `crate::presentation::<子模块>`
@@ -26,3 +29,26 @@ pub use rustmark_ui::presentation::widgets;
 // 把 crate 本身 re-export 成 `icons` 模块：`crate::presentation::icons::*`
 // 公开路径不变，存量视图（toolbar_view）与测试零改动。
 pub use rustmark_icons as icons;
+
+/// 动作 → 图标键 的映射（R-05，2026-10-27）。
+// R-05：动作 → 图标键 的映射从 `rustmark-icons` 上移到此处。
+//
+// 原 `icons` 直接 `use rustmark_actions::UiAction`，资源 crate 反向依赖动作
+// 词汇表。`icons` 现在只认自己的 [`IconKey`] 词汇表（见
+// `crate::presentation::icons::IconKey`）；「哪个动作对应哪枚图标」是表现层
+// 工具栏渲染的职责，留在这里，不在资源 crate 里绑定动作域。
+//
+// 返回 `None` 表示该动作没有向量图标——调用方据此跳过绘制，与旧行为一致
+// （`spec` 对未注册键返回空表、`paint_icon` 直接 return）。本函数直接可达
+// `rustmark::presentation::icon_key_for`，集成测试据此断言「每个平铺图标按钮
+// 都画出了向量图标」而无需重写映射逻辑。
+pub fn icon_key_for(action: UiAction) -> Option<IconKey> {
+    match action {
+        UiAction::Bold => Some(IconKey::Bold),
+        UiAction::Italic => Some(IconKey::Italic),
+        UiAction::Strikethrough => Some(IconKey::Strikethrough),
+        UiAction::InlineCode => Some(IconKey::InlineCode),
+        UiAction::InsertLink => Some(IconKey::InsertLink),
+        _ => None,
+    }
+}

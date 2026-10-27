@@ -24,6 +24,7 @@
 use crate::support::fake_dialog::FakeDialog;
 use rustmark::app::bootstrap::{ConfigPaths, Services};
 use rustmark::app::frame::EditorApp;
+use rustmark::presentation::icon_key_for;
 use rustmark::presentation::icons::{Icon, spec};
 use rustmark::presentation::shortcuts::registry::UiAction;
 use rustmark::presentation::views::toolbar_view::{FLAT_GROUP, ToolbarControl, toolbar_controls};
@@ -185,8 +186,10 @@ fn every_flat_control_has_a_vector_icon_spec() {
     for control in toolbar_controls() {
         if let ToolbarControl::Flat(action) = control {
             flat += 1;
+            let key = icon_key_for(action)
+                .expect("{action:?} 是平铺图标按钮，却没有对应的图标键——按钮上会是一个空方块");
             assert!(
-                !spec(Icon::Action(action)).is_empty(),
+                !spec(Icon::Action(key)).is_empty(),
                 "{action:?} 是平铺图标按钮，但没有向量图标规格——按钮上会是一个空方块"
             );
         }
