@@ -1,25 +1,11 @@
 //! 原生对话框：请求、结果回退、删除确认兑现。
 use super::*;
 
-/// 一次待执行的阻塞对话框请求。
-///
-/// **S6-11f 起本类型只作为请求的标签**，`PendingDialog::SaveFile`
-/// 缺少「建议文件名」这个必需参数，故实际请求改用
-/// [`crate::app::dialog_runner::DialogRequest`]。
-/// 保留本枚举是因为 `PendingDialog` 已被侧栏 / 欢迎页 / 设置引用，
-/// 而那三处传的都是 `OpenFile` / `PickFolder`（无需额外参数）。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PendingDialog {
-    /// 打开文件对话框。
-    OpenFile,
-    /// 另存为对话框。
-    ///
-    /// **已弃用**：走这条会丢掉建议文件名，对话框只能给一个空名。
-    /// 正确做法是 [`crate::app::dialog_runner::DialogRequest::SaveFile`]。
-    SaveFile,
-    /// 选择工作区目录。
-    PickFolder,
-}
+// `PendingDialog` 已于 R-03 B1 迁入 `rustmark-ui`（见
+// `crates/rustmark-ui/src/presentation/state/pending_dialog.rs`）——
+// 它是表现层的请求标签，视图要弹框就不该被迫认识组合根。
+// 本文件经 `use super::*` 取回该类型，`src/app/frame.rs` 保留同名 re-export，
+// 故 `rustmark::app::frame::PendingDialog` 路径逐字不变。
 
 impl EditorApp {
     /// 请求一次阻塞对话框（**在后台线程执行**，见 [`DialogRunner`]）。

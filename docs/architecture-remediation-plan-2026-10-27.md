@@ -101,7 +101,7 @@
 - **中期 B1（根治）**
   1. 定义窄接口 `EditorViewContext`（trait 或 view-model 结构体），只暴露该视图所需的数据与命令，**替代整个 `EditorApp`** 传入视图。
   2. 43 个视图文件逐一改为接收 `&EditorViewContext`（按依赖拓扑分批，先叶子视图后聚合视图）。
-  3. 视图不再 `use crate::app` 后，整体迁入 `rustmark-ui/src/presentation/views/`，root 仅剩二进制 + 装配。
+  3. 视图不再 `use crate::app` 后，root 的 `src/presentation/views/` **只留视图**（装配与状态在别处）——注意 views 按 ADR-013 决策 3 **留 root**，**不**整体迁入 `rustmark-ui`（见下方「B1 进展」的接口形态条）。
 - **负责角色**：UI（主）＋ Arch（接口设计）＋ QA
 - **优先级**：P1（root 臃肿直接原因、视图不可独立测；短期 B2 成本低先做）
 - **预期产出**：B2=显式 re-export + 守卫；B1=视图窄接口 + views 迁 ui + root 瘦身。
@@ -113,14 +113,24 @@
 - **实测口径更正**：方案原写「43 个视图」，实测 **36 个文件**引用 `crate::app`（`views/` 共 55 个 `.rs` / 14,138 行，其余不碰组合根）。以实测替代沿用。
 - **接口形态**：`rustmark-ui::presentation::view_context::EditorViewContext`（trait）。
   - **不是**「一堆字段引用的结构体」：视图既要读写状态又要调命令，而命令实现在 `EditorApp` 上，调用点会同时需要 `&mut self.field` 与 `&mut self`——借用检查器直接拒绝。trait 只给**一个** `&mut`，状态访问与命令都是它的方法。
-  - **放 ui 而非 root**：视图最终迁入 ui，trait 若留 root 则搬迁时反向依赖成环；放 ui 后**视图签名零改动**即可搬迁。
-  - **端口不收 `UiAction`**：`UiAction` 属 `rustmark-actions`，ui 当前只依赖 egui + core（`workspace_topology_test` 断言）。塞进来要新增一条 crate 边，为一批视图付全局依赖账——`execute` 类聚合视图留待后续批次。
-  - **访问器统一 `_state` 后缀**：与 `EditorApp` 同名 inherent 方法永不撞名。撞名时 `fn theme(&self) { self.theme() }` 会按「inherent 优先」解析，今天恰好正确、明天 inherent 一删就静默递归。实现侧对 8 个同名命令一律写 `EditorApp::x(self, …)` 全路径，把这个隐患在结构上掐掉。
+  - **放 ui 而非 root**：**契约要独立于组合根**——trait 描述「视图能对应用状态做什么」，而应用状态住在 ui 的 `state/` 下，契约与状态同侧才说得清；root 侧只提供实现。**注意**：views 按 ADR-013 决策 3 **留 root**（constraints §10.1 硬约束 2），故「为将来搬迁铺路」这条理由**不成立**，不可据此决策。
+  - **端口收 `UiAction`（实测零新增依赖边）**：`UiAction` 属 `rustmark-actions`，但 `rustmark-core/src/lib.rs` 已有 `pub mod actions { pub use rustmark_actions::{MenuGroup, UiAction, action}; }`，ui 侧 `presentation/shortcuts/registry.rs` 已在 re-export ⇒ trait 里引用 `UiAction` **不产生**新的 crate 边，`rustmark-ui/Cargo.toml` 的依赖面仍恰为 `egui + rustmark-core`（`workspace_topology_test` 断言不变）。收它的理由是**不变量**：菜单 / 快捷键 / 命令面板三处必须走**同一条**执行路径（`src/app/frame.rs`：「视图层只负责**画**按钮，点击后同样回到 `EditorApp::execute`」）；`execute` 不进 trait 就得在 root 侧另留分支，等于在视图里复制一份分派。
+  - **形态：5 个能力 trait + 1 个 bundle**：`ThemeAccess`（3）/ `UiStateAccess`（14）/ `DocumentAccess`（12）/ `CommandPort`（45）/ `ServiceQueries`（0，批 2 填充），`EditorViewContext` 是纯 bundle（无自有方法）。摊平成一个大 trait ≈ `EditorApp`（183 方法 + 40 字段）的 62%，正是「trait 上照抄 `EditorApp` 全部成员」的假解耦。Rust 1.86+ 的 trait object upcasting（1.99 已实测）保证将来再拆细粒度窄 trait 时**每视图只改一行签名**。
+  - **object-safety 三条硬约束**（trait 方法**不得含泛型参数**）：`set_diff_error(impl Into<String>)` → `String`；`apply_theme_field(impl FnOnce(&mut ThemeView))` → `&mut dyn FnMut(&mut ThemeView)`；`apply_editor_field` 同理。
+  - **访问器统一 `_state` 后缀**：与 `EditorApp` 同名 inherent 方法永不撞名。撞名时 `fn theme(&self) { self.theme() }` 会按「inherent 优先」解析，今天恰好正确、明天 inherent 一删就静默递归。实现侧**一律**写 `EditorApp::x(self, …)` 全路径（名字不同的也写，保持一致），把这个隐患在结构上掐掉。
 - **首批迁移（4 个文件 / 812 行）**：`about_view` / `stats_view` / `symbol_view` / `shortcut_overview_view`——正是 `overlays::show` 的四个 `match` 分支，内聚且可独立验收。`EditorApp` 实现该 trait，故 `&mut EditorApp` 在调用点自动强转 `&mut dyn EditorViewContext`，**已迁移与未迁移视图共存于同一次渲染**（`overlays.rs` 即混合态），这是渐进迁移的关键机制。
+- **批 1 准备项 ✅（2026-10-27）**：**P-1** 3 个 root 私有类型搬进 `rustmark-ui/src/presentation/state/`
+  （`PendingDialog` → `state/pending_dialog.rs`、`WorkspaceEntries` → `state/workspace_entries.rs`、
+  `WorkspaceSearch` → `state/sidebar_ui_state/search.rs`），root 侧 `pub use` 转发，
+  **公开路径逐字不变**（`rustmark::app::frame::PendingDialog` 等 6 处调用点零改动）；
+  **P-2** `EditorApp::editor_id()`（关联函数、无 `self`，trait 方法没法在 `dyn` 上调）落为 ui 侧自由函数
+  `editor_ui_state::editor_id()`，root 保留转发保旧路径；**P-3** 纠偏两处错误前提文档
+  （「塞进 `UiAction` 就要新增 ui→actions 边」不成立 /「视图最终整体迁进 ui」与 ADR-013 决策 3 冲突）。
+  迁移进度 **0/7**。
 - **守卫 `check_view_decoupling`**：白名单 `PENDING_DECOUPLED_VIEWS`（32 条）**双向**校验——名单外的 `crate::app` 引用报违规；名单内已解耦的条目也报（防名单腐烂）。词法级判定（`first_crate_app_line`），注释里提到旧路径不误伤。已接入 `scan_project`，故 `check-arch` bin 与 `build.rs` 构建期同时生效。
 - **变异验证**：① 废掉 `first_crate_app_line` → 构建期 panic，列出 32 条陈旧；② 关掉反向陈旧检查 → fixture 红（「名单陈旧应报 1 条，实际：[]」）。
 - **门禁**：fmt / check-arch / thresholds 121 / clippy `-D warnings` / `test --all-targets` **2243** passed（+1 新用例）/ `test --doc` 1 / `size_gate` 见 §metrics。
-- **下一步**：按「无 `execute` 的独立视图树」继续推进（`settings_view` 树 / `diff_view` / `find_replace_view` / `export_view` / `welcome_view` 树），再攻 `execute` 类聚合视图（需先决定 `ui → actions` 是否成边，或改由 root 侧保留 `execute` 分支）。
+- **下一步**：按「零 `app.services` 的独立视图树」分批推进——批 1 = 24 个视图（`welcome_view` 树 / `settings_view` 树 / `diff_view` / `find_replace_view` / `export_view` / `quick_open_view` / `command_palette_view` / `overlays` / `toolbar_view` 树 / `sidebar_view` 树），批 2 = 8 个 `services` 视图 + 6 个未登记子模块，批 3 = 守卫收官（白名单归零 + 「视图不得出现 `EditorApp` 记号」新守卫）。
 
 ### R-04 · 抽离 `rustmark-render`（富内容渲染引擎）　【P2，对应问题 F】
 

@@ -160,6 +160,34 @@ impl SearchToggle {
     }
 }
 
+/// 一次工作区搜索的结果（分组 + 是否被上限截断）。
+///
+/// 刻意**不**把「是否截断」藏进组合根的某个字段由搜索顺手改掉：
+/// 那样「读结果」就有了隐藏副作用，而截断提示恰恰是**必须被看见**的信息
+/// （用户看到截断结果会以为搜全了）。它和结果一起返回，界面不可能漏掉。
+///
+/// R-03 B1：本类型从 root 的 `app/frame/workspace.rs` 迁来，与 [`SearchGroup`]
+/// 作伴——两者是同一份结果的内外两层，拆开住会让「结果」与「分组」分居两地。
+#[derive(Clone, Debug, Default)]
+pub struct WorkspaceSearch {
+    /// 按文件分组的命中。
+    pub groups: Vec<SearchGroup>,
+    /// 是否因超过总命中上限而被截断。
+    pub truncated: bool,
+}
+
+impl WorkspaceSearch {
+    /// 命中总数（各组之和）。
+    pub fn total(&self) -> usize {
+        self.groups.iter().map(|g| g.hits.len()).sum()
+    }
+
+    /// 是否没有任何命中。
+    pub fn is_empty(&self) -> bool {
+        self.total() == 0
+    }
+}
+
 /// 一个搜索结果分组（按文件聚合）。
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct SearchGroup {

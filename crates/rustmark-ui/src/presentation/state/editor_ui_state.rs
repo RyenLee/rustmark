@@ -9,6 +9,25 @@
 //! 边界：本模块只存**字节偏移**，不存文本、不存 `Rope`。
 //! 文本永远来自 `DocumentService::get_content`（DTO）。
 
+/// 编辑区 `TextEdit` 的固定 `Id`（用于读写 egui 内部光标 / 撤销栈状态）。
+///
+/// # 为什么它是自由函数而不是 `EditorApp` 的关联函数
+///
+/// R-03 B1 之前它是 `EditorApp::editor_id()`——一个**没有 `self`** 的关联函数。
+/// trait 方法没法在 `dyn` 上调（加 `where Self: Sized` 会把它排除出 vtable），
+/// 于是「视图要拿编辑区的 egui Id」这件事只能靠「视图认识组合根」实现，
+/// 正好是 B1 要剪断的那条边。
+///
+/// 迁到这里后，视图经 `editor_ui_state::editor_id()` 拿 Id，
+/// 不再需要 `EditorApp`。root 侧 `EditorApp::editor_id()` 保留为转发，
+/// 故 `EditorApp::editor_id()` 这条路径**逐字不变**（含 7 处集成测试调用点）。
+///
+/// Id 字符串 `"rustmark.editor.text"` 是**跨帧持久**的：
+/// 改了它，egui 内部保存的光标 / 撤销栈会全部作废（用户表现为「光标跳回开头」）。
+pub fn editor_id() -> egui::Id {
+    egui::Id::unique("rustmark.editor.text")
+}
+
 /// 编辑区 UI 状态。
 #[derive(Clone, Debug, Default)]
 pub struct EditorUiState {

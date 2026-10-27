@@ -82,7 +82,7 @@ mod arch_check {
 /// - **删除条目** = 字段已收紧 / 已删：编译器保证外部没有读点，清单
 ///   同步移除，双向断言会把忘了删的情况报红。
 const APPROVED_PUB_FIELDS: &[&str] = &[
-    // total: 559
+    // total: 563
     "application/document/commands.rs::CloseCommand::force",
     "application/document/commands.rs::CloseCommand::id",
     "application/document/commands.rs::FormatCommand::id",
@@ -640,6 +640,8 @@ const APPROVED_PUB_FIELDS: &[&str] = &[
     "ui/presentation/state/sidebar_ui_state/search.rs::SearchOptions::case_sensitive",
     "ui/presentation/state/sidebar_ui_state/search.rs::SearchOptions::regex",
     "ui/presentation/state/sidebar_ui_state/search.rs::SearchOptions::whole_word",
+    "ui/presentation/state/sidebar_ui_state/search.rs::WorkspaceSearch::groups",
+    "ui/presentation/state/sidebar_ui_state/search.rs::WorkspaceSearch::truncated",
     "ui/presentation/state/sidebar_ui_state/tree.rs::TreeRow::depth",
     "ui/presentation/state/sidebar_ui_state/tree.rs::TreeRow::is_directory",
     "ui/presentation/state/sidebar_ui_state/tree.rs::TreeRow::is_last",
@@ -657,6 +659,8 @@ const APPROVED_PUB_FIELDS: &[&str] = &[
     "ui/presentation/state/symbol_ui_state/catalog.rs::SymbolItem::glyph",
     "ui/presentation/state/symbol_ui_state/catalog.rs::SymbolItem::label",
     "ui/presentation/state/symbol_ui_state/catalog.rs::SymbolItem::text",
+    "ui/presentation/state/workspace_entries.rs::WorkspaceEntries::items",
+    "ui/presentation/state/workspace_entries.rs::WorkspaceEntries::root",
 ];
 
 /// 递归收集 `.rs` 文件。

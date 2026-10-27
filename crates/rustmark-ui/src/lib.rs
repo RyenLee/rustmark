@@ -3,8 +3,18 @@
 //! 批次 1 只搬 `widgets`：egui 布局不变式的封装层（T8）——同一配方在 ≥2 处
 //! 出现、写错不报错、正确写法与直觉写法不同的三类东西收在这里，每条封装
 //! 对应至少一个已归档缺陷。state / theme / rich / shortcuts 按 V11-62 批次
-//! 计划随后迁入；views 按 ADR-013 决策 3 **永远留 root**（它依赖组合根
-//! `app`，而 core/ui 不允许反向依赖 root）。
+//! 计划随后迁入；views 按 ADR-013 决策 3 **留 root**（见
+//! `docs/architecture-constraints.md` §10.1 硬约束 2：presentation 外移采用
+//! 「views 留 root 的中间 crate」形态，否则 R-11/R-12 的跨 crate 字段保护
+//! 会被降级成同 crate 内约束）。
+//!
+//! # 视图契约住 ui，视图本体留 root（R-03 B1）
+//!
+//! `presentation::view_context::EditorViewContext`（视图窄接口）住在本 crate，
+//! 但**视图本体不迁进来**——ADR-013 决策 3 已把 views 定在 root。
+//! 住 ui 的理由不是「为将来搬迁铺路」（那条理由不成立），而是
+//! **契约要独立于组合根**：本 crate 的 `state/` 存着视图要读的全部 UI 状态，
+//! 契约与这些状态同侧才说得清「视图能对状态做什么」；root 侧只提供实现。
 //!
 //! # 依赖方向
 //!

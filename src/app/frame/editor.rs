@@ -530,8 +530,12 @@ impl EditorApp {
     }
 
     /// 编辑区 `TextEdit` 的固定 `Id`（用于读写 egui 内部光标 / 撤销栈状态）。
+    ///
+    /// R-03 B1：实现已迁至 `rustmark_ui::presentation::state::editor_ui_state::editor_id`
+    /// （它是**无 `self` 的关联函数**，trait 方法没法在 `dyn` 上调），
+    /// 本方法保留为转发，`EditorApp::editor_id()` 路径**逐字不变**。
     pub fn editor_id() -> egui::Id {
-        egui::Id::unique("rustmark.editor.text")
+        crate::presentation::state::editor_ui_state::editor_id()
     }
 
     /// 从领域回读当前文档内容到 `editor_text`，并夹紧光标/选区、失效高亮缓存。

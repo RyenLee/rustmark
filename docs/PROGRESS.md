@@ -91,6 +91,14 @@
   `rustmark-icons` / `rustmark-actions`，本地依赖边 9 条、无环（`docs/workspace-topology.expected.txt`）。
   两个新 crate 的直接收益是**依赖面收窄**：core 从 12 个外部依赖降为 4 个（serde/thiserror/log/ahash），
   复用 domain/application 的消费者不再被 syntect/ureq/rfd/image/pulldown 拖进编译图。
+- **R-03 B1 视图窄接口解耦（批 1，2026-10-27 起）**：视图签名由 `&mut EditorApp`
+  改为 `&mut dyn EditorViewContext`（契约在 `rustmark_ui::presentation::view_context`），
+  契约拆 5 个能力 trait（`ThemeAccess` / `UiStateAccess` / `DocumentAccess` /
+  `CommandPort` / `ServiceQueries`）+ 1 个 bundle，避免「trait 照抄 `EditorApp`」的假解耦。
+  **视图按 ADR-013 决策 3 留 root**，trait 住 ui 只为「契约独立于组合根」。
+  进度：**准备项 P-1/P-2/P-3 已完成**（`PendingDialog` / `WorkspaceEntries` /
+  `WorkspaceSearch` 搬 ui 且公开路径逐字不变；`editor_id()` 落为自由函数；
+  两处错误前提文档已纠偏），迁移 0/7。守卫 `PENDING_DECOUPLED_VIEWS` 只减不增。
 - **可观测性（D-5，2026-10-26，`1c58052`）**：`FrameScheduler` 兼作帧耗时观测点——超 16ms 的帧打一条
   `warn`（状态更新 / 绘制 / 未归因三段归因 + 本帧到期任务，120 帧限流；**仅 release 构建输出**），
   `RUST_LOG=…=debug`

@@ -77,7 +77,7 @@ use crate::presentation::state::scroll_sync_state::Side;
 use crate::presentation::state::settings_ui_state::{SettingsTab, SettingsUiState, Snapshot};
 use crate::presentation::state::shortcut_overview_ui_state::ShortcutOverviewUiState;
 use crate::presentation::state::sidebar_ui_state::SidebarUiState;
-use crate::presentation::state::sidebar_ui_state::{SearchGroup, SearchScope, group_search_hits};
+use crate::presentation::state::sidebar_ui_state::{SearchScope, group_search_hits};
 use crate::presentation::state::status_bar_ui_state::StatusBarUiState;
 use crate::presentation::state::symbol_ui_state::SymbolUiState;
 use crate::presentation::theme::builtin::{self, Theme};
@@ -90,8 +90,13 @@ use crate::presentation::views::scroll_sync::{LineIndex, RevealIntent, TARGET_MA
 use rustmark_core::shared::geometry::{ByteOffset, TextRange, floor_char_boundary};
 use rustmark_core::shared::ids::{DocumentId, JobId};
 
-pub use dialog::PendingDialog;
-pub use workspace::{WorkspaceEntries, WorkspaceSearch};
+// R-03 B1：这三个类型已迁入 `rustmark-ui`（纯数据 / 请求标签，不含组合根语义），
+// 但**公开路径逐字不变**——本文件保留同名 re-export，
+// 故 `rustmark::app::frame::PendingDialog` / `WorkspaceEntries` / `WorkspaceSearch`
+// 对外仍是同一条路径（`tests/app/dialog_runner_test.rs` 等 6 处调用点零改动）。
+pub use crate::presentation::state::pending_dialog::PendingDialog;
+pub use crate::presentation::state::sidebar_ui_state::WorkspaceSearch;
+pub use crate::presentation::state::workspace_entries::WorkspaceEntries;
 
 // E-25 拆分后的路径转发：`EditorApp` 与 `run` 的原路径**保持不变**，
 // 兄弟模块的 `use super::*` 与外部 `rustmark::app::frame::…` 都不必改。
