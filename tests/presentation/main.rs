@@ -27,6 +27,8 @@ mod highlight_layout_test;
 mod preview_border_test;
 // S8-05 高亮性能基线（必须 release 下跑，见文件内说明）。
 mod highlight_perf_test;
+// R-05 收口：钉死 UiAction→IconKey 恒等映射（见 icon_key_test.rs）。
+mod icon_key_test;
 mod lint_tab_test;
 mod math_glyph_test;
 mod multi_document_test;
