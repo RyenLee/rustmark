@@ -98,9 +98,10 @@
   **视图按 ADR-013 决策 3 留 root**，trait 住 ui 只为「契约独立于组合根」。
   进度：**准备项 P-1/P-2/P-3 已完成**（`PendingDialog` / `WorkspaceEntries` /
   `WorkspaceSearch` 搬 ui 且公开路径逐字不变；`editor_id()` 落为自由函数；
-  两处错误前提文档已纠偏），迁移 4/7（`welcome_view` 树 3 + `settings_view`
+  两处错误前提文档已纠偏），迁移 5/7（`welcome_view` 树 3 + `settings_view`
   树 5 + `diff_view` / `find_replace_view` / `export_view` / `quick_open_view`
-  4 + `command_palette_view` 1 = 13 个文件）。守卫 `PENDING_DECOUPLED_VIEWS` 只减不增。
+  4 + `command_palette_view` 1 + `overlays` 1 = 14 个文件）。守卫
+  `PENDING_DECOUPLED_VIEWS` 只减不增。
 - **可观测性（D-5，2026-10-26，`1c58052`）**：`FrameScheduler` 兼作帧耗时观测点——超 16ms 的帧打一条
   `warn`（状态更新 / 绘制 / 未归因三段归因 + 本帧到期任务，120 帧限流；**仅 release 构建输出**），
   `RUST_LOG=…=debug`

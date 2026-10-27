@@ -1477,11 +1477,11 @@ pub fn check_ui_submodule_sync(manifest: &Path) -> Vec<Violation> {
 /// **批 1 · 步 1.3（2026-10-27）**：`diff_view` / `find_replace_view` /
 /// `export_view` / `quick_open_view`（4 个文件）已迁。
 /// **批 1 · 步 1.4（2026-10-27）**：`command_palette_view`（1 个文件）已迁。
+/// **批 1 · 步 1.5（2026-10-27）**：`overlays`（1 个文件，10 个分支全通）已迁。
 pub const PENDING_DECOUPLED_VIEWS: &[&str] = &[
     "src/presentation/views/editor_view.rs",
     "src/presentation/views/editor_view/spell.rs",
     "src/presentation/views/main_view.rs",
-    "src/presentation/views/overlays.rs",
     "src/presentation/views/preview_view.rs",
     "src/presentation/views/preview_view/image_cache.rs",
     "src/presentation/views/preview_view/inline/math.rs",

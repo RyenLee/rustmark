@@ -17,8 +17,8 @@
 
 use egui::Ui;
 
-use crate::app::frame::EditorApp;
 use crate::presentation::state::dialog_ui_state::Overlay;
+use crate::presentation::view_context::EditorViewContext;
 
 /// 绘制当前栈顶浮层。
 ///
@@ -27,27 +27,29 @@ use crate::presentation::state::dialog_ui_state::Overlay;
 ///
 /// 刻意不在这里画「遮罩」：查找面板是**非模态工具面板**（原型里它浮在
 /// 编辑区右上角，编辑区仍可编辑），画遮罩会直接违反原型行为。
-pub fn show(app: &mut EditorApp, ui: &mut Ui) {
+pub fn show(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
     // 子浮层视图仍以 `&Context` 为入口（`Window::show` 在 0.37 仍收 `ctx`），
     // 这里从根 `Ui` 取出 `ctx` 后透传，避免改动十来个浮层签名。
     let ctx = ui.ctx().clone();
-    let Some(overlay) = app.dialog.top() else {
+    // `top()` 返回**自有**的 `Option<Overlay>`（`Overlay` 是 `Copy`），
+    // 借用在这一句结束——后面 10 个分支各自可变地借 `vctx` 不会撞车。
+    let Some(overlay) = vctx.dialog_state().top() else {
         return;
     };
     match overlay {
-        Overlay::Find => crate::presentation::views::find_replace_view::show(app, &ctx),
-        Overlay::Settings => crate::presentation::views::settings_view::show(app, &ctx),
-        Overlay::Export => crate::presentation::views::export_view::show(app, &ctx),
-        Overlay::QuickOpen => crate::presentation::views::quick_open_view::show(app, &ctx),
+        Overlay::Find => crate::presentation::views::find_replace_view::show(vctx, &ctx),
+        Overlay::Settings => crate::presentation::views::settings_view::show(vctx, &ctx),
+        Overlay::Export => crate::presentation::views::export_view::show(vctx, &ctx),
+        Overlay::QuickOpen => crate::presentation::views::quick_open_view::show(vctx, &ctx),
         Overlay::ShortcutOverview => {
-            crate::presentation::views::shortcut_overview_view::show(app, &ctx)
+            crate::presentation::views::shortcut_overview_view::show(vctx, &ctx)
         }
-        Overlay::About => crate::presentation::views::about_view::show(app, &ctx),
-        Overlay::Stats => crate::presentation::views::stats_view::show(app, &ctx),
-        Overlay::Symbol => crate::presentation::views::symbol_view::show(app, &ctx),
-        Overlay::Diff => crate::presentation::views::diff_view::show(app, &ctx),
+        Overlay::About => crate::presentation::views::about_view::show(vctx, &ctx),
+        Overlay::Stats => crate::presentation::views::stats_view::show(vctx, &ctx),
+        Overlay::Symbol => crate::presentation::views::symbol_view::show(vctx, &ctx),
+        Overlay::Diff => crate::presentation::views::diff_view::show(vctx, &ctx),
         Overlay::CommandPalette => {
-            crate::presentation::views::command_palette_view::show(app, &ctx)
+            crate::presentation::views::command_palette_view::show(vctx, &ctx)
         }
     }
 }
