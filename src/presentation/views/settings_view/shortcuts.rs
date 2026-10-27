@@ -7,15 +7,15 @@
 
 use egui::{Align, Layout, Ui};
 
-use crate::app::frame::EditorApp;
 use crate::presentation::theme::builtin::Theme;
+use crate::presentation::view_context::EditorViewContext;
 
 use super::*;
 
 /// 「快捷键」分区：改键 + 冲突提示。
-pub(super) fn shortcuts(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
-    // 先取快照再进闭包：闭包里要 `&mut app`，而 `entries` 借用了 `app` 的返回值。
-    let entries: Vec<(String, String, String)> = app
+pub(super) fn shortcuts(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
+    // 先取快照再进闭包：闭包里要 `&mut vctx`，而 `entries` 借用了 `vctx` 的返回值。
+    let entries: Vec<(String, String, String)> = vctx
         .settings()
         .shortcuts
         .iter()
@@ -42,7 +42,7 @@ pub(super) fn shortcuts(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
                 ui.horizontal(|ui| {
                     ui.label(label);
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        let recording = app.settings_ui.recording == Some(action);
+                        let recording = vctx.settings_ui_state().recording == Some(action);
                         let text = if recording {
                             "录制中…".to_string()
                         } else if combo.is_empty() {
@@ -52,12 +52,12 @@ pub(super) fn shortcuts(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
                         };
                         if ui.button(text).clicked() {
                             if recording {
-                                app.settings_ui.stop_recording();
+                                vctx.settings_ui_state().stop_recording();
                             } else {
                                 // 原键位的登记在 `EditorApp::rebind_shortcut` 里做，
                                 // 视图不重复登记（同一处登记两次会让「取消」把
                                 // 中间值也当成原值写回）。
-                                app.settings_ui.start_recording(action);
+                                vctx.settings_ui_state().start_recording(action);
                             }
                         }
                     });
@@ -70,7 +70,11 @@ pub(super) fn shortcuts(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
     // 用「先收集意图、出闭包后再执行」的写法而不是在闭包里直接改状态：
     // 闭包持有 `&mut ui`，而解除绑定需要 `&mut app`，两者同时可变借用会编译不过；
     // 绕开的代价是「闭包里改 app」这种写法一旦出现就极难读。
-    if let Some(conflict) = app.settings_ui.pending_conflict.clone() {
+    // 冲突快照先取出再进 `if let`：`&mut dyn` 上的一次借用若活到
+    // `if let` 的块末尾（`if let` 的判据临时量作用域覆盖整个块），
+    // 块里的 `clear_settings_pending_conflict()` 就再也借不到同一个 `vctx`。
+    let pending_conflict = vctx.settings_ui_state().pending_conflict.clone();
+    if let Some(conflict) = pending_conflict {
         ui.horizontal(|ui| {
             ui.colored_label(
                 theme.error,
@@ -83,19 +87,19 @@ pub(super) fn shortcuts(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
                 clear_conflict = true;
             }
             if ui.button("放弃本次修改").clicked() {
-                app.clear_settings_pending_conflict();
+                vctx.clear_settings_pending_conflict();
             }
         });
     }
 
     if clear_conflict
-        && let Some(conflict) = app.settings_ui.pending_conflict.take()
+        && let Some(conflict) = vctx.settings_ui_state().pending_conflict.take()
         && let Some(action) = action_of(&conflict.with_key)
     {
         // 先记住占用者原来的键位，再把它清空——否则「解除原绑定」
         // 就变成「删掉用户的键位」，按「取消」也回不来了。
-        app.settings_ui
+        vctx.settings_ui_state()
             .remember_shortcut(action, conflict.with_combo.clone());
-        app.rebind_shortcut(action, "");
+        vctx.rebind_shortcut(action, "");
     }
 }

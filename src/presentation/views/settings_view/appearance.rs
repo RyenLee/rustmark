@@ -2,14 +2,15 @@
 
 use egui::Ui;
 
-use crate::app::frame::EditorApp;
 use crate::presentation::theme::builtin::{Theme, theme_kind_label};
+use crate::presentation::view_context::EditorViewContext;
+use rustmark_core::application::dto::ThemeView;
 
 use super::*;
 
 /// 「外观」分区：主题 / 字号 / 行高 / 字体族。
-pub(super) fn appearance(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
-    let view = app.settings().theme;
+pub(super) fn appearance(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
+    let view = vctx.settings().theme;
     field(ui, theme, "主题", |ui| {
         ui.horizontal_wrapped(|ui| {
             for kind in THEME_KIND_ORDER {
@@ -21,7 +22,9 @@ pub(super) fn appearance(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
                     && !selected
                 {
                     let kind = kind_str.to_string();
-                    app.apply_theme_field(|t| t.kind = kind);
+                    vctx.apply_theme_field(&mut |t: &mut ThemeView| {
+                        t.kind = kind.clone();
+                    });
                 }
             }
         });
@@ -31,7 +34,7 @@ pub(super) fn appearance(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
             theme.text_secondary,
             format!(
                 "当前跟随操作系统外观：系统为{}。更改系统外观即时生效，无需重启。",
-                if app.system_prefers_dark() {
+                if vctx.system_prefers_dark() {
                     "深色"
                 } else {
                     "浅色"
@@ -42,7 +45,7 @@ pub(super) fn appearance(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
     if view.kind == "custom" {
         ui.add_space(theme.metrics.space_xs);
         ui.colored_label(theme.text_secondary, "自定义核心配色（其余沿用内置主题）：");
-        custom_palette_editor(app, ui, theme);
+        custom_palette_editor(vctx, ui, theme);
     }
     field(ui, theme, "字号", |ui| {
         ui.horizontal_wrapped(|ui| {
@@ -50,7 +53,9 @@ pub(super) fn appearance(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
                 let selected = (view.font_size - size).abs() < f32::EPSILON;
                 if ui.selectable_label(selected, format!("{size}px")).clicked() && !selected {
                     let size = *size;
-                    app.apply_theme_field(|t| t.font_size = size);
+                    vctx.apply_theme_field(&mut |t: &mut ThemeView| {
+                        t.font_size = size;
+                    });
                 }
             }
         });
@@ -61,7 +66,9 @@ pub(super) fn appearance(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
                 let selected = (view.line_height - height).abs() < f32::EPSILON;
                 if ui.selectable_label(selected, format!("{height}")).clicked() && !selected {
                     let height = *height;
-                    app.apply_theme_field(|t| t.line_height = height);
+                    vctx.apply_theme_field(&mut |t: &mut ThemeView| {
+                        t.line_height = height;
+                    });
                 }
             }
         });
@@ -77,7 +84,7 @@ pub(super) fn appearance(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
         // 早期这里是 CSS 通用名（`sans-serif` / `serif`…）+ 自由文本框：
         // egui 的字体族里根本没有这些名字，选了也不会变——即本次要修的
         // 「死设置」。现在下拉只列**能生效**的选项。
-        let choices = app.editor_font_choices().to_vec();
+        let choices = vctx.editor_font_choices().to_vec();
         let current = choices
             .iter()
             .find(|c| c.key == view.font_family)
@@ -89,7 +96,9 @@ pub(super) fn appearance(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
                     let selected = view.font_family == c.key;
                     if ui.selectable_label(selected, &c.display_name).clicked() && !selected {
                         let key = c.key.clone();
-                        app.apply_theme_field(|t| t.font_family = key);
+                        vctx.apply_theme_field(&mut |t: &mut ThemeView| {
+                            t.font_family = key.clone();
+                        });
                     }
                 }
             });
@@ -106,7 +115,9 @@ pub(super) fn appearance(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
             )
             .changed()
         {
-            app.apply_theme_field(|t| t.font_family = family.clone());
+            vctx.apply_theme_field(&mut |t: &mut ThemeView| {
+                t.font_family = family.clone();
+            });
         }
     });
 }
@@ -119,8 +130,8 @@ pub(super) fn appearance(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
 /// 语法色收进折叠区：18 行颜色一次铺开会把「字号 / 行高 / 字体族」挤出视野，
 /// 而语法色多数人只调一两个。折叠标题里写清「未改动的跟随主题」，
 /// 免去用户对「这一项到底是不是我在控制」的疑惑。
-fn custom_palette_editor(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
-    let mut palette = app.settings().theme.custom.clone().unwrap_or_default();
+fn custom_palette_editor(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
+    let mut palette = vctx.settings().theme.custom.clone().unwrap_or_default();
     let mut changed = false;
     changed |= color_row(ui, "主背景", &mut palette.bg_primary);
     changed |= color_row(ui, "次背景", &mut palette.bg_secondary);
@@ -145,7 +156,9 @@ fn custom_palette_editor(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
             changed |= syn_color_row(ui, "其它", &mut palette.syn_other, theme.syn_other);
         });
     if changed {
-        app.apply_theme_field(|t| t.custom = Some(palette.clone()));
+        vctx.apply_theme_field(&mut |t: &mut ThemeView| {
+            t.custom = Some(palette.clone());
+        });
     }
 }
 

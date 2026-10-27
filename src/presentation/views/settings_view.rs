@@ -28,11 +28,11 @@ mod shortcuts;
 
 use egui::{Align, Context, Layout, RichText, Ui};
 
-use crate::app::frame::EditorApp;
 use crate::presentation::shortcuts::registry::UiAction;
 use crate::presentation::state::dialog_ui_state::Overlay;
 use crate::presentation::state::settings_ui_state::SettingsTab;
 use crate::presentation::theme::builtin::Theme;
+use crate::presentation::view_context::EditorViewContext;
 use rustmark_core::shared::theme::ThemeKind;
 
 /// 对话框默认尺寸（对齐原型 `BaseModal :width="620" :height="420"`）。
@@ -96,7 +96,7 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const FONT_INPUT_ID: &str = "rustmark.settings.font";
 
 /// 绘制设置对话框。
-pub fn show(app: &mut EditorApp, ctx: &Context) {
+pub fn show(vctx: &mut dyn EditorViewContext, ctx: &Context) {
     let mut open = true;
     egui::Window::new(Overlay::Settings.title())
         .id(egui::Id::unique("rustmark.overlay.settings"))
@@ -105,7 +105,7 @@ pub fn show(app: &mut EditorApp, ctx: &Context) {
         .resizable(true)
         .default_width(WIDTH)
         .default_height(HEIGHT)
-        .show(ctx, |ui| body(app, ui));
+        .show(ctx, |ui| body(vctx, ui));
     // 打开后把焦点交给第一个输入控件（仅「外观」分区有它）。
     //
     // 条件是**打开事件**而不是「当前没有焦点」：后者每帧都成立
@@ -113,8 +113,11 @@ pub fn show(app: &mut EditorApp, ctx: &Context) {
     // 用户点哪儿都不上焦点。开关顺序也重要——分区判断放在前面短路，
     // 这样「打开时不在外观分区、之后切过去」仍能拿到那次唯一的焦点。
     // 详见 `DialogUiState::take_open_focus` 的文档。
-    if app.settings_ui.section == SettingsTab::Appearance
-        && app.dialog.take_open_focus(Overlay::Settings)
+    //
+    // 「分区」先取出再比较：`&mut dyn` 上的一次借用若活到 `if` 的条件作用域
+    // 末尾，后面的 `dialog_state()` 就再也借不到同一个 `vctx`（可变借用唯一）。
+    let section = vctx.settings_ui_state().section;
+    if section == SettingsTab::Appearance && vctx.dialog_state().take_open_focus(Overlay::Settings)
     {
         ctx.memory_mut(|m| m.request_focus(egui::Id::unique(FONT_INPUT_ID)));
     }
@@ -125,7 +128,7 @@ pub fn show(app: &mut EditorApp, ctx: &Context) {
         //
         // `cancel_settings` 会再调一次 `dialog.close`，此时浮层已被
         // egui 的 `open(&mut false)` 摘掉，close 是幂等的，无副作用。
-        app.cancel_settings();
+        vctx.cancel_settings();
     }
 }
 
@@ -147,17 +150,17 @@ pub fn show(app: &mut EditorApp, ctx: &Context) {
 /// 注意 egui 自带的 `Separator::default().vertical()` 同样取 available height，
 /// 换它没用；`ui.separator()` 之后的两个分隔线在**竖直**布局里是水平线
 /// （高度恒为 `spacing`），不参与该反馈，故保留。
-fn body(app: &mut EditorApp, ui: &mut Ui) {
-    let theme = app.theme().clone();
+fn body(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
+    let theme = vctx.theme_state().clone();
     let mut bar_x = 0.0_f32;
     let row = ui.horizontal_top(|ui| {
-        nav(app, ui, &theme);
+        nav(vctx, ui, &theme);
         ui.add_space(theme.metrics.space_md);
         // 记下竖线所在的 x（此刻的光标位置），再留出线宽与右间距。
         bar_x = ui.available_rect_before_wrap().left();
         ui.add_space(1.0);
         ui.add_space(theme.metrics.space_lg);
-        content(app, ui, &theme);
+        content(vctx, ui, &theme);
     });
     // 行画完后才知道真实高度，故在这一步补画竖线（高度 = 行矩形）。
     ui.painter().vline(
@@ -166,17 +169,17 @@ fn body(app: &mut EditorApp, ui: &mut Ui) {
         egui::Stroke::new(1.0_f32, theme.border),
     );
     ui.separator();
-    about::live_preview(ui, &theme, app.settings().theme.kind.as_str());
+    about::live_preview(ui, &theme, vctx.settings().theme.kind.as_str());
     ui.separator();
-    footer(app, ui);
+    footer(vctx, ui);
 }
 
 /// 左侧导航栏。
-fn nav(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
+fn nav(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
     ui.vertical(|ui| {
         ui.set_min_width(NAV_WIDTH);
         for tab in SettingsTab::ALL {
-            let selected = app.settings_ui.section == *tab;
+            let selected = vctx.settings_ui_state().section == *tab;
             let text = if selected {
                 RichText::new(tab.label()).color(theme.accent)
             } else {
@@ -186,33 +189,36 @@ fn nav(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
                 .add_sized([NAV_WIDTH, 28.0], egui::Button::new(text).frame(false))
                 .clicked()
             {
-                app.set_settings_section(*tab);
-                app.clear_settings_messages();
+                vctx.set_settings_section(*tab);
+                vctx.clear_settings_messages();
             }
         }
     });
 }
 
 /// 右侧内容区（按当前标签分发）。
-fn content(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
+fn content(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
     ui.vertical(|ui| {
         ui.set_min_width(WIDTH - NAV_WIDTH - 40.0);
         ui.horizontal_wrapped(|ui| {
-            ui.heading(app.settings_ui.section.label());
+            ui.heading(vctx.settings_ui_state().section.label());
         });
         ui.separator();
-        match app.settings_ui.section {
-            SettingsTab::Appearance => appearance::appearance(app, ui, theme),
-            SettingsTab::Editor => editor_prefs::editor(app, ui, theme),
-            SettingsTab::Shortcuts => shortcuts::shortcuts(app, ui, theme),
-            SettingsTab::SpellCheck => editor_prefs::spellcheck(app, ui, theme),
-            SettingsTab::About => about::about(app, ui, theme),
+        // 分区先取出再分发：`&mut dyn` 上的一次借用若活到 `match` 语句末尾，
+        // 各个分支就再也借不到同一个 `vctx`（可变借用唯一）。
+        let section = vctx.settings_ui_state().section;
+        match section {
+            SettingsTab::Appearance => appearance::appearance(vctx, ui, theme),
+            SettingsTab::Editor => editor_prefs::editor(vctx, ui, theme),
+            SettingsTab::Shortcuts => shortcuts::shortcuts(vctx, ui, theme),
+            SettingsTab::SpellCheck => editor_prefs::spellcheck(vctx, ui, theme),
+            SettingsTab::About => about::about(vctx, ui, theme),
         }
-        if let Some(error) = app.settings_ui.error.clone() {
+        if let Some(error) = vctx.settings_ui_state().error.clone() {
             ui.add_space(theme.metrics.space_sm);
             ui.colored_label(theme.error, format!("⚠ {error}"));
         }
-        if let Some(notice) = app.settings_ui.notice.clone() {
+        if let Some(notice) = vctx.settings_ui_state().notice.clone() {
             ui.add_space(theme.metrics.space_sm);
             ui.colored_label(theme.success, notice);
         }
@@ -220,29 +226,32 @@ fn content(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
 }
 
 /// 页脚：恢复本组默认 / 恢复默认快捷键 / 取消 / 保存。
-fn footer(app: &mut EditorApp, ui: &mut Ui) {
+fn footer(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
     ui.horizontal(|ui| {
         // 「恢复默认快捷键」在**父级页面**（对话框页脚），不在快捷键分区的
         // 滚动列表里（问题 038）：它是分区级动作，而 60 个条目的列表要滑到
         // 最底部才看得见——「重置整个分区」不该藏得比任何单条键位都深。
         // 页脚不随分区内容滚动，与「恢复本组默认」同级、同位，
         // 两个重置入口从此只有一处。
-        if app.settings_ui.section == SettingsTab::Shortcuts {
+        let section = vctx.settings_ui_state().section;
+        if section == SettingsTab::Shortcuts {
             if ui.button("恢复默认快捷键").clicked() {
-                app.reset_all_shortcuts();
+                vctx.reset_all_shortcuts();
             }
-        } else if app.settings_ui.can_reset_section() && ui.button("恢复本组默认").clicked() {
-            app.reset_current_settings_section();
+        } else if vctx.settings_ui_state().can_reset_section()
+            && ui.button("恢复本组默认").clicked()
+        {
+            vctx.reset_current_settings_section();
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             // 关闭浮层由 `confirm_settings` / `cancel_settings` 自己负责，
             // 这里不再重复调 `dialog.close`——三条关闭路径（两个按钮 + Esc）
             // 必须走同一段逻辑，少一处就少一条一致性保证。
             if ui.button("保存").clicked() {
-                app.confirm_settings();
+                vctx.confirm_settings();
             }
             if ui.button("取消").clicked() {
-                app.cancel_settings();
+                vctx.cancel_settings();
             }
         });
     });

@@ -2,14 +2,15 @@
 
 use egui::{RichText, Ui};
 
-use crate::app::frame::EditorApp;
 use crate::presentation::theme::builtin::Theme;
+use crate::presentation::view_context::EditorViewContext;
+use rustmark_core::application::dto::EditorSettingsView;
 
 use super::*;
 
 /// 「编辑器」分区：缩进 / 自动换行 / 自动保存间隔。
-pub(super) fn editor(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
-    let view = app.settings().editor;
+pub(super) fn editor(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
+    let view = vctx.settings().editor;
     field(ui, theme, "Tab 缩进", |ui| {
         ui.horizontal(|ui| {
             for size in TAB_SIZES {
@@ -20,7 +21,9 @@ pub(super) fn editor(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
                     && !selected
                 {
                     let size = *size;
-                    app.apply_editor_field(|e| e.tab_size = size);
+                    vctx.apply_editor_field(&mut |e: &mut EditorSettingsView| {
+                        e.tab_size = size;
+                    });
                 }
             }
         });
@@ -28,29 +31,31 @@ pub(super) fn editor(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
     field(ui, theme, "自动换行", |ui| {
         // 读**会话**值：它是编辑区实际生效的那份。启动时由领域播种、改动经
         // `set_word_wrap` 双写（会话 + 领域），故与设置页其它项显示一致。
-        let mut on = app.editor.word_wrap;
+        let mut on = vctx.editor_state().word_wrap;
         if ui.checkbox(&mut on, "按窗口宽度折行").changed() {
-            app.set_word_wrap(on);
+            vctx.set_word_wrap(on);
         }
     });
     // 行号栏：与自动换行同一手法——`set_line_numbers` 让会话立即生效，
     // `apply_editor_field` 负责落盘；持久化值在启动时播种进会话状态
     // （`EditorApp::new`），故复选框读会话值即可与设置页其它项一致。
     field(ui, theme, "行号栏", |ui| {
-        let mut on = app.editor.line_numbers;
+        let mut on = vctx.editor_state().line_numbers;
         if ui.checkbox(&mut on, "在编辑区左侧显示行号").changed() {
-            app.set_line_numbers(on);
-            app.apply_editor_field(|e| e.show_line_numbers = on);
+            vctx.set_line_numbers(on);
+            vctx.apply_editor_field(&mut |e: &mut EditorSettingsView| {
+                e.show_line_numbers = on;
+            });
         }
     });
     // 远程图片（PRIV-01）：与行号栏同一手法读**会话**值——预览区逐图读它
-    // 决定是否外联，读 `app.settings()` 会每图克隆一次设置视图。写入走
+    // 决定是否外联，读 `settings()` 会每图克隆一次设置视图。写入走
     // `set_load_remote_images`（会话 + 领域一起写），故不必再调
     // `apply_editor_field`。
     field(ui, theme, "远程图片", |ui| {
-        let mut on = app.editor.load_remote_images;
+        let mut on = vctx.editor_state().load_remote_images;
         if ui.checkbox(&mut on, "加载文档中的远程图片").changed() {
-            app.set_load_remote_images(on);
+            vctx.set_load_remote_images(on);
         }
     });
     ui.colored_label(
@@ -65,7 +70,9 @@ pub(super) fn editor(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
             .changed()
         {
             let value = (interval > 0).then_some(interval);
-            app.apply_editor_field(|e| e.auto_save_interval = value);
+            vctx.apply_editor_field(&mut |e: &mut EditorSettingsView| {
+                e.auto_save_interval = value;
+            });
         }
     });
     if view.auto_save_interval.is_none() {
@@ -78,7 +85,9 @@ pub(super) fn editor(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
             .add(egui::Slider::new(&mut limit, MAX_OPEN_DOCUMENTS_RANGE).suffix(" 个"))
             .changed()
         {
-            app.apply_editor_field(|e| e.max_open_documents = limit);
+            vctx.apply_editor_field(&mut |e: &mut EditorSettingsView| {
+                e.max_open_documents = limit;
+            });
         }
     });
     ui.colored_label(
@@ -90,19 +99,22 @@ pub(super) fn editor(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
     // 领域的 `WritingGoal::is_set` 以 0 表示未设，存 0 即语义正确，
     // 不必额外搬一份「未设」标记（表现层也不得依赖 `domain` 去读那个常量）。
     field(ui, theme, "写作目标（字数）", |ui| {
-        let current = app.settings().editor.writing_goal;
+        let current = vctx.settings().editor.writing_goal;
         // D-3 阶段 3：clone → 就地编辑 → 变化才值写回。局部缓冲不持
         // `app` 的借用，写回后 `apply_editor_field` 可直接接管。
-        let mut writing_goal_text = app.settings_ui.writing_goal_text.clone();
+        let mut writing_goal_text = vctx.settings_ui_state().writing_goal_text.clone();
         let changed = ui.text_edit_singleline(&mut writing_goal_text).changed();
         if changed {
             let next = crate::presentation::state::settings_ui_state::normalize_writing_goal(
                 &writing_goal_text,
                 current,
             );
-            app.settings_ui.set_writing_goal_text(writing_goal_text);
+            vctx.settings_ui_state()
+                .set_writing_goal_text(writing_goal_text);
             if next != current {
-                app.apply_editor_field(|e| e.writing_goal = next);
+                vctx.apply_editor_field(&mut |e: &mut EditorSettingsView| {
+                    e.writing_goal = next;
+                });
             }
         }
     });
@@ -113,12 +125,12 @@ pub(super) fn editor(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
 }
 
 /// 「语法检查」分区。
-pub(super) fn spellcheck(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
+pub(super) fn spellcheck(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
     // 读会话值（启动时由领域播种、改动经 `set_spell_check` 双写），
     // 与状态栏显示及编辑区实际生效值一致。
-    let mut on = app.editor.spell_check;
+    let mut on = vctx.editor_state().spell_check;
     if ui.checkbox(&mut on, "在编辑区标记拼写错误").changed() {
-        app.set_spell_check(on);
+        vctx.set_spell_check(on);
     }
     ui.colored_label(
         theme.text_secondary,
@@ -131,7 +143,7 @@ pub(super) fn spellcheck(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
         "在带波浪线的词上点右键，可看到「你可能想输入」的建议并一键替换。",
     );
     ui.add_space(theme.metrics.space_sm);
-    lint_rules(app, ui, theme);
+    lint_rules(vctx, ui, theme);
 }
 
 /// 格式检查（lint）规则开关（V11-08）。
@@ -140,9 +152,9 @@ pub(super) fn spellcheck(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
 ///
 /// 两者对用户是**同一件事**：「帮我看正文有没有毛病」。分到两个标签会让
 /// 用户来回找；而侧栏的「检查」标签正是这两类结果共同的去处。
-fn lint_rules(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
+fn lint_rules(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
     ui.label(RichText::new("格式检查（Markdown）").color(theme.text_primary));
-    let lint = app.settings().editor.lint;
+    let lint = vctx.settings().editor.lint;
     let toggles: [(&str, bool); 4] = [
         ("标题层级跳跃（如 H1 直接到 H3）", lint.heading_jump),
         ("列表符号混用（- / * / +）", lint.list_marker_mix),
@@ -162,7 +174,9 @@ fn lint_rules(app: &mut EditorApp, ui: &mut Ui, theme: &Theme) {
         }
     }
     if updated != lint {
-        app.apply_editor_field(|e| e.lint = updated);
+        vctx.apply_editor_field(&mut |e: &mut EditorSettingsView| {
+            e.lint = updated;
+        });
     }
     ui.colored_label(
         theme.text_secondary,

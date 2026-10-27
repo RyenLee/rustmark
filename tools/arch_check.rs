@@ -1473,6 +1473,7 @@ pub fn check_ui_submodule_sync(manifest: &Path) -> Vec<Violation> {
 /// ——四个浮层面板，正是 `overlays::show` 的四个 `match` 分支。
 ///
 /// **批 1 · 步 1.1（2026-10-27）**：`welcome_view` 树（3 个文件）已迁。
+/// **批 1 · 步 1.2（2026-10-27）**：`settings_view` 树（5 个文件）已迁。
 pub const PENDING_DECOUPLED_VIEWS: &[&str] = &[
     "src/presentation/views/command_palette_view.rs",
     "src/presentation/views/diff_view.rs",
@@ -1488,11 +1489,6 @@ pub const PENDING_DECOUPLED_VIEWS: &[&str] = &[
     "src/presentation/views/preview_view/inline/text_render.rs",
     "src/presentation/views/quick_open_view.rs",
     "src/presentation/views/scroll_sync.rs",
-    "src/presentation/views/settings_view.rs",
-    "src/presentation/views/settings_view/about.rs",
-    "src/presentation/views/settings_view/appearance.rs",
-    "src/presentation/views/settings_view/editor_prefs.rs",
-    "src/presentation/views/settings_view/shortcuts.rs",
     "src/presentation/views/sidebar_view.rs",
     "src/presentation/views/sidebar_view/files.rs",
     "src/presentation/views/sidebar_view/lint.rs",
