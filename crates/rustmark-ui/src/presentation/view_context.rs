@@ -117,6 +117,7 @@ use crate::presentation::state::shortcut_overview_ui_state::ShortcutOverviewUiSt
 use crate::presentation::state::sidebar_ui_state::{
     SearchScope, SearchToggle, SidebarUiState, WorkspaceSearch,
 };
+use crate::presentation::state::status_bar_ui_state::StatusBarUiState;
 use crate::presentation::state::symbol_ui_state::SymbolUiState;
 use crate::presentation::state::workspace_entries::WorkspaceEntries;
 use crate::presentation::theme::builtin::Theme;
@@ -127,6 +128,7 @@ use rustmark_core::application::dto::{
 };
 use rustmark_core::application::markdown::service::MarkdownAppService;
 use rustmark_core::application::preferences::service::PreferencesAppService;
+use rustmark_core::shared::encoding::TextEncoding;
 use rustmark_core::shared::ids::DocumentId;
 use rustmark_core::shared::kernel::export_format::PageSize;
 use rustmark_core::shared::kernel::fonts::EditorFontChoice;
@@ -160,6 +162,24 @@ pub trait UiStateAccess {
 
     /// 编辑器状态（光标 / 选区 / 滚动 / IME 组字）。
     fn editor_state(&mut self) -> &mut EditorUiState;
+
+    /// 编辑器状态的**只读**视图。
+    ///
+    /// [`Self::editor_state`] 是 `&mut self` 方法，而状态栏的 `build_model`
+    /// 是**纯读**的公开函数（集成测试有 19 处调用点直接断言它的输出）。
+    /// 它要读 `word_wrap` / `spell_check` / `load_remote_images` 三个开关，
+    /// 若只有可变出口，就得为了读一个 bool 把整个上下文可变地借走——
+    /// 那等于让签名撒谎。
+    fn editor_state_read(&self) -> &EditorUiState;
+
+    /// 状态栏状态（瞬态消息 / 编码 / 写作目标）。
+    fn status_bar_state(&mut self) -> &mut StatusBarUiState;
+
+    /// 状态栏状态的**只读**视图。
+    ///
+    /// 与 [`Self::editor_state_read`] 同一理由：`build_model` 读目标的
+    /// 进度 / 文案 / 提示，不改任何东西。
+    fn status_bar_state_read(&self) -> &StatusBarUiState;
 
     /// 侧栏状态（文件树展开 / 搜索输入 / 大纲）。
     fn sidebar_state(&mut self) -> &mut SidebarUiState;
@@ -262,6 +282,29 @@ pub trait DocumentAccess {
     /// 文件树里置灰行的悬停说明与双击后报给状态栏的提示必须**同一句**，
     /// 视图侧只有一条出口才做得到这一点。
     fn unsupported_format_notice(&self, path: &str) -> String;
+
+    /// 当前文档的行数（状态栏右端「N 行」）。
+    ///
+    /// **不搬 `LineIndex` 本身**：它是一次全文扫描的产物，住在应用层；
+    /// 视图要的是**行数**这一个数，不是那 58k 项的偏移表。
+    ///
+    /// 三处行相关文案（光标行列 / 选区行列 / 「N 行」）看起来要扫三遍，
+    /// 实际不会——行索引在应用层有缓存（键 = 文档 + 修订版本 + 文本长度），
+    /// 同一帧内文本没变就命中缓存，扫描仍只有一次（问题 053 的结论不变，
+    /// 只是「共用」从「共用一个局部变量」变成「共用缓存」）。
+    fn current_line_count(&self) -> usize;
+
+    /// 光标所在行列（**1-based**，列按**字符**数而非字节数）。
+    fn cursor_line_col(&self) -> (usize, usize);
+
+    /// 选区首尾行列；无选区或选区为空时为 `None`。
+    fn selection_line_col(&self) -> Option<((usize, usize), (usize, usize))>;
+
+    /// 当前文档是否有未保存修改。
+    fn current_document_dirty(&self) -> bool;
+
+    /// 当前文档的类型显示名（`Markdown` / `纯文本` …）。
+    fn current_document_kind(&self) -> &'static str;
 }
 
 // ===========================================================================
@@ -491,6 +534,28 @@ pub trait CommandPort {
 
     /// 重新绑定一个动作的键位。
     fn rebind_shortcut(&mut self, action: UiAction, combo: &str);
+
+    // ---------- 状态栏 / 编辑区 ----------
+
+    /// 取状态栏用的字数统计（**带防抖**：打字期沿用上次静止结果）。
+    ///
+    /// 它归 [`CommandPort`] 而非 [`DocumentAccess`]，因为它**会改状态**——
+    /// 命中缓存时把统计结果写回缓存槽位。放在只读 trait 里会掩盖这个副作用。
+    fn current_stats_for_status_bar(&mut self) -> Option<StatsView>;
+
+    /// 把状态栏的编码项同步到当前活动文档的真实编码。
+    ///
+    /// `None` = 新建未保存的文档（尚无编码可言）。
+    fn set_status_bar_encoding(&mut self, encoding: Option<TextEncoding>);
+
+    /// 把瞬态消息的到期点交给帧末统一定时。
+    ///
+    /// 状态栏是唯一知道「这条消息还剩多久」的地方；缺了它，用户停手后
+    /// 不再有帧，一条 4 秒该消失的提示会一直挂着。
+    fn arm_status_message_deadline(&mut self);
+
+    /// 保存当前文档（`save_as` 为真时另存为）。
+    fn save_document(&mut self, save_as: bool) -> AppResult<()>;
 }
 
 // ===========================================================================

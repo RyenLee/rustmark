@@ -1490,7 +1490,6 @@ pub const PENDING_DECOUPLED_VIEWS: &[&str] = &[
     "src/presentation/views/preview_view/image_cache.rs",
     "src/presentation/views/preview_view/inline/text_render.rs",
     "src/presentation/views/scroll_sync.rs",
-    "src/presentation/views/status_bar_view.rs",
 ];
 
 /// 视图解耦进度守卫（R-03 B1）：`views/**` 不得再直取组合根 `crate::app`。

@@ -107,6 +107,13 @@
   方法**（ThemeAccess 3 / UiStateAccess 15 / DocumentAccess 13 / CommandPort 61 /
   ServiceQueries 4）——`ServiceQueries` 交出**服务本身的只读借用**（视图拿得到
   能力、拿不到所有权），`assets` 刻意不给（`AssetLoader` 在 infra，ui 不可名）。
+- **R-03 B1 批 2（`services` 视图解耦）· 步 2.1 `status_bar_view`（已收官）**：契约
+  **96 → 108 个方法**（`UiStateAccess` +3 / `DocumentAccess` +5 / `CommandPort` +4），
+  白名单 8 → **7 条**。`build_model` 保持**只读**签名（收 `&dyn EditorViewContext`），
+  集成测试 **19 处**调用点**零改动**；为此把 `*_state()` 只读变体从拍板的 2 个
+  补到 **3 个**（多出 `editor_state_read`——`build_model` 要读三个编辑器开关，
+  而通往 `EditorUiState` 的唯一出口是 `&mut` 的）。`LineIndex` 不搬，行索引靠
+  应用层缓存保证仍只扫一次全文（问题 053 的性能不变量未破）。
 - **可观测性（D-5，2026-10-26，`1c58052`）**：`FrameScheduler` 兼作帧耗时观测点——超 16ms 的帧打一条
   `warn`（状态更新 / 绘制 / 未归因三段归因 + 本帧到期任务，120 帧限流；**仅 release 构建输出**），
   `RUST_LOG=…=debug`

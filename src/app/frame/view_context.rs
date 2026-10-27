@@ -51,6 +51,7 @@ use crate::presentation::state::shortcut_overview_ui_state::ShortcutOverviewUiSt
 use crate::presentation::state::sidebar_ui_state::{
     SearchScope, SearchToggle, SidebarUiState, WorkspaceSearch,
 };
+use crate::presentation::state::status_bar_ui_state::StatusBarUiState;
 use crate::presentation::state::symbol_ui_state::SymbolUiState;
 use crate::presentation::state::workspace_entries::WorkspaceEntries;
 use crate::presentation::theme::builtin::Theme;
@@ -64,6 +65,7 @@ use rustmark_core::application::dto::{
 };
 use rustmark_core::application::markdown::service::MarkdownAppService;
 use rustmark_core::application::preferences::service::PreferencesAppService;
+use rustmark_core::shared::encoding::TextEncoding;
 use rustmark_core::shared::ids::DocumentId;
 use rustmark_core::shared::kernel::export_format::PageSize;
 use rustmark_core::shared::kernel::fonts::EditorFontChoice;
@@ -99,6 +101,18 @@ impl UiStateAccess for EditorApp {
 
     fn editor_state(&mut self) -> &mut EditorUiState {
         &mut self.editor
+    }
+
+    fn editor_state_read(&self) -> &EditorUiState {
+        &self.editor
+    }
+
+    fn status_bar_state(&mut self) -> &mut StatusBarUiState {
+        &mut self.status_bar
+    }
+
+    fn status_bar_state_read(&self) -> &StatusBarUiState {
+        &self.status_bar
     }
 
     fn sidebar_state(&mut self) -> &mut SidebarUiState {
@@ -209,6 +223,26 @@ impl DocumentAccess for EditorApp {
 
     fn unsupported_format_notice(&self, path: &str) -> String {
         EditorApp::unsupported_format_notice(path)
+    }
+
+    fn current_line_count(&self) -> usize {
+        EditorApp::current_line_count(self)
+    }
+
+    fn cursor_line_col(&self) -> (usize, usize) {
+        EditorApp::cursor_line_col(self)
+    }
+
+    fn selection_line_col(&self) -> Option<((usize, usize), (usize, usize))> {
+        EditorApp::selection_line_col(self)
+    }
+
+    fn current_document_dirty(&self) -> bool {
+        EditorApp::current_document_dirty(self)
+    }
+
+    fn current_document_kind(&self) -> &'static str {
+        EditorApp::current_document_kind(self)
     }
 }
 
@@ -485,6 +519,24 @@ impl CommandPort for EditorApp {
 
     fn rebind_shortcut(&mut self, action: UiAction, combo: &str) {
         EditorApp::rebind_shortcut(self, action, combo);
+    }
+
+    // ---------- 状态栏 / 编辑区 ----------
+
+    fn current_stats_for_status_bar(&mut self) -> Option<StatsView> {
+        EditorApp::current_stats_for_status_bar(self)
+    }
+
+    fn set_status_bar_encoding(&mut self, encoding: Option<TextEncoding>) {
+        EditorApp::set_status_bar_encoding(self, encoding);
+    }
+
+    fn arm_status_message_deadline(&mut self) {
+        EditorApp::arm_status_message_deadline(self);
+    }
+
+    fn save_document(&mut self, save_as: bool) -> AppResult<()> {
+        EditorApp::save_document(self, save_as)
     }
 }
 

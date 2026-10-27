@@ -19,9 +19,9 @@
 
 use egui::{Align, CornerRadius, Layout, Rect, Response, Sense, Ui, Vec2};
 
-use crate::app::frame::EditorApp;
 use crate::presentation::shortcuts::registry::UiAction;
 use crate::presentation::theme::builtin::Theme;
+use crate::presentation::view_context::EditorViewContext;
 use rustmark_core::application::dto::{GoalProgressView, StatsView};
 use rustmark_core::shared::text::thousands;
 
@@ -38,14 +38,18 @@ const GOAL_BAR: Vec2 = Vec2::new(46.0, 6.0);
 /// 那些入口分散在拖拽、命令面板、快捷键、文件树与最近文件里，漏一处就会
 /// 留下一个过期值——状态栏显示上一个文档的编码比不显示更糟。
 /// 代价只是一次 `HashMap` 查询（应用层旁路表），每帧可忽略。
-fn sync_encoding(app: &mut EditorApp) {
-    app.set_status_bar_encoding(
-        app.active_doc
-            .and_then(|id| app.services.documents.encoding_of(id)),
-    );
+fn sync_encoding(vctx: &mut dyn EditorViewContext) {
+    // 先取活动文档，再查编码：两次调用之间不留借用。
+    // `document_service()` 是只读借用，若把它拖进下一步的
+    // `set_status_bar_encoding()`（可变借用），两者会撞车（形态 A）。
+    let doc = vctx.active_doc();
+    let encoding = match doc {
+        Some(id) => vctx.document_service().encoding_of(id),
+        None => None,
+    };
+    vctx.set_status_bar_encoding(encoding);
 }
 
-/// 绘制底部状态栏。
 /// 结算写作目标进度（V11-05）。
 ///
 /// 与 `sync_encoding` 同一套路：每帧从应用层投影，而不是在「打开 / 编辑 /
@@ -59,45 +63,50 @@ fn sync_encoding(app: &mut EditorApp) {
 /// 旧写法无条件先取字数、再把算不出来的目标投影丢弃，等于为一条不画的进度条
 /// 白付一次统计。改成先问设置（一次读锁 + 一个整数比较）再决定要不要字数——
 /// 这与「新增每帧查询先问：构造是 O(1) 还是 O(全文)」（问题 043 的纪律）同源。
-fn sync_goal(app: &mut EditorApp, stats: Option<&StatsView>) {
-    let now_ms = app.services.markdown.now().millis();
-    let progress = if app.services.preferences.has_writing_goal() {
-        let words = stats.map_or(0, |s| s.words);
-        app.services.preferences.goal_progress(words)
-    } else {
-        // 未设目标：与 `goal_progress(0)` 的可见结果**逐字段等价**
-        // （`goal = 0` → `is_set()` 为假 → 状态栏整项不画，
-        // `percent` 为 `None`、`reached` 为假，`words` 在未设目标时无人读），
-        // 但省掉了一次整篇统计。
-        GoalProgressView::default()
+fn sync_goal(vctx: &mut dyn EditorViewContext, stats: Option<&StatsView>) {
+    let now_ms = vctx.markdown_service().now().millis();
+    // 块内取完就放：`preferences_service()` 的只读借用不能拖过块尾，
+    // 否则后面的 `status_bar_state()`（可变借用）无处安放。
+    let progress = {
+        let prefs = vctx.preferences_service();
+        if prefs.has_writing_goal() {
+            let words = stats.map_or(0, |s| s.words);
+            prefs.goal_progress(words)
+        } else {
+            // 未设目标：与 `goal_progress(0)` 的可见结果**逐字段等价**
+            // （`goal = 0` → `is_set()` 为假 → 状态栏整项不画，
+            // `percent` 为 `None`、`reached` 为假，`words` 在未设目标时无人读），
+            // 但省掉了一次整篇统计。
+            GoalProgressView::default()
+        }
     };
-    let doc = app.active_doc.map(|id| id.as_u64());
-    app.status_bar.note_goal(progress, doc, now_ms);
+    let doc = vctx.active_doc().map(|id| id.as_u64());
+    vctx.status_bar_state().note_goal(progress, doc, now_ms);
 }
 
 /// 绘制状态栏：编码、写作目标进度、字数与瞬态消息（在底部 `Panel` 内）。
 ///
 /// 绘制前先结算统计防抖、目标进度与消息 TTL（见函数体注释），
 /// 故它不只是「画」，也是状态栏相关瞬态状态的每帧推进点。
-pub fn show(app: &mut EditorApp, ui: &mut Ui) {
-    sync_encoding(app);
+pub fn show(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
+    sync_encoding(vctx);
     // 状态栏统计防抖（建议一 / 问题 039）：每帧只算一次，供「写作目标进度」
     // 与「字数」共用；打字期沿用上一次静止结果，停手满窗口才刷新。
     // 统计浮层另走 `current_stats`（点击即时），不受影响。
-    let stats = app.current_stats_for_status_bar();
-    sync_goal(app, stats.as_ref());
-    let height = app.theme().metrics.statusbar_height;
+    let stats = vctx.current_stats_for_status_bar();
+    sync_goal(vctx, stats.as_ref());
+    let height = vctx.theme_state().metrics.statusbar_height;
     // 先把消息取出来：它带到期时间，必须在绘制前结算，
     // 否则一条 3 天前就该消失的错误会一直画着。
-    let now_ms = app.services.markdown.now().millis();
-    let message = app.status_bar.take_message(now_ms);
+    let now_ms = vctx.markdown_service().now().millis();
+    let message = vctx.status_bar_state().take_message(now_ms);
     // 消息 TTL 的到期点交给帧末统一定时（T11）：状态栏是唯一知道
     // 「这条消息还剩多久」的地方。缺了它，用户停手后不会再有帧，
     // 一条 4 秒该消失的提示会一直挂在状态栏上。
-    app.arm_status_message_deadline();
+    vctx.arm_status_message_deadline();
     egui::Panel::bottom("rustmark.statusbar")
         .exact_size(height)
-        .show(ui, |ui| draw(app, ui, message, stats));
+        .show(ui, |ui| draw(vctx, ui, message, stats));
 }
 
 /// 状态栏要显示的**全部**信息，一次算清。
@@ -150,13 +159,17 @@ pub struct StatusBarModel {
 }
 
 /// 由应用状态构造状态栏模型。
-pub fn build_model(app: &EditorApp, stats: Option<StatsView>) -> StatusBarModel {
-    // 三处行相关文案（光标行列 / 选区行列 / 「N 行」）共用**一次**全文扫描
-    // （问题 053）：旧写法各算各的，1MB 上一帧要扫三遍、其中两遍还各建一份
-    // 58k 项的 `Vec<usize>`，实测每帧恒定 1.1ms。
-    let index = app.line_index();
-    let (line, col) = app.cursor_line_col_in(&index);
-    let position = match app.selection_line_col_in(&index) {
+///
+/// **只读**：它不改动任何状态，故收 `&dyn EditorViewContext`——集成测试
+/// 有 19 处调用点直接断言它的输出，签名若收可变引用，这些调用点就得
+/// 全部改成拿可变借用（为一个纯读断言编造一次独占借用）。
+pub fn build_model(vctx: &dyn EditorViewContext, stats: Option<StatsView>) -> StatusBarModel {
+    // 三处行相关文案（光标行列 / 选区行列 / 「N 行」）看似要扫三遍全文，
+    // 实际不会：行索引在应用层有缓存（键 = 文档 + 修订版本 + 文本长度），
+    // 一帧内文本没变就命中缓存，扫描仍只有一次（问题 053 的结论不变，
+    // 只是「共用」从「共用一个局部变量」变成「共用缓存」）。
+    let (line, col) = vctx.cursor_line_col();
+    let position = match vctx.selection_line_col() {
         Some(((sl, sc), (el, ec))) => {
             if (sl, sc) == (el, ec) {
                 format!("行 {line}, 列 {col}")
@@ -168,25 +181,29 @@ pub fn build_model(app: &EditorApp, stats: Option<StatsView>) -> StatusBarModel 
     };
     let words = stats.map_or_else(
         // `None` 表示「未预计算」：退回即时统计（测试 / 浮层路径等同旧行为）。
-        || app.current_stats().map_or(0, |s| s.words),
+        || vctx.current_stats().map_or(0, |s| s.words),
         |s| s.words,
     );
-    let is_dirty = app.current_document_dirty();
-    let wrap_on = app.editor.word_wrap;
-    let spell_on = app.editor.spell_check;
-    let (theme_label, theme_hint) = theme_label(app);
-    let goal = app.status_bar.goal;
+    let is_dirty = vctx.current_document_dirty();
+    // 三个开关都是 `bool`（Copy），一次取完——借用不跨语句。
+    let editor = vctx.editor_state_read();
+    let wrap_on = editor.word_wrap;
+    let spell_on = editor.spell_check;
+    let remote_images_off = !editor.load_remote_images;
+    let (theme_label, theme_hint) = theme_label(vctx);
+    let status = vctx.status_bar_state_read();
+    let goal = status.goal;
     let goal_visible = goal.is_set();
 
     StatusBarModel {
         // 未设目标时整项不画：`goal` 仍保留在模型里，
         // 测试要能断言「为什么没画」（是没设目标，还是画漏了）。
         goal: goal_visible.then_some(goal),
-        goal_label: app.status_bar.goal_label(),
-        goal_hint: app.status_bar.goal_hint(),
-        kind: app.current_document_kind().to_string(),
-        encoding: app.status_bar.encoding_label().to_string(),
-        encoding_hint: app.status_bar.encoding_hint().to_string(),
+        goal_label: status.goal_label(),
+        goal_hint: status.goal_hint(),
+        kind: vctx.current_document_kind().to_string(),
+        encoding: status.encoding_label().to_string(),
+        encoding_hint: status.encoding_hint().to_string(),
         position,
         // 千分位：四位以上数字不加分隔符会很难读（「字数 12345」要数位数）。
         words: format!("字数 {}", thousands(words)),
@@ -196,10 +213,10 @@ pub fn build_model(app: &EditorApp, stats: Option<StatsView>) -> StatusBarModel 
         spell_on,
         word_wrap: format!("自动换行 {}", if wrap_on { "开" } else { "关" }),
         wrap_on,
-        remote_images_off: !app.editor.load_remote_images,
+        remote_images_off,
         theme_label,
         theme_hint,
-        line_count: format!("{} 行", thousands(index.count())),
+        line_count: format!("{} 行", thousands(vctx.current_line_count())),
     }
 }
 
@@ -208,8 +225,8 @@ pub fn build_model(app: &EditorApp, stats: Option<StatsView>) -> StatusBarModel 
 /// 状态栏的「一键切换」现在是**深↔浅直接互换**（见 `EditorApp::cycle_theme`）：
 /// 当前显示深色就提示「点一下变浅色」、反之变深色。这是可预期的一元动作，
 /// 不再有三态轮换带来的「浅色点回深色要点两次」困惑（#039）。
-fn theme_label(app: &EditorApp) -> (String, String) {
-    if app.ui.theme.is_dark() {
+fn theme_label(vctx: &dyn EditorViewContext) -> (String, String) {
+    if vctx.theme_state().is_dark() {
         ("深色主题".to_string(), "点击切换为浅色主题".to_string())
     } else {
         ("浅色主题".to_string(), "点击切换为深色主题".to_string())
@@ -217,16 +234,16 @@ fn theme_label(app: &EditorApp) -> (String, String) {
 }
 
 fn draw(
-    app: &mut EditorApp,
+    vctx: &mut dyn EditorViewContext,
     ui: &mut Ui,
     message: Option<crate::presentation::state::status_bar_ui_state::StatusMessage>,
     stats: Option<StatsView>,
 ) {
-    let theme = app.theme().clone();
+    let theme = vctx.theme_state().clone();
     ui.painter()
         .rect_filled(ui.max_rect(), egui::CornerRadius::ZERO, theme.bg_secondary);
-    let model = build_model(app, stats);
-    let now_ms = app.services.markdown.now().millis();
+    let model = build_model(vctx, stats);
+    let now_ms = vctx.markdown_service().now().millis();
 
     let mut intents: Vec<IntentKind> = Vec::new();
 
@@ -338,7 +355,7 @@ fn draw(
     // 本帧已读出的 `model` 不一致（model 里还是旧值），
     // 用户会看到「开关显示关了但已经开了」这种一帧错位。
     for intent in intents {
-        run_intent(app, intent, now_ms);
+        run_intent(vctx, intent, now_ms);
     }
 }
 
@@ -353,16 +370,26 @@ enum IntentKind {
 }
 
 /// 执行一项点击意图。
-fn run_intent(app: &mut EditorApp, intent: IntentKind, now_ms: u64) {
+fn run_intent(vctx: &mut dyn EditorViewContext, intent: IntentKind, now_ms: u64) {
     match intent {
-        IntentKind::Save => match app.save_document(false) {
-            Ok(()) => app.status_bar.notice("已保存", now_ms),
-            Err(e) => app.status_bar.error(format!("保存失败：{e}"), now_ms),
+        IntentKind::Save => match vctx.save_document(false) {
+            Ok(()) => vctx.status_bar_state().notice("已保存", now_ms),
+            Err(e) => vctx
+                .status_bar_state()
+                .error(format!("保存失败：{e}"), now_ms),
         },
-        IntentKind::Spell => app.toggle_spell_check(),
-        IntentKind::Wrap => app.toggle_word_wrap(),
-        IntentKind::Theme => app.execute(UiAction::ToggleTheme),
-        IntentKind::Stats => app.execute(UiAction::DocumentStats),
+        IntentKind::Spell => {
+            // 先读出再写：`editor_state()` 是可变借用，读完立刻放掉，
+            // 否则随后的 `set_spell_check` 会与它撞车（形态 A）。
+            let on = vctx.editor_state().spell_check;
+            vctx.set_spell_check(!on);
+        }
+        IntentKind::Wrap => {
+            let on = vctx.editor_state().word_wrap;
+            vctx.set_word_wrap(!on);
+        }
+        IntentKind::Theme => vctx.execute(UiAction::ToggleTheme),
+        IntentKind::Stats => vctx.execute(UiAction::DocumentStats),
     }
 }
 

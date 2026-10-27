@@ -138,6 +138,28 @@
   `lint` / `outline` / `search`）+ `preview_view/inline/math.rs`（1 个文件）。
   **批 1 的 24 个零 services 视图全部解耦**，`PENDING_DECOUPLED_VIEWS` 余 **8** 条
   （全为 `services` 视图 + 6 个未登记子模块，留批 2 / 批 3）。
+- **批 2 进展（`services` 视图解耦）**：按「状态栏 → 编辑区 → 预览区 → 主视图 +
+  滚动同步」四步推进。
+  - **步 2.1 `status_bar_view.rs`（已收官）**：契约新增 12 个方法
+    （`UiStateAccess` +3：`editor_state_read` / `status_bar_state` /
+    `status_bar_state_read`；`DocumentAccess` +5：`current_line_count` /
+    `cursor_line_col` / `selection_line_col` / `current_document_dirty` /
+    `current_document_kind`；`CommandPort` +4：`current_stats_for_status_bar` /
+    `set_status_bar_encoding` / `arm_status_message_deadline` / `save_document`），
+    trait 总数 96 → **108**。
+    **`build_model` 保持只读**（收 `&dyn EditorViewContext`）——它是公开的纯读
+    函数，集成测试有 **19 处**调用点直接断言它的输出；改成可变收��就得让这 19 处
+    全部去拿独占借用，为一个纯读断言编造可变签名。
+    **只读变体因此是 3 个而非拍板的 2 个**：`editor_state_read` 是被代码事实
+    逼出来的第三条（`build_model` 要读 `word_wrap` / `spell_check` /
+    `load_remote_images` 三个开关，而 trait 上通往 `EditorUiState` 的唯一出口
+    是 `&mut` 的）。
+    **行索引的性能不变量未破**：`LineIndex` 不搬（视图要的是「行数」一个数，
+    不是 58k 项的偏移表），三处行相关文案改走 `current_line_count()` /
+    `cursor_line_col()` / `selection_line_col()` 三个独立调用——扫描仍只有
+    **一次**，因为行索引在应用层有缓存（键 = 文档 + 修订版本 + 文本长度），
+    一帧内文本没变就命中（问题 053 的结论不变，只是「共用」从共用一个局部
+    变量变成共用缓存）。
 - **批 1 遗留（移交给批 2 / 批 3）**：
   - `preview_view/image_cache.rs` **本轮不迁**，留 root + 批 3 加 `EXEMPT_VIEWS`
     永久豁免（**不能**简单留在 `PENDING_DECOUPLED_VIEWS` 里——双向棘轮会报
