@@ -41,7 +41,7 @@ use crate::presentation::state::app_ui_state::AppUiState;
 use crate::presentation::state::command_palette_ui_state::CommandPaletteUiState;
 use crate::presentation::state::dialog_ui_state::DialogUiState;
 use crate::presentation::state::diff_ui_state::DiffUiState;
-use crate::presentation::state::editor_ui_state::EditorUiState;
+use crate::presentation::state::editor_ui_state::{EditorUiState, SpellSuggestMenu};
 use crate::presentation::state::export_ui_state::ExportUiState;
 use crate::presentation::state::find_replace_ui_state::FindReplaceUiState;
 use crate::presentation::state::pending_dialog::PendingDialog;
@@ -56,8 +56,10 @@ use crate::presentation::state::symbol_ui_state::SymbolUiState;
 use crate::presentation::state::workspace_entries::WorkspaceEntries;
 use crate::presentation::theme::builtin::Theme;
 use crate::presentation::view_context::{
-    CommandPort, DocumentAccess, EditorViewContext, ServiceQueries, ThemeAccess, UiStateAccess,
+    CommandPort, DocumentAccess, EditorViewContext, ServiceQueries, TextEdit, ThemeAccess,
+    UiStateAccess,
 };
+use egui::Context;
 use rustmark_core::application::document::service::DocumentAppService;
 use rustmark_core::application::dto::{
     EditorSettingsView, ExportRequestView, ExportResultView, LintIssueView, OutlineItemView,
@@ -165,6 +167,10 @@ impl UiStateAccess for EditorApp {
 
     fn editor_text(&self) -> &str {
         &self.editor_text
+    }
+
+    fn editor_text_mut(&mut self) -> &mut String {
+        &mut self.editor_text
     }
 }
 
@@ -537,6 +543,46 @@ impl CommandPort for EditorApp {
 
     fn save_document(&mut self, save_as: bool) -> AppResult<()> {
         EditorApp::save_document(self, save_as)
+    }
+
+    // ---------- 编辑区 ----------
+
+    fn apply_pending_editor_state(&mut self, ctx: &Context) {
+        EditorApp::apply_pending_editor_state(self, ctx);
+    }
+
+    fn ensure_document(&mut self) -> Option<DocumentId> {
+        EditorApp::ensure_document(self)
+    }
+
+    fn set_editor_selection(&mut self, cursor: usize, anchor: Option<usize>) {
+        EditorApp::set_editor_selection(self, cursor, anchor);
+    }
+
+    fn set_editor_text(&mut self, text: String) {
+        EditorApp::set_editor_text(self, text);
+    }
+
+    fn flush_edit(&mut self, edit: TextEdit, domain_len: usize, transformed: bool) {
+        // `editor_ops::TextEdit` 就是契约里的那个 `TextEdit`（root 侧 `pub use` 转发），
+        // 故这里不需要任何转换。
+        EditorApp::flush_edit(self, edit, domain_len, transformed);
+    }
+
+    fn close_spell_menu(&mut self) {
+        EditorApp::close_spell_menu(self);
+    }
+
+    fn set_spell_menu(&mut self, menu: Option<SpellSuggestMenu>) {
+        EditorApp::set_spell_menu(self, menu);
+    }
+
+    fn set_editor_scroll_y(&mut self, y: f32) {
+        EditorApp::set_editor_scroll_y(self, y);
+    }
+
+    fn replace_spelling(&mut self, start: usize, end: usize, replacement: &str) -> AppResult<()> {
+        EditorApp::replace_spelling(self, start, end, replacement)
     }
 }
 

@@ -51,13 +51,13 @@ fn pointer_at(g: &egui::Galley, char_index: usize) -> egui::Pos2 {
 /// 主路径：右键落在错词上 → 菜单给出该词的区间与原拼写。
 #[test]
 fn right_clicking_a_flagged_word_opens_a_menu_for_it() {
-    let (_dir, mut app) = app_with("teh quick brown");
+    let (_dir, app) = app_with("teh quick brown");
     let ctx = egui::Context::default();
     crate::support::run_ui(&ctx, egui::RawInput::default(), |_| {});
     let g = galley(&ctx, "teh quick brown");
     let origin = egui::pos2(0.0, 0.0);
 
-    let menu = spell_menu_for(&mut app, &g, origin, origin + pointer_at(&g, 1).to_vec2())
+    let menu = spell_menu_for(&app, &g, origin, origin + pointer_at(&g, 1).to_vec2())
         .expect("错词上应弹出建议菜单");
 
     assert_eq!(
@@ -77,27 +77,27 @@ fn right_clicking_a_flagged_word_opens_a_menu_for_it() {
 /// 右键在**正确**的词上 → 不开菜单。
 #[test]
 fn right_clicking_a_correct_word_opens_nothing() {
-    let (_dir, mut app) = app_with("teh quick brown");
+    let (_dir, app) = app_with("teh quick brown");
     let ctx = egui::Context::default();
     crate::support::run_ui(&ctx, egui::RawInput::default(), |_| {});
     let g = galley(&ctx, "teh quick brown");
     let origin = egui::pos2(0.0, 0.0);
 
     // `quick` 起点是第 4 个字符。
-    let menu = spell_menu_for(&mut app, &g, origin, origin + pointer_at(&g, 6).to_vec2());
+    let menu = spell_menu_for(&app, &g, origin, origin + pointer_at(&g, 6).to_vec2());
     assert!(menu.is_none(), "正确的词不该弹替换菜单，实际 {menu:?}");
 }
 
 /// 右键在空白处 → 不开菜单。
 #[test]
 fn right_clicking_whitespace_opens_nothing() {
-    let (_dir, mut app) = app_with("teh quick brown");
+    let (_dir, app) = app_with("teh quick brown");
     let ctx = egui::Context::default();
     crate::support::run_ui(&ctx, egui::RawInput::default(), |_| {});
     let g = galley(&ctx, "teh quick brown");
     let origin = egui::pos2(0.0, 0.0);
 
-    let menu = spell_menu_for(&mut app, &g, origin, origin + pointer_at(&g, 3).to_vec2());
+    let menu = spell_menu_for(&app, &g, origin, origin + pointer_at(&g, 3).to_vec2());
     assert!(menu.is_none(), "空白处没有词，不该弹菜单");
 }
 
@@ -111,7 +111,7 @@ fn spell_check_off_means_no_menu() {
     let g = galley(&ctx, "teh quick brown");
     let origin = egui::pos2(0.0, 0.0);
 
-    let menu = spell_menu_for(&mut app, &g, origin, origin + pointer_at(&g, 1).to_vec2());
+    let menu = spell_menu_for(&app, &g, origin, origin + pointer_at(&g, 1).to_vec2());
     assert!(menu.is_none(), "开关关闭时不该弹菜单");
 }
 

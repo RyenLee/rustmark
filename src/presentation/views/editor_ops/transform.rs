@@ -4,19 +4,15 @@ use super::cursor::{byte_to_char, line_before, matching_close};
 use super::line::list_marker;
 
 /// 一次文本编辑的结果：在旧文本的 `[byte_start, byte_end)` 区间替换为 `inserted`。
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TextEdit {
-    /// 旧文本中被替换的起点（字节）。
-    pub byte_start: usize,
-    /// 旧文本中被替换的终点（字节，不含）。
-    pub byte_end: usize,
-    /// 插入的新文本。
-    pub inserted: String,
-    /// 编辑后光标应落在的**字符**索引（用于在 egui 中重设光标）。
-    pub cursor_char: usize,
-    /// 编辑后选区锚点应落在的**字符**索引（`None` 表示无选区）。
-    pub anchor_char: Option<usize>,
-}
+///
+/// # 它住在 `rustmark-ui` 而不是这里
+///
+/// 编辑区的 trait 方法 `CommandPort::flush_edit` 要拿它做参数，而 trait 在
+/// `rustmark-ui`——**契约的参数类型必须与契约同侧**，否则 trait 就得反向
+/// 依赖组合根（root 的 `views/`）。故定义搬进
+/// `rustmark_ui::presentation::view_context::TextEdit`，此处 `pub use` 转发，
+/// 公开路径 `rustmark::presentation::views::editor_ops::TextEdit` **逐字不变**。
+pub use rustmark_ui::presentation::view_context::TextEdit;
 
 /// 计算从 `old` 到 `new` 的最小替换。
 ///

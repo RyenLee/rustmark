@@ -7,7 +7,8 @@
 //! 也是 S6-03 风险预案里「输入法隔离层」最务实的兑现：**不自己造输入法**。
 //!
 //! 代价是 egui 的 `TextEdit` 自带一套撤销栈与 Tab 语义，会与本项目「领域是内容 /
-//! 撤销唯一真相」冲突。处理方式（见 [`crate::app::frame::EditorApp`]）：
+//! 撤销唯一真相」冲突。处理方式（由组合根的 `EditorApp` 承担，见
+//! `apply_pending_editor_state` 与 `flush_edit` 两条契约）：
 //!
 //! - **撤销/重做**走领域：每次领域改了文本后清空 egui 内置撤销栈（`clear_undoer_next`），
 //!   且 Ctrl+Z 由快捷键分发器路由到领域，绝不走 egui 原生撤销。
@@ -45,23 +46,24 @@ pub use spell::spell_menu_for;
 
 use egui::{FontId, ScrollArea, TextEdit, Ui};
 
-use crate::app::frame::EditorApp;
+use crate::presentation::state::editor_ui_state::editor_id;
 use crate::presentation::state::scroll_sync_state::Side;
 use crate::presentation::theme::mapper;
+use crate::presentation::view_context::EditorViewContext;
 use crate::presentation::views::editor_ops;
 use rustmark_core::application::markdown::queries::{HighlightQuery, SpellCheckQuery};
 use rustmark_core::shared::geometry::{ByteOffset, TextRange};
 
 /// 绘制编辑区。
-pub fn show(app: &mut EditorApp, ui: &mut Ui) {
+pub fn show(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
     let ctx = ui.ctx().clone();
     // 1) 把上一帧领域编辑留下的「清撤销栈 / 重设光标」落到 egui 内部状态
     //    （必须在 `TextEdit::show` 之前，否则本帧光标不会更新）。
-    app.apply_pending_editor_state(&ctx);
+    vctx.apply_pending_editor_state(&ctx);
     // 2) 确保有活动文档（每帧兜底：编辑区永远要有一页可编辑）。
-    app.ensure_document();
+    vctx.ensure_document();
 
-    let theme = app.theme().clone();
+    let theme = vctx.theme_state().clone();
 
     ui.painter()
         .rect_filled(ui.max_rect(), egui::CornerRadius::ZERO, theme.bg_primary);
@@ -74,18 +76,18 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
     // 的假设，按钮实际更高时会与下拉阶梯化（首个菜单项偏高）叠加。
     let tb_h = theme.metrics.editor_toolbar_height;
     ui.allocate_ui(egui::vec2(ui.available_width(), tb_h), |ui| {
-        crate::presentation::views::toolbar_view::draw_editor_toolbar(app, ui);
+        crate::presentation::views::toolbar_view::draw_editor_toolbar(vctx, ui);
     });
     ui.separator();
 
-    let line_count = app.line_index().count();
+    let line_count = vctx.current_line_count();
     let font_size = theme.editor_font_size;
     // 行号栏：宽度按**最大行号的位数实测**（等宽字体），而不是写死 44pt——
     // 写死会在万行文档里挤掉最后一位、在十行文档里留一片空白。
     // 左右各留一个 `space_sm` 内边距，行号与正文之间另有一个 `space_sm` 间隔，
     // 这是「行号不与文字重叠」的横向保障。
     let gutter_pad = theme.metrics.space_sm;
-    let show_gutter = app.editor.line_numbers;
+    let show_gutter = vctx.editor_state().line_numbers;
     let gutter_w = if show_gutter {
         let digits = line_count.to_string().len().max(2);
         let digit_w = ui
@@ -108,8 +110,13 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
     //
     // **只在显示行号栏时才算**（问题 046）：它是一次 O(光标位置) 的前缀扫描，
     // 而行号栏默认关闭——关着的时候每帧白扫一遍纯属浪费。
-    let cursor_line =
-        show_gutter.then(|| gutter::current_line_index(&app.editor_text, app.editor.cursor));
+    //
+    // 闭包只捕获 `cursor`（`usize`，Copy）与 `vctx` 的只读用法，
+    // 不捕获 `vctx` 的可变借用——闭包结束时借用即释放。
+    let cursor_line = {
+        let cursor = vctx.editor_state().cursor;
+        show_gutter.then(|| gutter::current_line_index(vctx.editor_text(), cursor))
+    };
 
     // 自动换行开关（设置 / 状态栏可切换）。egui 0.33 的 `TextEdit` **没有**
     // `.wrap(bool)` 方法，换行与否完全由 `desired_width` + 自定义 layouter 决定。
@@ -117,40 +124,41 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
     // `desired_width` 设为 `INFINITY`，只要内部可用宽有限就仍是有限值、依旧换行
     // （见下方 `layouter` 内对 `effective_wrap` 的覆盖）。故在此先取一份副本，
     // 闭包里好按开关强制「不换行 = INFINITY」。
-    let wrap = app.editor.word_wrap;
+    let wrap = vctx.editor_state().word_wrap;
 
     // 预计算高亮 span（owned `Vec<SpanView>`），避免 `layouter` 闭包去借用
-    // `app.services`——那会与下方 `&mut app.editor_text` 的可变借用冲突。
+    // 服务——那会与下方 `editor_text_mut()` 的独占借用冲突。
     // `theme` 是 `Copy`，闭包里会按值拷贝它；`doc_id` 也是 `Copy`。
-    // 闭包因此**不借用 `app`**，把 `app` 的唯一可变借用让给 `TextEdit`。
-    let doc_id = app.active_doc;
-    let spans = doc_id.and_then(|id| {
-        app.services
-            .markdown
+    // 闭包因此**不借用上下文**，把唯一的可变借用让给 `TextEdit`。
+    let doc_id = vctx.active_doc();
+    let text_len = vctx.editor_text().len();
+    let spans = match doc_id {
+        Some(id) => vctx
+            .markdown_service()
             .highlight(HighlightQuery {
                 doc_id: id,
-                range: TextRange::new(ByteOffset::new(0), ByteOffset::new(app.editor_text.len())),
+                range: TextRange::new(ByteOffset::new(0), ByteOffset::new(text_len)),
                 lang: Some("markdown".to_string()),
             })
-            .ok()
-    });
+            .ok(),
+        None => None,
+    };
     // 拼写检查：开启时取错词区间（字节坐标，与 `editor_text` 同源）。
     // 关闭时返回空Vec，服务端也不查缓存不重算，故关闭的代价为零。
     let spell_marks: Vec<mapper::SpellMark> = {
-        let enabled = app.editor.spell_check;
-        doc_id
-            .map(|id| {
-                app.services
-                    .markdown
-                    .spell_check(SpellCheckQuery {
-                        doc_id: id,
-                        enabled,
-                    })
-                    .into_iter()
-                    .map(|(start, end)| mapper::SpellMark { start, end })
-                    .collect()
-            })
-            .unwrap_or_default()
+        let enabled = vctx.editor_state().spell_check;
+        match doc_id {
+            Some(id) => vctx
+                .markdown_service()
+                .spell_check(SpellCheckQuery {
+                    doc_id: id,
+                    enabled,
+                })
+                .into_iter()
+                .map(|(start, end)| mapper::SpellMark { start, end })
+                .collect(),
+            None => Vec::new(),
+        }
     };
 
     // 波浪线用 `error` 色（与状态栏错误、导出失败提示同色），
@@ -161,24 +169,25 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
     let theme_for_layout = theme.clone();
     // 编辑区查找命中高亮：把当前文档的查找命中区间（文档字节坐标）交给排版层，
     // 由 `highlight_layout_with_find` 叠加背景。无命中（未搜索 / 无结果）时留空。
-    let find_marks: Vec<mapper::FindMark> = app
-        .find
-        .finder
-        .as_ref()
-        .map(|finder| {
-            let current = app.find.current;
-            finder
-                .matches()
-                .iter()
-                .enumerate()
-                .map(|(i, m)| mapper::FindMark {
-                    start: m.start,
-                    end: m.end,
-                    current: Some(i) == current,
-                })
-                .collect()
-        })
-        .unwrap_or_default();
+    let find_marks: Vec<mapper::FindMark> = {
+        let find = vctx.find_state();
+        match find.finder.as_ref() {
+            Some(finder) => {
+                let current = find.current;
+                finder
+                    .matches()
+                    .iter()
+                    .enumerate()
+                    .map(|(i, m)| mapper::FindMark {
+                        start: m.start,
+                        end: m.end,
+                        current: Some(i) == current,
+                    })
+                    .collect()
+            }
+            None => Vec::new(),
+        }
+    };
     let mut layouter = move |ui: &Ui, buf: &dyn egui::TextBuffer, wrap_arg: f32| {
         let txt = buf.as_str();
         // egui 把 `wrap_width = desired_width.min(available_width)` 传进来；
@@ -230,7 +239,11 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
     // 补一条「旧文本退回领域内容」的兜底固然能救回正确性，但那条路径要么不触发
     // （优化收益为零）、要么触发时正是它要省掉的那次全文复制——两边都不划算。
     // 故此处**据实保留克隆**，并把结论记在报告 §14.3.2。
-    let prev = app.editor_text.clone();
+    // ⚠ 这里必须是 `to_string()` 而不是 `clone()`：`vctx.editor_text()` 给的是
+    // `&str`，而 `&str` **自身**实现了 `Clone`（`impl Clone for &T`），
+    // 方法解析会先命中它 → `clone()` 得到的是 `&str` 而不是 `String`，
+    // 于是 `prev` 变成对上下文的**长期借用**，把整段闭包的可变借用全堵死。
+    let prev = vctx.editor_text().to_string();
 
     // 滚动偏移：**读回**比写入更重要。
     // `ScrollArea` 的用户滚轮增量是在 `show` 内部叠加的，
@@ -238,10 +251,9 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
     // 用它回写 UI State，同步逻辑才不会读到「上一帧的意图」。
     // 传入上一次的值不影响滚轮：`begin` 只是把它作为初值，
     // 增量在 `end` 里照样生效。
-    let start_y = if app.editor.scroll_y.is_finite() {
-        app.editor.scroll_y
-    } else {
-        0.0
+    let start_y = {
+        let scroll_y = vctx.editor_state().scroll_y;
+        if scroll_y.is_finite() { scroll_y } else { 0.0 }
     };
     // 换行时只能要纵向滚动（`vertical()` 会给子布局**有限**宽，换行才能正确
     // 随窗口重排）；不换行时才允许横向滚动（`both()`），否则长行会被裁掉看不见。
@@ -293,35 +305,44 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
                     rect
                 });
 
-                let editor = TextEdit::multiline(&mut app.editor_text)
-                    .id(EditorApp::editor_id())
-                    .font(FontId::monospace(font_size))
-                    // 注意：一旦提供自定义 `layouter`，egui 就会**完全忽略**
-                    // `.text_color()`——正文颜色只来自 layouter 产出的 Galley
-                    // （见 `egui::widgets::text_edit::builder` 中 `default_layouter`
-                    // 只在 `layouter.is_none()` 时生效）。
-                    // 这里保留它只为「未来若无高亮 layouter 时的兜底」，真正决定
-                    // 编辑区可读性的是 `mapper::StyleMapper::format("plain")`，
-                    // 它取 `theme.text_primary`。
-                    .text_color(theme.text_primary)
-                    .desired_rows(line_count)
-                    // 换行：用当前可用宽（有限）→ 在编辑器边缘换行、随窗口重排；
-                    // 不换行：用 `INFINITY` → 不折行，靠 `both()` 的横向滚动查看。
-                    .desired_width(if wrap {
-                        ui.available_width()
-                    } else {
-                        f32::INFINITY
-                    })
-                    // 框（`TextEdit` 自带 frame）撑到整个视口高（问题 047）。
-                    //
-                    // 只给高度、**不给**宽度：egui 算宽度是
-                    // `allocate_width = desired_width.at_most(available_width).at_least(min_size.x)`，
-                    // 即 `min_size.x` 会**顶掉** `available_width`——传了宽度，正文区
-                    // 就会横向溢出视口，凭空多出一条横滚动条。
-                    .min_size(egui::vec2(0.0, viewport_h))
-                    .code_editor() // 等宽字体 + lock_focus(true)：Tab 不丢焦点
-                    .layouter(&mut layouter)
-                    .show(ui);
+                // 形态 B 的极端形态：`TextEdit` 要**独占**编辑区文本。
+                //
+                // egui 0.37 的 `TextEditOutput` **不带生命周期参数**（`galley: Arc<Galley>`），
+                // 借用在 `.show(ui)` 返回后**立即结束**——故把独占借用关进
+                // **显式块**，块内不得调上下文的其它方法（含 `&self` 的
+                // `markdown_service()`）：需要的数据一律块外预取。
+                let editor = {
+                    let buf = vctx.editor_text_mut();
+                    TextEdit::multiline(buf as &mut dyn egui::TextBuffer)
+                        .id(editor_id())
+                        .font(FontId::monospace(font_size))
+                        // 注意：一旦提供自定义 `layouter`，egui 就会**完全忽略**
+                        // `.text_color()`——正文颜色只来自 layouter 产出的 Galley
+                        // （见 `egui::widgets::text_edit::builder` 中 `default_layouter`
+                        // 只在 `layouter.is_none()` 时生效）。
+                        // 这里保留它只为「未来若无高亮 layouter 时的兜底」，真正决定
+                        // 编辑区可读性的是 `mapper::StyleMapper::format("plain")`，
+                        // 它取 `theme.text_primary`。
+                        .text_color(theme.text_primary)
+                        .desired_rows(line_count)
+                        // 换行：用当前可用宽（有限）→ 在编辑器边缘换行、随窗口重排；
+                        // 不换行：用 `INFINITY` → 不折行，靠 `both()` 的横向滚动查看。
+                        .desired_width(if wrap {
+                            ui.available_width()
+                        } else {
+                            f32::INFINITY
+                        })
+                        // 框（`TextEdit` 自带 frame）撑到整个视口高（问题 047）。
+                        //
+                        // 只给高度、**不给**宽度：egui 算宽度是
+                        // `allocate_width = desired_width.at_most(available_width).at_least(min_size.x)`，
+                        // 即 `min_size.x` 会**顶掉** `available_width`——传了宽度，正文区
+                        // 就会横向溢出视口，凭空多出一条横滚动条。
+                        .min_size(egui::vec2(0.0, viewport_h))
+                        .code_editor() // 等宽字体 + lock_focus(true)：Tab 不丢焦点
+                        .layouter(&mut layouter)
+                        .show(ui)
+                };
 
                 // 3) 行号：用**本帧真实排版的行顶**（含折行）+ 文本原点描画，
                 //    使每个行号精确落在其对应文本行上（问题 3）。
@@ -332,7 +353,7 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
                         &theme,
                         gutter_rect,
                         editor.galley_pos,
-                        &app.editor_text,
+                        vctx.editor_text(),
                         cursor_line.unwrap_or(0),
                         font_size,
                     );
@@ -340,9 +361,9 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
 
                 // 4) 光标 / 选区同步（egui 给的是字符索引，存成字节偏移）。
                 if let Some(range) = editor.cursor_range {
-                    let c = editor_ops::char_to_byte(&app.editor_text, range.primary.index.0);
-                    let a = editor_ops::char_to_byte(&app.editor_text, range.secondary.index.0);
-                    app.set_editor_selection(c, Some(a));
+                    let c = editor_ops::char_to_byte(vctx.editor_text(), range.primary.index.0);
+                    let a = editor_ops::char_to_byte(vctx.editor_text(), range.secondary.index.0);
+                    vctx.set_editor_selection(c, Some(a));
                 }
 
                 // 5) 文本顶端偏移：Galley 坐标系 → 滚动内容坐标系。
@@ -356,7 +377,7 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
                 // 探针实测标题应贴视口顶 +8pt、实际 +12pt）。
                 //    这里每帧实测并交给同步层：既不被主题间距的具体数值
                 //    绑死，也不把 UI 结构细节泄露进滚动数学。
-                app.ui
+                vctx.ui_state()
                     .sync
                     .set_editor_text_top(editor.galley_pos.y - content_top);
 
@@ -367,41 +388,60 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
                 //    `response.changed()` 是 egui 原生「本帧 TextEdit 内容是否变了」的信号——
                 //    用户停止打字后立刻跳过整个 diff 路径，大文档上每帧可省掉 O(n) 的 diff 计算。
                 //    prev.clone() 仍保留（diff_replace 需要 old 参数），无法省。
-                if editor.response.changed()
-                    && prev != app.editor_text
-                    && let Some(mut edit) = editor_ops::diff_replace(&prev, &app.editor_text)
-                {
-                    // 变换是否真的改动了这次编辑（列表续行 / 括号配对 / 退出列表）。
-                    // 返回 false 说明领域应用的就是 egui 给的那次编辑，
-                    // 光标位置 egui 自己已经算对了。
-                    let transformed = editor_ops::transform_insert(&prev, &mut edit);
-                    // 关键：把「旧文本 + 编辑」拼成与领域完全一致的最终串，
-                    // 直接写回 `editor_text`，然后再发领域命令。这样 `flush_edit`
-                    // 就**不必再从领域整篇回读**——那次回读会在每一帧把绑定给
-                    // egui 的字符串整体替换一遍，迫使 egui 的 `TextEdit` 每敲一个
-                    // 键就重新推导光标 / 选区 / 撤销栈，表现为编辑区闪烁；列表
-                    // 续行时还会让标记「晚一帧才弹出来」。此处就地拼出最终串，
-                    // egui 与领域内容瞬时一致，下游 `flush_edit` 跳过回读。
-                    //
-                    // `edit.byte_start/end` 是相对 `prev`（旧文本）的字节边界，
-                    // 经 `transform_insert` 后仍是 `prev` 的合法边界（空项退出分支
-                    // 把起点拉到了行首），故切片安全。
-                    let bs = edit.byte_start.min(prev.len());
-                    let be = edit.byte_end.min(prev.len());
-                    app.set_editor_text(format!("{}{}{}", &prev[..bs], edit.inserted, &prev[be..]));
-                    // 第二个参数必须是 `prev.len()`（领域旧文本长度），**不是**
-                    // `app.editor_text.len()`——上一行刚把 `editor_text` 拼成
-                    // 变换后的新串，「退出列表」分支会把文本改短，新长度装不下
-                    // 相对旧文本的 `byte_end`；flush_edit 若按新长度钳制就会把
-                    // 区间砍短，领域层只删掉半个标记（实测：`4. ` 残留成 `. `）。
-                    app.flush_edit(edit, prev.len(), transformed);
-                    // 文本一变，egui 就会「把光标滚进视口」（带动画、连续数帧）。
-                    // 那是程序为了光标可见而滚的，用户并没有滚，故必须声明成
-                    // 程序性位移——否则滚动同步会把它当成用户手势，一帧一次地把
-                    // 预览区拉到映射位置（编辑区平滑滚、预览区逐帧跳），
-                    // 两栏同时在动即用户看到的「界面闪烁」。
-                    let now_ms = app.services.markdown.now().millis();
-                    app.ui.sync.note_programmatic_scroll(Side::Editor, now_ms);
+                if editor.response.changed() {
+                    // 借用纪律（形态 B）：`vctx.editor_text()` 的共享借用若直接
+                    // 出现在 `if let` 判据里，它会**覆盖整个块**——块内紧接着的
+                    // `set_editor_text` / `flush_edit` 是可变借用，直接撞车。
+                    // 故先在**内层块**里把这次编辑算完（借用在此结束），
+                    // 外层再 `if let` 取用：全程**不多一次全文克隆**。
+                    let edit = {
+                        let new_text = vctx.editor_text();
+                        if prev == new_text {
+                            None
+                        } else {
+                            editor_ops::diff_replace(&prev, new_text)
+                        }
+                    };
+                    if let Some(mut edit) = edit {
+                        // 变换是否真的改动了这次编辑（列表续行 / 括号配对 / 退出列表）。
+                        // 返回 false 说明领域应用的就是 egui 给的那次编辑，
+                        // 光标位置 egui 自己已经算对了。
+                        let transformed = editor_ops::transform_insert(&prev, &mut edit);
+                        // 关键：把「旧文本 + 编辑」拼成与领域完全一致的最终串，
+                        // 直接写回编辑区文本，然后再发领域命令。这样 `flush_edit`
+                        // 就**不必再从领域整篇回读**——那次回读会在每一帧把绑定给
+                        // egui 的字符串整体替换一遍，迫使 egui 的 `TextEdit` 每敲一个
+                        // 键就重新推导光标 / 选区 / 撤销栈，表现为编辑区闪烁；列表
+                        // 续行时还会让标记「晚一帧才弹出来」。此处就地拼出最终串，
+                        // egui 与领域内容瞬时一致，下游 `flush_edit` 跳过回读。
+                        //
+                        // `edit.byte_start/end` 是相对 `prev`（旧文本）的字节边界，
+                        // 经 `transform_insert` 后仍是 `prev` 的合法边界（空项退出分支
+                        // 把起点拉到了行首），故切片安全。
+                        let bs = edit.byte_start.min(prev.len());
+                        let be = edit.byte_end.min(prev.len());
+                        vctx.set_editor_text(format!(
+                            "{}{}{}",
+                            &prev[..bs],
+                            edit.inserted,
+                            &prev[be..]
+                        ));
+                        // 第二个参数必须是 `prev.len()`（领域旧文本长度），**不是**
+                        // 当前编辑区文本的长度——上一行刚把文本拼成变换后的新串，
+                        // 「退出列表」分支会把文本改短，新长度装不下
+                        // 相对旧文本的 `byte_end`；flush_edit 若按新长度钳制就会把
+                        // 区间砍短，领域层只删掉半个标记（实测：`4. ` 残留成 `. `）。
+                        vctx.flush_edit(edit, prev.len(), transformed);
+                        // 文本一变，egui 就会「把光标滚进视口」（带动画、连续数帧）。
+                        // 那是程序为了光标可见而滚的，用户并没有滚，故必须声明成
+                        // 程序性位移——否则滚动同步会把它当成用户手势，一帧一次地把
+                        // 预览区拉到映射位置（编辑区平滑滚、预览区逐帧跳），
+                        // 两栏同时在动即用户看到的「界面闪烁」。
+                        let now_ms = vctx.markdown_service().now().millis();
+                        vctx.ui_state()
+                            .sync
+                            .note_programmatic_scroll(Side::Editor, now_ms);
+                    }
                 }
 
                 // 7) 右键：落在错词上就开「你可能想输入」菜单（V11-07）。
@@ -409,23 +449,28 @@ pub fn show(app: &mut EditorApp, ui: &mut Ui) {
                 //    左键点进编辑区一律关菜单：那表示用户要继续打字，
                 //    一个浮在正文上的菜单只会挡住他要看的那行。
                 if editor.response.clicked() {
-                    app.close_spell_menu();
+                    vctx.close_spell_menu();
                 }
-                if editor.response.secondary_clicked() {
-                    let opened = editor.response.interact_pointer_pos().and_then(|pointer| {
-                        spell::spell_menu_for(app, &editor.galley, editor.galley_pos, pointer)
-                    });
-                    app.set_spell_menu(opened);
+                //    指针位置**先取出来**再调 `spell_menu_for`：后者要读文本与
+                //    服务，若塞进 `and_then` 的闭包里，闭包会捕获上下文的可变
+                //    借用，与紧随其后的 `set_spell_menu` 撞车。
+                if editor.response.secondary_clicked()
+                    && let Some(pointer) = editor.response.interact_pointer_pos()
+                {
+                    let opened =
+                        spell::spell_menu_for(vctx, &editor.galley, editor.galley_pos, pointer);
+                    vctx.set_spell_menu(opened);
                 }
             });
         });
 
-    if app.editor.spell_menu.is_some() {
-        spell::draw_spell_menu(app, &ctx, &theme);
+    let spell_menu_open = vctx.editor_state().spell_menu.is_some();
+    if spell_menu_open {
+        spell::draw_spell_menu(vctx, &ctx, &theme);
     }
 
-    app.set_editor_scroll_y(out.state.clamped_offset().y);
-    app.ui
+    vctx.set_editor_scroll_y(out.state.clamped_offset().y);
+    vctx.ui_state()
         .sync
         .set_geometry(Side::Editor, out.content_size.y, out.inner_rect.height());
     // 说明：S6-04 时代曾把高亮 / 滚动同步的统计 readout 直接画在编辑区底部，

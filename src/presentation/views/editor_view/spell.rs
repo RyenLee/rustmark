@@ -2,9 +2,9 @@
 
 use egui::Context;
 
-use crate::app::frame::EditorApp;
 use crate::presentation::state::editor_ui_state::SpellSuggestMenu;
 use crate::presentation::theme::builtin::Theme;
+use crate::presentation::view_context::EditorViewContext;
 use crate::presentation::views::editor_ops;
 use rustmark_core::application::markdown::queries::{SpellCheckQuery, SpellSuggestQuery};
 use rustmark_core::shared::text::word_bounds_at;
@@ -21,6 +21,12 @@ const SPELL_SUGGEST_LIMIT: usize = 5;
 /// 静默错位的一环（编译不报、运行不崩，只是菜单弹在别的词上），
 /// 没有自动化断言就只能靠肉眼看。
 ///
+/// # 为什么是**只读**签名
+///
+/// 本函数只读文本、读活动文档、查服务——一样都不改。故收 `&dyn` 而不是
+/// `&mut dyn`：调用点（`editor_view` 与 4 处集成测试）不必为一次纯读
+/// 断言去拿独占借用。
+///
 /// # 为什么必须自己把屏幕坐标换算成字节偏移
 ///
 /// egui 的 `TextEdit` 只告诉「指针在哪个像素」，不给「哪个字符」。
@@ -31,29 +37,31 @@ const SPELL_SUGGEST_LIMIT: usize = 5;
 /// 用本帧的 `galley` 而不是「按行号推算」，是因为自动换行时一个逻辑行
 /// 折成多行，行号推算必然错位——那正是行号栏踩过的坑。
 pub fn spell_menu_for(
-    app: &mut EditorApp,
+    vctx: &dyn EditorViewContext,
     galley: &egui::Galley,
     galley_pos: egui::Pos2,
     pointer: egui::Pos2,
 ) -> Option<SpellSuggestMenu> {
     let relative = pointer - galley_pos;
     let char_index = galley.cursor_from_pos(relative).index;
-    let byte = editor_ops::char_to_byte(&app.editor_text, char_index.0);
-    let (start, end) = word_bounds_at(&app.editor_text, byte)?;
+    // 文本只读借用：整个函数里所有上下文访问都是 `&self`，
+    // 故这层共享借用与后续的 `markdown_service()` 互不排斥。
+    let text = vctx.editor_text();
+    let byte = editor_ops::char_to_byte(text, char_index.0);
+    let (start, end) = word_bounds_at(text, byte)?;
     // 只给**已标红**的词提建议：没有被判错的词弹出替换菜单，
     // 会让用户以为程序认为他写错了。
     //
     // 判错结果在这里现取而不是复用帧首算好的那份：右键一帧才发生一次，
     // 为此多调一次服务的代价可以忽略，换来的是本函数**自给自足**——
     // 无头测试可以直接驱动它，不必先手工拼出标记集。
-    let flagged = app
-        .active_doc
+    let flagged = vctx
+        .active_doc()
         .map(|doc_id| {
-            app.services
-                .markdown
+            vctx.markdown_service()
                 .spell_check(SpellCheckQuery {
                     doc_id,
-                    enabled: app.editor.spell_check,
+                    enabled: vctx.editor_state_read().spell_check,
                 })
                 .into_iter()
                 .any(|(s, e)| s == start && e == end)
@@ -62,13 +70,15 @@ pub fn spell_menu_for(
     if !flagged {
         return None;
     }
-    let word = app.editor_text.get(start..end)?.to_string();
-    let doc_id = app.active_doc?;
-    let suggestions = app.services.markdown.spell_suggestions(SpellSuggestQuery {
-        doc_id,
-        offset: start,
-        limit: SPELL_SUGGEST_LIMIT,
-    });
+    let word = text.get(start..end)?.to_string();
+    let doc_id = vctx.active_doc()?;
+    let suggestions = vctx
+        .markdown_service()
+        .spell_suggestions(SpellSuggestQuery {
+            doc_id,
+            offset: start,
+            limit: SPELL_SUGGEST_LIMIT,
+        });
     // 没有候选就不弹：一个只有标题的空菜单只会让人以为坏了。
     if suggestions.is_empty() {
         return None;
@@ -90,16 +100,20 @@ pub fn spell_menu_for(
 /// 可拖动、会被 `Esc` 当浮层关掉），语义不对；`Area` 恰恰是「钉在屏幕某点
 /// 的即时模式浮层」，且不需要进 `Overlay` 栈——它不是对话框，
 /// 不该抢「关闭浮层」那条快捷键。
-pub(super) fn draw_spell_menu(app: &mut EditorApp, ctx: &Context, theme: &Theme) {
-    let Some(menu) = app.editor.spell_menu.clone() else {
+pub(super) fn draw_spell_menu(vctx: &mut dyn EditorViewContext, ctx: &Context, theme: &Theme) {
+    // 菜单内容先克隆出来：`editor_state()` 是可变借用，若把它的结果挂在
+    // `let ... else` 的判据上，那层借用会**覆盖整个块**（形态 B），
+    // 与块内的 `close_spell_menu()` 撞车。故分两步：先取出来，再判。
+    let menu = vctx.editor_state().spell_menu.clone();
+    let Some(menu) = menu else {
         return;
     };
     // 陈旧检测：菜单里存的是**上一帧**的字节区间。用户可能在菜单开着的
     // 时候改了文本，此时按旧区间替换会改到别处去——宁可关掉重来。
-    let stale = app.editor_text.get(menu.byte_start..menu.byte_end) != Some(menu.word.as_str());
+    let stale = vctx.editor_text().get(menu.byte_start..menu.byte_end) != Some(menu.word.as_str());
     let escaped = ctx.input(|i| i.key_pressed(egui::Key::Escape));
     if stale || escaped {
-        app.close_spell_menu();
+        vctx.close_spell_menu();
         return;
     }
 
@@ -129,7 +143,7 @@ pub(super) fn draw_spell_menu(app: &mut EditorApp, ctx: &Context, theme: &Theme)
 
     if let Some(replacement) = picked {
         let (start, end) = (menu.byte_start, menu.byte_end);
-        let _ = app.replace_spelling(start, end, &replacement);
-        app.close_spell_menu();
+        let _ = vctx.replace_spelling(start, end, &replacement);
+        vctx.close_spell_menu();
     }
 }

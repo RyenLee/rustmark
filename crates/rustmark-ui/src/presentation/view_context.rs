@@ -107,7 +107,7 @@ use crate::presentation::state::app_ui_state::AppUiState;
 use crate::presentation::state::command_palette_ui_state::CommandPaletteUiState;
 use crate::presentation::state::dialog_ui_state::DialogUiState;
 use crate::presentation::state::diff_ui_state::DiffUiState;
-use crate::presentation::state::editor_ui_state::EditorUiState;
+use crate::presentation::state::editor_ui_state::{EditorUiState, SpellSuggestMenu};
 use crate::presentation::state::export_ui_state::ExportUiState;
 use crate::presentation::state::find_replace_ui_state::FindReplaceUiState;
 use crate::presentation::state::pending_dialog::PendingDialog;
@@ -121,6 +121,7 @@ use crate::presentation::state::status_bar_ui_state::StatusBarUiState;
 use crate::presentation::state::symbol_ui_state::SymbolUiState;
 use crate::presentation::state::workspace_entries::WorkspaceEntries;
 use crate::presentation::theme::builtin::Theme;
+use egui::Context;
 use rustmark_core::application::document::service::DocumentAppService;
 use rustmark_core::application::dto::{
     EditorSettingsView, ExportRequestView, ExportResultView, LintIssueView, OutlineItemView,
@@ -134,6 +135,34 @@ use rustmark_core::shared::kernel::export_format::PageSize;
 use rustmark_core::shared::kernel::fonts::EditorFontChoice;
 use rustmark_core::shared::kernel::system::ExternalOpener;
 use rustmark_core::shared::result::AppResult;
+
+/// 一次文本编辑的结果：在旧文本的 `[byte_start, byte_end)` 区间替换为 `inserted`。
+///
+/// # 为什么它住在**契约文件**里
+///
+/// 编辑区的 trait 方法 [`CommandPort::flush_edit`] 要拿它做参数，而 trait 在
+/// 本 crate——**契约的参数类型必须与契约同侧**，否则 trait 就得反向依赖
+/// 组合根（`editor_ops` 住在 root 的 `views/` 下）。
+///
+/// root 侧 `editor_ops` 以 `pub use` 转发，故公开路径
+/// `rustmark::presentation::views::editor_ops::TextEdit` **逐字不变**。
+///
+/// 坐标语义：**命令用字节偏移，光标 / 选区用字符索引**——
+/// 「字符数 ≠ 字节数」（`İ` 1 字符 2 字节、emoji、组合字符），
+/// 详见 `editor_ops` 模块文档。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TextEdit {
+    /// 旧文本中被替换的起点（字节）。
+    pub byte_start: usize,
+    /// 旧文本中被替换的终点（字节，不含）。
+    pub byte_end: usize,
+    /// 插入的新文本。
+    pub inserted: String,
+    /// 编辑后光标应落在的**字符**索引（用于在 egui 中重设光标）。
+    pub cursor_char: usize,
+    /// 编辑后选区锚点应落在的**字符**索引（`None` 表示无选区）。
+    pub anchor_char: Option<usize>,
+}
 
 // ===========================================================================
 // T1 · ThemeAccess —— 主题与快捷键注册表
@@ -230,6 +259,24 @@ pub trait UiStateAccess {
     /// 它是领域内容的**视图副本**，不是领域真值——领域是单一真相，
     /// 每次领域命令后由组合根回读覆盖（见 `EditorApp::refresh_text`）。
     fn editor_text(&self) -> &str;
+
+    /// 编辑区文本的**可变**借用（egui 的 `TextEdit` 直接写它）。
+    ///
+    /// # 借用纪律：它必须被关进**显式块**
+    ///
+    /// egui 0.37 的 `TextEditOutput` **不带生命周期参数**（`galley: Arc<Galley>`），
+    /// 所以借用在 `.show(ui)` 返回后**立即结束**。故视图侧这样写：
+    ///
+    /// ```ignore
+    /// let out = {
+    ///     let buf = vctx.editor_text_mut();
+    ///     TextEdit::multiline(buf as &mut dyn egui::TextBuffer).show(ui)
+    /// };  // ← 借用在此结束
+    /// ```
+    ///
+    /// **块内不得调 `vctx` 的其它方法**（含 `&self` 的 `markdown_service()`）——
+    /// 那会把独占借用拖成第二个借用，直接撞车。需要的数据**块外预取**。
+    fn editor_text_mut(&mut self) -> &mut String;
 }
 
 // ===========================================================================
@@ -556,6 +603,51 @@ pub trait CommandPort {
 
     /// 保存当前文档（`save_as` 为真时另存为）。
     fn save_document(&mut self, save_as: bool) -> AppResult<()>;
+
+    // ---------- 编辑区 ----------
+
+    /// 把上一帧领域编辑留下的「清撤销栈 / 重设光标」落到 egui 内部状态。
+    ///
+    /// 必须在 `TextEdit::show` **之前**调用，否则本帧光标不会更新。
+    fn apply_pending_editor_state(&mut self, ctx: &Context);
+
+    /// 确保有活动文档（每帧兜底：编辑区永远要有一页可编辑）。
+    fn ensure_document(&mut self) -> Option<DocumentId>;
+
+    /// 设置光标与选区锚点（**字节**偏移）。
+    fn set_editor_selection(&mut self, cursor: usize, anchor: Option<usize>);
+
+    /// 覆写编辑区文本（视图算出的最终串）。
+    fn set_editor_text(&mut self, text: String);
+
+    /// 把一次编辑发回领域（区间替换 + 光标回设 + 清 egui 撤销栈）。
+    ///
+    /// # `domain_len` 必须是**旧文本长度**
+    ///
+    /// 不是当前 `editor_text.len()`——调用方往往刚把文本拼成变换后的新串，
+    /// 而「退出列表」分支会把文本**改短**；按新长度钳制会把区间砍短，
+    /// 领域层只删掉半个标记（已知症状：`` ` `` 残留成 `. `）。
+    ///
+    /// # `transformed` 决定要不要回设光标
+    ///
+    /// 列表续行 / 括号配对 / 退出列表会改写插入内容或区间，
+    /// 此时 egui 的光标确实错了，必须回设；否则 egui 自己算的就对。
+    fn flush_edit(&mut self, edit: TextEdit, domain_len: usize, transformed: bool);
+
+    /// 关闭拼写建议菜单。
+    fn close_spell_menu(&mut self);
+
+    /// 设置拼写建议菜单（`None` = 关闭）。
+    fn set_spell_menu(&mut self, menu: Option<SpellSuggestMenu>);
+
+    /// 回写编辑区的垂直滚动量（**读回**比写入更重要，见视图注释）。
+    fn set_editor_scroll_y(&mut self, y: f32);
+
+    /// 替换源码的一段字节区间（拼写建议菜单采纳时用）。
+    ///
+    /// 与 [`Self::flush_edit`] 的区别：本方法**不移动光标**——
+    /// 用户此刻的焦点在菜单上，编辑区光标应保持原位。
+    fn replace_spelling(&mut self, start: usize, end: usize, replacement: &str) -> AppResult<()>;
 }
 
 // ===========================================================================

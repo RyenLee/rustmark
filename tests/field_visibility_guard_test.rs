@@ -82,7 +82,7 @@ mod arch_check {
 /// - **删除条目** = 字段已收紧 / 已删：编译器保证外部没有读点，清单
 ///   同步移除，双向断言会把忘了删的情况报红。
 const APPROVED_PUB_FIELDS: &[&str] = &[
-    // total: 563
+    // total: 568
     "application/document/commands.rs::CloseCommand::force",
     "application/document/commands.rs::CloseCommand::id",
     "application/document/commands.rs::FormatCommand::id",
@@ -481,6 +481,11 @@ const APPROVED_PUB_FIELDS: &[&str] = &[
     "ui/presentation/theme/mapper/squiggle.rs::SpellMark::start",
     "ui/presentation/theme/mapper/squiggle.rs::Squiggle::phase",
     "ui/presentation/theme/mapper/squiggle.rs::Squiggle::rect",
+    "ui/presentation/view_context.rs::TextEdit::anchor_char",
+    "ui/presentation/view_context.rs::TextEdit::byte_end",
+    "ui/presentation/view_context.rs::TextEdit::byte_start",
+    "ui/presentation/view_context.rs::TextEdit::cursor_char",
+    "ui/presentation/view_context.rs::TextEdit::inserted",
     "shared/kernel/dialog.rs::FileFilter::extensions",
     "shared/kernel/fonts.rs::EditorFontChoice::display_name",
     "shared/kernel/fonts.rs::EditorFontChoice::key",

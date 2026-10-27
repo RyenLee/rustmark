@@ -160,6 +160,34 @@
     **一次**，因为行索引在应用层有缓存（键 = 文档 + 修订版本 + 文本长度），
     一帧内文本没变就命中（问题 053 的结论不变，只是「共用」从共用一个局部
     变量变成共用缓存）。
+  - **步 2.2 `editor_view.rs` + `editor_view/spell.rs`（已收官）**：契约新增
+    **10** 个方法（`UiStateAccess` +1 `editor_text_mut`；`CommandPort` +9：
+    `apply_pending_editor_state` / `ensure_document` / `set_editor_selection` /
+    `set_editor_text` / `flush_edit` / `close_spell_menu` / `set_spell_menu` /
+    `set_editor_scroll_y` / `replace_spelling`），trait 总数 108 → **118**。
+    **契约的参数类型必须与契约同侧**：`editor_ops::TextEdit`（一次编辑的区间
+    替换描述）搬进 `rustmark_ui::presentation::view_context::TextEdit`，
+    root 侧 `editor_ops` 以 `pub use` 转发 ⇒ 公开路径
+    `rustmark::presentation::views::editor_ops::TextEdit` **逐字不变**；
+    否则 trait 要反向依赖组合根（`editor_ops` 住在 root 的 `views/` 下）。
+    **形态 B 的极端形态（`TextEdit::multiline`）解法**：egui 0.37 的
+    `TextEditOutput` 不带生命周期参数（`galley: Arc<Galley>`），借用在
+    `.show(ui)` 返回即结束 ⇒ 把独占借用关进**显式块**，块内不得调上下文的
+    其它方法（含 `&self` 的 `markdown_service()`），需要的数据块外预取。
+    **签名收窄波及的测试调用点**：`tests/presentation/spell_menu_test.rs`
+    4 处 `spell_menu_for(&mut app, …)` → `(&app, …)`（函数变只读后 `&mut`
+    成了多余的 mut，clippy `unnecessary_mut_passed` 报出），另 3 处
+    `let (_dir, mut app)` 的 `mut` 随之失效——**方向与 R13 相反：这次是
+    放宽**。
+    **`flush_edit` 的钳制基准口径（易错点，已钉死）**：`domain_len` 必须是
+    **变换前**的文本长度，不是 `editor_text.len()`。编辑区先把 `editor_text`
+    拼成变换后的新串再调 `flush_edit`，若按新串长度钳制，「回车退出列表」
+    这类**变短**的变换会把相对旧文本的 `byte_end` 砍短，领域层只删掉标记的
+    前半个字符（空列表项 `4. ` 上回车残留成 `. `）。专项回归：
+    `top_menu_test::enter_key_creates_lines_and_keeps_list_numbers_intact`（三步
+    断言「续行 → 退出列表 → 空行」）与
+    `enter_ime_test::list_enter_right_after_commit_does_not_pile_markers`
+    （中文提交后同一时刻连按回车，零时钟推进）**均通过**。
 - **批 1 遗留（移交给批 2 / 批 3）**：
   - `preview_view/image_cache.rs` **本轮不迁**，留 root + 批 3 加 `EXEMPT_VIEWS`
     永久豁免（**不能**简单留在 `PENDING_DECOUPLED_VIEWS` 里——双向棘轮会报

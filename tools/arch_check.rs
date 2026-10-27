@@ -1483,8 +1483,6 @@ pub fn check_ui_submodule_sync(manifest: &Path) -> Vec<Violation> {
 /// **批 1 · 步 1.7（2026-10-27）**：`sidebar_view` 树（5 个文件）
 /// + `preview_view/inline/math.rs`（1 个文件）已迁——批 1 的 24 个文件收官。
 pub const PENDING_DECOUPLED_VIEWS: &[&str] = &[
-    "src/presentation/views/editor_view.rs",
-    "src/presentation/views/editor_view/spell.rs",
     "src/presentation/views/main_view.rs",
     "src/presentation/views/preview_view.rs",
     "src/presentation/views/preview_view/image_cache.rs",
