@@ -74,10 +74,11 @@
 **阶段 01–09 已全部完成，无进行中的阶段。** 下一阶段为 **v1.1**，
 任务规划、逐项说明与完成记录以 [`docs/plans/v1.1-backlog.md`](./v1.1-backlog.md) 为**唯一入口**（本文不重复其总览表）。
 
-截至 2026-10-26 的状态摘要：
+截至 2026-10-28 的状态摘要：
 
-- **功能项已全部完成**：V11-03~09、V11-12~26 均 ✅；测试基线 **2227 passed / 0 failed / 4 ignored**
-  （`--all-targets` 2226 + `--doc` 1，2026-10-26「去双源」批次后实测；命令与构成见 backlog §3）。
+- **功能项已全部完成**：V11-03~09、V11-12~26 均 ✅；测试基线 **2299 passed / 0 failed / 4 ignored**
+  （`--all-targets`，2026-10-28 实测；再加 `--doc` 的 1 passed / 1 ignored 合计 **2300 passed / 5 ignored**；
+  分层构成见 `docs/spec/metrics.md` §1.1，命令构成见 backlog §3）。
   较 2187 的 **+40**：+8 来自架构评审 D-5（帧耗时观测的单测）、+8 来自合规差额报告
   PRIV-01/02（远程图片开关 6 条 + 导出 CDN 披露 2 条）、+1 来自 `default-members` 拓扑守卫、
   +8 来自 V11-61（find 引擎上浮的内联单测）、+5 来自 D-6（测试目标登记守卫）、
@@ -86,9 +87,11 @@
   V11-10 / V11-11（证书预算 / 痛点驱动）——见 backlog §3。
 - **架构改造已收官**：V11-54 / V11-54a（全库评估 + 21 条改造项）2026-10-21 完成；
   V11-56~67 波次中 V11-56/57/58/59/62/63/64/65/66/67 已落地，V11-60 关闭、V11-61 降级为记录。
-  **workspace 现为 7 crate**：`rustmark`（组合根 + views）/ `rustmark-core`（六边形脊柱，零 egui）/
+  **workspace 现为 9 crate**：`rustmark`（组合根 + views）/ `rustmark-core`（六边形脊柱，零 egui）/
   `rustmark-infra`（V11-64，`7b9b6ba`）/ `rustmark-shared`（TD-04，`2da434e`）/ `rustmark-ui`（V11-62）/
-  `rustmark-icons` / `rustmark-actions`，本地依赖边 9 条、无环（`docs/spec/workspace-topology.expected.txt`）。
+  `rustmark-render`（R-04 升 crate，`22e8a86`：`presentation::rich` 搬出，默认 egui-free、egui 后端经 feature 门控）/
+  `rustmark-ports`（R-10 项 A，`0f20bc8`：5 个架构端口契约搬出 `shared/kernel`，实现仍在 infra）/
+  `rustmark-icons` / `rustmark-actions`，本地依赖边 **12 条**、无环（`docs/spec/workspace-topology.expected.txt`）。
   两个新 crate 的直接收益是**依赖面收窄**：core 从 12 个外部依赖降为 4 个（serde/thiserror/log/ahash），
   复用 domain/application 的消费者不再被 syntect/ureq/rfd/image/pulldown 拖进编译图。
 - **R-03 B1 视图窄接口解耦（批 1，2026-10-27 起）**：视图签名由 `&mut EditorApp`
@@ -202,10 +205,12 @@
   说明 + 导出件 `<head>` 注释）已闭环，`PRIVACY.md` 里「不勾选则不注入」的错误说法一并改正。
   剩余 P1 只有 `SEC-03`（Release Notes 三段式，发布时动作）。
 - **`--workspace` 纪律机制化（2026-10-26，`9c85129`）**：根 manifest 的 `default-members`
-  覆盖全部 7 个包，漏带 flag 不再漏测子 crate；两份清单的同步由
+  覆盖全部 9 个包（root `.` + 8 个 crate），漏带 flag 不再漏测子 crate；两份清单的同步由
   `workspace_topology_test::default_members_cover_every_workspace_member` 集合相等断言钉死。
-- **体积**：`NFR-PERF-01` release exe **10,558,464 B = 10.069 MiB**（2026-10-27 R-03 B1 批 2 收官后实测），
-  低于 10.5 MiB 预警线与 11 MiB 红线（`size_gate` exit 0，距预警线余 451,584 B、距红线余 975,872 B）。
+- **体积**：`NFR-PERF-01` release exe **10,567,168 B = 10.078 MiB**（**2026-10-28 R-10 项 B 后实测**，
+  当日 `bash scripts/size_gate.sh` 输出；2026-10-27 R-03 B1 批 2 收官时点为 10,558,464 B = 10.069 MiB），
+  低于 10.5 MiB 预警线与 11 MiB 红线（`size_gate` exit 0，距预警线（11,010,048 B）余 442,880 B、
+  距红线（11,534,336 B）余 967,168 B）。
   2026-10-20 的
   「11.36 MiB 超 10 MB 红线」已解除：V11-26 依赖裁剪先把 11.36 → 10.93 MiB（仍高于旧红线），
   随后维护者把红线 10 → 11 MiB（2026-10-24，`scripts/size_gate.sh` 与 metrics §2.8 同步），

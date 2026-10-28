@@ -408,7 +408,7 @@ rich / widgets ──► （不得回指 views / state / theme / widgets）
 
 ```bash
 cargo fmt --check
-cargo clippy --workspace --all-targets -- -D warnings
+cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo check --workspace --all-targets
 cargo test --workspace
 cargo run --bin check-arch
@@ -416,7 +416,7 @@ cargo run --bin check-arch
 
 `--workspace` 仍**显式书写**（自明意图、与 CI 同口径），但不再是正确性的依赖：
 2026-10-26 起根 manifest 的 `[workspace] default-members` 已覆盖全部成员
-（root `.` + 6 个 crate），漏带 flag 时 cargo 也跑全量——原先「忘带 → core 单测
+（root `.` + 8 个 crate，共 9 成员），漏带 flag 时 cargo 也跑全量——原先「忘带 → core 单测
 **静默缺席**、本地全绿 CI 才红」的失效模式（多 crate 评审债务 D-2）已由 cargo
 自身兜底。两份清单的同步同样被机械钉死：
 `tests/workspace_topology_test.rs::default_members_cover_every_workspace_member`
@@ -437,6 +437,35 @@ cargo run --bin check-arch
 校验器自身的用例在 `tests/arch_violation_fixture.rs`。它验的是**形状覆盖**：
 每种逃逸形态（`pub use` / 嵌套花括号 / 跨行 / 别名 / 层根文件 / 组合根 /
 注释与字符串里的假路径）各有一条注入用例，变异验证确认它们不是恒绿。
+
+### 6.1 门禁定义（提交前七条 / 发布前追加一条）
+
+上文代码块是**最小快速自查**；本小节是**唯一权威清单**，三套口径并存时以本节为准。
+
+**提交前七条（全绿才可提交）**
+
+```bash
+cargo fmt --all --check
+cargo run --bin check-arch
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace --all-targets --no-fail-fast
+cargo test --workspace --doc
+python3 tools/check_thresholds.py     # 121 条
+bash scripts/size_gate.sh             # 先 build --release 再测量
+```
+
+**发布前追加一条**：`python3 tools/release_dryrun.py`（须 **15/15**）。
+
+两条易漏口径：
+
+1. `cargo test --doc` **必须单独跑**——`--all-targets` **不含** doc 测试
+   （`--all-targets` = lib/bins/tests/benches/examples，doctest 是独立目标）；
+2. clippy 必须带 `--all-features`——与 CI 同口径，否则 feature 门控下的代码
+   （如 `rustmark-render` 的 egui 后端）本地不参与检查，本地绿而 CI 红。
+
+`size_gate.sh` 自 2026-10-27 起**先 `cargo build --release` 再测量**（`6523200`），
+终结「只 find 现成产物 → 量到陈旧二进制 → 静默假绿」的失效模式；
+逃生口 `SIZE_GATE_SKIP_BUILD=1` 仅供离线复核使用。
 
 ## 7. 模块文件树（需求文档 §7.1，禁 `mod.rs`）
 
