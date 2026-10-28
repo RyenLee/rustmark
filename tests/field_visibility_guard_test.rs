@@ -82,7 +82,38 @@ mod arch_check {
 /// - **删除条目** = 字段已收紧 / 已删：编译器保证外部没有读点，清单
 ///   同步移除，双向断言会把忘了删的情况报红。
 const APPROVED_PUB_FIELDS: &[&str] = &[
-    // total: 568
+    // total: 594
+    // R-10 项 B（2026-10-28）：DI 边界 `application/composition.rs` 新增 26 条——
+    // `AppServices` 13 条（core 装配产物，组合根逐字段映射成 `Services`，
+    // 外部读点即 `src/app/bootstrap.rs::assemble_with_bundle`）+
+    // `ImplBundle` 13 条（组合根点名 impl 的填空位，构造点即 `production_bundle`）。
+    // `ComposeConfig::drafts_dir` 是私有字段，不在此列。
+    "application/composition.rs::AppServices::auto_save_tracker",
+    "application/composition.rs::AppServices::dialogs",
+    "application/composition.rs::AppServices::documents",
+    "application/composition.rs::AppServices::drafts_dir",
+    "application/composition.rs::AppServices::export",
+    "application/composition.rs::AppServices::images",
+    "application/composition.rs::AppServices::markdown",
+    "application/composition.rs::AppServices::opener",
+    "application/composition.rs::AppServices::preferences",
+    "application/composition.rs::AppServices::registry",
+    "application/composition.rs::AppServices::render_cache",
+    "application/composition.rs::AppServices::workspace",
+    "application/composition.rs::AppServices::workspace_id",
+    "application/composition.rs::ImplBundle::buffer_factory",
+    "application/composition.rs::ImplBundle::bus",
+    "application/composition.rs::ImplBundle::clock",
+    "application/composition.rs::ImplBundle::dialogs",
+    "application/composition.rs::ImplBundle::document_repository",
+    "application/composition.rs::ImplBundle::exporter",
+    "application/composition.rs::ImplBundle::highlighter",
+    "application/composition.rs::ImplBundle::images",
+    "application/composition.rs::ImplBundle::opener",
+    "application/composition.rs::ImplBundle::parser",
+    "application/composition.rs::ImplBundle::preferences_repository",
+    "application/composition.rs::ImplBundle::spell_checker",
+    "application/composition.rs::ImplBundle::workspace_repository",
     "application/document/commands.rs::CloseCommand::force",
     "application/document/commands.rs::CloseCommand::id",
     "application/document/commands.rs::FormatCommand::id",

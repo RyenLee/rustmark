@@ -570,7 +570,7 @@ modules:
       preview_debounce_ms:
         value: 150
         unit: "ms"
-        source: "src/app/bootstrap.rs:65"
+        source: "src/app/bootstrap.rs:61"
         anchor: "PREVIEW_DEBOUNCE_MS: u64 = rustmark_core::shared::constants::DEBOUNCE_MS"
         via: "crates/rustmark-shared/src/shared/support/constants.rs"
         purpose: "预览防抖窗口（FR-01），装配 DebouncePolicy 时传入；打字期不重排，停手 150ms 后渲染。"

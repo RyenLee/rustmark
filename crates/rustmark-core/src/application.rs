@@ -1,5 +1,6 @@
 //! 应用层：用例编排（阶段 04）。
 
+pub mod composition;
 pub mod document;
 pub mod dto;
 pub mod event_subscriptions;

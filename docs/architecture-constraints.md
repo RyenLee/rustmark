@@ -465,7 +465,7 @@ src/                                    # shell（root crate `rustmark`）
 ├─ presentation/views/                  # 视图（唯一留在 shell 的 presentation 子层）
 └─ bin/check-arch.rs                    # 工具二进制
 
-crates/rustmark-core/src/               # core（crate `rustmark-core`）—— 六边形脊柱
+crates/rustmark-core/src/               # core（crate `rustmark-core`）—— 六边形脊柱；装配 DI 边界在 application/composition.rs（ImplBundle/ComposeConfig/AppServices/compose，R-10 项 B，绝不引 infra）
 ├─ lib.rs / {domain,application}.rs
 ├─ domain/{document,markdown,workspace,preferences,export}/
 │    └─ 各含 {aggregate.rs,value_objects.rs,events.rs,services.rs,repository.rs,errors.rs}

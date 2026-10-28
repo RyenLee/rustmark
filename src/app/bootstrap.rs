@@ -6,7 +6,11 @@
 //! 表现层拿不到 `domain` 与 `infrastructure`，应用层拿不到 `infrastructure`。
 //! 于是「用哪个实现替换哪个 trait」这个决定**无处可表达**，只能集中在这里。
 //!
-//! # 装配顺序不是自由的
+//! **装配顺序知识已下沉到 `rustmark_core::application::composition::compose`**
+//! （R-10 项 B），本文件只负责两件事：点名具体 impl（[`production_bundle`]）
+//! 与把它们注入 [`compose`]（[`Services::assemble_with_bundle`]）。
+//!
+//! # 装配顺序不是自由的（顺序由 core 的 `compose` 保证）
 //!
 //! 服务之间有真实的依赖环，必须靠 `provider()` 这类**后置提取**打破：
 //!
@@ -36,23 +40,15 @@ use crate::infrastructure::persistence::toml_preferences_repository::TomlPrefere
 use crate::infrastructure::spell::VendoredSpellChecker;
 use crate::infrastructure::system::SystemExternalOpener;
 use crate::infrastructure::text::rope_text_buffer::RopeBufferFactory;
+use rustmark_core::application::composition::{ComposeConfig, ImplBundle, compose};
 use rustmark_core::application::document::registry::DocumentRegistry;
 use rustmark_core::application::document::service::DocumentAppService;
-use rustmark_core::application::event_subscriptions::{AutoSaveTracker, EventSubscribers};
+use rustmark_core::application::event_subscriptions::AutoSaveTracker;
 use rustmark_core::application::export::service::ExportAppService;
-use rustmark_core::application::markdown::service::{
-    DebouncePolicy, MarkdownAppService, RENDER_CACHE_CAPACITY, RenderCache,
-};
+use rustmark_core::application::markdown::service::{MarkdownAppService, RenderCache};
 use rustmark_core::application::preferences::service::PreferencesAppService;
 use rustmark_core::application::workspace::service::WorkspaceAppService;
-use rustmark_core::domain::document::repository::DocumentRepository;
-use rustmark_core::domain::document::services::BufferFactory;
-use rustmark_core::domain::export::services::Exporter;
-use rustmark_core::domain::preferences::repository::PreferencesRepository;
-use rustmark_core::domain::workspace::aggregate::Workspace;
-use rustmark_core::domain::workspace::repository::WorkspaceRepository;
 use rustmark_core::ports::dialog::DialogPort;
-use rustmark_core::ports::event::EventBus;
 use rustmark_core::ports::image_asset::ImageAssetStore;
 use rustmark_core::ports::system::ExternalOpener;
 use rustmark_core::ports::time::{Clock, SystemClock};
@@ -63,12 +59,6 @@ use rustmark_core::shared::result::AppResult;
 ///
 /// 与统计防抖、高亮静止窗口共用 core 的单一真源。
 pub const PREVIEW_DEBOUNCE_MS: u64 = rustmark_core::shared::constants::DEBOUNCE_MS;
-
-// 渲染缓存容量（`RENDER_CACHE_CAPACITY`）的**单一事实来源**在
-// `application::markdown::service` 层定义，本文件通过上方 `use` 引入并在装配处使用。
-// 取 32 的权衡：每个条目存一份块序列，1MB 级文档的单份块序列可达数十 KB；
-// 32 份约几 MB，换来「来回切标签页不重解析」。超过这个量级用户几乎不会用到，
-// 而内存是实打实常驻的。
 
 /// 配置与最近文件的存放位置。
 #[derive(Clone, Debug)]
@@ -194,6 +184,29 @@ pub struct Services {
     pub drafts_dir: PathBuf,
 }
 
+/// 生产实现集合：**全仓唯一点名 infra impl 的地方**。
+///
+/// 13 个具体类型在这里各出现一次；除本函数外，全仓不再有第二处
+/// 「impl 与 trait 的配对」知识。要换实现只改这里，要新增可注入依赖只加
+/// [`ImplBundle`] 字段 + 本函数一行。
+fn production_bundle(paths: &ConfigPaths) -> ImplBundle {
+    ImplBundle {
+        dialogs: Arc::new(RfdDialogAdapter::new()),
+        clock: Arc::new(SystemClock),
+        opener: Arc::new(SystemExternalOpener::new()),
+        images: Arc::new(FsImageAssetStore::new()),
+        bus: Arc::new(InProcessEventBus::new()),
+        preferences_repository: Arc::new(TomlPreferencesRepository::new(paths.preferences.clone())),
+        document_repository: Arc::new(FsDocumentRepository::new()),
+        workspace_repository: Arc::new(FsWorkspaceRepository::new(paths.recent.clone())),
+        buffer_factory: Arc::new(RopeBufferFactory),
+        parser: Arc::new(PulldownMarkdownParser::new()),
+        highlighter: Arc::new(SyntectHighlighter::new()),
+        spell_checker: Arc::new(VendoredSpellChecker::new()),
+        exporter: Arc::new(RoutingExporter::new()),
+    }
+}
+
 impl Services {
     /// 从零装配（使用平台默认配置路径）。
     pub fn bootstrap() -> AppResult<Self> {
@@ -208,7 +221,7 @@ impl Services {
     /// `include_bytes!` 直接 `unwrap`，加载失败等价于产物损坏，
     /// 不存在运行期可恢复路径。
     pub fn assemble(paths: ConfigPaths) -> AppResult<Self> {
-        Self::assemble_with_dialogs(paths, Arc::new(RfdDialogAdapter::new()))
+        Self::assemble_with_bundle(&paths, production_bundle(&paths))
     }
 
     /// 以指定配置路径与**指定对话框端口**装配。
@@ -219,11 +232,14 @@ impl Services {
     /// 无人值守的 CI 上直接超时。
     ///
     /// 生产路径走 [`Self::assemble`]，那里固定用 `rfd`。
+    /// 覆盖方式是 **bundle 单点覆盖一个字段**，不再有中间层转调。
     pub fn assemble_with_dialogs(
         paths: ConfigPaths,
         dialogs: Arc<dyn DialogPort>,
     ) -> AppResult<Self> {
-        Self::assemble_with_clock_and_dialogs(paths, Arc::new(SystemClock), dialogs)
+        let mut bundle = production_bundle(&paths);
+        bundle.dialogs = dialogs;
+        Self::assemble_with_bundle(&paths, bundle)
     }
 
     /// 以指定配置路径、**指定时钟**与指定对话框端口装配。
@@ -242,34 +258,34 @@ impl Services {
         clock: Arc<dyn Clock>,
         dialogs: Arc<dyn DialogPort>,
     ) -> AppResult<Self> {
-        Self::assemble_with_opener(paths, clock, dialogs, Arc::new(SystemExternalOpener::new()))
+        let mut bundle = production_bundle(&paths);
+        bundle.clock = clock;
+        bundle.dialogs = dialogs;
+        Self::assemble_with_bundle(&paths, bundle)
     }
 
     /// 以指定配置路径、时钟、对话框端口与**外部打开器端口**装配。
     ///
-    /// 转调 [`Self::assemble_with_image_store`]（固定用文件系统实现）：
-    /// 与 R-03 加 opener 时同款取舍——给中间层加参数会一次性改动
-    /// 所有测试调用点，新增依赖一律落在**最深层**。
+    /// 与 R-03 加 opener 时同款取舍已随 R-10 项 B 消失：新增依赖不再需要
+    /// 「落在最深层」的级联——bundle 单点覆盖一个字段即可，测试调用点零改动。
     pub fn assemble_with_opener(
         paths: ConfigPaths,
         clock: Arc<dyn Clock>,
         dialogs: Arc<dyn DialogPort>,
         opener: Arc<dyn ExternalOpener>,
     ) -> AppResult<Self> {
-        Self::assemble_with_image_store(
-            paths,
-            clock,
-            dialogs,
-            opener,
-            Arc::new(FsImageAssetStore::new()),
-        )
+        let mut bundle = production_bundle(&paths);
+        bundle.clock = clock;
+        bundle.dialogs = dialogs;
+        bundle.opener = opener;
+        Self::assemble_with_bundle(&paths, bundle)
     }
 
-    /// 装配链的最深点（R-04b 起）：显式指定图片资源导入端口。
+    /// 显式指定图片资源导入端口（R-04b）。
     ///
-    /// 生产路径经 [`Self::assemble_with_opener`] 固定用
-    /// [`FsImageAssetStore`]；本变体为需要假导入器的测试存在
-    /// （与 `assemble_with_dialogs` 同理）。
+    /// 生产路径固定用 [`FsImageAssetStore`]；本变体为需要假导入器的测试存在
+    /// （与 `assemble_with_dialogs` 同理）。4 个 `assemble_with_*` 互不级联，
+    /// 各自只覆盖自己关心的字段。
     pub fn assemble_with_image_store(
         paths: ConfigPaths,
         clock: Arc<dyn Clock>,
@@ -277,114 +293,35 @@ impl Services {
         opener: Arc<dyn ExternalOpener>,
         images: Arc<dyn ImageAssetStore>,
     ) -> AppResult<Self> {
-        // —— 共享内核 ——
-        let bus: Arc<dyn EventBus> = Arc::new(InProcessEventBus::new());
-        // 草稿目录在 `paths.preferences` 被 `TomlPreferencesRepository` 部分移动之前取出，
-        // 否则 `paths` 进入部分移动状态后无法再整体使用。
-        let drafts_dir = paths.drafts_dir();
+        let mut bundle = production_bundle(&paths);
+        bundle.clock = clock;
+        bundle.dialogs = dialogs;
+        bundle.opener = opener;
+        bundle.images = images;
+        Self::assemble_with_bundle(&paths, bundle)
+    }
 
-        // —— 持久化 ——
-        let preferences_repo: Arc<dyn PreferencesRepository> =
-            Arc::new(TomlPreferencesRepository::new(paths.preferences));
-        let document_repo: Arc<dyn DocumentRepository> = Arc::new(FsDocumentRepository::new());
-        let workspace_repo: Arc<dyn WorkspaceRepository> =
-            Arc::new(FsWorkspaceRepository::new(paths.recent));
-
-        // —— 文本 / 解析 / 高亮 ——
-        let buffers: Arc<dyn BufferFactory> = Arc::new(RopeBufferFactory);
-        let parser = Arc::new(PulldownMarkdownParser::new());
-        let render_cache = Arc::new(Mutex::new(RenderCache::new(RENDER_CACHE_CAPACITY)));
-
-        // —— 偏好（会读盘）——
-        // 装配阶段唯一的可失败点。注意：**配置损坏不会走到这里失败**——
-        // `TomlPreferencesRepository` 按 ADR-003「备份原文件 + 回退默认」处理，
-        // 理由是：让用户因为一个语法错误的配置文件**打不开编辑器**，
-        // 比「设置悄悄回到默认」更糟（后者只丢配置，不丢文档）。
-        // 备份文件会留在配置目录里，用户报障时可查。
-        let preferences = PreferencesAppService::new(preferences_repo, bus.clone())?;
-
-        // —— 文档服务（provider 的来源，必须先于其余三个服务）——
-        let registry = Arc::new(RwLock::new(DocumentRegistry::new()));
-        let documents = DocumentAppService::new(
-            registry.clone(),
-            document_repo,
-            bus.clone(),
-            buffers,
-            clock.clone(),
-        )
-        // 撤销合并窗口来自偏好设置（F-1：此前 `new_untitled` 走默认策略，
-        // 领域里持久化的 `undo_merge_window_ms` 从未到达任何文档）。
-        .with_undo_policy(preferences.undo_policy());
-        let provider = documents.provider();
-
-        // —— 其余服务（共享同一份 provider，即同一份注册表状态）——
-        let markdown = Arc::new(
-            MarkdownAppService::new(
-                parser,
-                Arc::new(SyntectHighlighter::new()),
-                provider.clone(),
-                clock.clone(),
-                DebouncePolicy::new(PREVIEW_DEBOUNCE_MS),
-                render_cache.clone(),
-            )
-            // 拼写检查用 builder 注入（保持 `new` 签名稳定，见方法注释）。
-            // 词典在 `VendoredSpellChecker::new` 内构建一次近邻索引，之后复用。
-            .with_spell_checker(Arc::new(VendoredSpellChecker::new())),
-        );
-
-        let exporter: Arc<dyn Exporter> = Arc::new(RoutingExporter::new());
-        let export = ExportAppService::new(provider.clone(), exporter, bus.clone());
-
-        let workspace_id = WorkspaceId::new();
-        // 保留一份总线克隆用于注册事件订阅：下方 `workspace` 构造会消费 `bus`，
-        // 故订阅接线必须在那之前取好克隆。
-        let bus_for_subs = bus.clone();
-        let workspace = Arc::new(WorkspaceAppService::new(
-            workspace_repo,
-            provider.clone(),
-            bus,
-            clock.clone(),
-            Arc::new(RwLock::new(Workspace::new(workspace_id))),
-            workspace_id,
-        ));
-
-        // —— DEF-02 接线：把自动保存计时器 / 草稿恢复接入事件总线 ——
-        // 此前 `EventSubscribers` 只定义未装配，导致 `AutoSaveTracker` 从未收到
-        // `TextModified`、`DocumentSaved`/`DocumentClosed` 也从未触发计时清理，
-        // 自动保存与最近文件、缓存失效全部不生效。这里统一注册。
-        //
-        // 注册后**不保留** `EventSubscribers` 本体：订阅者是注册进总线的 Arc
-        // 闭包，与结构体存活无关；运行期询问「该保存哪些文档」走
-        // `Services::auto_save_tracker`（同一份 Arc），结构体留着只会多一条
-        // 永远没人调的访问器（`auto_save_now` / `tracker`，2026-10-17 清理）。
-        let tracker = Arc::new(AutoSaveTracker::new());
-        let event_subscribers = EventSubscribers::new(
-            provider,
-            workspace.clone(),
-            markdown.clone(),
-            clock,
-            tracker.clone(),
-        );
-        event_subscribers.register(bus_for_subs.as_ref());
-        // 最近文件恢复失败**不阻断启动**：它只是侧栏里的一行行列表，
-        // 失败时留空即可；为此弹窗打断启动的代价远大于收益。
-        let _ = workspace.restore_recent();
-
+    /// 装配终点：把 bundle 交给应用层 [`compose`]，再把结果映射成 [`Services`]。
+    ///
+    /// 这里是 root 与 core 的唯一交接面。`Services` 比 [`AppServices`] 多一个
+    /// UI 侧专用的 `AssetLoader`（图片解码），故需显式逐字段映射，而不是类型别名。
+    fn assemble_with_bundle(paths: &ConfigPaths, bundle: ImplBundle) -> AppResult<Self> {
+        let app = compose(bundle, ComposeConfig::new(paths.drafts_dir()))?;
         Ok(Self {
-            documents,
-            markdown,
-            export,
-            preferences,
-            workspace,
-            dialogs,
-            opener,
-            images,
-            registry,
-            render_cache,
+            documents: app.documents,
+            markdown: app.markdown,
+            export: app.export,
+            preferences: app.preferences,
+            workspace: app.workspace,
+            dialogs: app.dialogs,
+            opener: app.opener,
+            images: app.images,
+            registry: app.registry,
+            render_cache: app.render_cache,
             assets: AssetLoader::default(),
-            workspace_id,
-            auto_save_tracker: tracker,
-            drafts_dir,
+            workspace_id: app.workspace_id,
+            auto_save_tracker: app.auto_save_tracker,
+            drafts_dir: app.drafts_dir,
         })
     }
 }
