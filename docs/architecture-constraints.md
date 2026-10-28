@@ -3,7 +3,7 @@
 > 来源：《需求文档 v2.0 整合版》§6、§7；冲突裁决见 `adr/`。
 >
 > **本文档是架构约束的唯一真源**（原在 `.agent/architecture.md`，2026-10-20 迁入
-> `docs/`——原因见 `docs/architecture-refactor-plan.md` §4.1 R-01「实施结果」：
+> `docs/`——原因见 `docs/archive/architecture-reviews/architecture-refactor-plan.md` §4.1 R-01「实施结果」：
 > `.agent/` 整目录在 `.gitignore` 里，真源不入库会导致「拿到代码的人拿不到规则」，
 > 且校验器的豁免登记表在 CI 上读不到）。
 
@@ -623,7 +623,7 @@ crate 入口白名单里，`layer_of` 自然判 Free（依赖面 = egui，由
 
 > 本章回答两个问题：**workspace 里应该有哪些 crate**（地图 + 三阶段演进，
 > §10.1），以及**一个模块该住哪里**（四问判据 + 外移触发条件，§10.2/§10.3）。
-> 判据来源为 `docs/core-structure-review-2026-10-24.md`（评审三大病灶的
+> 判据来源为 `docs/archive/architecture-reviews/core-structure-review-2026-10-24.md`（评审三大病灶的
 > 规则化收口）；决策记录见
 > `docs/adr/ADR-013-core-adapter-residency-and-leaf-extraction.md`。
 > §1–§9 的分层与禁令对**所有** crate 一视同仁——新 crate 不是法外之地：
@@ -792,7 +792,7 @@ V11-62 全落地，阶段 3 的 `rustmark-infra` 行已由 V11-64 提前兑现�
 - **state 零 serde**：`presentation/state` 24 文件无一处 serde——UI 状态不
   持久化（持久化走 `domain/preferences`），「state 必须在 core 才能被持久化」
   的理由不成立（V11-59 审计 K=201 / V=0 / A=0 复核确认，
-  `docs/state-field-audit.md`）。
+  `docs/archive/architecture-reviews/state-field-audit.md`）。
 
 **抽查示例**（本章验收方式：任取一模块按上表能复现评审结论）：以 `icons`
 （V11-58 已落地）走一遍——① core 内消费者 0、root 引用 3 个 view 文件 →
@@ -818,4 +818,4 @@ core。同一子模块内两种结论，判据的粒度是**模块**，不是目
 | math / mermaid → `rustmark-render` | mermaid/math 年变更 ≥10 提交或合计 >8k 行（现 5.6k） | git log + wc -l | **已触发并落地（R-04，2026-10-28，`22e8a86`）**：`rich/{math,mermaid}` 物理搬出为 `rustmark-render`（27 文件 / 5,579 行，`src/` 不含 tests），默认 egui-free、egui 仅 `feature="egui"` 门控、对 `rustmark-core` 零依赖；`rustmark-ui` 经 shim 拼回原路径、消费方零改动。触发条件虽未达（5.6k < 8k），维护者拍板提前升 crate 以兑现 O4「富内容渲染可独立复用」 |
 | 新 crate 合并回退（防过度拆分） | 新建 crate <1k 行且 12mo 变更 <5 提交 | git log | 不适用：actions（687 行）/ icons（613 行）均 <1k 行，但属零依赖契约 / 纯资源 crate，回退等于把契约塞回 core——判据本意防「为拆而拆的业务模块」（ADR-013 决策 5） |
 | shared 通用件再拆分 | pattern+lru+text 合计 >1,500 行或出现第 4 个非领域通用模块 | wc -l | **已触发并落地（2026-10-26，`2da434e`）**：模块计数分支满足——非领域通用件 **6 个**（pattern 531 / text_format 310 / lru 291 / path 278 / geometry 248 / export_format 233 = **1,891 行**，6 ≥ 阈值 4）；行数分支按本行初版具名清单（pattern+lru+text）算 **992 行**、未达 1,500（两分支口径不一致已如实保留：1,500 行公式固化了初版三模块清单，模块计数分支未绑定清单）。维护者拍板**抽 crate**，TD-04 落地为 `rustmark-shared`（19 文件 / 3,061 行 + 骨架，依赖面 = ahash/serde/thiserror，零 workspace 成员）；**是否把整份 shared 抽走 vs 只抽 6 个通用件**选择了前者（前缀保留后两者代价相同，整抽避免「shared 一半在内一半在外」的判层歧义） |
-| state 瘦身叫停 | 审计发现纯帧内字段 <10%（收益不抵改动风险） | 字段清单 | **已触发并闭环**（V11-59 审计纯帧内字段远低于阈值 → V11-60 关闭，结论见 `docs/state-field-audit.md`） |
+| state 瘦身叫停 | 审计发现纯帧内字段 <10%（收益不抵改动风险） | 字段清单 | **已触发并闭环**（V11-59 审计纯帧内字段远低于阈值 → V11-60 关闭，结论见 `docs/archive/architecture-reviews/state-field-audit.md`） |

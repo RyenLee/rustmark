@@ -1,8 +1,8 @@
 # R-10「最大解」评估：同时收口两半的形态对比
 
-> 作者：顾图南（架构师）· 2026-10-28 · 依据：docs/architecture-remediation-plan-2026-10-27.md 问题 D
+> 作者：顾图南（架构师）· 2026-10-28 · 依据：docs/remediation/r01-r11/remediation-plan-2026-10-27.md 问题 D
 > 性质：纯架构分析，未改动 `crates/` 下任何源码。所有结论基于读代码实测。
-> 配套文档：docs/R-10-evaluation.md（拆库 vs 端口升 crate 评估）。
+> 配套文档：docs/remediation/r10/evaluation.md（拆库 vs 端口升 crate 评估）。
 >
 > 状态：**项 A（M0）✅ `0f20bc8`；项 B（M3）✅ 本次落地** —— 见 §5 最小可行路径 2~3 步。
 

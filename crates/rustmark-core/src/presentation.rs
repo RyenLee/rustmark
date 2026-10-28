@@ -16,4 +16,4 @@
 //! 见 `src/presentation.rs`）。视图（`views`）自始留在 root crate。
 //!
 //! 架构真源见 `docs/architecture-constraints.md` §7 / §10.1 与
-//! `docs/core-refactor-tasklist-2026-10-24.md` 的 V11-62 节。
+//! `docs/archive/architecture-reviews/core-refactor-tasklist-2026-10-24.md` 的 V11-62 节。

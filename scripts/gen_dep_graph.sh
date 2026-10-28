@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 生成 rustmark workspace 依赖图快照。
 #
-# R-09 纪律（见 docs/architecture-remediation-plan-2026-10-27.md §遗留处置）：
+# R-09 纪律（见 docs/remediation/r01-r11/remediation-plan-2026-10-27.md §遗留处置）：
 # docs/{current,target}_dependency_graph.html 曾由一次性 `cargo depgraph` 生成、无脚本，
 # 存在腐化风险。本脚本让快照可复现：
 #

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """接入成本度量（V11-66）。
 
-为 core 结构治理（docs/core-refactor-tasklist-2026-10-24.md 的 D 组触发条件、
+为 core 结构治理（docs/archive/architecture-reviews/core-refactor-tasklist-2026-10-24.md 的 D 组触发条件、
 V11-60/62 排序）提供数据，回答两个问题：
 
 1. **每提交的触及面**：平均「文件数 / 逻辑模块数 / workspace crate 数 /
@@ -26,7 +26,7 @@ V11-60/62 排序）提供数据，回答两个问题：
   `*_test.rs`）的 numstat 增+删之和。src 内 `#[cfg(test)]` 与生产代码
   同文件共存，numstat 无法拆分，只能按文件归集——故本指标是上界口径。
 
-与评审报告数字的关系：评审报告（docs/core-structure-review-2026-10-24.md）
+与评审报告数字的关系：评审报告（docs/archive/architecture-reviews/core-structure-review-2026-10-24.md）
 记 root views 70 / presentation/state 30 / theme 19（12mo），本脚本同口径
 实测为 69 / 31 / 20（见 docs/metrics.md 接入成本基线条的差异说明）。
 差异 ≤2 提交，来自评审当时的一次性聚合方法无法完全复现；**热模块排序不变**，

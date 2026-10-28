@@ -21,7 +21,7 @@
 
 > 以下非性能阈值，而是**架构演化的观测仪表**。数值由对应机械守卫或散文清单兜底，
 > 此处集中登记以便随版本复测、识别耦合税增长趋势（评估见
-> `docs/rustmark-evaluation-2026-10-25.md` E-07 / E-27）。
+> `docs/archive/architecture-reviews/rustmark-evaluation-2026-10-25.md` E-07 / E-27）。
 
 | 观测项 | 评估登记值 | 真源 / 守门方式 | 风险信号 |
 |---|---|---|---|
@@ -295,7 +295,7 @@ macOS（`.dmg`）与 Linux（`.AppImage`）产物体积**本机无法构建**（
 > **2026-10-25 更新**：V11-62 批次 2（state 6,682 行迁入 `rustmark-ui`）致 +2,560 B，
 > 旧 10 MiB 红线余量（512 B）耗尽越线；经维护者决策，NFR 红线由 10 MiB 上调至
 > **11 MiB**，预警线由 8 MiB 上调至 **10.5 MiB**（保留约 512 KiB 可行动窗口），
-> 详见 `scripts/size_gate.sh` 与 `docs/core-refactor-tasklist-2026-10-24.md` TD-01。
+> 详见 `scripts/size_gate.sh` 与 `docs/archive/architecture-reviews/core-refactor-tasklist-2026-10-24.md` TD-01。
 >
 > **术语约定（2026-10-27 起）**：本表判定「体积没变」一律写 **「字节数相同」**，
 > 不写「字节数相同」。原因：同一 revision 反复重建**文件大小 100% 稳定**
@@ -1203,7 +1203,7 @@ cargo test --release --test presentation bench_layout_phases -- --ignored --noca
 
 **症状**：切到侧栏「搜索」标签（查询非空）后整窗冻结；输入框逐字卡顿。
 
-**根因**（按代价排序，完整报告见 [`search-tab-performance-report.md`](./search-tab-performance-report.md)）：
+**根因**（按代价排序，完整报告见 [`search-tab-performance-report.md`](./archive/incident-reports/search-tab-performance-report.md)）：
 
 1. **「当前文档」范围也读全盘**——`gather_candidates` 对 `only_document` 也传
    `include_disk = true`，先把整个工作区逐文件 `fs::read` + 解码，再 `retain`
@@ -1340,7 +1340,7 @@ cargo test --release --test presentation bench_layout_phases -- --ignored --noca
 
 ### 7.4 与评审报告数字的差异（诚实记录）
 
-评审报告（`docs/core-structure-review-2026-10-24.md`）记 root views 70 /
+评审报告（`docs/archive/architecture-reviews/core-structure-review-2026-10-24.md`）记 root views 70 /
 presentation/state 30 / theme 19（12mo）；本脚本同窗口实测 **69 / 31 / 20**
 （Δ −1 / +1 / +1，落在 V11-66 验收容差 ±1 内）。已尝试复现评审口径的变体：
 含 merge 计数、pathspec 计数、排除 4a 拆分 commit、含 tests 目录——均不能

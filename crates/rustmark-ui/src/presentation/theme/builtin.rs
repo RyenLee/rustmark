@@ -32,7 +32,7 @@
 //! `Custom`），加上领域版、应用层与组合根各一份手写 `match`，共**四份**
 //! 副本。表现层那份缺 `Custom` 正是「自定义主题在表现层无法如实表达」
 //! 的根因——本文件 [`Theme::kind`] 曾用 `System` 顶替 `Custom`。
-//! R-09 已全部收敛，见 `docs/architecture-refactor-plan.md` §4.2 R-09。
+//! R-09 已全部收敛，见 `docs/archive/architecture-reviews/architecture-refactor-plan.md` §4.2 R-09。
 //!
 //! # 自定义主题（P2）的加载点
 //!

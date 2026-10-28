@@ -3,11 +3,11 @@
 - **状态**：已接受（2026-10-24；判据与触发条件已进 `architecture-constraints.md` §10，actions / icons 两步已落地）
 - **决策者**：项目架构负责人
 - **关联任务**：V11-56（规则化）/ V11-57 / V11-58（已落地）/ V11-59~61（审计与关闭项）/ V11-62~64（待触发）
-- **关联文档**：`docs/architecture-constraints.md` §10、`docs/core-structure-review-2026-10-24.md`、`docs/state-field-audit.md`、`docs/workspace-topology.expected.txt`、`docs/metrics.md` §7、`tools/onboard_cost.py`
+- **关联文档**：`docs/architecture-constraints.md` §10、`docs/archive/architecture-reviews/core-structure-review-2026-10-24.md`、`docs/archive/architecture-reviews/state-field-audit.md`、`docs/workspace-topology.expected.txt`、`docs/metrics.md` §7、`tools/onboard_cost.py`
 
 ## 背景
 
-评审（`docs/core-structure-review-2026-10-24.md`）对 core 的臃肿判定成立，但性质是
+评审（`docs/archive/architecture-reviews/core-structure-review-2026-10-24.md`）对 core 的臃肿判定成立，但性质是
 **「crate 粒度错配」，不是「层内混乱」**：
 
 1. **core 名不副实**：46,375 行 / 238 文件里，领域脊柱（domain + application +

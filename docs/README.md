@@ -1,132 +1,163 @@
 # docs/ 文档地图
 
-> 最近整理：2026-10-14（归档 + 去重 + 调试经验沉淀）。本页是 `docs/` 的导航入口：
-> 每篇文档的定位、面向读者、什么时候读。已完成的一次性文档在 [`archive/`](./archive/README.md)。
+> 最近整理：**2026-10-28**（第二批归档 + 索引重建：14 篇收官文档与 9 张零引用截图入库，整改文档按阶段建档）。
+> 本页是 `docs/` 的**唯一导航入口**。分区规则只有一条：
+> **「现行真源」是活的，要改就改它；「决策与证据」是只读的，改不了也不该改；「归档」是一次性报告，只查不维护。**
 
 ## 怎么用这份地图
 
 | 你是谁 | 先读 |
 |---|---|
-| 新接手的开发者 | 本页 → `PROGRESS.md`（进度索引）→ `debug-guide.md`（跑起来 + 排障） |
-| 领任务开工 | `v1.1-backlog.md`（唯一任务入口）→ 对应阶段文档 → `.agent/conventions.md` |
-| 用户 / 报缺陷 | `troubleshooting.md`（配置目录 / 草稿恢复 / 崩溃报告） |
-| 准备发布 | `release.md` → `CHANGELOG.md` → `testing.md` |
-| 关心体积 / 性能数字 | `metrics.md`（唯一数字来源）→ `dependencies.md` |
+| 新接手的开发者 | 本页 → [`PROGRESS.md`](./PROGRESS.md)（做到哪了）→ [`debug-guide.md`](./debug-guide.md)（跑起来 + 排障）→ [`architecture-constraints.md`](./architecture-constraints.md)（不许做什么） |
+| 领任务开工 | [`v1.1-backlog.md`](./v1.1-backlog.md)（**唯一任务入口**）→ 对应阶段文档 → `.agent/conventions.md` |
+| 要改架构 / 加 crate | [`architecture-constraints.md`](./architecture-constraints.md) §10（crate 地图与归属四问）→ [`remediation/`](./remediation/README.md)（为什么是现在这个样子） |
+| 用户 / 报缺陷 | [`troubleshooting.md`](./troubleshooting.md)（配置目录 / 草稿恢复 / 崩溃报告） |
+| 准备发布 | [`release.md`](./release.md) → [`release-compliance-gap-report.md`](./release-compliance-gap-report.md)（还剩什么没闭环）→ [`testing.md`](./testing.md) |
+| 关心体积 / 性能数字 | [`metrics.md`](./metrics.md)（**唯一数字来源**）→ [`dependencies.md`](./dependencies.md) |
 
-## 现行文档（根目录）
+---
 
-| 文档 | 定位 | 读者 | 什么时候读 |
-|---|---|---|---|
-| [`PROGRESS.md`](./PROGRESS.md) | 九阶段实施计划索引 + 当前进度 | 全体 | 了解「做了什么、做到哪」；阶段总览 / 依赖顺序 / 硬约束 |
-| [`v1.1-backlog.md`](./v1.1-backlog.md) | **v1.1 唯一任务入口**（V11-01~26 总览 + 逐项说明） | 维护者 | 领任务、查任务状态与完成记录 |
-| [`debug-guide.md`](./debug-guide.md) | 运行 / 调试命令手册 + **GUI 缺陷定位方法论**（§6） | 开发者 | 跑程序、写测试、**排障前** |
-| [`troubleshooting.md`](./troubleshooting.md) | 终端用户故障排查（配置目录 / 重置 / 草稿恢复 / 崩溃报告） | 用户 | 应用出问题、要提 issue |
-| [`config-reference.md`](./config-reference.md) | **配置面参考**：`preferences.toml` 全字段（类型 / 默认 / 约束）+ 自定义主题色板 + 快捷键语法与默认键位 | 用户 / 维护者 | 手改配置、写主题、查字段含义 |
-| [`metrics.md`](./metrics.md) | 七项硬指标口径与实测值（**唯一数字来源**） | 维护者 | 关心体积 / 启动 / 内存 / 性能数字时 |
-| [`search-tab-performance-report.md`](./search-tab-performance-report.md) | 侧栏「搜索」标签卡顿专项：全链路、根因、实测、修复与门禁 | 维护者 | 怀疑搜索标签卡顿、要改搜索性能时 |
-| [`search-tab-postmortem.md`](./search-tab-postmortem.md) | 「搜索」标签卡顿技术复盘：5-Why、修复方案、性能对比、经验教训 | 维护者 | 复盘该缺陷、评审同类「读盘 + UI 每帧重算」问题时 |
-| [`dependencies.md`](./dependencies.md) | 依赖清单、锁定版本、许可证、复查报告（§6） | 维护者 | 增删依赖、评审体积 |
-| [`testing.md`](./testing.md) | 测试金字塔 / 覆盖率门禁 / 当前测试状态 | 贡献者 | 写测试、跑 CI 等价命令 |
-| [`release.md`](./release.md) | 发布流程（tag 驱动、CI 全自动、回滚） | 维护者 | 发版前 |
-| [`manual-qa-windows.md`](./manual-qa-windows.md) / [`manual-qa-macos.md`](./manual-qa-macos.md) / [`manual-qa-linux.md`](./manual-qa-linux.md) | 三平台手工回归清单（V11-02 待执行） | 测试者 | 真机回归、验收 GUI 行为 |
+## 1. 现行真源（唯一的「家」，其余位置只引用不复写）
 
-## 架构评估与改造（2026-10-20）
+> 这五份是**机器或流程直接读取**的判据，移动/改名会让门禁变红。改内容必须同步跑门禁。
 
-| 文档 | 定位 | 读者 | 什么时候读 |
-|---|---|---|---|
-| [`architecture-review.md`](./architecture-review.md) | 全库架构评估报告：模块职责边界、依赖关系、P0~P3 问题清单（18 项主问题 + 11 项清理） | 维护者 | 想知道「现状哪里有问题、为什么这么判」 |
-| [`architecture-refactor-plan.md`](./architecture-refactor-plan.md) | 上述评估的**可执行改造方案**：21 条改造项（R-01~R-21，各含七字段）+ M0~M6 里程碑 + 验收判据 | 维护者 | 领改造任务、查某一条怎么做与怎么算做完 |
-| [`architecture-review-2026-10-23.md`](./architecture-review-2026-10-23.md) | 八维度架构复审报告：前次问题修复核对 + D-1~D-11 新问题清单与状态 | 维护者 | 查最新问题清单与 D 系列处置状态 |
-| [`multi-crate-review-2026-10-23.md`](./multi-crate-review-2026-10-23.md) | **多 crate 拆分专项评估**（D-3 阶段 4a）：优缺点、DDD 边界/依赖/内聚/DX/构建评审、技术债定级与优化建议 | 维护者 | 评审 workspace 拆分、决策「是否再拆」、执行 4b 前 |
+| 文档 | 定位 | 被谁读 |
+|---|---|---|
+| [`architecture-constraints.md`](./architecture-constraints.md) | **架构规则唯一真源**：分层 / 依赖矩阵 / 各层禁令 / `shared` 准入三问 + 登记表 / §10 crate 地图与模块归属四问 | `cargo run --bin check-arch`（按区段标记解析「豁免登记表」「`shared` 准入表」，未登记即违规） |
+| [`metrics.md`](./metrics.md) | **七项硬指标唯一数字来源**（体积 / 启动 / 内存 / 帧耗时 / 解析 / 高亮 / 搜索） | 人工 + CI 注释口径；`size_gate.sh` 的默认值与 §2.8 同源 |
+| [`thresholds.baseline.yaml`](./thresholds.baseline.yaml) | 121 条阈值的取值 / 单位 / 源码行号基线（运行时**不加载**） | `python3 tools/check_thresholds.py`（CI `Threshold baseline` 步骤） |
+| [`workspace-topology.expected.txt`](./workspace-topology.expected.txt) | 12 条本地依赖边的期望快照（含手写注释头） | `tests/workspace_topology_test.rs` + CI diff + `scripts/gen_dep_graph.sh` 回写 |
+| [`PROGRESS.md`](./PROGRESS.md) | 九阶段实施计划索引 + 当前进度 + v1.1 状态摘要 | 全体；阶段文档的历史快照与此冲突时**以本文 §1.2 为准** |
+| [`v1.1-backlog.md`](./v1.1-backlog.md) | **v1.1 唯一任务入口**（V11-01~67 总览 + 逐项说明 + 完成记录） | 维护者；任务状态只在这里登记 |
 
-> 两份文档构成一对：**review 回答「问题是什么」，plan 回答「怎么改、怎么验」**。
-> 任务状态仍只在 [`v1.1-backlog.md`](./v1.1-backlog.md) 的 V11-54 / V11-54a 登记。
-> 具体文件路径与行号以基线 `e09ad2b` 为准，**行号漂移时以符号名为准**。
+## 2. 操作手册（面向具体动作）
 
-## 近期评审与评估（2026-10-24/25）
+| 文档 | 定位 | 什么时候读 |
+|---|---|---|
+| [`debug-guide.md`](./debug-guide.md) | 运行 / 调试命令手册 + **GUI 缺陷定位方法论**（§6） | 跑程序、写测试、**排障前** |
+| [`troubleshooting.md`](./troubleshooting.md) | 终端用户故障排查（配置目录 / 重置 / 草稿恢复 / 崩溃报告） | 应用出问题、要提 issue |
+| [`config-reference.md`](./config-reference.md) | **配置面参考**：`preferences.toml` 全字段（类型 / 默认 / 约束）+ 自定义主题色板 + 快捷键语法与默认键位 | 手改配置、写主题、查字段含义 |
+| [`testing.md`](./testing.md) | 测试金字塔 / 覆盖率门禁 / 排除清单与理由 | 写测试、跑 CI 等价命令 |
+| [`dependencies.md`](./dependencies.md) | 依赖清单、锁定版本、许可证、复查报告（§6） | 增删依赖、评审体积 |
+| [`release.md`](./release.md) | 发布流程（tag 驱动、CI 全自动、回滚三步） | 发版前 |
+| [`release-compliance-gap-report.md`](./release-compliance-gap-report.md) | **发布阻断项判定依据** + 未闭环待办（§6：三平台产物 / 真机回归 / 证书） | 发版前查未闭环合规项 |
+| [`manual-qa-windows.md`](./manual-qa-windows.md) / [`manual-qa-macos.md`](./manual-qa-macos.md) / [`manual-qa-linux.md`](./manual-qa-linux.md) | 三平台手工回归清单（V11-02 **待执行**） | 真机回归、验收 GUI 行为 |
+| [`cache-design.md`](./cache-design.md) | 缓存子系统设计（`revision` 语义失效 / 防抖节拍 / LruMap 收敛） | 改缓存、查淘汰策略 |
 
-> V11 系列改造期间的专项复盘与审计快照，结论仍有效、可交叉印证；与上文「架构评估与改造」
-> 章节互补（那组偏 2026-10-20 的总评估，这组偏 10-24/25 的拆分与阈值治理）。
+## 3. 决策与证据（**只读**：记录「当时为什么这么定」，不回改）
 
-| 文档 | 定位 | 读者 | 什么时候读 |
-|---|---|---|---|
-| [`core-structure-review-2026-10-24.md`](./core-structure-review-2026-10-24.md) | core 拆分后的结构复审 | 维护者 | 查 core crate 内部边界与规模 |
-| [`core-refactor-tasklist-2026-10-24.md`](./core-refactor-tasklist-2026-10-24.md) | core 重构逐项任务清单（含完成记录） | 维护者 | 领 core 改造任务、查状态 |
-| [`workspace-split-assessment-2026-10-24.md`](./workspace-split-assessment-2026-10-24.md) | **workspace 拆分专项评估**（D-3 阶段 4a 延续） | 维护者 | 评审拆分、决策「是否再拆」 |
-| [`state-field-audit.md`](./state-field-audit.md) | 跨 crate 字段可见性白名单审计 | 维护者 | 评估 R-11/R-12 字段保护摩擦（E-07） |
-| [`release-compliance-gap-report.md`](./release-compliance-gap-report.md) | 发布合规差距登记（含 PRIV-01 等未闭环项） | 维护者 | 发版前查未闭环合规项 |
-| [`threshold-audit-2026-10-25.md`](./threshold-audit-2026-10-25.md) | 体积 / 性能阈值审计 | 维护者 | 评审阈值口径与实测一致性 |
-| [`threshold-review-2026-10-25.md`](./threshold-review-2026-10-25.md) | 阈值复审（审计的裁定结论） | 维护者 | 阈值口径的最终裁定 |
-| [`shared-internal-cycle-review.md`](./shared-internal-cycle-review.md) | `shared` 内部环评审（E-27 / V11-55） | 维护者 | 查 shared 内部依赖无环守卫 |
-| [`python-cleanup-report.md`](./python-cleanup-report.md) | Python 工具清理报告（`tools/*.py` 26 → 5） | 维护者 | 追 `tools/mut_*.py` 等脚本去向 |
-| [`cache-design.md`](./cache-design.md) | 图片 / 高亮 / 拼写 / 渲染缓存统一设计（D-4 收敛） | 维护者 | 查 LruMap 共用与淘汰策略 |
-| [`rustmark-evaluation-2026-10-25.md`](./rustmark-evaluation-2026-10-25.md) | **全方位评估报告**（架构 / 代码 / 文档三维度，34 项清单） | 全体 | 想看「当前问题全景与优先级」 |
-
-## 扩展三个新 crate（贡献者指南）
-
-> 拆解出的 `rustmark-actions` / `rustmark-icons` / `rustmark-ui` 有各自的契约，扩展时请先读对应
-> ADR（[ADR-011](./adr/ADR-011-action-routing-and-dual-intent.md) / [ADR-012](./adr/ADR-012-icon-system-and-resource-layout.md) / [ADR-013](./adr/ADR-013-core-adapter-residency-and-leaf-extraction.md)）。实操清单：
-
-- **新增可持久化动作（`rustmark-actions`）**：必须在 `UiAction` 与领域 `ActionId` **两侧同步加**变体；
-  快捷键若要持久化，必须显式声明 `persisted_key`，**不得用 `_` 兜底**（`rustmark-actions/src/action/impls.rs`
-  要求两侧 `ActionId::all()` 与本表逐项比对，缺一项即构建失败）。
-- **新增图标（`rustmark-icons`）**：规格即数据——按 16×16 栅格手绘向量，草稿旁车协议随包分发；
-  不要引入字体字形或位图。
-- **新增 UI 模块（`rustmark-ui`）**：按 constraints §10 四问判据判断模块归属；`views` 留 root、
-  子层（`state/theme/shortcuts/rich/widgets`）在 ui crate；跨 crate 可见字段须进白名单 +
-  对应 `pub` setter（见 `tests/field_visibility_guard_test.rs`）。
-
-## 阶段文档（01–11）
-
-| 文档 | 内容 |
-|---|---|
-| `01-需求基线与技术决策.md` | 需求基线、ADR 决策记录、指标口径 |
-| `02-工程骨架与分层边界.md` | 模块系统、分层约束、`check-arch` |
-| `03-领域模型实现.md` | 5 个限界上下文的领域层落地 |
-| `04-应用服务与用例编排.md` | 5 个 AppService、事件订阅链 |
-| `05-基础设施实现.md` | ropey / pulldown / syntect 适配、fs 仓储、导出器 |
-| `06-表现层与交互实现.md` | egui 视图、快捷键单一数据源、主题（77.1 KB，阶段文档中最大单篇） |
-| `07-集成联调与原型对齐.md` | 集成联调、原型契约对齐、手工回归 |
-| `08-性能优化与质量加固.md` | 体积 / 启动 / 内存优化过程 |
-| `09-测试体系打包与发布.md` | 测试金字塔、覆盖率门禁、三平台打包 |
-| `10-编辑区技术实现.md` | 编辑区专项（行高 / 高亮 / IME / 行号栏） |
-| `11-预览区技术实现.md` | 预览区专项（渲染管线 / 滚动同步 / 图表） |
-
-> 阶段文档中的「任务清单 / 验收记录」是各阶段收尾时的快照；**当前状态一律以
-> `PROGRESS.md` §1.1 与 `v1.1-backlog.md` 为准**（历史快照与新结论冲突时，新结论胜）。
-
-## 决策记录（adr/）
+### 3.1 决策记录 [`adr/`](./adr/)（13 条，不可改写）
 
 | ADR | 决策 |
 |---|---|
-| [ADR-001](./adr/ADR-001-ui-framework.md) | UI 框架：egui + eframe（wgpu 后端），不采用 Tauri（**当前锁定 0.37.0**——ADR 正文记的是当初的 0.33.3，升级后的现行版本见 `Cargo.toml`） |
+| [ADR-001](./adr/ADR-001-ui-framework.md) | UI 框架：egui + eframe（wgpu 后端），不采用 Tauri（正文记 0.33.3，**现行版本见 `Cargo.toml`**） |
 | [ADR-002](./adr/ADR-002-parser-highlighter.md) | 解析与高亮：pulldown-cmark + syntect（feature 收窄） |
 | [ADR-003](./adr/ADR-003-persistence-export.md) | 持久化与导出：ropey trait 隔离、原子写 |
 | [ADR-004](./adr/ADR-004-pdf-export.md) | PDF 导出：不内嵌引擎 → 系统打印 → **无头 Chromium**（修订） |
 | [ADR-005](./adr/ADR-005-prototype-relationship.md) | 原型关系：行为契约来源，非代码来源 |
 | [ADR-006](./adr/ADR-006-memory-threshold-revision.md) | 内存阈值修订：按平台各自口径（Windows Private WS ≤150 MB） |
-| [ADR-007](./adr/ADR-007-rich-renderer-boundary.md) | `presentation/rich/` 的边界：零 egui 依赖，与 `views` / `state` / `theme` 隔离 |
-| [ADR-008](./adr/ADR-008-widgets-layer-boundary.md) | `presentation/widgets/` 的收口标准（≥2 处重复 + 写错不报错 + 直觉写法看起来合理） |
-| [ADR-009](./adr/ADR-009-frame-scheduler.md) | 帧循环定时任务的统一调度：登记表 + 唯一预约出口（`request_repaint_after` 只许出现在 `app/frame/scheduler.rs`） |
-| [ADR-010](./adr/ADR-010-presentation-internal-direction.md) | `presentation` 内部依赖方向单向化 + `tests/` 禁库内部视角（R-02 / R-13） |
-| [ADR-011](./adr/ADR-011-action-routing-and-dual-intent.md) | 动作路由：穷举路由表 + `Unbound` 显式声明（无 `_` 兜底）；跳转双意图 `RevealIntent` |
-| [ADR-012](./adr/ADR-012-icon-system-and-resource-layout.md) | 图标系统：向量手绘废止字形 + 规格即数据（16×16 栅格）；草稿旁车协议；字体外置随包分发 |
-| [ADR-013](./adr/ADR-013-core-adapter-residency-and-leaf-extraction.md) | core 适配层驻留与叶层外移策略：模块归属四问判据 + 外移触发条件量化表（constraints §10）；presentation 外移取「views 留 root 的中间 crate」形态（保 R-11/R-12 编译保证）；actions/icons 首拆已落地 |
+| [ADR-007](./adr/ADR-007-rich-renderer-boundary.md) | `presentation/rich/` 边界：零 egui 依赖，与 `views` / `state` / `theme` 隔离 |
+| [ADR-008](./adr/ADR-008-widgets-layer-boundary.md) | `presentation/widgets/` 收口标准（≥2 处重复 + 写错不报错 + 直觉写法看起来合理） |
+| [ADR-009](./adr/ADR-009-frame-scheduler.md) | 帧循环定时任务统一调度：登记表 + 唯一预约出口 |
+| [ADR-010](./adr/ADR-010-presentation-internal-direction.md) | `presentation` 内部依赖单向化 + `tests/` 禁库内部视角 |
+| [ADR-011](./adr/ADR-011-action-routing-and-dual-intent.md) | 动作路由：穷举路由表 + `Unbound` 显式声明（无 `_` 兜底）；跳转双意图 |
+| [ADR-012](./adr/ADR-012-icon-system-and-resource-layout.md) | 图标系统：向量手绘废止字形 + 规格即数据（16×16）；字体外置随包分发 |
+| [ADR-013](./adr/ADR-013-core-adapter-residency-and-leaf-extraction.md) | core 适配层驻留与叶层外移：模块归属四问 + 外移触发条件量化表 |
 
-## 流水与素材（logs/ 与 pic/）
+### 3.2 整改执行期档案 [`remediation/`](./remediation/README.md)（3 篇，按批次分文件夹）
+
+| 路径 | 批次 | 内容 | 状态 |
+|---|---|---|---|
+| [`r01-r11/remediation-plan-2026-10-27.md`](./remediation/r01-r11/remediation-plan-2026-10-27.md) | R-01~R-11 | 架构整改细化实施方案（问题画像 A~I → 目标 O1~O7 → 逐条改造项 + 落地记录） | ✅ 全量收官 |
+| [`r10/evaluation.md`](./remediation/r10/evaluation.md) | R-10 | 拆库 vs 端口升 crate；结论「**强最大解不可达**」 | ✅ 项 A 落地 `0f20bc8` |
+| [`r10/max-solution.md`](./remediation/r10/max-solution.md) | R-10 | 最大解 M0~M3 的设计与不可达论证（M1 成环禁 / M2 伪收敛） | ✅ 项 A + 项 B 落地 |
+
+> 这三篇为什么**不归档**：总方案是全仓唯一记载「每条改造具体怎么改、偏差为何」的文档；
+> R-10 两篇承载**否定性结论**——它不会变成代码也不会变成规则，丢了会有人重走一遍。
+> 同类的 R-04 / R-07 方案已随批次收官归档，见 [`archive/remediation-plans/`](./archive/remediation-plans/)。
+
+### 3.3 阈值治理证据（2 篇）
+
+| 文档 | 内容 | 为什么留 |
+|---|---|---|
+| [`threshold-audit-2026-10-25.md`](./threshold-audit-2026-10-25.md) | 115 项阈值的全量审计（取值 / 依据 / 判定） | `thresholds.baseline.yaml:8` 的 `audit_report:` 指向本篇 |
+| [`threshold-review-2026-10-25.md`](./threshold-review-2026-10-25.md) | 审计的裁定结论（6 个语义簇 / 3 项阻断 / P0-P1 落地记录） | 同上 `review_report:`；121 条阈值的取值依据 |
+
+### 3.4 阶段技术文档（01–11）
+
+| 文档 | 内容 | 状态 |
+|---|---|---|
+| `01-需求基线与技术决策.md` | 需求基线、ADR 决策记录、指标口径 | 阶段快照 |
+| `02-工程骨架与分层边界.md` | 模块系统、分层约束、`check-arch` | 阶段快照 |
+| `03-领域模型实现.md` | 5 个限界上下文的领域层落地 | 阶段快照 |
+| `04-应用服务与用例编排.md` | 5 个 AppService、事件订阅链 | 阶段快照 |
+| `05-基础设施实现.md` | ropey / pulldown / syntect 适配、fs 仓储、导出器 | 阶段快照 |
+| `06-表现层与交互实现.md` | egui 视图、快捷键单一数据源、主题（阶段文档中最大单篇） | **仍被 `widgets.rs` 引用**（五条纪律条目出处） |
+| `07-集成联调与原型对齐.md` | 集成联调、原型契约对齐、手工回归 | 阶段快照 |
+| `08-性能优化与质量加固.md` | 体积 / 启动 / 内存优化过程 | 阶段快照 |
+| `09-测试体系打包与发布.md` | 测试金字塔、覆盖率门禁、三平台打包 | 阶段快照 |
+| `10-编辑区技术实现.md` | 编辑区专项（行高 / 高亮 / IME / 行号栏） | **仍指导改代码** |
+| `11-预览区技术实现.md` | 预览区专项（渲染管线 / 滚动同步 / 图表） | **仍指导改代码** |
+
+> 01–09 的「任务清单 / 验收记录」是各阶段收尾时的快照。**当前状态一律以 `PROGRESS.md` §1.2 与
+> `v1.1-backlog.md` 为准**（历史快照与新结论冲突时，新结论胜）。
+
+### 3.5 依赖图与拓扑快照（2 图 + 1 文本基线）
+
+| 路径 | 内容 | 维护方式 |
+|---|---|---|
+| [`current_dependency_graph.html`](./current_dependency_graph.html) | 当前 workspace 依赖图（SVG） | **手工维护**；`scripts/gen_dep_graph.sh` 会用 `cargo depgraph` 覆盖同名文件（见该脚本注释），重生成后需补回手绘 `<title>/<desc>` |
+| [`target_dependency_graph.html`](./target_dependency_graph.html) | 目标态依赖图（shared 二分 / icons 解耦 / views 迁 ui / rich 抽出 / ports 独立） | 手工；5 项中 4 项已达成，仅「views 迁 ui」未做 |
+| [`workspace-topology.expected.txt`](./workspace-topology.expected.txt) | 12 条本地依赖边的机器基线 | `scripts/gen_dep_graph.sh` 重写主体、保留注释头 |
+
+### 3.6 流水与素材（`logs/` 与 `pic/`）
 
 | 路径 | 内容 |
 |---|---|
-| [`logs/问题记录1.txt`](./logs/问题记录1.txt) | 用户反馈与缺陷修复的**原始流水记录**（001–056 + 066，**倒序** append-only）——调试经验已提炼至 `debug-guide.md` §6，细节追根溯源查这里 |
+| [`logs/问题记录1.txt`](./logs/问题记录1.txt) | 用户反馈与缺陷修复的**原始流水**（001~069，**倒序** append-only）——调试经验已提炼至 `debug-guide.md` §6，追根溯源查这里 |
 | `logs/示例文档.md` | 应用内置欢迎页 / 测试用 Markdown 样本 |
-| `pic/` | 文档引用的截图与调试探针图（问题记录按编号引用） |
-
-## 归档（archive/）
-
-已完成的一次性文档（阶段报告 / 修复方案 / 实施日志 / 审计快照）在 [`archive/`](./archive/README.md)，
-结论仍有效、可追溯，但不再维护。收录标准与逐篇索引见其 README。
+| `pic/` | 文档引用的截图（问题记录按编号引用）；无引用的已随第二批归档移入 `archive/pic/` |
 
 ---
 
-_整理约定：文档只保留一个「家」——任务状态只进 backlog，数字只进 metrics，命令与排障只进
-debug-guide，用户故障只进 troubleshooting；其余位置引用，不复制。_
+## 4. 归档 [`archive/`](./archive/README.md)（一次性报告，只查不维护）
+
+两批归档，逐篇索引与「现状」见其 README：
+
+| 批次 | 目录 | 收录 |
+|---|---|---|
+| 2026-10-14（第一批） | `stage-reports/` `audits-2026-10-12/` `crash-reports/` + 3 篇 10-17 报告 | 阶段收尾报告 / 一次性修复方案 / 审计快照 / 崩溃转储 |
+| **2026-10-28（第二批）** | **`architecture-reviews/`**（9 篇 + 1 图）**`incident-reports/`**（2）**`remediation-plans/`**（2）**`tooling/`**（2）**`pic/`**（+9 张） | R-01~R-11 整改收官后的评审 / 方案 / 复盘 / 工具治理记录 |
+
+---
+
+## 扩展 crate 的实操清单（贡献者）
+
+> 拆出的 `rustmark-actions` / `rustmark-icons` / `rustmark-ui` / `rustmark-render` / `rustmark-ports`
+> 各有契约，扩展前先读对应 ADR（[ADR-011](./adr/ADR-011-action-routing-and-dual-intent.md) /
+> [ADR-012](./adr/ADR-012-icon-system-and-resource-layout.md) /
+> [ADR-013](./adr/ADR-013-core-adapter-residency-and-leaf-extraction.md)）。
+
+- **新增可持久化动作（`rustmark-actions`）**：必须在 `UiAction` 与领域 `ActionId` **两侧同步加**变体；
+  快捷键若要持久化，必须显式声明 `persisted_key`，**不得用 `_` 兜底**
+  （`rustmark-actions/src/action/impls.rs` 要求两侧 `ActionId::all()` 与本表逐项比对，缺一项即构建失败）。
+- **新增图标（`rustmark-icons`）**：规格即数据——按 16×16 栅格手绘向量，草稿旁车协议随包分发；
+  不要引入字体字形或位图。
+- **新增 UI 模块（`rustmark-ui`）**：按 `architecture-constraints.md` §10 四问判据判断模块归属；
+  `views` 留 root，子层（`state/theme/shortcuts/widgets`）在 ui crate，富内容渲染在 `rustmark-render`；
+  跨 crate 可见字段须进白名单 + 对应 `pub` setter（见 `tests/field_visibility_guard_test.rs`）。
+- **新增端口（`rustmark-ports`）**：只放「领域需要、实现归 infra」的 trait，`ports → shared` 单向；
+  **`shared` 绝不反向 `pub use rustmark_ports::*`**（会成环），调用点经 `rustmark_core::ports::*` 取用。
+
+---
+
+## 维护纪律（改文档前先读）
+
+1. **文档只保留一个「家」**：任务状态只进 `v1.1-backlog.md`，数字只进 `metrics.md`，
+   命令与排障只进 `debug-guide.md`，用户故障只进 `troubleshooting.md`；其余位置**引用，不复制**。
+2. **历史不改写**：`adr/`、`CHANGELOG.md`、`v1.1-backlog.md` 的已完成条目、`logs/问题记录1.txt`
+   一律不回改（含其中的旧路径）。归档迁移造成的老链接失效由 `archive/README.md` 索引兜底。
+3. **三档归属**：仍在指引后续工作的 → 本页 §1/§2；记录「当时为什么」的 → §3；
+   任务已收官且结论被吸收的 → §4 归档。**新文档不要平铺进 `docs/` 顶层**，按上表分档。
+4. **数字必须当日实测**：跨快照引用「此前全绿」而不复跑，会积累出「文档声称全绿、实际为红」的失实
+   （教训见 `PROGRESS.md` §1.1.1）。

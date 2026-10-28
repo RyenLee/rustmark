@@ -1,6 +1,6 @@
 # R-10 评估：拆库 vs 端口升 crate
 
-> 作者：顾图南（架构师）· 2026-10-28 · 依据：docs/architecture-remediation-plan-2026-10-27.md 问题 D
+> 作者：顾图南（架构师）· 2026-10-28 · 依据：docs/remediation/r01-r11/remediation-plan-2026-10-27.md 问题 D
 > 性质：纯架构分析，未改动 `crates/` 下任何源码。所有结论基于读代码实测。
 
 ---

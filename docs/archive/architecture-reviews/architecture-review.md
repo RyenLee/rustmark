@@ -52,9 +52,9 @@
 
 **分层依赖总览图**（红 = 违反单向依赖或契约越界；绿 = 已验证合规）：
 
-![rustmark 改造后的分层依赖与四处违规边](./arc/architecture-layers.svg)
+![rustmark 改造后的分层依赖与四处违规边](./architecture-layers.svg)
 
-> 源文件：[`docs/arc/architecture-layers.svg`](./arc/architecture-layers.svg)（SVG）。
+> 源文件：[`docs/arc/architecture-layers.svg`](./architecture-layers.svg)（SVG）。
 > 图中的违规边与本报告 §2 的问题编号一一对应：`shared → std::process` = P0-2，
 > `presentation ↔ app` 双向环 = P1-1。
 

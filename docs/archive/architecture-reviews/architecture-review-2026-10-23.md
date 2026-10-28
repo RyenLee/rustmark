@@ -34,7 +34,7 @@
 
 ### 1.1 分层结构
 
-依赖方向 `presentation → application → domain ← infrastructure`，`shared` 为零业务依赖内核，`app` 为唯一组合根。规则真源 [architecture-constraints.md](./architecture-constraints.md)（依赖矩阵 §3、各层禁 crate §4、判定口径 §4.1），执行者为词法/token 级的 [arch_check.rs](../tools/arch_check.rs)（`build.rs` 编译期 panic + `check-arch` bin 双入口）+ CI。
+依赖方向 `presentation → application → domain ← infrastructure`，`shared` 为零业务依赖内核，`app` 为唯一组合根。规则真源 [architecture-constraints.md](../../architecture-constraints.md)（依赖矩阵 §3、各层禁 crate §4、判定口径 §4.1），执行者为词法/token 级的 [arch_check.rs](../../../tools/arch_check.rs)（`build.rs` 编译期 panic + `check-arch` bin 双入口）+ CI。
 
 各层规模（实测）：
 
@@ -125,7 +125,7 @@
 
 ### 4.3 性能
 - 帧调度：ADR-009 `FrameScheduler` 单一出口（`request_repaint_after` 全仓只许出现在 `scheduler.rs`，无豁免、构建期拦截）——把「定时功能静默失效」这类历史 bug 类别机械消灭。
-- 缓存：应用层真 LRU（`highlight_cache/render_cache/spell_cache`，键含 revision）+ 表现层 Galley 缓存，设计文档 [cache-design.md](./cache-design.md)。
+- 缓存：应用层真 LRU（`highlight_cache/render_cache/spell_cache`，键含 revision）+ 表现层 Galley 缓存，设计文档 [cache-design.md](../../cache-design.md)。
 - 门禁：CI release 性能冒烟（1 MB 全文查找/解析/首屏阈值断言，仅 Linux 必过）+ 体积门禁 10 MB + 近期搜索优化有独立报告（切搜索标签首帧 250ms → **0.69ms**）。
 - 判定：**强，且有回归防线**。风险点：性能阈值仅 Linux 单平台（跨平台数字不可比，已显式裁定）；帧预算依赖 `begin/flush` 成对契约（ADR-009 自认的软肋，~~现仅 `repaint_delay` 测试兜底~~ **D-7 已补 debug 断言（2026-10-24）**：漏调 `begin` 在 debug 构建即 panic，含「下一帧漏调」的消费语义用例）。
 
@@ -138,7 +138,7 @@
 
 ### 4.5 可观测性 —— 曾是最弱维度（**2026-10-26 D-5 已补帧级常态指标**）
 - 现状：`env_logger`（默认 warn，`main.rs:23`）+ 零散 `log::warn!` + `RUSTMARK_STARTUP_TIMING` 启动埋点 + panic backtrace；无结构化日志、无运行时指标、无帧耗时的用户可见归因（曾靠临时归因测试排查 TextEdit 开销）。
-- **且文档与实现矛盾**（~~已纠错~~ **2026-10-24 D-2 闭合**）：[debug-guide.md](./debug-guide.md) §2.4/§400 旧版声称「本项目没有 logger 后端，`RUST_LOG` 无效」——F-2 已注册 env_logger，`frame.rs:717` 注释也已同步，**当时只有 debug-guide 没改**；现已按 `main.rs` 实况改写（默认 warn、`RUST_LOG=rustmark::app=debug` 模块过滤、无正则 feature 的边界注明）。
+- **且文档与实现矛盾**（~~已纠错~~ **2026-10-24 D-2 闭合**）：[debug-guide.md](../../debug-guide.md) §2.4/§400 旧版声称「本项目没有 logger 后端，`RUST_LOG` 无效」——F-2 已注册 env_logger，`frame.rs:717` 注释也已同步，**当时只有 debug-guide 没改**；现已按 `main.rs` 实况改写（默认 warn、`RUST_LOG=rustmark::app=debug` 模块过滤、无正则 feature 的边界注明）。
 - 判定：对当前规模「够用」，但每次性能/行为排障都依赖临时插桩（近期两次排障均为事后复盘），**缺一层常态化的帧级/搜索级耗时指标**。
 - **补记（2026-10-26，D-5 闭合）**：帧级缺口已补——`FrameScheduler` 在 `flush` 结账本帧耗时，
   超 16ms（`NFR-PERF-04`）即 `log::warn!`（状态更新 / 绘制 / 未归因三段归因 + 本帧到期任务，

@@ -1,7 +1,7 @@
 # R-04 升 crate 实施方案：rich → `rustmark-render`
 
 > 文档类型：ADR 级实施计划（供评审，不立即执行）  
-> 关联：`docs/architecture-remediation-plan-2026-10-27.md` §3 R-04  
+> 关联：`docs/remediation/r01-r11/remediation-plan-2026-10-27.md` §3 R-04  
 > 状态：草案（等待主理人拍板是否执行）
 
 ---
@@ -119,7 +119,7 @@ pub use self::egui::{EguiBackend, apply_egui, rgb8_from_color32};
 
 - **`docs/architecture-constraints.md` §10 crate 地图**：新增 `rustmark-render` 行（依赖面：默认无 / 仅 `egui` feature）；更新 `rustmark-ui` 依赖面（egui + core + render）；注明 render 主面 egui-free。
 - **`docs/thresholds.baseline.yaml`**：被搬迁文件的 `source:` 路径由 `crates/rustmark-ui/src/presentation/rich/...` → `crates/rustmark-render/src/...`（**`--fix` 只回行号，路径必须手改**）；涉及 `via` 路径同步；跨 crate 搬迁的 3 件套（field_visibility 白名单 / source / §10）照 R-09 纪律执行。
-- **整改计划 `docs/architecture-remediation-plan-2026-10-27.md` §3 R-04**：状态补「升 crate ✅ 落地（commit X）」；触发线说明（行数已越 5.6k）。
+- **整改计划 `docs/remediation/r01-r11/remediation-plan-2026-10-27.md` §3 R-04**：状态补「升 crate ✅ 落地（commit X）」；触发线说明（行数已越 5.6k）。
 - **`docs/PROGRESS.md`**（若存在）回填实测数字。
 - root `Cargo.toml` 第 166-195 行注释（"rich / shortcuts / widgets 在 V11-62 抽出的 rustmark-ui"）补一句：rich 已于 R-04 升 `rustmark-render`。
 
