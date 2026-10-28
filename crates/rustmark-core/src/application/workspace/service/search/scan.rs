@@ -112,7 +112,7 @@ impl LineCursor {
 
 /// 命中片段窗口：一段**不跨行、两端对齐字符边界**的字节区间。
 ///
-/// 单独成为类型而不是让 [`snippet_window`] 直接返回 `String`，是为了把
+/// 单独成为类型而不是让 [`snippet_bounds`] 直接返回 `String`，是为了把
 /// 「窗口边界」这一个纯判定从「切片 + 分配」里分出来：边界（行内截断、
 /// 上下文半径、UTF-8 对齐）是能静默退化的部分，切片只是搬运。
 pub(super) struct SnippetWindow {
