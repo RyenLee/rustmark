@@ -139,7 +139,7 @@ rich / widgets ──► （不得回指 views / state / theme / widgets）
 | 子层 | 额外禁止 |
 |---|---|
 | `presentation/state/` | `crate::presentation::views` |
-| `presentation/rich/` | `crate::presentation::views` / `state` / `widgets`（theme 已于 V11-62 批次 4 抽去 `rustmark-ui`；rich 本身于批次 5 收官迁入 ui，与 widgets/state/shortcuts/theme 同 crate——禁令改为**词法守门**：rich 内出现 `crate::presentation::views` / `state` / `widgets` 字面即触发，不因同 crate 而放松；`crate::presentation::theme` 词条在 `tools/arch_check.rs` 的 `PRESENTATION_RICH_FORBIDDEN` 保留作防御性守门） |
+| `presentation/rich/` | **已升 crate（R-04，2026-10-28，`22e8a86`）**：`rich/{math,mermaid}` 物理搬出为独立 crate `rustmark-render`，`rustmark-ui` 经 `pub mod rich { pub use rustmark_render::*; }` shim 拼回原路径（消费方零改动）。子层禁令 `PRESENTATION_RICH_FORBIDDEN`（禁 `crate::presentation::views/state/widgets`，theme 词条防御性保留）现对真实 workspace **休眠**——已无 `presentation/rich` 目录，跨 crate 引用本就不可达，仅在 `arch_check` 合成夹具中保留防回归；egui 隔离另由 `check_rich_egui_isolation` 扫 `rustmark-render/src`（白名单仅 `render/egui.rs`）覆盖 |
 | `presentation/widgets/` | `crate::presentation::views` |
 | `presentation/icons.rs` | `crate::presentation::views`（**V11-58 起休眠**：icons 已抽去独立 crate `rustmark-icons`，core 内暂无文件落此子层。规则与 fixture（`leaf_layers_may_not_depend_on_views`）保留防回归——icons 若搬回 core 即自动生效） |
 
@@ -638,7 +638,8 @@ rustmark（root：组合根 + views + bin）
 ├──► rustmark-infra  ──► rustmark-core ──► {rustmark-actions, rustmark-shared}
 ├──► rustmark-icons
 └──► rustmark-ui     ──► rustmark-core ──► rustmark-shared
-                        （五条本地链，无环；actions 与 shared 是叶）
+    └──► rustmark-render（默认 egui-free；egui 仅 `feature="egui"` 门控）
+                        （9 条本地边，无环；actions 与 shared 是叶）
 ```
 
 | crate | 角色 | 实测规模（2026-10-26，`src/` 口径） | 外部依赖面 |
@@ -649,7 +650,8 @@ rustmark（root：组合根 + views + bin）
 | `rustmark-actions` | 动作词汇表契约（V11-57） | 4 文件 / 687 行 | **零依赖** |
 | `rustmark-shared` | 共享内核：纯值 / 端口 / 唯一真源（TD-04） | 21 文件 / 3,153 行 | ahash + serde + thiserror（**零本地**） |
 | `rustmark-icons` | 16×16 图标规格 + Painter 渲染器（V11-58） | 1 文件 / 630 行 | egui |
-| `rustmark-ui` | 表现层非视图部分：widgets（批次 1）/ state（批次 2）/ shortcuts（批次 3）/ theme（批次 4）/ rich（批次 5，V11-62 收官）/ view_context（R-03 B1：视图窄接口 `EditorViewContext`） | 72 文件 / 17,401 行（2026-10-27 实测） | egui + rustmark-core |
+| `rustmark-ui` | 表现层非视图部分：widgets（批次 1）/ state（批次 2）/ shortcuts（批次 3）/ theme（批次 4）/ view_context（R-03 B1：视图窄接口 `EditorViewContext`）；`presentation::rich` 为兼容 shim（R-04 升 crate 为 `rustmark-render`，经 `pub use rustmark_render::*` 拼回原路径，消费方零改动） | 48 文件 / 12,265 行（2026-10-28 实测，rich 升 crate 后；`src/` 口径不含 tests） | egui + rustmark-core + rustmark-render |
+| `rustmark-render` | 富内容渲染引擎：数学排版 / Mermaid 自绘（`rustmark-ui::presentation::rich` 物理搬出，R-04 升 crate，2026-10-28）；默认 egui-free，唯一 egui 后端 `render/egui.rs` 走 `feature="egui"` 双门控（`#[cfg(feature = "egui")]`），依赖面仅 egui（optional）；对 `rustmark-core` 零依赖 | 27 文件 / 5,579 行（2026-10-28 实测；`src/` 口径不含 tests） | egui（optional，仅 `feature="egui"`） |
 
 规模口径：`find <源码根> -name '*.rs' -exec cat {} + | wc -l`（**不用 `xargs wc -l`**——超 ~100 文件会分批而 `tail -1` 只抓末批小计），只含 `src/`、
 不含 `tests/`，命令随文可复跑。core 与评审快照（46,375 行 / 238 文件）的差额 =
@@ -808,7 +810,7 @@ core。同一子模块内两种结论，判据的粒度是**模块**，不是目
 |---|---|---|---|
 | presentation 非视图子模块 → `rustmark-ui`（V11-62） | ① UI 并行开发人数 ≥2；② core 增量编译 >10s；③ presentation 年变更 ≥80 提交**且**「views↔core state 跨 crate 摩擦」在 ≥3 个功能中复现 | `tools/onboard_cost.py` + `git log` 去重 | ② 未触发（增量 5.92s）。③ **提交数已去重实测**——表现层整体 **88**、含 `tests/presentation` **93**、仅待搬迁的非视图部分 **51**（阈值 80：整体口径满足、待搬迁部分不满足，口径差异如实保留）；**摩擦已取证：8 个功能复现**（state 字段白名单 169/548 条 + 22 个 `pub` setter + 桥接 6 行 / 21 个 view 文件经桥接访问）。**③ 判定：满足**（证据见 tasklist V11-62 节）。① 仍待维护者提供。**已收官（2026-10-25）**：五批次全部落地（widgets `9ab57ae` → state `c40235c` → shortcuts `6778f20` → theme `14f7d87` → rich `d8126a4`），`rustmark-ui` 收官态 73 文件 / 17,653 行（2026-10-26 实测）、本地依赖边 6 条、release 10,487,296 B；摩擦只搬迁不消除（views 留 root，白名单 169 条 + 22 个 `pub` setter 换 crate，保 R-11/R-12） |
 | infrastructure → `rustmark-infra`（V11-63/64） | 出现真实非 UI 消费者（CLI / headless / 嵌入）**且**去 egui 化完成 | 需求事实 + `cargo tree -p rustmark-core \| grep egui` 为 0 | **两分支均已满足，已收官（2026-10-26，`7b9b6ba`）**：egui 侧 V11-63 达标（`cargo tree -p rustmark-core \| grep -c egui` 实测 0，依赖已删非仅无引用）；消费者侧由维护者对 Q-01 答「有计划（CLI / headless / 嵌入）」。落地形态：54 文件 / 10,976 行迁入 `crates/rustmark-infra`（保 `infrastructure/` 前缀），core 依赖面收窄为 `rustmark-{actions,shared}` + serde/thiserror/log/ahash，本地依赖边 7→9（root→infra 与 infra→core 各一条）。**触发门保留**：若日后 Q-01 改答「无计划」，本行应记为「已落地但不再扩建」，不再重评 |
-| math / mermaid → `rustmark-render` | mermaid/math 年变更 ≥10 提交或合计 >8k 行（现 5.6k） | git log + wc -l | 未触发 |
+| math / mermaid → `rustmark-render` | mermaid/math 年变更 ≥10 提交或合计 >8k 行（现 5.6k） | git log + wc -l | **已触发并落地（R-04，2026-10-28，`22e8a86`）**：`rich/{math,mermaid}` 物理搬出为 `rustmark-render`（27 文件 / 5,579 行，`src/` 不含 tests），默认 egui-free、egui 仅 `feature="egui"` 门控、对 `rustmark-core` 零依赖；`rustmark-ui` 经 shim 拼回原路径、消费方零改动。触发条件虽未达（5.6k < 8k），维护者拍板提前升 crate 以兑现 O4「富内容渲染可独立复用」 |
 | 新 crate 合并回退（防过度拆分） | 新建 crate <1k 行且 12mo 变更 <5 提交 | git log | 不适用：actions（687 行）/ icons（613 行）均 <1k 行，但属零依赖契约 / 纯资源 crate，回退等于把契约塞回 core——判据本意防「为拆而拆的业务模块」（ADR-013 决策 5） |
 | shared 通用件再拆分 | pattern+lru+text 合计 >1,500 行或出现第 4 个非领域通用模块 | wc -l | **已触发并落地（2026-10-26，`2da434e`）**：模块计数分支满足——非领域通用件 **6 个**（pattern 531 / text_format 310 / lru 291 / path 278 / geometry 248 / export_format 233 = **1,891 行**，6 ≥ 阈值 4）；行数分支按本行初版具名清单（pattern+lru+text）算 **992 行**、未达 1,500（两分支口径不一致已如实保留：1,500 行公式固化了初版三模块清单，模块计数分支未绑定清单）。维护者拍板**抽 crate**，TD-04 落地为 `rustmark-shared`（19 文件 / 3,061 行 + 骨架，依赖面 = ahash/serde/thiserror，零 workspace 成员）；**是否把整份 shared 抽走 vs 只抽 6 个通用件**选择了前者（前缀保留后两者代价相同，整抽避免「shared 一半在内一半在外」的判层歧义） |
 | state 瘦身叫停 | 审计发现纯帧内字段 <10%（收益不抵改动风险） | 字段清单 | **已触发并闭环**（V11-59 审计纯帧内字段远低于阈值 → V11-60 关闭，结论见 `docs/state-field-audit.md`） |

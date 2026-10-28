@@ -165,8 +165,8 @@ eframe = { version = "0.37.0", default-features = false, features = [
 # domain / application 与 presentation 的 doc-only 空壳在 core；shared 在
 # TD-04 抽出的 rustmark-shared（core 经 re-export 拼回 `crate::shared`）；
 # infrastructure 在 V11-64 抽出的 rustmark-infra（root 经 re-export 拼回
-# `crate::infrastructure`）；state / theme / rich / shortcuts / widgets 在
-# V11-62 抽出的 rustmark-ui；icons 在 V11-58 抽出的 rustmark-icons；
+# `crate::infrastructure`）；state / theme / shortcuts / widgets 在
+# V11-62 抽出的 rustmark-ui（rich 已于 R-04 升 crate 为 rustmark-render）；icons 在 V11-58 抽出的 rustmark-icons；
 # root 只留组合根 app 与 presentation::views。
 # V11-57：rustmark-actions（UiAction 词汇表）是 workspace 成员，但 root **不
 # 直接依赖**它——UiAction 经 core 的 registry re-export 访问（root→actions
@@ -195,6 +195,11 @@ rustmark-icons = { path = "crates/rustmark-icons" }
 # 经 src/presentation.rs 的 `pub use rustmark_ui::widgets;` 拼回
 # `crate::presentation::widgets` 原路径（存量引用零改动）。
 rustmark-ui = { path = "crates/rustmark-ui" }
+
+# R-04（2026-10-28，`22e8a86`）：ui 内 `presentation::rich`（数学 / Mermaid 自绘）
+# 已**升 crate**为 `rustmark-render`；ui 经 `pub mod rich { pub use rustmark_render::*; }`
+# 拼回原路径（消费方零改动）。render 默认 egui-free（`feature="egui"` 双门控唯一
+# 后端 `render/egui.rs`），对 core 零依赖；root 不直接依赖 render（仅 ui 依赖）。
 
 # --- 解析与高亮（ADR-002）---
 # pulldown-cmark / syntect 已下沉 core（infrastructure::parsing / highlighting）；

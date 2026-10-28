@@ -1,6 +1,6 @@
 # rustmark 架构整改细化实施方案
 
-> 文档编号：ADR-REM-2026-10-27　|　作者：架构评审（专家视角）　|　状态：进行中（R-01、R-02、R-03 B2、**R-03 B1 全三批**已落地——均为 2026-10-27；R-04 起待排期）
+> 文档编号：ADR-REM-2026-10-27　|　作者：架构评审（专家视角）　|　状态：进行中（R-01、R-02、R-03 B2、**R-03 B1 全三批**已落地——均为 2026-10-27；**R-04 已落地（2026-10-28，`22e8a86` 升 crate）**）
 > 综合来源：架构评审 `architecture-review-2026-10-23.md`、评估报告 `rustmark-evaluation-2026-10-25.md`、合规差额报告、多轮 refactor 波次（V11-56~67）、「去双源」批次（2026-10-26）、专家架构评审（2026-10-27）。
 > 本文件是上述所有讨论的**可执行汇总**。任何一条改造项落地后，请在 `docs/PROGRESS.md` / `docs/v1.1-backlog.md` §3 回填实测数字，并同步本文件的「状态」列。
 
@@ -323,6 +323,7 @@
 - **优先级**：P2（影响 ui 体量 + 导出复用；对接既有规划，可与前序并行准备）
 - **预期产出**：`rich/` 端口化；可选升 crate；导出路径复用渲染。
 - **验收点**：`cargo tree -p rustmark-render` 无 egui（若升 crate）；渲染输出契约单测绿；门禁绿。
+- **状态**：**已落地（R-04 升 crate，2026-10-28，`22e8a86`）**。`rich/{math,mermaid}` 物理搬出为独立 crate `rustmark-render`（27 文件 / 5,579 行，`src/` 不含 tests）：默认 egui-free，唯一 egui 后端 `render/egui.rs` 走 `feature="egui"` 双门控（`#[cfg(feature = "egui")]`），对 `rustmark-core` 零依赖；`rustmark-ui` 经 `pub mod rich { pub use rustmark_render::*; }` 拼回原路径、消费方零改动。既包含原计划步骤 1 的 internal 端口化（历史已落地），也含步骤 2 的升 crate——触发条件（5.6k < 8k 行）虽未达，维护者拍板提前升 crate 以兑现 O4「富内容渲染可独立复用」。验收点 `cargo tree -p rustmark-render`（默认 features）无 egui 成立；门禁全绿（test 2297 passed / 4 ignored、size 10,076 MB = 10,565,632 B，较基线 +5,120 B）。
 
 ### R-05 · 解耦 icons 与 actions　【P2，对应问题 C/D 的 icons 部分】
 
@@ -400,7 +401,7 @@
 | **阶段 1 · 地基（P0）** | R-01 | 1 个工作单元 | 五门禁全绿快照 | R-01 验收点全过；arch 新断言 + 变异绿；体积字节数不变 |
 | **阶段 2 · 契约分离（P1）** | R-02、R-03(B2) | 1~2 个工作单元 | 阶段 1 完成 | shared 内部二分 + re-export 显式 + 守卫绿 |
 | **阶段 3 · 表现层合一（P1 根治）** | R-03(B1) | 2~3 个工作单元（43 文件分批） | 阶段 2 完成、窄接口设计评审通过 | views 迁 ui、root 瘦身、视图可独立测 |
-| **阶段 4 · 子域抽离（P2）** | R-04、R-05 | 2 个工作单元（可并行） | 阶段 2/3 稳定 | render 端口化/升 crate；icons 不依赖 actions |
+| **阶段 4 · 子域抽离（P2）** | R-04（已落地 `22e8a86`）、R-05 | 2 个工作单元（可并行） | 阶段 2/3 稳定 | render 升 crate（rustmark-render）；icons 不依赖 actions |
 | **阶段 5 · 常规瘦身（P3）** | R-06、R-07、R-08、R-09 | 持续，随功能提交穿插 | 无阻塞 | 大文件降复杂度、纪律固化 |
 
 **排序依据串讲**：先「让边界可见、依赖可声明」（R-01）→ 再「把混在一起的契约与工具分开」（R-02）→ 同时「解耦视图与运行时、为拆库松绑」（R-03）——这三步构成「可拆分架构」的地基；其后才是子域抽离（R-04/R-05）与常规瘦身（R-06/R-07）。优先级加权因子：**影响半径 > 腐化概率（是否静默失效/靠人记） > 改造成本/是否阻断其他改造**。
@@ -445,7 +446,7 @@
 | R-01 | `crate::domain` 在 `src/` 0 处；`cargo tree -p rustmark` 仅含声明依赖；arch 新断言 + 变异绿 |
 | R-02 | shared 内部 kernel/support 二分；`internal_cycle_guard_test` 绿；调用点零改动 |
 | R-03 | B2：re-export 显式 + 守卫绿；B1：`src/presentation/views` 清空/仅装配、`crate::app` 在视图 0 处、root 行数下降、视图可独立测 |
-| R-04 | `rich/` 端口化；若升 crate 则 `cargo tree -p rustmark-render` 无 egui |
+| R-04 | `rich/` 端口化；升 crate 为 `rustmark-render`（`cargo tree -p rustmark-render` 默认无 egui 成立）；门禁全绿——**已落地（2026-10-28，`22e8a86`）** |
 | R-05 | `cargo tree -p rustmark-icons` 无 `rustmark-actions`；icons 单测绿 |
 | R-06 | `search`/`stats`/`find` 目标文件 ≤ ~400 行；纯函数单测绿；体积字节数不变 |
 | R-07 | `incremental` 等目标文件 ≤ ~400 行；单测绿 |
