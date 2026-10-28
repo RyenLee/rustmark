@@ -87,7 +87,6 @@
 #   rustmark-infra  → rustmark-core                                       （1 条）
 #   rustmark-ui     → {rustmark-core, rustmark-render}                     （2 条）
 # `rustmark-render` 自身无本地依赖边（egui 为 optional 外部依赖，默认不引入）。
-
 rustmark v0.2.0
 ├── anyhow v1.0.104
 ├── eframe v0.37.0

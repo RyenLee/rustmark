@@ -467,6 +467,22 @@ bash scripts/size_gate.sh             # 先 build --release 再测量
 终结「只 find 现成产物 → 量到陈旧二进制 → 静默假绿」的失效模式；
 逃生口 `SIZE_GATE_SKIP_BUILD=1` 仅供离线复核使用。
 
+**第八条 · 拓扑基线 diff（CI 步骤，本地不默认跑，改依赖时必跑）**
+
+```bash
+diff <(grep -v '^#' docs/spec/workspace-topology.expected.txt) \
+     <(cargo tree --workspace --depth 1 --no-dedupe | sed -E 's| \([^)]*\)||g')
+```
+
+它不在上面七条里，是因为日常提交不涉及依赖变更；但**改 `Cargo.toml` / `Cargo.lock`
+就必须跑**，否则 CI 红而本地全绿。
+
+> 2026-10-28 实测教训：该文件注释头与机器主体之间曾混入一个**空行**——空行不以 `#`
+> 开头，`grep -v '^#'` 会留下来，于是 diff 恒不等、本步骤长期红，而本地七门禁不含它，
+> 无人发现。`scripts/gen_dep_graph.sh` 原先按「第一个非 `#` 起始行」切边界，会把这个
+> 空行**原样保留**（幂等地维持红色状态）；已改为按「最后一个 `#` 起始行」切，重跑
+> 产生的内容与 CI 比对口径一致。
+
 ## 7. 模块文件树（需求文档 §7.1，禁 `mod.rs`）
 
 D-3 阶段 4a（2026-10-23）起为 workspace 多 crate：**core 只装六边形脊柱
