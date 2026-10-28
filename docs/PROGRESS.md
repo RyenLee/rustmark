@@ -155,6 +155,43 @@
   ② `UiAction → IconKey` 映射上移到 **root** 的 `src/presentation.rs::icon_key_for`（非方案字面写的「ui crate」）：唯一生产调用点 `toolbar_view/controls.rs:261` 本就在 root，且 `rustmark-ui` 的拓扑守卫 `ui_crate_dependency_face_is_egui_plus_core` 严禁其获第三依赖，加 `rustmark-icons` 边会破该守卫；root 已同时依赖 icons 与（经 re-export 的）actions，上移映射不引入任何新跨 crate 边，最小侵入。
   ③ 方案步骤 3「root 显式依赖 actions」**未触发**：root 经 `crate::presentation::shortcuts::registry::UiAction` 间接引用，非直连，符合「若无则不动 root 依赖」。
   ④ 门禁全绿：fmt / check-arch / clippy -D warnings / `test --all-targets` 2250 passed·0 failed·4 ignored / `test --doc` / thresholds 121 / size_gate **10,558,464 B（±0 B，与 R-03 收官基线一致）**。拓扑期望 `workspace-topology.expected.txt` 同步（本地依赖边 9 → 8，icons 依赖面收敛为纯 egui）。
+- **R-11「去双源」收口（2026-10-28，`3e89332` + `a90f29e`）**：DS-2 任务项识别、DS-1 搜索命中高亮两处双源各收口到一处真源。
+  - **DS-2 任务项识别（真双源，且口径已分歧）**：core 的 `stats::classify::task_marker_of`
+    与 root `preview_view/list::task_marker_offset` 各自写一遍判定（前者要行首子弹、认大写
+    `[X]`、**不要求闭合 `]`**；后者不要子弹、不认 `[X]`、要求 `]`），坐实两个活缺陷：
+    **D-1** `- [X]` 点击**静默无反应**（统计认它已完成、回写不认 → `toggle_task` 直接 return）；
+    **D-2** 真标记是 `[X]` 而正文里有 `[x]` 时，会把**正文里的 `[x]` 换成 `[ ]]`**。
+    收口方式：抽出唯一真源 `task_marker_state_at`（锚定开头、认 `[ ]`/`[x]`/`[X]`、要求闭合 `]`），
+    两个入口各只做定位（`task_marker_of` 剥子弹、`find_task_marker` 找首个并返回字节偏移），
+    root 侧改为委托。三个函数提为 `pub` 并从 `document::service` 导出（root 已依赖 core，
+    **不新增跨 crate 依赖边**）。
+    - **行为变更（须显式接受）**：统一后**要求闭合 `]`**，`- [ x` / `-[x` 这类畸形行在统计侧
+      从「算作任务项」变为「不算」。这更正确（GFM 要求 `]`），但属行为变更，已由
+      `task_marker_state_requires_the_closing_bracket` 钉死；等价性基准
+      `stats/equivalence::ref_task_marker_of` **同步跟随真源**（留一份更旧口径的副本，
+      等价性用例就只是在「输入没碰上差异」时碰巧绿），并往语料里补了畸形行。
+    - 变异 4 项全捕获：真源去掉闭合要求 → core 3 红（含 equivalence 对拍）；真源丢掉大写 `X`
+      → core 5 红 + root 2 红；`find_task_marker` 改取最后一个 → core 2 红 + root 2 红；
+      root 退回本地判定（旧双源形态）→ root 2 红。
+  - **DS-1 搜索命中高亮（真双源）**：core 有 `SearchHitView::match_range`（`pub(crate)`、
+    **实测零消费**），UI 却在 `locate_in_snippet` 里拿片段**再搜一遍** query，返回字符区间。
+    成因化石：`scan.rs` 两处文档写着「高亮区间见 `[SnippetWindow::highlight]`」，而
+    `SnippetWindow` 实际只有 `start`/`end`——文档里留痕说 core 会带出高亮、代码没落地，
+    UI 才只能自己重搜。收口方式：给 `SnippetWindow` 补上 `highlight` 方法
+    （绝对字节命中 + 窗口起点 → 片段内**字符**区间），DTO 换成 `pub highlight`，UI 删除
+    `locate_in_snippet` 直接取 DTO；两处文档引用随之变真。**顺带删** `RawHit::{start,end}`
+    与 `snippet_window`（同样算完即弃 / 只做切片）。UI 侧四处分歧一并消除：① 上下文抢高亮
+    ② 忽略 `whole_word` ③ 大小写折叠走 `to_lowercase` 而非 `char_eq_ignore_case` ④ 命中被窗口
+    截断时返回 `(0,0)`。
+    - 变异 3 项全捕获：`highlight` 恒返回 `(0,0)` → core 6 红 + app 2 红；改从片段开头起
+      （旧 UI 行为退化）→ core 6 红 + app 2 红；**`search.rs` 漏搬运 highlight → core 全绿、
+      仅 app 2 红**，证明新增的服务级用例（`search_highlight_points_at_the_real_match` /
+      `search_highlight_honors_whole_word`）是管线的唯一守卫。
+  - 门禁：fmt / check-arch / clippy `-D warnings` 全绿；`test --all-targets`
+    **2295 passed / 0 failed / 4 ignored**（基线 2284，+11：core 8 / root 3；
+    删 1 条 `locate_in_snippet` 用例）；`test --doc`；thresholds 121 OK
+    （`stats.rs` 112→118、`scan.rs` 262→296 两处行号漂移已同步）；
+    size_gate **10,560,512 B**（DS-2 ±0 B，DS-1 −512 B，端点见 metrics §2.8）。
 - **可观测性（D-5，2026-10-26，`1c58052`）**：`FrameScheduler` 兼作帧耗时观测点——超 16ms 的帧打一条
   `warn`（状态更新 / 绘制 / 未归因三段归因 + 本帧到期任务，120 帧限流；**仅 release 构建输出**），
   `RUST_LOG=…=debug`
