@@ -140,14 +140,17 @@ jobs:
       # 均无评审价值；版本号保留（体积红线余量仅 512 B，锁文件漂移是拓扑事件）。
       # `--no-dedupe` 必须带：默认去重模式下第二个 workspace 成员（rustmark-core）
       # 的直接依赖被 `(*)` 折叠隐藏，core 新增依赖边会逃过本断言（2026-10-24 实测）。
-      # 本地复现：diff <(grep -v '^#' docs/spec/workspace-topology.expected.txt) \
-      #   <(cargo tree --workspace --depth 1 --no-dedupe | sed -E 's| \([^)]*\)||g')
+      # `--color=never` 必须带：本 workflow 顶层 env 设了 `CARGO_TERM_COLOR: always`，
+      # cargo 因此**即使输出被管道接走**也照常喷 ANSI 转义序列（实测 run #11 的
+      # windows job 红在这里：逐行内容完全相同，肉眼不可见的 `\e[2m` 让 diff 全量失配）。
+      # 本地复现：CARGO_TERM_COLOR=always diff <(grep -v '^#' docs/spec/workspace-topology.expected.txt) \
+      #   <(cargo tree --workspace --depth 1 --no-dedupe --color=never | sed -E 's| \([^)]*\)||g')
       - name: Workspace topology assertion
         shell: bash
         run: |
           set -o pipefail
           if ! diff <(grep -v '^#' docs/spec/workspace-topology.expected.txt) \
-                     <(cargo tree --workspace --depth 1 --no-dedupe | sed -E 's| \([^)]*\)||g'); then
+                     <(cargo tree --workspace --depth 1 --no-dedupe --color=never | sed -E 's| \([^)]*\)||g'); then
             echo "::error::workspace 拓扑与 docs/spec/workspace-topology.expected.txt 不一致——若是预期变更，请按该文件头部注释的更新流程改完后重新提交"
             exit 1
           fi

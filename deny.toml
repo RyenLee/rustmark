@@ -59,6 +59,11 @@ license-files = [{ path = "LICENSE-APACHE", hash = 0x0 }]
 [bans]
 multiple-versions = "allow"
 wildcards = "deny"
+# workspace 内部依赖是 `path = "../xxx"` 形式、不带版本要求，cargo-deny 会
+# 把它们一并判成 wildcard（run #11 实测：7 个 crate 全部命中，`bans FAILED`）。
+# 它们不从 registry 解析、不存在「解析到任意版本」的供应链风险，与
+# `wildcards = "deny"` 真正要拦的 `*` 版本要求不是一回事，故显式放行路径依赖。
+allow-wildcard-paths = true
 highlight = "all"
 
 [sources]
