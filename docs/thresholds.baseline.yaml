@@ -544,7 +544,7 @@ modules:
       highlight_checkpoint_lines:
         value: 25
         unit: "lines"
-        source: "crates/rustmark-infra/src/infrastructure/highlighting/incremental.rs:55"
+        source: "crates/rustmark-infra/src/infrastructure/highlighting/incremental.rs:60"
         anchor: "CHECKPOINT_INTERVAL_LINES: usize = 25"
         purpose: "增量高亮检查点间隔；越小恢复点越近但检查点内存越大，越大则增量收益下降。"
         recommended: "16-64"
@@ -552,7 +552,7 @@ modules:
       max_incremental_bytes:
         value: 512000
         unit: "bytes"
-        source: "crates/rustmark-infra/src/infrastructure/highlighting/incremental.rs:58"
+        source: "crates/rustmark-infra/src/infrastructure/highlighting/incremental.rs:63"
         anchor: "MAX_INCREMENTAL_BYTES: usize = rustmark_core::shared::constants::LARGE_FILE_BYTES"
         via: "crates/rustmark-shared/src/shared/support/constants.rs"
         purpose: "超过该字节数不做增量高亮（降级纯文本）；与截断阈值、排版阈值共用同一常量。"

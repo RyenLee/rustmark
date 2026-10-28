@@ -43,8 +43,13 @@ use syntect::parsing::{ParseState, Scope, ScopeStack, SyntaxReference, SyntaxSet
 use rustmark_core::domain::markdown::errors::HighlightError;
 use rustmark_core::domain::markdown::services::HighlightSession;
 use rustmark_core::domain::markdown::value_objects::{SpanStyle, SyntaxSpan};
-use rustmark_core::shared::geometry::{ByteOffset, TextRange};
+use rustmark_core::shared::geometry::TextRange;
+// `ByteOffset` 仅被 `#[cfg(test)]` 内的测试辅助 `range`（L527）使用；
+// 此处按需条件导入，避免非测试编译触发 unused-import 告警。
+#[cfg(test)]
+use rustmark_core::shared::geometry::ByteOffset;
 
+use super::diff::{changed_range, push_shifted};
 use super::syntect_highlighter::{classify, default_syntax_set, push_span, resolve_language};
 
 /// 检查点间隔（行）。
@@ -83,11 +88,13 @@ pub(crate) struct IncrementalStats {
 
 impl IncrementalStats {
     /// 复用的行数（未重新解析的行）。
+    #[allow(dead_code)]
     pub(crate) fn reused_lines(&self) -> usize {
         self.total_lines.saturating_sub(self.parsed_lines)
     }
 
     /// 重新解析的行占比（0.0 ~ 1.0）。
+    #[allow(dead_code)]
     pub(crate) fn parsed_ratio(&self) -> f64 {
         if self.total_lines == 0 {
             return 0.0;
@@ -263,6 +270,7 @@ impl SyntectSession {
     }
 
     /// 上一次高亮的片段（便于调用方零拷贝取用）。
+    #[allow(dead_code)]
     pub(crate) fn last_spans(&self) -> &[SyntaxSpan] {
         &self.spans
     }
@@ -485,71 +493,6 @@ impl HighlightSession for SyntectSession {
         let changed = (text != self.text).then(|| changed_range(&self.text, text));
         self.highlight(text, lang, changed)
     }
-}
-
-/// 用「公共前缀 + 公共后缀」求新文本坐标下的变更区间。
-///
-/// # 为什么不用真正的 diff
-///
-/// 高亮只需要「哪一段可能影响语法状态」，不需要最小编辑脚本。公共前后缀
-/// 给出的是**包含所有变更的最小连续区间**：区间外逐字节相同，正是增量
-/// 恢复所需的全部前提；区间内哪怕有未变的片段，也只是多解几行。
-///
-/// 多光标 / 撤销这类「两处都变」的编辑会得到一个横跨两处的区间——最坏
-/// 退化为全量，正确性不受影响。
-///
-/// # UTF-8 边界
-///
-/// 前缀/后缀是按**字节**比对的，可能落在多字节字符中间。此时向前/向后
-/// 收缩到最近的 char boundary，把这个字符整体算进变更区（区间只能变大，
-/// 不会切在字符中间导致后续切片 panic）。
-fn changed_range(old: &str, new: &str) -> TextRange {
-    let old_bytes = old.as_bytes();
-    let new_bytes = new.as_bytes();
-
-    let mut prefix = 0usize;
-    let prefix_limit = old_bytes.len().min(new_bytes.len());
-    while prefix < prefix_limit && old_bytes[prefix] == new_bytes[prefix] {
-        prefix += 1;
-    }
-    while prefix > 0 && !new.is_char_boundary(prefix) {
-        prefix -= 1;
-    }
-
-    let mut suffix = 0usize;
-    let suffix_limit = (old_bytes.len() - prefix).min(new_bytes.len() - prefix);
-    while suffix < suffix_limit
-        && old_bytes[old_bytes.len() - 1 - suffix] == new_bytes[new_bytes.len() - 1 - suffix]
-    {
-        suffix += 1;
-    }
-    while suffix > 0 && !new.is_char_boundary(new_bytes.len() - suffix) {
-        suffix -= 1;
-    }
-
-    TextRange::new(
-        ByteOffset::new(prefix),
-        ByteOffset::new(new_bytes.len() - suffix),
-    )
-}
-
-/// 追加一个整体平移 `delta` 的旧片段。
-///
-/// 不复用 [`push_span`] 的合并逻辑：收敛点是行首，新旧片段分属不同行，
-/// 跨收敛边界的合并会破坏「增量与全量逐片段一致」的验收标准。
-fn push_shifted(spans: &mut Vec<SyntaxSpan>, span: SyntaxSpan, delta: i64) {
-    let start = span.range().start().value() as i64 + delta;
-    let end = span.range().end().value() as i64 + delta;
-    if start < 0 || end < start {
-        return;
-    }
-    spans.push(SyntaxSpan::new(
-        TextRange::new(
-            ByteOffset::new(start as usize),
-            ByteOffset::new(end as usize),
-        ),
-        span.style(),
-    ));
 }
 
 #[cfg(test)]
