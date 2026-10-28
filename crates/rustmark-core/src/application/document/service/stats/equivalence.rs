@@ -88,14 +88,23 @@ fn ref_fence_token_of(line: &str) -> Option<String> {
         .map(|m| m.to_string())
 }
 
+/// 与 [`super::classify::task_marker_of`] 同一口径（R-11：要求闭合 `]`）。
+///
+/// 本模块是「合并六遍为单遍」的等价性基准，参照实现**必须跟着真源走**：
+/// 留一份口径更旧的副本，等价性用例就只是在「输入没碰上差异」时碰巧绿。
 fn ref_task_marker_of(line: &str) -> Option<bool> {
     let rest = line.strip_prefix(['-', '*', '+'])?.trim_start();
     let rest = rest.strip_prefix('[')?;
-    match rest.chars().next()? {
+    let mut chars = rest.chars();
+    let done = match chars.next()? {
         ' ' => Some(false),
         'x' | 'X' => Some(true),
-        _ => None,
+        _ => return None,
+    };
+    if chars.next()? != ']' {
+        return None;
     }
+    done
 }
 
 fn ref_count_links_and_images(text: &str) -> (usize, usize) {
@@ -218,6 +227,8 @@ fn single_pass_matches_reference_on_mixed_inputs() {
         "    ```\n    # 缩进代码\n",
         "- [ ] a\n* [x] b\n+ [X] c\n-  [ ] d\n-[ ] e",
         "- [] 空括号\n- [y] 非法状态\n-[普通链接]",
+        // R-11 行为变更：缺闭合 `]` 的畸形行不再算任务项（GFM 要求 `]`）。
+        "- [ x 畸形\n-[x 也畸形\n- [X] 见 [x] 说明",
         "[a](b) ![图](c.png) [带括号](d(e)f) [裸括号] [^1]",
         "```\n- [ ] 代码里的\n```\n- [ ] 真的",
         "你好world",

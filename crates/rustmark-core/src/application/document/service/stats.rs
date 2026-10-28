@@ -33,6 +33,12 @@ use crate::shared::text::line_count;
 use accumulator::StatsAcc;
 use links::count_links_and_images;
 
+// 任务标记识别的三个入口（`classify`）：R-11 起是**跨 crate 唯一真源**——
+// 预览区的勾选回写（root `preview_view::list`）此前自写一套判定，与统计
+// 侧口径分家（大写 `[X]` 点不动、正文里的 `[x]` 反被改）。三个入口同族
+// 导出，规则本身只在 `task_marker_state_at` 里写了一遍。
+pub use classify::{find_task_marker, task_marker_of, task_marker_state_at};
+
 mod accumulator;
 mod classify;
 mod links;

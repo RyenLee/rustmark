@@ -69,6 +69,29 @@ fn out_of_bounds_range_is_clamped() {
     assert_eq!(task_marker_offset(text, 5, 2), None);
 }
 
+/// 大写 `[X]` 也能定位（R-11 / DS-2 的 D-1）。
+///
+/// 此前回写只认小写 `[x]`：统计里 `- [X]` 算「已完成」，点复选框却
+/// 静默无反应。判定已收口到 core 的 `find_task_marker`。
+#[test]
+fn uppercase_checked_marker_is_reachable() {
+    let text = "- [X] 已完成\n";
+    let at = task_marker_offset(text, 0, text.len()).expect("应能定位大写标记");
+    assert_eq!(&text[at..at + 3], "[X]");
+}
+
+/// 真标记是 `[X]`、正文里还有 `[x]` 时，命中**真标记**（D-2）。
+///
+/// 旧实现扫 `b"[ ]" || b"[x]"`，会跳过 `[X]` 去改正文里的 `[x]`，
+/// 把用户的话换成 `[ ]]`。
+#[test]
+fn body_text_marker_is_not_mistaken_for_the_real_one() {
+    let text = "- [X] 见 [x] 说明\n";
+    let at = task_marker_offset(text, 0, text.len()).expect("应找到标记");
+    assert_eq!(at, 2, "必须命中行首的真标记，而不是正文里的 [x]");
+    assert_eq!(&text[at..at + 3], "[X]");
+}
+
 /// 空文本 / 空区间。
 #[test]
 fn degenerate_inputs_are_handled() {

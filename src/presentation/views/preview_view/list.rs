@@ -2,6 +2,7 @@
 
 use egui::{Align, RichText};
 
+use rustmark_core::application::document::service::find_task_marker;
 use rustmark_core::application::dto::ListItemView;
 
 use super::blocks::draw_text_with_images;
@@ -113,10 +114,15 @@ fn toggle_task(vctx: &mut dyn EditorViewContext, item: &ListItemView, checked: b
     vctx.replace_source(from, from + 3, if checked { "[x]" } else { "[ ]" });
 }
 
-/// 在文本的一段区间里定位任务标记 `[ ]` / `[x]`，返回其**绝对**字节偏移。
+/// 在文本的一段区间里定位任务标记 `[ ]` / `[x]` / `[X]`，返回其**绝对**字节偏移。
 ///
 /// 只认区间内**首个**标记：一个列表项里出现多个复选框是极端的写法，
 /// 而「改错位置」的代价（把用户别的文字换成 `[x]`）远大于「不生效」。
+///
+/// 判定**不在本文件**：委托 core 的 `find_task_marker`（R-11 / DS-2 的
+/// 唯一真源）。此前这里自己用 `w == b"[ ]" || w == b"[x]"` 判，与统计侧
+/// 的 `task_marker_of` 是两套口径，坐实两个活缺陷：大写 `[X]` 点不动
+/// （统计认它已完成、这里不认），而正文里的 `[x]` 反倒会被改掉。
 ///
 /// 区间超界时按文本长度裁剪——`BlockView` 的区间来自上一次解析，
 /// 之后的编辑可能让它们落在文本之外（此时直接放弃，下一帧解析结果会自愈）。
@@ -124,11 +130,11 @@ pub fn task_marker_offset(text: &str, start: usize, end: usize) -> Option<usize>
     let len = text.len();
     let start = start.min(len);
     let end = end.min(len).max(start);
-    // 逐字节扫描而非 `char_indices`：标记的括号是 ASCII，
-    // 但 `find` 的结果必须是**字节**偏移才能直接用于替换。
-    let bytes = &text.as_bytes()[start..end];
-    let pos = bytes.windows(3).position(|w| w == b"[ ]" || w == b"[x]")?;
-    Some(start + pos)
+    // `get` 而不是直接切片：区间可能落在非字符边界上（解析结果与当前文本
+    // 不同步），此时宁可返回 `None` 也不能 panic。
+    let slice = text.get(start..end)?;
+    // 偏移是相对子切片起点的字节偏移，加上 `start` 才是全文偏移。
+    find_task_marker(slice).map(|(off, _)| start + off)
 }
 
 /// 列表项文本：走行内富文本（`- **粗体**` 必须与正文里的粗体一致），

@@ -16,7 +16,8 @@
 //! - `drafts`：崩溃恢复草稿；
 //! - `support`：注册表锁与事件发布原语；
 //! - `mapping`：聚合 / EditPlan → DTO 投影与另存为路径派生；
-//! - `stats`：字数等统计纯函数。
+//! - `stats`：字数等统计纯函数（含**跨 crate 唯一真源**的任务标记判定
+//!   `find_task_marker`，预览区勾选回写走它，见 R-11 / DS-2）。
 
 mod drafts;
 mod editing;
@@ -43,6 +44,7 @@ use super::DocumentContentProvider;
 use super::registry::{DocumentRegistry, RegistryProvider};
 
 pub use stats::compute_stats;
+pub use stats::{find_task_marker, task_marker_of, task_marker_state_at};
 
 /// 文档用例服务：编排文档生命周期与编辑命令。
 pub struct DocumentAppService {
