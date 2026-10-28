@@ -371,6 +371,13 @@
 - **预期产出**：职责确认记录。
 - **验收点**：无新增跨职责依赖。
 
+**执行记录（2026-10-28，实测 `cargo tree` + 读 Cargo.toml/lib.rs）**
+
+- `rustmark-actions`：**零依赖**叶子（Cargo.toml 无 `[dependencies]`），仅 `action` 模块承载 `UiAction` / `MenuGroup` 词汇表（分组 / 中文名 / 持久化键 / 默认键位 / 检索词 + 穷举 match），不含 egui、core、IO。✅ 单一职责。
+- `rustmark-icons`：**仅依赖 `egui`**；自持 `IconKey` 词汇表，**已不依赖 `rustmark-actions`**——原「C · icons 绑 actions(P2)」问题已由 V11-58 收口。本地依赖边由旧记的 9 条实为 **8 条**（`icons→actions` 不存在）；`icons` 仅被组合根 `root` 依赖。
+- 跨职责依赖核查：`actions` 仅被 `core` 直接依赖（registry `pub use` 拼回原路径）；`icons` 仅被 `root` 依赖。**无新增跨职责依赖，验收点满足。**
+- 备注：`IconKey` 与 `UiAction` 的映射（`icon_key_for`）留在 root/ui 侧，未把动作词汇回流进 icons，解耦方向保持单向。
+
 ### R-09 · 门禁/文档纪律固化（贯穿所有项）　【贯穿】
 
 - **具体操作步骤**
