@@ -40,7 +40,7 @@ use crate::infrastructure::persistence::toml_preferences_repository::TomlPrefere
 use crate::infrastructure::spell::VendoredSpellChecker;
 use crate::infrastructure::system::SystemExternalOpener;
 use crate::infrastructure::text::rope_text_buffer::RopeBufferFactory;
-use rustmark_core::application::composition::{ComposeConfig, ImplBundle, compose};
+use rustmark_core::application::composition::{AppServices, ComposeConfig, ImplBundle, compose};
 use rustmark_core::application::document::registry::DocumentRegistry;
 use rustmark_core::application::document::service::DocumentAppService;
 use rustmark_core::application::event_subscriptions::AutoSaveTracker;
@@ -307,21 +307,40 @@ impl Services {
     /// UI 侧专用的 `AssetLoader`（图片解码），故需显式逐字段映射，而不是类型别名。
     fn assemble_with_bundle(paths: &ConfigPaths, bundle: ImplBundle) -> AppResult<Self> {
         let app = compose(bundle, ComposeConfig::new(paths.drafts_dir()))?;
+        // 用**穷尽解构**而不是逐字段 `app.documents`：`AppServices` 一旦新增
+        // 字段，这里立即编译失败，强迫作者决定是否在 `Services` 上暴露它。
+        // 若写成逐字段取用，「core 加了服务、root 静默漏接」不会报错——
+        // 那正是映射最容易腐化的方向。
+        let AppServices {
+            documents,
+            markdown,
+            export,
+            preferences,
+            workspace,
+            dialogs,
+            opener,
+            images,
+            registry,
+            render_cache,
+            workspace_id,
+            auto_save_tracker,
+            drafts_dir,
+        } = app;
         Ok(Self {
-            documents: app.documents,
-            markdown: app.markdown,
-            export: app.export,
-            preferences: app.preferences,
-            workspace: app.workspace,
-            dialogs: app.dialogs,
-            opener: app.opener,
-            images: app.images,
-            registry: app.registry,
-            render_cache: app.render_cache,
+            documents,
+            markdown,
+            export,
+            preferences,
+            workspace,
+            dialogs,
+            opener,
+            images,
+            registry,
+            render_cache,
             assets: AssetLoader::default(),
-            workspace_id: app.workspace_id,
-            auto_save_tracker: app.auto_save_tracker,
-            drafts_dir: app.drafts_dir,
+            workspace_id,
+            auto_save_tracker,
+            drafts_dir,
         })
     }
 }
