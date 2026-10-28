@@ -222,7 +222,8 @@ pub(super) fn search_text(
     hits
 }
 
-/// 命中的左右两侧是否都不是字母数字（整词匹配的边界判定）。
+/// 命中的左右两侧是否都不是 ASCII 字母数字（整词匹配的边界判定）；汉字等非
+/// ASCII 字符按边界处理，故中文与拉丁混排时拉丁词可独立成词。
 ///
 /// 抽出来是因为「整词」与 [`crate::application::document::find`] 的
 /// `is_word_boundary` 是两套**有意不同**的口径（那边认 `_`，这边不认），
@@ -230,7 +231,8 @@ pub(super) fn search_text(
 fn is_whole_word(chars: &[(usize, char)], start: usize, len: usize) -> bool {
     let before = start.checked_sub(1).map(|k| chars[k].1);
     let after = chars.get(start + len).map(|&(_, c)| c);
-    !before.is_some_and(char::is_alphanumeric) && !after.is_some_and(char::is_alphanumeric)
+    !before.is_some_and(|c| c.is_ascii_alphanumeric())
+        && !after.is_some_and(|c| c.is_ascii_alphanumeric())
 }
 
 /// 正则模式的单文件搜索（[`search_text`] 的正则分支）。
@@ -567,5 +569,22 @@ mod tests {
         // 假装命中比窗口还长（真实扫描不会这样，但换算必须不出界、不 panic）。
         assert_eq!(window.highlight(text, 0, 99), (0, 6));
         assert_eq!(window.highlight(text, 99, 99), (6, 6), "越界一律收敛到末尾");
+    }
+
+    /// 整词：汉字按 ASCII 口径不是词字符，故「中文abc」里的 `abc` 左边界成立。
+    ///
+    /// 与 find 的 `is_word_boundary` 唯一有意不同是 `_`（这边不认）——CJK 边界
+    /// 语义两边一致，这条用例钉住本分支也按 CJK 边界处理。
+    #[test]
+    fn whole_word_treats_cjk_as_boundary() {
+        // 中(0) 文(1) a(2) b(3) c(4)：vec 索引，非字节偏移。
+        let chars: Vec<(usize, char)> = "中文abc".char_indices().collect();
+        assert!(
+            is_whole_word(&chars, 2, 3),
+            "汉字按 ASCII 口径不是词字符，abc 左边界成立"
+        );
+        // 对照：拉丁紧邻仍要边界。
+        let latin: Vec<(usize, char)> = "catcategory".char_indices().collect();
+        assert!(!is_whole_word(&latin, 3, 3), "词内位置不是整词");
     }
 }

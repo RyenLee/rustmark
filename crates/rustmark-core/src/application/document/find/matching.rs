@@ -194,18 +194,19 @@ pub(super) fn scan_literal_ignore_case_all(
 /// 区间两侧是否为词边界。
 ///
 /// 规则：起点前一个字符不是词字符，且终点后一个字符不是词字符。
-/// 「词字符」取 Unicode 口径（[`char::is_alphanumeric`]），故汉字也是词字符——
-/// 「中文abc」里的 `abc` 左边界**不**成立。（原注释写的「中文按非 ASCII
-/// 字母数字处理」与实现不符，以本注释为准；口径由下方用例钉住。）
+/// 「词字符」取 **ASCII 口径**（`is_ascii_alphanumeric` + `_`），故**汉字等非
+/// ASCII 字符不是词字符**——「中文abc」里的 `abc` 左边界**成立**（CJK 与拉丁
+/// 混排时拉丁词可独立成词）。口径由下方用例钉住。
 pub(super) fn is_word_boundary(text: &str, start: usize, end: usize) -> bool {
     let before = text[..start].chars().next_back();
     let after = text[end..].chars().next();
     !before.is_some_and(is_word_char) && !after.is_some_and(is_word_char)
 }
 
-/// 是否为「词字符」。
+/// 是否为「词字符」：ASCII 字母数字与下划线算；标点和空白、以及非 ASCII 字符
+///（含汉字）不算——汉字在整词匹配里视为词边界。
 pub(super) fn is_word_char(ch: char) -> bool {
-    ch.is_alphanumeric() || ch == '_'
+    ch.is_ascii_alphanumeric() || ch == '_'
 }
 
 /// 下一个字符边界（保证不切在多字节字符中间）。
@@ -223,16 +224,16 @@ mod tests {
 
     /// 词边界：两侧都不能是词字符；`_` 算词字符，故 `a_b` 里的 `a` 不成立。
     ///
-    /// 与侧栏搜索的整词口径（只认字母数字）**有意不同**——这条用例同时
-    /// 钉住差异本身，防止哪天被「统一口径」掉。
+    /// 与侧栏搜索（`scan.rs` 的 `is_whole_word`）的整词口径**唯一有意不同只剩
+    /// `_`**（那边不认 `_`，这边认）——这条用例同时钉住差异本身，防止被「统一口径」掉。
     #[test]
     fn word_boundary_treats_underscore_as_a_word_char() {
         assert!(is_word_boundary("cat category", 0, 3), "行首 + 空格");
         assert!(!is_word_boundary("cat category", 4, 7), "右侧紧跟字母");
         assert!(!is_word_boundary("a_b", 0, 1), "`_` 是词字符");
         assert!(
-            !is_word_boundary("中文abc", 6, 9),
-            "汉字按 Unicode 口径也是词字符，左边界不成立"
+            is_word_boundary("中文abc", 6, 9),
+            "汉字按 ASCII 口径不是词字符，左边界成立"
         );
         assert!(
             is_word_boundary("中文 abc", 7, 10),
@@ -240,12 +241,12 @@ mod tests {
         );
     }
 
-    /// 词字符：字母数字与下划线算，标点和空白不算。
+    /// 词字符：ASCII 字母数字与下划线算；标点和空白、以及非 ASCII 字符（含汉字）不算。
     #[test]
-    fn word_char_is_alphanumeric_or_underscore() {
+    fn word_char_is_ascii_alphanumeric_or_underscore() {
         assert!(is_word_char('a'));
         assert!(is_word_char('7'));
-        assert!(is_word_char('中'), "Unicode 字母数字也算");
+        assert!(!is_word_char('中'), "非 ASCII 不算词字符（汉字视为边界）");
         assert!(is_word_char('_'));
         assert!(!is_word_char('-'));
         assert!(!is_word_char(' '));
