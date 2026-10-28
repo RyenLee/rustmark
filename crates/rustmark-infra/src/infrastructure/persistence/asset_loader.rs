@@ -34,16 +34,18 @@
 //! # 模块结构
 //!
 //! facade 保留 `AssetLoader` 与三种来源的加载流程；
-//! 限制 / 错误 / MIME 推断在 `policy`，零依赖编码原语在 `coding`。
+//! 限制 / 错误 / MIME 推断在 `policy`，零依赖编码原语在 `coding`，
+//! HTTP agent 与平台根证书分别在 `agent` / `platform_certs`。
 
+mod agent;
 mod coding;
+mod platform_certs;
 mod policy;
 
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
-use std::time::Duration;
 
+use agent::http_agent;
 use coding::{decode_base64, percent_decode};
 use policy::{ALLOWED_MIME, alt_of, mime_from_extension};
 
@@ -341,101 +343,4 @@ impl AssetLoader {
             alt: alt_of(&final_path),
         })
     }
-}
-
-/// 进程级共享的 HTTP agent（默认超时那一份）。
-///
-/// 见 [`http_agent`]。
-static DEFAULT_AGENT: OnceLock<ureq::Agent> = OnceLock::new();
-
-/// 取用于下载的 HTTP agent。
-///
-/// # 为什么要复用
-///
-/// 早先每次下载都 `Agent::new_with_config`：连接池、DNS 缓存、TLS 会话
-/// 一律从头开始，一张远程图一次完整握手。含 N 张远程图的文档要付 N 次
-/// 握手成本——而它们指向的常常是同一个图床主机。`ureq::Agent` 内部是
-/// 连接池 + 引用计数，`clone` 极廉价且可跨线程共享（后台下载线程人手一份
-/// 也不会互相打架），故缓存一份复用。
-///
-/// # 为什么只对默认超时复用
-///
-/// 超时是烧进 agent 配置的，而 agent 是进程级共享的：若把任意超时都塞进
-/// 同一个单例，A 处配的 30 秒会悄悄作用到 B 处那张本该 10 秒就放弃的图上。
-/// 故只有超时等于 [`AssetLimits::DEFAULT_DOWNLOAD_TIMEOUT`] 的加载器共用
-/// 单例（生产路径全部如此）；自定义超时退回按次构造——宁可少一次复用，
-/// 也不能让限额配置互相串味。
-fn http_agent(timeout: Duration) -> ureq::Agent {
-    if timeout != AssetLimits::DEFAULT_DOWNLOAD_TIMEOUT {
-        return build_agent(timeout);
-    }
-    DEFAULT_AGENT
-        .get_or_init(|| build_agent(AssetLimits::DEFAULT_DOWNLOAD_TIMEOUT))
-        // Agent 的 clone 是廉价的句柄复制（内部引用计数），连接仍在池里。
-        .clone()
-}
-
-/// 按给定超时新建一个 agent（含平台根证书与 TLS 配置）。
-fn build_agent(timeout: Duration) -> ureq::Agent {
-    ureq::Agent::new_with_config(
-        ureq::Agent::config_builder()
-            // REL-03：exe 不再内置 Mozilla 根包，根证书改由平台信任库提供
-            // （见 [`platform_root_certs`]）。不显式注入会走 ureq 的
-            // `RootCerts::WebPki` 默认值——该 feature 已关，运行期 panic。
-            .tls_config(
-                ureq::tls::TlsConfig::builder()
-                    .root_certs(platform_root_certs())
-                    .build(),
-            )
-            .timeout_global(Some(timeout))
-            .build(),
-    )
-}
-
-/// 进程级缓存：平台信任库只读一次。
-///
-/// 读信任库在部分平台要解析数百 KB 的证书包，逐张图片重读纯属浪费；
-/// 根集本身在进程生命周期内不会变（改信任库需要重启应用，可接受）。
-static PLATFORM_ROOTS: std::sync::OnceLock<ureq::tls::RootCerts> = std::sync::OnceLock::new();
-
-/// 平台信任库里的根证书（REL-03：替代此前内置的 `webpki-roots`）。
-///
-/// # 为什么改读平台
-///
-/// 内置 Mozilla 根包是 exe 里最后一块**非必需**的大数据（约 400 KB 裸 DER，
-/// 压不进 `.text` 的压缩收益），而系统信任库本来就在维护同一份清单，还能
-/// 覆盖企业自建 CA / TLS 代理。关掉 ureq 的 `rustls-webpki-roots` 后，
-/// `RootCerts::WebPki` 会在建连时 panic（见 ureq `tls/rustls.rs`），
-/// 故这里**必须**显式给出根集。
-///
-/// # 读不到时怎么办
-///
-/// 极简容器可能没有 `/etc/ssl/certs`、`SSL_CERT_FILE` 也未设置。此时返回
-/// **空根集**：https 下载以「证书校验失败」收场并落到
-/// [`AssetError::DownloadFailed`]，编辑器其余功能（含本地图片）不受影响。
-/// 只留一条 `warn`，绝不 panic——`panic = "abort"` 下那等于整个进程退出。
-fn platform_root_certs() -> ureq::tls::RootCerts {
-    PLATFORM_ROOTS
-        .get_or_init(|| {
-            let native = rustls_native_certs::load_native_certs();
-            let certs: Vec<ureq::tls::Certificate<'static>> = native
-                .certs
-                .iter()
-                .map(|der| ureq::tls::Certificate::from_der(der.as_ref()).to_owned())
-                .collect();
-            if certs.is_empty() {
-                log::warn!(
-                    "平台信任库未读到任何根证书（{} 个错误），https 图片将无法通过证书校验",
-                    native.errors.len()
-                );
-            } else {
-                log::debug!(
-                    "已从平台信任库装载 {} 张根证书（{} 个读取错误）",
-                    certs.len(),
-                    native.errors.len()
-                );
-            }
-            ureq::tls::RootCerts::new_with_certs(&certs)
-        })
-        .clone()
 }

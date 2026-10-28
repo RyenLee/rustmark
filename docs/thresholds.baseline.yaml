@@ -656,7 +656,7 @@ modules:
       asset_remote_stream_cap:
         value: 8388608
         unit: "bytes"
-        source: "crates/rustmark-infra/src/infrastructure/persistence/asset_loader.rs:315"
+        source: "crates/rustmark-infra/src/infrastructure/persistence/asset_loader.rs:317"
         anchor: "bytes.len() > self.limits.max_local_bytes"
         via: "crates/rustmark-infra/src/infrastructure/persistence/asset_loader/policy.rs"
         purpose: "远程下载边读边判的瞬时上限（= 本地上限 8 MiB），超过即中止，不再先读到 2× 再拒绝。"

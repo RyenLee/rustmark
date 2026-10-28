@@ -37,6 +37,9 @@
 //!   的换行风格还原。只做「读时归一 + 写时还原」而不改内容，用户看不出差别，
 //!   但 Windows 用户的文件不会因为我们保存一次就全变成 LF（那是 git diff噪声）。
 
+mod draft_id;
+mod line_ending;
+
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -47,43 +50,10 @@ use rustmark_core::shared::ids::DocumentId;
 use rustmark_core::shared::path::FilePath;
 use rustmark_core::shared::time::Timestamp;
 
-/// UTF-8 BOM 的字节序列（EF BB BF）。
-///
-/// 定义在 [`super::encoding`] 侧，此处转发以保持既有引用点不变。
-const UTF8_BOM: [u8; 3] = super::encoding::UTF8_BOM;
+use super::encoding::UTF8_BOM;
 
-/// 文件的换行风格。
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub enum LineEnding {
-    /// `\n`（Unix / 默认为新文件）。
-    #[default]
-    Lf,
-    /// `\r\n`（Windows）。
-    CrLf,
-}
-
-impl LineEnding {
-    /// 按当前平台推断新建文件应使用的换行。
-    ///
-    /// Windows 记事本等工具对纯 LF 支持不佳，故新建文件用 `CRLF` 更友好。
-    pub(crate) const fn platform_default() -> Self {
-        if cfg!(windows) { Self::CrLf } else { Self::Lf }
-    }
-
-    /// 由**原始字节**探测换行风格（出现 `\r\n` 即为 CRLF）。
-    ///
-    /// 必须传原始字节而非已解码文本：[`Self::decode`] 会把 CRLF 归一为 LF，
-    /// 若拿解码结果来探测，CRLF 文件永远会被误判成 LF，
-    /// 于是「读时归一 + 写时还原」里的还原步骤失效——用户的 Windows 文件
-    /// 会在我们保存一次后被整体改成 LF（git diff 噪声）。
-    pub(crate) fn detect_bytes(bytes: &[u8]) -> Self {
-        if bytes.windows(2).any(|pair| pair == b"\r\n") {
-            Self::CrLf
-        } else {
-            Self::Lf
-        }
-    }
-}
+use draft_id::parse_draft_id;
+pub use line_ending::LineEnding;
 
 /// 文件系统文档仓储。
 #[derive(Debug, Default)]
@@ -425,13 +395,4 @@ impl DocumentRepository for FsDocumentRepository {
         }
         Ok(out)
     }
-}
-
-/// 由草稿文件名 `<DocumentId(N)>` 还原文档 ID。
-///
-/// 草稿文件名即 `DocumentId` 的 `Display` 输出（`DocumentId(N)`），
-/// 此处逆向解析，使「列出遗留草稿」能与「按 ID 清除草稿」对齐。
-fn parse_draft_id(stem: &str) -> Option<DocumentId> {
-    let inner = stem.strip_prefix("DocumentId(")?.strip_suffix(")")?;
-    inner.parse::<u64>().ok().map(DocumentId::from_u64)
 }
