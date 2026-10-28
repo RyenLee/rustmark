@@ -27,7 +27,7 @@
 // # 豁免（`arch-allow`）
 //
 // 行尾注释 `// arch-allow: <对象>` **只豁免该对象**（不再整行放行），
-// 且必须登记在 `docs/architecture-constraints.md` 的豁免表里（校验器逐条核对）。
+// 且必须登记在 `docs/spec/architecture-constraints.md` 的豁免表里（校验器逐条核对）。
 //
 // 豁免窗口分两种形状：**行尾**豁免只作用于本条语句；**独立成行**的豁免额外
 // 作用于紧邻的下一行。少了这个区分，行尾豁免会漏到下一行，把一条独立的
@@ -275,11 +275,11 @@ const PRINT_MACROS: &[&str] = &["print", "println", "eprint", "eprintln", "dbg"]
 /// 豁免注释的标记串。
 const ARCH_ALLOW: &str = "arch-allow:";
 
-/// 豁免登记表在 `docs/architecture-constraints.md` 里的区段标记。
+/// 豁免登记表在 `docs/spec/architecture-constraints.md` 里的区段标记。
 const REGISTRY_BEGIN: &str = "<!-- arch-allow:registry -->";
 const REGISTRY_END: &str = "<!-- /arch-allow:registry -->";
 
-/// `shared` 准入登记表在 `docs/architecture-constraints.md` 里的区段标记
+/// `shared` 准入登记表在 `docs/spec/architecture-constraints.md` 里的区段标记
 /// （§4.5 三问，D-6）。与豁免表同级：`shared/` 下每个文件必须登记。
 const SHARED_REGISTRY_BEGIN: &str = "<!-- shared:registry -->";
 const SHARED_REGISTRY_END: &str = "<!-- /shared:registry -->";
@@ -500,7 +500,7 @@ fn forbidden_for(layer: Layer) -> Vec<&'static str> {
 /// R-03 B1 收官（2026-10-27）后视图层**零 `crate::app` 引用**，这条豁免成了
 /// 纯粹的历史包袱：留着它，下一个写视图的人漏写 `use` 到 `crate::app::frame`
 /// 也不会有任何提示，规则就从「不该这么做」退化成「随你」。故按
-/// `docs/architecture-constraints.md` §10.1 硬约束 5 的既定计划**撤回**——
+/// `docs/spec/architecture-constraints.md` §10.1 硬约束 5 的既定计划**撤回**——
 /// 这是当初留下它的条件（「迁移完成」）已经兑现，不是规则反悔。
 ///
 /// 其余表现层子层（`state` / `rich` / `widgets` / `icons`）已迁入 ui crate，
@@ -1156,7 +1156,7 @@ fn allow_covers(name: &str, banned: &str) -> bool {
 // 豁免登记表
 // ============================================================================
 
-/// `docs/architecture-constraints.md` 里的豁免登记表。
+/// `docs/spec/architecture-constraints.md` 里的豁免登记表。
 #[derive(Debug, Default)]
 struct Registry {
     /// `(文件相对 src 的路径, 豁免对象)`。
@@ -1169,7 +1169,7 @@ impl Registry {
     }
 }
 
-/// 读取豁免登记表。登记表路径约定为 `<manifest>/docs/architecture-constraints.md`。
+/// 读取豁免登记表。登记表路径约定为 `<manifest>/docs/spec/architecture-constraints.md`。
 fn load_registry(src_root: &Path) -> Registry {
     let manifest = src_root.parent().unwrap_or(src_root);
     load_registry_at(manifest)
@@ -1184,7 +1184,7 @@ fn load_registry(src_root: &Path) -> Registry {
 /// 登记表描述的是**整个工程**的豁免，与根无关，故按 manifest 载入一次、
 /// 所有根共用（[`scan_project`] 的做法）。
 fn load_registry_at(manifest: &Path) -> Registry {
-    let path = manifest.join("docs").join("architecture-constraints.md");
+    let path = manifest.join(CONSTRAINTS_DOC);
     let Ok(text) = fs::read_to_string(&path) else {
         return Registry::default();
     };
@@ -1260,7 +1260,7 @@ impl SharedRegistry {
 /// 路径按 manifest 而非扫描根，理由与 [`load_registry_at`] 相同：
 /// core 根的 parent 没有 `docs/`。
 fn load_shared_registry_at(manifest: &Path) -> SharedRegistry {
-    let path = manifest.join("docs").join("architecture-constraints.md");
+    let path = manifest.join(CONSTRAINTS_DOC);
     let Ok(text) = fs::read_to_string(&path) else {
         return SharedRegistry::default();
     };
@@ -1310,7 +1310,7 @@ fn collect_rs_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
     }
 }
 
-/// D-4 视图文件拆分阈值（docs/architecture-constraints.md:447）：`presentation/views/`
+/// D-4 视图文件拆分阈值（docs/spec/architecture-constraints.md:447）：`presentation/views/`
 /// 下单文件 **> 600 行须拆子目录**（入口 `foo.rs` + 子模块 `foo/bar.rs`，
 /// `pub use` 重导出零变化）。
 ///
@@ -1577,7 +1577,7 @@ const UI_PRESENTATION_RS: &str = "crates/rustmark-ui/src/presentation.rs";
 /// root 的 presentation 桥接文件（真源 2）。
 const ROOT_PRESENTATION_RS: &str = "src/presentation.rs";
 /// 约束文档（真源 3）。
-const CONSTRAINTS_DOC: &str = "docs/architecture-constraints.md";
+const CONSTRAINTS_DOC: &str = "docs/spec/architecture-constraints.md";
 /// §10.1 小节的起止标题；只在本段内找 ui 子模块名。
 const CRATE_MAP_HEADING: &str = "### 10.1";
 const CRATE_MAP_NEXT_HEADING: &str = "### 10.2";
@@ -1603,7 +1603,7 @@ const VIEWS_DIR: &str = "src/presentation/views";
 /// 1. `crates/rustmark-ui/src/presentation.rs` 的 `pub mod X;`（ui 侧真源）；
 /// 2. root `src/presentation.rs` 的 `pub use rustmark_ui::presentation::X;`
 ///    （逐项显式；出现整组 `::{…}` 即违规）；
-/// 3. `docs/architecture-constraints.md` §10.1 段落提及 X。
+/// 3. `docs/spec/architecture-constraints.md` §10.1 段落提及 X。
 ///
 /// 反向（root 有 X 但 ui 没有）不报：删模块时编译器会先报
 /// `unresolved import`，不需要重复守。
@@ -2145,7 +2145,7 @@ pub fn scan_project(manifest: &Path) -> Vec<Violation> {
     // 「actions 不得引用 core / 任何 crate」刻意**不**做成词法禁令：core
     // 已依赖 actions，反向加普通依赖即 Cargo 循环依赖（解析期报错，比词法
     // 规则更强）；「获得任意依赖」由 workspace 拓扑断言兜底
-    // （docs/workspace-topology.expected.txt）。词法规则只多挡
+    // （docs/spec/workspace-topology.expected.txt）。词法规则只多挡
     // dev-dependency 一种形状，不值得为之新增层类别——校验器教条是
     // 「确需新的层类别，先改约束文档与校验器」。
     for (root, display_prefix, forced_layer) in src_roots(manifest) {
@@ -2175,7 +2175,7 @@ pub fn scan_project(manifest: &Path) -> Vec<Violation> {
                     line: 1,
                     detail: format!(
                         "shared 准入三问未登记（§4.5 / D-6）：`{rel}` 不在 \
-                         docs/architecture-constraints.md 的 shared 登记表里——进 `shared/` 前 \
+                         docs/spec/architecture-constraints.md 的 shared 登记表里——进 `shared/` 前 \
                          须答 ①是否 ≥2 层需要 ②是否零 IO ③是否无可归属的层，登记一行方可准入"
                     ),
                 });
@@ -2330,7 +2330,7 @@ pub fn format_report(violations: &[Violation]) -> String {
     for v in violations {
         s.push_str(&format!("  {}:{} —— {}\n", v.file, v.line, v.detail));
     }
-    s.push_str("\n规则见 docs/architecture-constraints.md\n");
+    s.push_str("\n规则见 docs/spec/architecture-constraints.md\n");
     s
 }
 
@@ -2430,7 +2430,7 @@ fn check_file(rel: &str, layer: Layer, lexed: &Lexed, registry: &Registry) -> Ve
             file: rel.to_string(),
             line: 1,
             detail: format!(
-                "未知层：{rel} 不在架构约束的模块树里（docs/architecture-constraints.md）。\
+                "未知层：{rel} 不在架构约束的模块树里（docs/spec/architecture-constraints.md）。\
                  要么把它归入既有层（domain / application / infrastructure / shared / \
                  presentation / app），要么它是 src/bin/ 工具；若确实需要新的层类别，\
                  先改约束文档与校验器，再放代码"
@@ -2506,7 +2506,7 @@ fn check_file(rel: &str, layer: Layer, lexed: &Lexed, registry: &Registry) -> Ve
                     file: rel.to_string(),
                     line: a.line,
                     detail: format!(
-                        "arch-allow 豁免未登记：{}（须在 docs/architecture-constraints.md 的豁免表里登记 \
+                        "arch-allow 豁免未登记：{}（须在 docs/spec/architecture-constraints.md 的豁免表里登记 \
                          「{} | {}」）",
                         a.name, rel, a.name
                     ),

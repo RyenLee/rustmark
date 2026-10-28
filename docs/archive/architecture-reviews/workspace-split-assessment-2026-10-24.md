@@ -58,7 +58,7 @@
 | S-1 | **"DDD 拆分为多个 crate"前提仅部分成立**：限界上下文（Document/Markdown/Workspace/Preferences/Export）是 core 内部模块，不是独立 crate；crate 级粒度只有 2 个，core 单 crate 承载五层 46 375 行 | `crates/rustmark-core/src/{domain,application,infrastructure,shared,presentation}.rs`；约束文档 §5 上下文表 vs §7 文件树 | 中 | 所有权划分、并行开发、core 内任何改动的重编范围 |
 | S-2 | **表现层被 crate 边界切成两半**：views（root，50 文件/13 799 行）与 state/theme/rich/widgets/icons/shortcuts（core，76 文件/18 818 行）。新增一个 UI 功能要同时改两个 crate（视图 + 状态 + 应用服务），跨 crate 摩擦是结构性的 | `src/presentation/views/` vs `crates/rustmark-core/src/presentation/`；`src/presentation.rs:3-7` 注释自述"views 依赖组合根 app，只能留 root" | 中 | 全部 UI 功能迭代 |
 | S-3 | **双 manifest 版本/feature/lint 重复**：无 `[workspace.dependencies]` 表——`egui 0.37.0`（根 `:71` / core `:18`）、`image 0.25`（根 `:93` / core `:34`）、`syntect 5.3.0` 及同一 4 项 feature 列表（根 dev `:155-160` / core `:24-29`）、`tempfile`（根 `:152` / core `:71`）各声明两份；4 条 lint 属性在 `src/lib.rs:26-27,33` 与 core `src/lib.rs:21-23` 各写一份（core 注释自述"两处必须保持一致"） | 两份 Cargo.toml + 两份 lib.rs | 低 | 依赖升级、lint 策略调整 |
-| S-4 | **release 产物体积贴红线**：实测 exe 10 485 248 B，门禁上限 10 485 760 B（`scripts/size_gate.sh` `LIMIT`），**余量 512 B（0.005%）**；8 MiB 预警线早已越线（仅告警）。`docs/metrics.md` 记录的 10 466 816 B 与实测差 +18 432 B（工作区含未提交改动） | 本报告实跑 `cargo build --release --bin rustmark`；`scripts/size_gate.sh:24` | 中（风险） | 任何新增代码/依赖都可能触发门禁 |
+| S-4 | **release 产物体积贴红线**：实测 exe 10 485 248 B，门禁上限 10 485 760 B（`scripts/size_gate.sh` `LIMIT`），**余量 512 B（0.005%）**；8 MiB 预警线早已越线（仅告警）。`docs/spec/metrics.md` 记录的 10 466 816 B 与实测差 +18 432 B（工作区含未提交改动） | 本报告实跑 `cargo build --release --bin rustmark`；`scripts/size_gate.sh:24` | 中（风险） | 任何新增代码/依赖都可能触发门禁 |
 | S-5 | **最大文件未拆且阈值无机械校验**：`preview_view.rs` 1 421 行（全仓最大），`toolbar_view.rs` 695 行；600 行拆分阈值 2026-10-24 才入约束文档 §7，且明确为"评审纪律、当前未机械校验" | `wc -l` 实测；约束文档 §7 末段 | 低-中 | 表现层可维护性（前次评审 D-4 未闭合项） |
 | S-6 | **组合根内部残余反向导入**：`group_search_hits` 定义在 `src/app/frame/find.rs:203`，被 `src/app/frame/outline.rs:3` 反向 import（app 内纯函数互导）；另有三条并存的"当前文档路径"方法（返回类型各异） | grep 实测；前次评审 D-8 | 低 | 组合根 29 文件 / 7 027 行的局部导航 |
 | S-7 | **`crate::app::frame` 下行通道有 38 个使用文件**（33 个 views + 5 个 app 内部）：这是获认可的窄豁免，但它是全仓最大的单一"层规则例外"；裸字段赋值已归零（state_borrow_guard 白名单为空双向断言），egui 控件 `&mut` 借用属文档化已知边界 | grep 实测 38 文件；`tests/presentation/state_borrow_guard_test.rs`（3 用例） | 低（受控） | 表现层 50 个视图文件 |
@@ -195,7 +195,7 @@
 |---|---|---|---|---|---|---|
 | P1-1 | P1 | **引入 `[workspace.dependencies]` 单点真源** | 消除 S-3 的版本/feature 双写（egui/image/syntect/tempfile） | 2 个 Cargo.toml（root 改 `workspace.dependencies` + `dep.workspace = true`；core 同） | egui 0.37→0.38 升级单点修改；杜绝"syntect feature 两侧漂移导致测试与产品不同源"（根 dev-deps 注释自述的风险） | 低：path 依赖关系不变，`Cargo.lock` 重解析；回退 = 还原两份清单 |
 | P1-2 | P1 | **`preview_view.rs`（1 421 行）按既有先例拆分**，并把 600 行阈值并入 `check-arch` 文本扫描（不设豁免） | 消除最大维护盲区（S-5），把"评审纪律"升级为机械门禁 | 1 文件 → `preview_view.rs` 入口 + `preview_view/{media,overlay,toc}.rs`（子目录已有 3 000+ 行先例）；`tools/arch_check.rs` 加一条文件名规则 | 同目录 `sidebar_view/`、`settings_view/` 拆后评审定位成本更低的经验复现；阈值机械化后新增大文件必红 | 低：纯文件移动 + use 调整；风险在渲染路径回归，由现有 43 个 presentation 测试文件兜底 |
-| P1-3 | P1 | **体积红线余量预警前移**：`scripts/size_gate.sh` 增加"距红线 <2% 即 warn 升级"或将强预警线提到 9.5 MiB | 当前余量 512 B（0.005%），任何新增代码/依赖即越线（S-4） | `scripts/size_gate.sh` + `ci.yml` 摘要输出 | 越线从"CI 红"变成"提前可见的渐进告警"；配合 `docs/metrics.md` 唯一数值真源纪律 | 低：只动告警阈值不动判定红线 |
+| P1-3 | P1 | **体积红线余量预警前移**：`scripts/size_gate.sh` 增加"距红线 <2% 即 warn 升级"或将强预警线提到 9.5 MiB | 当前余量 512 B（0.005%），任何新增代码/依赖即越线（S-4） | `scripts/size_gate.sh` + `ci.yml` 摘要输出 | 越线从"CI 红"变成"提前可见的渐进告警"；配合 `docs/spec/metrics.md` 唯一数值真源纪律 | 低：只动告警阈值不动判定红线 |
 | P2-1 | P2 | **D-8 收尾**：`group_search_hits` 下沉 core（`presentation/state/find_replace_ui_state` 或 workspace 应用服务）；三条"当前文档路径"方法收敛为一个 `Option<FilePath>` 返回 | 消除组合根内反向导入（S-6） | `src/app/frame/find.rs`、`outline.rs` + core 侧落点 | 组合根 7 027 行的局部导航成本下降 | 低-中：涉及 outline 调用点，需回归大纲/搜索测试 |
 | P2-2 | P2 | **`[workspace.lints]` 收敛 4 条 lint 属性**（unwrap/expect/panic/missing_docs，根 `lib.rs:26-27,33` 与 core `lib.rs:21-23`） | 消除"两处必须保持一致"的隐性耦合（S-3 的 lint 部分） | 2 个 Cargo.toml + 2 个 lib.rs | lint 策略单点修改；新 crate 自动继承 | 低：cargo ≥1.51 支持；回退 = 还原属性行 |
 | P2-3 | P2 | **合并 D-6/D-7 在途改动并发布基线**（shared 登记制、scheduler debug 断言当前未提交） | 工作区回到干净基线，避免评估结论与代码状态漂移 | 6 个已修改文件（+321 行） | 守卫生效；`git status` 干净 | 低：改动已在 CI 口径验证过（check-arch OK、clippy 0 告警均含这批改动实测通过） |
@@ -235,7 +235,7 @@
 **推断**（标注了推断性质）：
 1. "按文件数加权的平均波及 crate 数 ≈1.75"——等权假设，非改动频率加权。
 2. "clippy 36 s 可作 IDE 冷检查代理"——口径近似（clippy = check + lints，无 codegen），rust-analyzer 实测待测量。
-3. S-4 中 `docs/metrics.md` 记录值（10 466 816 B）与本次实测（10 485 248 B）差异归因于未提交改动——**未逐 commit  bisect，属推断**。
+3. S-4 中 `docs/spec/metrics.md` 记录值（10 466 816 B）与本次实测（10 485 248 B）差异归因于未提交改动——**未逐 commit  bisect，属推断**。
 4. §2.3"代码级重复低"为抽样判定（root frame 写入口 + span 构造器收敛点），未做全量重复检测。
 5. 团队协作维度评分基于"若团队扩大"的情景推演——当前为单人维护项目。
 

@@ -3,8 +3,8 @@
 > 建档：2026-10-28　｜　定位：**架构整改的执行期档案**——按整改批次分文件夹存放，
 > 只收录「结论仍在指导后续判断」的方案与评估；已收官且结论被吸收的同类文档在
 > [`../archive/remediation-plans/`](../archive/remediation-plans/)。
-> 现行规范一律看 [`../architecture-constraints.md`](../architecture-constraints.md)；
-> 任务状态一律看 [`../v1.1-backlog.md`](../v1.1-backlog.md)。
+> 现行规范一律看 [`../architecture-constraints.md`](../spec/architecture-constraints.md)；
+> 任务状态一律看 [`../v1.1-backlog.md`](../plans/v1.1-backlog.md)。
 
 ## 为什么单独成区
 
@@ -30,7 +30,7 @@
 
 - **想知道当前架构为什么长这样** → `r10/evaluation.md` §1（违规画像）→ `r10/max-solution.md` §结论 → `../architecture-constraints.md` §10（crate 地图与归属四问）
 - **想知道某条改造当初怎么做的** → `r01-r11/remediation-plan-2026-10-27.md` §3 对应条目
-- **想领新任务** → 不要读这里，去 [`../v1.1-backlog.md`](../v1.1-backlog.md)
+- **想领新任务** → 不要读这里，去 [`../v1.1-backlog.md`](../plans/v1.1-backlog.md)
 
 ## 纪律
 

@@ -6,7 +6,7 @@
 //!
 //! 端口（dialog / event / system / image_asset / time）已迁至独立的
 //! `rustmark-ports` crate（R-10 项 A，契约归领域、实现归 infra）——见
-//! `docs/architecture-constraints.md` §4.5 登记表路径 `ports/...`。
+//! `docs/spec/architecture-constraints.md` §4.5 登记表路径 `ports/...`。
 //!
 //! 落点保留在 `shared/kernel/`，由 `shared.rs` 以 `pub use kernel::*` 拼回
 //! `shared::<名>`，调用点零改动（与 V11-57 / V11-58 / V11-62 同款桥接）。

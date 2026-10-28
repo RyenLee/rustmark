@@ -37,7 +37,7 @@ rustmark 是一套**工程纪律极强、文档与代码同源性很高**的成�
 
 | 维度 | 负责角色 | 范围 | 方法 |
 |---|---|---|---|
-| 架构设计 | 顾图南（software-architect） | 分层落地、模块边界、依赖耦合、机械守卫盲区、crate 切分权衡、测试金字塔 | 通读 `docs/architecture-constraints.md` 与 `tools/arch_check.rs`，对照 `Cargo.toml`、拼接点、事件总线、拓扑断言取证 |
+| 架构设计 | 顾图南（software-architect） | 分层落地、模块边界、依赖耦合、机械守卫盲区、crate 切分权衡、测试金字塔 | 通读 `docs/spec/architecture-constraints.md` 与 `tools/arch_check.rs`，对照 `Cargo.toml`、拼接点、事件总线、拓扑断言取证 |
 | 代码质量 | 霍承钧（backend-architect） | 核心逻辑正确性、可维护性、错误处理、性能瓶颈、并发健壮性 | Grep 统计 `unwrap/expect/panic` 分布 + 关键模块精读（undo/坐标/正则引擎/asset_loader/导出消毒/聚合 apply） |
 | 文档一致性 | 关千锤（release-gatekeeper） | 文档↔代码一致性、缺失说明、过时内容（重点 V11 重构后滞后） | Grep 文档路径串→对照文件系统；复算 crate 规模；核对枚举计数与代码 |
 
@@ -66,7 +66,7 @@ rustmark 是一套**工程纪律极强、文档与代码同源性很高**的成�
 - **位置**：`crates/rustmark-core/src/shared/pattern.rs:295-302`
 
 #### E-02 · 表现层技术文档（06/10/11）路径指向已迁移模块 ［文档一致性｜高］
-- **问题描述**：`docs/06-表现层与交互实现.md`、`docs/10-编辑区技术实现.md`、`docs/11-预览区技术实现.md` 仍把 `src/presentation/{state,theme,shortcuts,rich}/...` 及 `src/presentation/views/{math,mermaid}/` 当作当前文件路径。实际这些非视图子模块已于 V11-62 全迁 `crates/rustmark-ui/src/presentation/`，root 仅保留 `views`，且 root `src/presentation.rs:11` 用 `pub use rustmark_ui::presentation::{rich,shortcuts,state,theme,widgets}` 桥接。`math/mermaid` 在 `rich/` 下、`views` 下无 math/mermaid。
+- **问题描述**：`docs/stages/06-表现层与交互实现.md`、`docs/stages/10-编辑区技术实现.md`、`docs/stages/11-预览区技术实现.md` 仍把 `src/presentation/{state,theme,shortcuts,rich}/...` 及 `src/presentation/views/{math,mermaid}/` 当作当前文件路径。实际这些非视图子模块已于 V11-62 全迁 `crates/rustmark-ui/src/presentation/`，root 仅保留 `views`，且 root `src/presentation.rs:11` 用 `pub use rustmark_ui::presentation::{rich,shortcuts,state,theme,widgets}` 桥接。`math/mermaid` 在 `rich/` 下、`views` 下无 math/mermaid。
 - **影响分析**：开发者按文档定位源码会扑空，误判「哪些模块在 root、哪些在 core/ui」，最易误导新接手者。
 - **改进建议**：在 06/10/11 顶部加「模块现住 crate」说明；把文件前缀改为 `crates/rustmark-ui/src/presentation/...` 与 `crates/rustmark-core/src/...`，并注明「经 root `pub use` 桥接，`crate::presentation::*` 逻辑路径不变」。
 - **位置**：`docs/06:40,59,75,92,221,228,335`；`docs/10:3,90,93-96,381-384`；`docs/11:3,90,369-374` → 代码 `src/presentation.rs:11`、`crates/rustmark-ui/src/presentation/`
@@ -95,20 +95,20 @@ rustmark 是一套**工程纪律极强、文档与代码同源性很高**的成�
 - **问题描述**：`V11_63_KNOWN_EGUI_LEAKS`（`tools/arch_check.rs:121-127`）仅放行 5 个文件（fonts 系 3 + viewport_capture 系 2），**清单内文件可随意新增 `egui`**；清单外新增才被拦。且 `crates/rustmark-core/Cargo.toml:26` 使 core 本身依赖 `egui`（绘制原语）。结果：「core 可 headless 复用」前提短期不成立，`rustmark-infra` 拆分触发条件（`cargo tree -p rustmark-core | grep egui == 0`）当前无法满足。已确证非清单文件中的 `egui` 字样全在注释中，无真实新增泄漏。
 - **影响分析**：5 个文件是 unbounded 的耦合汇；只要不清空，core 永远拖着 egui，任何 headless/CLI/嵌入消费者都被迫引入整条 egui 依赖。
 - **改进建议**：将 V11-63 端口化落地（fonts/viewport_capture 改为产出字节/端口类型、执行端外移），随后删除 5 条放行；同时明确「core 依赖 egui 仅限 epaint 文本布局原语（无窗口/后端）」，把「headless 复用」重新定义为「无窗口复用」，消除文档与现实张力。
-- **位置**：`tools/arch_check.rs:98-127`；`crates/rustmark-core/Cargo.toml:26`；`docs/architecture-constraints.md:106-117`
-- **✅ 已收口（2026-10-26，V11-63 / E-06 两阶段）**：本条的**根因**（core 依赖 egui）已消除——`crates/rustmark-core/Cargo.toml` 的 `egui` 依赖已删，`cargo tree -p rustmark-core | grep -c egui` 实测 **0**；`V11_63_KNOWN_EGUI_LEAKS` 常量与放行分支双删，`INFRASTRUCTURE_FORBIDDEN` 的 egui 项升为无条件生效（验收用例 `former_v11_63_leak_paths_are_now_caught` 把 5 个历史路径钉成"必报"）。建议中"把 headless 复用重新定义为无窗口复用"这一折中**不再需要**：端口化已让 core 真正 egui 无关。上述"位置"与行号是 2026-10-25 快照，现状见 `docs/architecture-constraints.md` §4 与 tasklist V11-63 节后收官记录。
+- **位置**：`tools/arch_check.rs:98-127`；`crates/rustmark-core/Cargo.toml:26`；`docs/spec/architecture-constraints.md:106-117`
+- **✅ 已收口（2026-10-26，V11-63 / E-06 两阶段）**：本条的**根因**（core 依赖 egui）已消除——`crates/rustmark-core/Cargo.toml` 的 `egui` 依赖已删，`cargo tree -p rustmark-core | grep -c egui` 实测 **0**；`V11_63_KNOWN_EGUI_LEAKS` 常量与放行分支双删，`INFRASTRUCTURE_FORBIDDEN` 的 egui 项升为无条件生效（验收用例 `former_v11_63_leak_paths_are_now_caught` 把 5 个历史路径钉成"必报"）。建议中"把 headless 复用重新定义为无窗口复用"这一折中**不再需要**：端口化已让 core 真正 egui 无关。上述"位置"与行号是 2026-10-25 快照，现状见 `docs/spec/architecture-constraints.md` §4 与 tasklist V11-63 节后收官记录。
 
 #### E-07 · `views 留 root / state 留 core` 的跨 crate 字段保护摩擦，是持续增长的耦合税 ［架构设计｜中］
 - **问题描述**：为保留 R-11/R-12 的跨 crate 字段保护不被降级，引入 169/548 条 `pub` 字段白名单 + 22 个 `pub` setter + 6 行桥接（`views` 经桥接访问 core state）。白名单由 `tests/field_visibility_guard_test.rs` 集合相等双向断言守门，安全但随功能增长。
 - **影响分析**：白名单越大，越反向说明 crate 边界切在了一处紧耦合上；每次新增跨 crate 可见字段都要同时改清单，演化摩擦显著。若未来真出现非 UI 消费者触发 `rustmark-infra` 拆分，此摩擦还会加剧。
 - **改进建议**：定期度量白名单增速；若增速持续，重评「state 是否应与 views 同留 root」或「由 `EditorApp` 直接持有 UI 状态、state 退为纯逻辑容器」。短期维持现状（守卫已到位），但把「白名单条目数」作为架构健康度指标纳入 metrics。
-- **位置**：`tests/field_visibility_guard_test.rs`（548 条目集合相等）；`docs/architecture-constraints.md:559`、`§10.3`
+- **位置**：`tests/field_visibility_guard_test.rs`（548 条目集合相等）；`docs/spec/architecture-constraints.md:559`、`§10.3`
 
 #### E-08 · R-13 的「views 方向」禁令在 ui crate 内失效，真实保证来自 crate 拓扑，文档未澄清 ［架构设计｜中］
 - **问题描述**：`views` 在 root、`state/widgets/rich/theme/shortcuts` 在 `rustmark-ui`。ui 内写 `crate::presentation::views` 无法解析，词法禁令（`PRESENTATION_RICH_FORBIDDEN` 等含 `crate::presentation::views`）实际是 no-op；「叶子不得依赖视图编排者」这一 R-13 核心意图，在 views 方向上改由 **Cargo 禁止 ui→root** 兜底。兄弟子层方向（rich→state 等）仍由词法守卫生效。文档 §4.0/§7 仍把 R-13 表述为词法守卫生效。
 - **影响分析**：后人可能误以为词法守卫仍在管 views 方向，在回迁子层时产生误判。
-- **改进建议**：在 `docs/architecture-constraints.md §4.0` 明确分工——「views 方向由 crate 拓扑（ui 不得反向依赖 root）保证；兄弟子层方向由词法守卫保证；若某子层搬回 core，views 方向词法禁令自动重生」（icons 同款先例已写明，建议统一措辞）。
-- **位置**：`tools/arch_check.rs:171-176`；`docs/architecture-constraints.md:119-142`
+- **改进建议**：在 `docs/spec/architecture-constraints.md §4.0` 明确分工——「views 方向由 crate 拓扑（ui 不得反向依赖 root）保证；兄弟子层方向由词法守卫保证；若某子层搬回 core，views 方向词法禁令自动重生」（icons 同款先例已写明，建议统一措辞）。
+- **位置**：`tools/arch_check.rs:171-176`；`docs/spec/architecture-constraints.md:119-142`
 
 #### E-09 · 迷你正则引擎无步骤上限 → 灾难性回溯（ReDoS） ［代码质量｜中］
 - **问题描述**：`crates/rustmark-core/src/shared/pattern.rs:174` `match_seq` 与 `pattern.rs:235` `match_repeat` 为纯递归回溯，无步数/递归深度预算，无记忆化。形如 `(a+)+$`、`(a*)*b` 对长串 `a`+非匹配字符会在 UI 线程上指数级搜索。该扫描在查找面板键入（`engine.rs:50`）与侧栏搜索（`search.rs:454`）同步执行。
@@ -204,10 +204,10 @@ rustmark 是一套**工程纪律极强、文档与代码同源性很高**的成�
   若将来实现，前置条件是 `PRIV-01`（禁止加载远程图片开关）先落地——两者共用一个「远程资源策略」设置，避免出现「一边禁止加载、一边偷偷缓存」的自相矛盾。现状见 `PRIVACY.md` §2。
 
 #### E-24 · D-4 视图拆分阈值（>600 行须拆）尚未机械校验 ［架构设计｜低］
-- **问题描述**：`docs/architecture-constraints.md:419-436` 明示为「评审纪律，当前未机械校验」。现存超阈值 `preview_view/inline.rs`（642 行）留待评审。
+- **问题描述**：`docs/spec/architecture-constraints.md:419-436` 明示为「评审纪律，当前未机械校验」。现存超阈值 `preview_view/inline.rs`（642 行）留待评审。
 - **影响分析**：纪律规则依赖人记，新增超阈值视图 PR 可能漏拆。
 - **改进建议**：仿 `CONSTR-03` 的 `mod.rs` 扫描（`tools/arch_check.rs:1498-1520`），在 `scan_project` 内对 `presentation/views/**/*.rs` 做行数断言（排除 `tests.rs`），超 600 行即构建失败并提示拆法。
-- **位置**：`docs/architecture-constraints.md:419-436`；`tools/arch_check.rs:1498-1520`
+- **位置**：`docs/spec/architecture-constraints.md:419-436`；`tools/arch_check.rs:1498-1520`
 
 #### E-25 · 组合根 `app/frame.rs` 巨型 god-facade ［架构设计｜低］
 - **问题描述**：`src/app/frame.rs` 单文件承载 `EditorApp` 结构体（`:154-395`，~45 字段）、构造函数（`:438-538`）、eframe `ui` 主循环（`:577-668`）、字体装配、IME 处理；虽已拆 25 个子模块，facade 仍偏大。
@@ -231,18 +231,18 @@ rustmark 是一套**工程纪律极强、文档与代码同源性很高**的成�
   实现会把它切碎）、超窗新开点、窗口端点闭区间、零值容量按 1、字节预算至少保留一份快照、空栈重做是 no-op。
   两处关键契约做了**变异验证**：删掉 `last_at = Some(at)` 的滚动更新 → 滚动用例红；预算保留条件 `> 1` 改 `> 0`
   → 「至少一份」用例红。补测后 `tests/domain` 为 11 文件 / **200 例**（18.2 例/文件）；测试基线 2178 → **2184**（+6）；同时把「按用例数而非文件数」的口径写进
-  `docs/metrics.md` §1.1，避免后续再按文件数误判覆盖。
+  `docs/spec/metrics.md` §1.1，避免后续再按文件数误判覆盖。
 
 #### E-27 · `shared` 准入三问 + 内部边清单治理负担偏重，且本地开发期存在登记时差 ［架构设计｜低］
-- **问题描述**：19 文件三问登记表（`docs/architecture-constraints.md:261-283`）+ 11 条内部边清单（§4.6）均为人工散文；新增 shared 文件须先答三问并登记一行，否则构建失败（`tools/arch_check.rs:1450-1460`）。
+- **问题描述**：19 文件三问登记表（`docs/spec/architecture-constraints.md:261-283`）+ 11 条内部边清单（§4.6）均为人工散文；新增 shared 文件须先答三问并登记一行，否则构建失败（`tools/arch_check.rs:1450-1460`）。
 - **影响分析**：构建期拦截到位，但若本地仅跑 `cargo test`（未带 `--workspace`）或跳过 `check-arch`，缺口可拖到 CI 才暴露。
-- **改进建议**：把「shared 文件数 / 内部边条数」纳入 `docs/metrics.md` 健康度指标；并在 `check-arch` 零违规报告中附「shared 登记完整性 OK」。
-- **位置**：`docs/architecture-constraints.md:242-312`；`tools/arch_check.rs:1450-1460`
+- **改进建议**：把「shared 文件数 / 内部边条数」纳入 `docs/spec/metrics.md` 健康度指标；并在 `check-arch` 零违规报告中附「shared 登记完整性 OK」。
+- **位置**：`docs/spec/architecture-constraints.md:242-312`；`tools/arch_check.rs:1450-1460`
 
 #### E-28 · constraints §8 早期体积预算「5–7 MB」与实测不符 ［文档一致性｜低］
-- **问题描述**：`docs/architecture-constraints.md:448` 预算表「总计 5–7 MB（红线 11 MB）」的估算区间过时（实测 ≈10.5 MB），红线值本身已正确。
+- **问题描述**：`docs/spec/architecture-constraints.md:448` 预算表「总计 5–7 MB（红线 11 MB）」的估算区间过时（实测 ≈10.5 MB），红线值本身已正确。
 - **改进建议**：表下加注「5–7 MB 为早期需求预算，实测见 metrics.md §2.8（当前 ≈10.5 MB）」。
-- **位置**：`docs/architecture-constraints.md:448` vs `metrics.md §2.8`
+- **位置**：`docs/spec/architecture-constraints.md:448` vs `metrics.md §2.8`
 
 #### E-29 · 根 README.md 无 ADR 索引 ［文档一致性｜低］
 - **问题描述**：根 README 仅特性注释提 ADR-004，未给 13 篇 ADR 入口。
@@ -275,10 +275,10 @@ rustmark 是一套**工程纪律极强、文档与代码同源性很高**的成�
 - **位置**：`architecture-review-2026-10-23.md:63` vs `metrics.md §2.8`
 
 #### E-34 · core 规模行数 8 行级差异 ［文档一致性｜低］
-- **问题描述**：`docs/architecture-constraints.md:503` 记 core 27,892 行，实测 27,900 行（差 8 行）。
+- **问题描述**：`docs/spec/architecture-constraints.md:503` 记 core 27,892 行，实测 27,900 行（差 8 行）。
 - **影响分析**：可忽略，疑似末行换行/计数口径差异。
 - **改进建议**：复跑 `find crates/rustmark-core -name '*.rs' | xargs wc -l` 确认，或接受为统计噪声。
-- **位置**：`docs/architecture-constraints.md:503` vs 实测 27,900
+- **位置**：`docs/spec/architecture-constraints.md:503` vs 实测 27,900
 
 ---
 
@@ -368,4 +368,4 @@ rustmark 是一套**工程纪律极强、文档与代码同源性很高**的成�
   后台解码、本帧出「加载中」占位，注释同源引用 E-13；远程图一律后台。
 - **E-07 数字校正**：白名单**总条目 559**（2026-10-26 实测，守卫常量注释同值）/ **`views` 侧
   读点 169**（2026-10-25 快照，含 22 个 `pub` setter）——原报告「169/548」的两段含义已在
-  `docs/metrics.md` §1.1 分行写清，避免被读成「总数 169」。
+  `docs/spec/metrics.md` §1.1 分行写清，避免被读成「总数 169」。

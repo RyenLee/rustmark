@@ -53,7 +53,7 @@ env:
   RUST_BACKTRACE: "1"
   # 体积门禁：红线 11 MiB（NFR-PERF-01，2026-10-25 由 10 MiB 上调），
   # 预警线 10.5 MiB（保留约 512 KiB 的可行动窗口，而不是贴着产物常亮）。
-  # 三个数值的唯一真源是 `scripts/size_gate.sh` 的默认值与 docs/metrics.md §2.8；
+  # 三个数值的唯一真源是 `scripts/size_gate.sh` 的默认值与 docs/spec/metrics.md §2.8；
   # 本处 env 只是把同一口径传给 CI，不得单独改动。
   # 2026-10-25 实测（Windows）10,487,296 B = 10.001 MiB：距红线余约 1.0 MiB。
   # 断言失败时可直接用 workflow_dispatch 的 size_limit_bytes 覆盖阈值，以验证门禁本身有效。
@@ -121,22 +121,22 @@ jobs:
         run: python3 tools/check_thresholds.py
 
       # V11-66：workspace 拓扑断言。新增/移除依赖边或 Cargo.lock 版本漂移都会
-      # 改变 `cargo tree` 输出，与 docs/workspace-topology.expected.txt 对不上
+      # 改变 `cargo tree` 输出，与 docs/spec/workspace-topology.expected.txt 对不上
       # 即红——「加一条依赖」必须是显式评审事件（更新期望文件后随 commit 提交），
       # 而非静默发生。归一化删除 ` (...)`：workspace 成员的绝对路径随平台变化
       # （Windows 盘符路径 vs Linux runner 路径）、`(*)` 重复标记随去重状态变化，
       # 均无评审价值；版本号保留（体积红线余量仅 512 B，锁文件漂移是拓扑事件）。
       # `--no-dedupe` 必须带：默认去重模式下第二个 workspace 成员（rustmark-core）
       # 的直接依赖被 `(*)` 折叠隐藏，core 新增依赖边会逃过本断言（2026-10-24 实测）。
-      # 本地复现：diff <(grep -v '^#' docs/workspace-topology.expected.txt) \
+      # 本地复现：diff <(grep -v '^#' docs/spec/workspace-topology.expected.txt) \
       #   <(cargo tree --workspace --depth 1 --no-dedupe | sed -E 's| \([^)]*\)||g')
       - name: Workspace topology assertion
         shell: bash
         run: |
           set -o pipefail
-          if ! diff <(grep -v '^#' docs/workspace-topology.expected.txt) \
+          if ! diff <(grep -v '^#' docs/spec/workspace-topology.expected.txt) \
                      <(cargo tree --workspace --depth 1 --no-dedupe | sed -E 's| \([^)]*\)||g'); then
-            echo "::error::workspace 拓扑与 docs/workspace-topology.expected.txt 不一致——若是预期变更，请按该文件头部注释的更新流程改完后重新提交"
+            echo "::error::workspace 拓扑与 docs/spec/workspace-topology.expected.txt 不一致——若是预期变更，请按该文件头部注释的更新流程改完后重新提交"
             exit 1
           fi
 
@@ -258,7 +258,7 @@ jobs:
   # 单平台（Linux）足够：覆盖率是代码属性，不是平台属性；
   # 三平台各跑一遍 llvm-cov 只是三倍的时间换不出三倍的信息。
   # 门禁判定在 tools/coverage_gate.py（整体 ≥70%、领域 ≥90%，
-  # 2% 缓冲区内 WARN），排除清单与理由见 docs/testing.md。
+  # 2% 缓冲区内 WARN），排除清单与理由见 docs/guides/testing.md。
   coverage:
     name: coverage gate (linux)
     runs-on: ubuntu-latest
@@ -308,7 +308,7 @@ jobs:
 
   # S9-06：离线预发布演练。
   #
-  # 完整演练需要远端与三平台真机（docs/release.md §4），CI 补不了这一半。
+  # 完整演练需要远端与三平台真机（docs/guides/release.md §4），CI 补不了这一半。
   # 但**不依赖远端**的环节——版本守卫（含红路径）、校验和汇总与校验（含篡改
   # 红路径）、Release Notes 阶段归组、无私钥入仓、回滚步骤——可由
   # tools/release_dryrun.py 常态化验证，防发布流程腐化。

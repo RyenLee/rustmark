@@ -134,14 +134,14 @@ wgpu 通过系统图形栈渲染，无窗口管理器外的额外依赖。
 9. **超大文档（1MB 档）编辑性能为「尽力而为」**：≤100KB 文档对编辑响应 16ms
    （`NFR-PERF-04`）有 ≥9× 余量；**1MB 档 p50 已达标**（14.35ms）、**p95 贴 16ms
    线未稳定达标**（15.6~17.3ms，2026-10-19 同机 A/B 5 次复测，历程与数据见
-   `docs/metrics.md` §3.2.13）。继续下压需绕过 egui `TextEdit` 的 galley 契约
+   `docs/spec/metrics.md` §3.2.13）。继续下压需绕过 egui `TextEdit` 的 galley 契约
    （自绘只读视图 / 视口虚拟化），成本远超收益，本期不做（V11-41 口径 A 裁定；
    「自绘 vs 修订口径」议题 T5 已由 §3.2.13 的排版层「原地补丁」落地闭环，
    4.57 → 0.241ms）。日常文档（<1MB）不受影响。
 
 ## 5. 故障排查
 
-见 [docs/troubleshooting.md](docs/troubleshooting.md)，覆盖：配置目录位置、
+见 [docs/guides/troubleshooting.md](docs/guides/troubleshooting.md)，覆盖：配置目录位置、
 重置设置、找回草稿、崩溃报告的提交方式（本地写盘、无遥测、不含文档内容）。
 
 ## 6. 从源码构建
@@ -172,16 +172,16 @@ python tools/release_dryrun.py            # 离线发布演练：版本守卫 / 
 ```
 
 打包：`scripts/package-windows.ps1` / `package-macos.sh` / `package-linux.sh`，
-发布流程见 [docs/release.md](docs/release.md)。
+发布流程见 [docs/guides/release.md](docs/guides/release.md)。
 
 ## 7. 开发者文档
 
-- 开发计划与阶段进度：[docs/PROGRESS.md](docs/PROGRESS.md)（原 README 索引）
-- 下一阶段（v1.1）任务规划：[docs/v1.1-backlog.md](docs/v1.1-backlog.md)
+- 开发计划与阶段进度：[docs/plans/PROGRESS.md](docs/plans/PROGRESS.md)（原 README 索引）
+- 下一阶段（v1.1）任务规划：[docs/plans/v1.1-backlog.md](docs/plans/v1.1-backlog.md)
 - 编码规范：`.agent/conventions.md`；架构与分层：`docs/adr/`
 - 架构决策记录（ADR-001~013 索引与摘要）：[docs/README.md](docs/README.md)
-- 测试体系与覆盖率门禁：[docs/testing.md](docs/testing.md)
-- 配置与主题格式参考（`preferences.toml` 全字段）：[docs/config-reference.md](docs/config-reference.md)
+- 测试体系与覆盖率门禁：[docs/guides/testing.md](docs/guides/testing.md)
+- 配置与主题格式参考（`preferences.toml` 全字段）：[docs/guides/config-reference.md](docs/guides/config-reference.md)
 - 需求基线：[REQUIREMENTS.md](REQUIREMENTS.md)
 - 贡献指南：[CONTRIBUTING.md](CONTRIBUTING.md)
 - 贡献者行为准则：[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)（安全问题请走私密渠道，见下节）

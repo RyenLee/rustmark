@@ -2,7 +2,7 @@
 
 > 适用范围：RustMark（基于 `egui`/`eframe` 的桌面 Markdown 编辑器）进程内缓存子系统。
 > 本文档基于 `src/` 当前实现逐文件核对，所列文件、常量、行号均对应实际代码。
-> 配套性能基线见 `docs/metrics.md`（§3.2.x 各段）。
+> 配套性能基线见 `docs/spec/metrics.md`（§3.2.x 各段）。
 
 ---
 
@@ -257,7 +257,7 @@ TextEdit 的 layouter 每帧要整篇 Galley
 
 **G5（跨文档行布局复用）** 仍按 §7.4 第 6 条为独立技术预研，本期未实现（内存随文档数线性增长、整文档键不含 viewport，风险高）。
 
-> 实测收益对照基线见 `docs/metrics.md`；G6 的 `cache_stats()` 可在「优化前/后」各采一次快照做前后对照。
+> 实测收益对照基线见 `docs/spec/metrics.md`；G6 的 `cache_stats()` 可在「优化前/后」各采一次快照做前后对照。
 
 #### 复审记录（2026-10-17，通用 `cache-audit` skill 复查）
 
@@ -271,4 +271,4 @@ TextEdit 的 layouter 每帧要整篇 Galley
 - 缓存实现：`src/application/markdown/service/{highlight_cache,render_cache,spell_cache,highlight}.rs`、`src/application/document/service.rs`、`src/app/frame.rs`、`src/presentation/theme/mapper/highlight_cache.rs`、`src/presentation/views/preview_view.rs`
 - 装配与参数：`src/app/bootstrap.rs`、`src/application/markdown/service.rs`
 - 进程级静态资源：`src/infrastructure/highlighting/syntect_highlighter.rs`、`src/infrastructure/spell/dictionary.rs`
-- 性能基线：`docs/metrics.md` §3.2.1（高亮 56.5ms）、§3.2.4–§3.2.7（统计/排版/1MB 击键帧）、§3.2.5（统计 9.5ms）
+- 性能基线：`docs/spec/metrics.md` §3.2.1（高亮 56.5ms）、§3.2.4–§3.2.7（统计/排版/1MB 击键帧）、§3.2.5（统计 9.5ms）

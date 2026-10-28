@@ -264,7 +264,7 @@ fn align_default_undo_merge_window_is_400ms() {
 
 /// A-17 的原型值为 50 / 300；2026-10-25 阈值评审裁定上调到 100 / 1000
 /// （1000 文件夹具中常见词会立即触顶且无分页）。此处断言**本实现的决策值**，
-/// 偏差已登记在 `docs/threshold-review-2026-10-25.md` 与原型契约 A-17 备注。
+/// 偏差已登记在 `docs/reports/threshold-review-2026-10-25.md` 与原型契约 A-17 备注。
 #[test]
 fn align_search_hit_caps_follow_reviewed_limits() {
     assert_eq!(

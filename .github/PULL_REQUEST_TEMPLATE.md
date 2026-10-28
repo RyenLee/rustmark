@@ -37,7 +37,7 @@ bash scripts/size_gate.sh                                      →  B（红线 1
 - [ ] 涉及**用户可见行为**的改动有真帧或领域级回归（不是只有纯函数单测）
 - [ ] 新增 / 放宽 `pub` 字段已登记 `tests/field_visibility_guard_test.rs`
 - [ ] 新增测试入口已在根 `Cargo.toml` 补 `[[test]]`（否则不会编译）
-- [ ] 阈值有变动时已同步 `docs/thresholds.baseline.yaml`
+- [ ] 阈值有变动时已同步 `docs/spec/thresholds.baseline.yaml`
 
 ## 风险与回滚
 

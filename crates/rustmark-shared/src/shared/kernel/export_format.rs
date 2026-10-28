@@ -9,7 +9,7 @@
 //! - **表现层**：导出对话框的单选组、提交给应用层的格式 id、目标文件扩展名；
 //! - **基础设施层**：按格式把任务路由到具体导出器（HTML / PDF / 图片）。
 //!
-//! 而 `docs/architecture-constraints.md` §4 规定：表现层不得依赖 `domain`，
+//! 而 `docs/spec/architecture-constraints.md` §4 规定：表现层不得依赖 `domain`，
 //! 基础设施层不得依赖 `application`。三方共同的依赖点**只有 `shared`**
 //! （与 [`crate::shared::path`] / [`crate::shared::text_format`] 同一模式）。
 //!

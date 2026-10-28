@@ -14,8 +14,8 @@
   超时即失败、不重试）。偏好配置为 `settings.toml`（键名 `theme.*` / `editor.*`），
   **不存在**「一个阈值一个环境变量」的通用覆盖机制。
 - **开发期校验**：`python tools/check_thresholds.py`（CI Linux 单平台执行；行号漂移 `--fix` 回写）。
-- **配套文件**：`docs/thresholds.baseline.yaml`（与本文同源生成，供后续校验脚本消费）；
-  合理性判定与调整建议见 `docs/threshold-review-2026-10-25.md`。
+- **配套文件**：`docs/spec/thresholds.baseline.yaml`（与本文同源生成，供后续校验脚本消费）；
+  合理性判定与调整建议见 `docs/reports/threshold-review-2026-10-25.md`。
 
 > 说明：表中「可配置性」只描述**当前代码事实**；标注为硬编码的项，修改需改代码并过四门禁。
 
@@ -203,7 +203,7 @@
 
 | 编号 | 风险 | 位置 | 问题 | 潜在影响 |
 |---|---|---|---|---|
-| R-1 | 体积门禁七处定义、两套口径 | .github/workflows/ci.yml:59-60；scripts/size_gate.sh:25-26；scripts/package-{linux,macos}.sh / package-windows.ps1 | NFR-PERF-01 与 size_gate.sh 已改为 11 MiB 红线 / 10 MiB 预警，但 CI env 仍写 10485760 / 8388608，三个打包脚本仍硬编码 10485760。CI 的 SIZE_LIMIT_BYTES 优先于脚本默认值，故实际执行的是旧的 10 MiB 红线。 | 按 docs/metrics.md 与 TD-01 记载的 Windows 发布基线 10,487,296 B 推算，已超过 10,485,760 B 达 1,536 B：CI 的 size gate 将 exit 1、check job 红；打包脚本亦会拦截（macOS / Linux 产物未真机复测，结论待验证）。预警线 8 MiB 低于当前产物，告警常亮、失去区分度。 |
+| R-1 | 体积门禁七处定义、两套口径 | .github/workflows/ci.yml:59-60；scripts/size_gate.sh:25-26；scripts/package-{linux,macos}.sh / package-windows.ps1 | NFR-PERF-01 与 size_gate.sh 已改为 11 MiB 红线 / 10 MiB 预警，但 CI env 仍写 10485760 / 8388608，三个打包脚本仍硬编码 10485760。CI 的 SIZE_LIMIT_BYTES 优先于脚本默认值，故实际执行的是旧的 10 MiB 红线。 | 按 docs/spec/metrics.md 与 TD-01 记载的 Windows 发布基线 10,487,296 B 推算，已超过 10,485,760 B 达 1,536 B：CI 的 size gate 将 exit 1、check job 红；打包脚本亦会拦截（macOS / Linux 产物未真机复测，结论待验证）。预警线 8 MiB 低于当前产物，告警常亮、失去区分度。 |
 | R-2 | 「大文件」阈值三处定义、两种取值 | crates/rustmark-core/src/application/markdown/service.rs:58（500*1024）；crates/rustmark-ui/src/presentation/theme/mapper/galley_cache.rs:81（500*1024）；crates/rustmark-core/src/infrastructure/highlighting/incremental.rs:58（512*1024） | 同一语义（超过即降级/停止着色）被复制三份；incremental.rs 注释写明「与现有 >500KB 降级对齐」，实际值为 512 KiB = 524,288 B，与 500 KiB = 512,000 B 相差 12,288 B。 | 512,000-524,288 B 之间的文档会出现「预览已降级但增量高亮仍启用」的口径分裂；后续调整阈值需改三处，漏改即行为不一致。 |
 | R-3 | 预览防抖 150ms 两份常量 + 统计防抖第三份 | src/app/bootstrap.rs:63；crates/rustmark-ui/src/presentation/state/preview_ui_state.rs:21；src/app/frame.rs:148 | 同名 PREVIEW_DEBOUNCE_MS 在组合根与表现层各定义一次（值相同），统计防抖另立 STATS_DEBOUNCE_MS 同值。三处无编译期关联，注释均声称「与另一处一致」。 | 任一处的调整不会传导到其余两处，将出现「预览已刷新、计数未刷新」或反之的时序错位；FR-01 的 150ms 事实上是三个独立事实。 |
 | R-4 | 字号/行高的合法区间与设置页档位不一致 | crates/rustmark-core/src/domain/preferences/value_objects/theme.rs:188,190；src/presentation/views/settings_view.rs:66,69；src/presentation/views/settings_view/appearance.rs:50,61 | 领域允许 8-48 px / 1.0-3.0，设置页只提供 12-20 px（7 档）/ 1.4-2.0（6 档），且选中判定用 f32::EPSILON 严格相等。 | 手改 settings.toml 为 8、48 或 1.0 时配置合法但设置页无任何档位高亮，用户无法判断当前值、也无法用 UI 回到该值；只能继续手改文件。 |
@@ -214,10 +214,10 @@
 
 ## 四、基线文件说明
 
-- `docs/thresholds.baseline.yaml` 按 9 个模块分组，字段：`value` / `unit` / `source` /
+- `docs/spec/thresholds.baseline.yaml` 按 9 个模块分组，字段：`value` / `unit` / `source` /
   `purpose` / `recommended` / `configurable`。`source` 与上表逐字一致，可直接用于
   「读源码行 → 比对 value」的校验脚本。
 - `recommended` 是**建议区间**（工程判断），不是代码事实；收紧或放宽须走评审并同步
-  `docs/architecture-constraints.md` 的预算章节。
+  `docs/spec/architecture-constraints.md` 的预算章节。
 - 建议把 R-1（体积红线）与 R-2（大文件阈值）作为第一批收敛项：前者已使 CI 处于必红状态，
   后者是同一语义的三份真源。

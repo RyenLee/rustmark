@@ -2,7 +2,7 @@
 
 > 文档编号：ADR-REM-2026-10-27　|　作者：架构评审（专家视角）　|　状态：**整改收官，R-10 项 A/B 均已落地**（R-01~R-09 全部落地/闭项；R-10 项 A「端口升 crate」2026-10-28 落地为 `rustmark-ports`，项 B 已落地（`core/src/application/composition.rs` 的 `ImplBundle`/`ComposeConfig`/`AppServices`/`compose` + bootstrap 去级联）；R-11 整词语义已于 `7201e11` 落地）。R-04 升 crate `22e8a86`；R-09 可复现脚本+LF 基线 `f4ba740`。
 > 综合来源：架构评审 `architecture-review-2026-10-23.md`、评估报告 `rustmark-evaluation-2026-10-25.md`、合规差额报告、多轮 refactor 波次（V11-56~67）、「去双源」批次（2026-10-26）、专家架构评审（2026-10-27）。
-> 本文件是上述所有讨论的**可执行汇总**。任何一条改造项落地后，请在 `docs/PROGRESS.md` / `docs/v1.1-backlog.md` §3 回填实测数字，并同步本文件的「状态」列。
+> 本文件是上述所有讨论的**可执行汇总**。任何一条改造项落地后，请在 `docs/plans/PROGRESS.md` / `docs/plans/v1.1-backlog.md` §3 回填实测数字，并同步本文件的「状态」列。
 
 ---
 
@@ -71,7 +71,7 @@
   2. `src/` 内部所有 `crate::domain` / `crate::shared` / `crate::application` 调用改为显式 `rustmark_core::domain::…`，使真实依赖在 `Cargo.toml` 可见。
   3. 若 root 确需 `shared` / `actions`，在 root 的 `[dependencies]` 显式声明；否则统一经 core/ui 取用，弃用 `crate::shared` 别名。
   4. 在 `tools/arch_check.rs` 新增断言：**root（src 根）不得出现 `crate::domain` 路径**，并配 fixture + 变异（删断言→红）。
-  5. 同步 `docs/architecture-constraints.md` §10 crate 地图与 §3 定位声明。
+  5. 同步 `docs/spec/architecture-constraints.md` §10 crate 地图与 §3 定位声明。
 - **负责角色**：Root（主）＋ Arch（守卫设计）＋ Docs
 - **优先级**：P0（影响全局、是后续拆库绊脚石、靠词法守卫兜底）
 - **预期产出**：`src/lib.rs` 收敛；`crate::domain` 0 处；新增 arch 断言 + 变异用例；依赖图在 `Cargo.toml` 完全可见。
@@ -96,7 +96,7 @@
 
 - **短期 B2（低成本，必做）**
   1. `src/presentation.rs:11` 的 `presentation::{rich, shortcuts, state, theme, widgets}` 整体转发改为**显式逐项** `pub use`。
-  2. 在 `check-arch` 新增守卫：「新增 ui 子模块须同步 root re-export + `docs/architecture-constraints.md` §10」；配 fixture。
+  2. 在 `check-arch` 新增守卫：「新增 ui 子模块须同步 root re-export + `docs/spec/architecture-constraints.md` §10」；配 fixture。
   3. 把「views 留 root 是已知约束」写进 §10 与 backlog，消除人记。
 - **中期 B1（根治）**
   1. 定义窄接口 `EditorViewContext`（trait 或 view-model 结构体），只暴露该视图所需的数据与命令，**替代整个 `EditorApp`** 传入视图。
@@ -297,7 +297,7 @@
   时 `build.rs` 会先 panic，**bin 根本不重建**，跑旧 exe 会得到假绿；必须
   `SKIP_ARCH_CHECK=1 cargo build --bin check-arch` 再独立运行。
 - **`allowed_for` 撤回 `Layer::PresentationViews` 的 `crate::app::frame` 豁免**
-  （`docs/architecture-constraints.md` §10.1 硬约束 5 / §4.2 同步）：当初给它豁免的
+  （`docs/spec/architecture-constraints.md` §10.1 硬约束 5 / §4.2 同步）：当初给它豁免的
   条件是「全部视图迁完」，已兑现，故删——留下的豁免只剩坏处（漏写 `use` 无人提示）。
   其余表现层子层照旧（它们已迁进 ui crate，反向依赖物理上写不出来）。
 - **门禁**：fmt / check-arch / thresholds 121 / clippy `-D warnings` /
@@ -310,7 +310,7 @@
   守卫只在 `check-arch` bin / `build.rs` 运行，不进编辑器产物。
 - **下一步**：批 1 / 批 2 / 批 3 **均已完成**，R-03 B1 收官。剩余可选项是 R-03 B1 的
   「views 迁 ui crate」——它与「视图解耦 `EditorApp`」是两件事，成本账见
-  `docs/v1.1-backlog.md` §3；`EXEMPT_VIEWS` 机制**不实现**（无真实成员，
+  `docs/plans/v1.1-backlog.md` §3；`EXEMPT_VIEWS` 机制**不实现**（无真实成员，
   空表会把「一名都不许有」读成「暂时没人管」）。
 
 ### R-04 · 抽离 `rustmark-render`（富内容渲染引擎）　【P2，对应问题 F】
@@ -472,4 +472,4 @@
 4. **文档同步**：约束 §10、backlog §3、metrics、PROGRESS 随代码回填实测数字。
 5. **体积/基线不得"沿用"**：必须实测；纯重构字节数不变是正常证据。
 
-> 本文件与 `docs/architecture-constraints.md`、`docs/v1.1-backlog.md`、`docs/PROGRESS.md` 联动维护。改造项状态变更请同步回填。
+> 本文件与 `docs/spec/architecture-constraints.md`、`docs/plans/v1.1-backlog.md`、`docs/plans/PROGRESS.md` 联动维护。改造项状态变更请同步回填。

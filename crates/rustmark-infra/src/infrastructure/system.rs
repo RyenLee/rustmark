@@ -3,7 +3,7 @@
 //! # 为什么实现在这里而不在 `shared`
 //!
 //! `shared` 是零 IO 的共享内核，`std::process` 自 R-03 起进
-//! [`SHARED_FORBIDDEN`]（见 `docs/architecture-constraints.md`）。端口
+//! [`SHARED_FORBIDDEN`]（见 `docs/spec/architecture-constraints.md`）。端口
 //! （[`ExternalOpener`] trait）与链接安全校验（`is_safe_to_open`）留在
 //! `shared`——前者因为表现层需要它而 `presentation` 禁依赖
 //! `crate::infrastructure`，后者因为它是**纯逻辑**。

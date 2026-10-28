@@ -1,7 +1,7 @@
 //! 共享内核（Shared Kernel）的模块根——`rustmark_shared::shared`（TD-04 抽出）。
 //!
 //! 可被任意层依赖，但自身**不得依赖** `domain` / `application` /
-//! `infrastructure` / `presentation`（见 `docs/architecture-constraints.md`）。
+//! `infrastructure` / `presentation`（见 `docs/spec/architecture-constraints.md`）。
 //! 这一条不再只靠词法守卫：crate 的 `Cargo.toml` 只有 serde / thiserror /
 //! ahash 三个纯数据依赖，反向依赖任何层都会在 Cargo 解析期成环报错。
 //!

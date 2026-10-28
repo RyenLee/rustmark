@@ -10,7 +10,7 @@
 # 穷举 match，没有任何外部类型）。「不得引用 core / root / 任何 crate」不由
 # 词法规则守，而由两层更强的兜底守：
 # 1. Cargo 循环依赖——core 已依赖本 crate，反向加普通依赖即解析期报错；
-# 2. workspace 拓扑断言——docs/workspace-topology.expected.txt，任何新依赖边
+# 2. workspace 拓扑断言——docs/spec/workspace-topology.expected.txt，任何新依赖边
 #    都让 CI 的 cargo tree diff 变红，「加一条依赖」是显式评审事件。
 # arch_check 侧本根整体判 Free 层（零依赖纯词汇，无层内边界可言），该判定的
 # 理由与失覆盖形状见 tests/arch_violation_fixture.rs 第十六节。

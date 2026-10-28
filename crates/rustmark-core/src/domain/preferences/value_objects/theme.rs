@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// 主题种类是**三方**共同需要的：领域（持久化 `Theme.kind`）、
 /// 应用（DTO ↔ 领域转换）、表现（设置页选项 / 主题解析 / 关于面板）。
-/// 而表现层**不得**依赖领域（`docs/architecture-constraints.md` §4；
+/// 而表现层**不得**依赖领域（`docs/spec/architecture-constraints.md` §4；
 /// `check-arch` 的 `PRESENTATION_FORBIDDEN` 拦 `crate::domain`），
 /// 三方共同的依赖点只有 `shared`。
 ///

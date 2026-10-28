@@ -4,7 +4,7 @@
 //! 出现、写错不报错、正确写法与直觉写法不同的三类东西收在这里，每条封装
 //! 对应至少一个已归档缺陷。state / theme / rich / shortcuts 按 V11-62 批次
 //! 计划随后迁入；views 按 ADR-013 决策 3 **留 root**（见
-//! `docs/architecture-constraints.md` §10.1 硬约束 2：presentation 外移采用
+//! `docs/spec/architecture-constraints.md` §10.1 硬约束 2：presentation 外移采用
 //! 「views 留 root 的中间 crate」形态，否则 R-11/R-12 的跨 crate 字段保护
 //! 会被降级成同 crate 内约束）。
 //!

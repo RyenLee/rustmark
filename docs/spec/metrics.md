@@ -186,7 +186,7 @@ macOS（`.dmg`）与 Linux（`.AppImage`）产物体积**本机无法构建**（
 | 增量 | 估算体积 | 内容 | 记录 |
 |---|---|---|---|
 | 内置字体资产（`include_bytes!`） | **≈ +2.4 MiB**（资产原始字节） | JetBrains Mono / Fira Code / IBM Plex Mono 各 Regular + Noto Sans SC GB2312 子集（1.57MB）+ DejaVuMathTeXGyre 数学兜底（578KB）；TTF 在 `.rodata` 压缩率有限 | 问题记录 022 / 023（V11-22 / V11-21） |
-| `ureq` + `rustls` + `ring` 依赖链 | **≈ +1.8 MiB**（差值倒推） | https 图片下载（缺陷 026）：纯 Rust TLS 的代码 + webpki 根证书 | 问题记录 026（V11-25）、`docs/dependencies.md` §1 |
+| `ureq` + `rustls` + `ring` 依赖链 | **≈ +1.8 MiB**（差值倒推） | https 图片下载（缺陷 026）：纯 Rust TLS 的代码 + webpki 根证书 | 问题记录 026（V11-25）、`docs/guides/dependencies.md` §1 |
 | 其余（甘特图重写、检查/搜索截断修复等代码） | ≈ +0.0~0.1 MiB | 均为小量代码增长 | 问题记录 024 / 025 |
 
 **⚠️ 待决策（不自行处置，理由如下）**：`NFR-PERF-01` 的 10 MB 红线被越过，
@@ -210,7 +210,7 @@ macOS（`.dmg`）与 Linux（`.AppImage`）产物体积**本机无法构建**（
 ## 2.5 依赖复查后的复测（2026-10-14，S8-02 依赖复查）
 
 > 口径同 §2.4。本轮变更：移除 `eframe` 的 `accesskit` 特性、收窄 `ahash` 特性
-> （详见 `docs/dependencies.md` §6 与问题记录 027）。两次均用同一 `cargo build --release --bin rustmark` 口径。
+> （详见 `docs/guides/dependencies.md` §6 与问题记录 027）。两次均用同一 `cargo build --release --bin rustmark` 口径。
 
 | 项 | 实测 | 相对 §2.4 | 结论 |
 |---|---|---|---|
@@ -447,7 +447,7 @@ pulldown-cmark 均不参与链接）与完整应用对比：
 #### 3.2.0 egui 0.33.3 → 0.37.0 升级后复测（2026-10-16）
 
 命令：`cargo test --release --test presentation -- --nocapture measure_`（3/3 通过）。
-评估报告：[`archive/stage-reports/egui-0.37-upgrade.md`](archive/stage-reports/egui-0.37-upgrade.md)。
+评估报告：[`archive/stage-reports/egui-0.37-upgrade.md`](../archive/stage-reports/egui-0.37-upgrade.md)。
 
 | 指标 | 升级后（2026-10-16） | 升级前（下方历史值） | 判定 |
 |---|---|---|---|
@@ -1203,7 +1203,7 @@ cargo test --release --test presentation bench_layout_phases -- --ignored --noca
 
 **症状**：切到侧栏「搜索」标签（查询非空）后整窗冻结；输入框逐字卡顿。
 
-**根因**（按代价排序，完整报告见 [`search-tab-performance-report.md`](./archive/incident-reports/search-tab-performance-report.md)）：
+**根因**（按代价排序，完整报告见 [`search-tab-performance-report.md`](../archive/incident-reports/search-tab-performance-report.md)）：
 
 1. **「当前文档」范围也读全盘**——`gather_candidates` 对 `only_document` 也传
    `include_disk = true`，先把整个工作区逐文件 `fs::read` + 解码，再 `retain`

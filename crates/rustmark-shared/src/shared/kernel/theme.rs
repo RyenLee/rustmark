@@ -26,7 +26,7 @@
 //!
 //! # 为什么放在 shared 而非 domain
 //!
-//! 表现层**不得**依赖领域（`docs/architecture-constraints.md` §4，
+//! 表现层**不得**依赖领域（`docs/spec/architecture-constraints.md` §4，
 //! `check-arch` 的 `PRESENTATION_FORBIDDEN` 拦 `crate::domain`），
 //! 而主题种类是三方共同需要的：
 //!

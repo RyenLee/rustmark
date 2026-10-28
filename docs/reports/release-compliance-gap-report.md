@@ -7,7 +7,7 @@
 > 本轮已闭环的项保留条目与证据，便于复核；未闭环项集中在 §6。
 >
 > **2026-10-26 补记**：两项 P1 已落地——`PRIV-01`（远程图片开关，关闭即零外联）与
-> `PRIV-02`（导出 CDN 披露），提交 `ee8acfb`；`PRIVACY.md` 与 `docs/config-reference.md`
+> `PRIV-02`（导出 CDN 披露），提交 `ee8acfb`；`PRIVACY.md` 与 `docs/guides/config-reference.md`
 > 同步修正（旧文「不勾选则不注入」的说法本身有误：注入是自动的）。最后一个 P1 `SEC-03`
 > （Release Notes 三段式）也**已于 2026-10-26 闭环**（`502ddf9`）——P1 清零。
 
@@ -97,7 +97,7 @@ cargo build --release --bin rustmark && stat -c%s target/release/rustmark   # �
 
 ### LEG-05 【✅ 已闭环（2026-10-26，`2f00a6e`）】加密组件出口管制登记
 
-`docs/release.md` 新增 §7：逐项列出 `rustls` + `ring` 的用途（TLS 客户端 / 远程图片下载，可在设置关闭）、
+`docs/guides/release.md` 新增 §7：逐项列出 `rustls` + `ring` 的用途（TLS 客户端 / 远程图片下载，可在设置关闭）、
 开源可获取性与开源豁免的一般适用，并明确「本登记不构成法律意见」与「组件或用途变化时本节必须同步」。
 `REL-03` 后根证书改为读平台信任库，但**加密实现未变**，本项结论不变。
 
@@ -159,7 +159,7 @@ CI 的 `deny` job 在有网环境运行，会使用最新快照；**发布前仍
 
 `.github/workflows/ci.yml` 的 `deny` job 已移除 `|| true` 并固定 cargo-deny 版本，安装失败即红。
 
-### DEP-05 / DOC-06 【✅ 已闭环】`docs/dependencies.md` 状态漂移
+### DEP-05 / DOC-06 【✅ 已闭环】`docs/guides/dependencies.md` 状态漂移
 
 - `egui` 行：由「必须并开 `monochrome_emoji_fonts`」改为「两个字体特性均关闭 + 随包分发」；
 - `ureq` 行：`3.4.2 + ["rustls"]` → `3.5.0 + ["rustls-no-provider","_ring"]`，并新增 `rustls-native-certs` 行；
@@ -239,7 +239,7 @@ Windows 调用本机 Edge / Chrome 无头模式，macOS 走系统打印链路；
 - ✅ **发布页机械固化**：`tools/gen_release_notes.py` 的 `render` 开头固定
   「一、未签名 / 二、绕过方式（三平台）/ 三、校验和」三段，之后才是变更分组；
   `tools/release_dryrun.py` 断言三段齐全**且顺序正确**（变异：改掉任一段标题 → 演练当场红）。
-- 产物仍**未签名**（证书成本见 §6 与 `docs/release.md` §6）；本项闭合的是「发布页必须说清」，
+- 产物仍**未签名**（证书成本见 §6 与 `docs/guides/release.md` §6）；本项闭合的是「发布页必须说清」，
   不是「已经签名」。
 
 ### SEC-04 / DOC-05 【✅ 已闭环（2026-10-26，`2f00a6e`）】Issue / PR 模板
@@ -296,7 +296,7 @@ PR 表单：四道门禁实测数字、守卫改动的变异验证、新 `pub` �
   `env_logger` 去 `humantime`（实测仅 −4 KiB，不建议，日志会失去时间戳）。
 - **macOS / Linux 未实测量**：两步缓解对三者同样成立，但 Linux 侧另有 `x11` / `wayland` / `rfd` 的 GTK 依赖，
   实际字节须在 CI 或真机重测后才能对三平台下结论（并入 `DOC-02`）。
-- **口径一致性（已修）**：`docs/metrics.md` §1 / §2.4 / §2.6 / 新增 §2.7、`ci.yml` 注释、打包脚本说明现在统一为
+- **口径一致性（已修）**：`docs/spec/metrics.md` §1 / §2.4 / §2.6 / 新增 §2.7、`ci.yml` 注释、打包脚本说明现在统一为
   「**未压缩 exe** ≤ 10 MiB」，不再出现「zip / 安装包」混用。
 
 ---
@@ -326,7 +326,7 @@ PR 表单：四道门禁实测数字、守卫改动的变异验证、新 `pub` �
 |---|---|---|
 | ~~5~~ | ~~`LEG-03`~~ | ~~新增 `CODE_OF_CONDUCT.md`~~ **已闭环（`2f00a6e`）**：Contributor Covenant 2.1 + CONTRIBUTING §0 / README §7 链接 |
 | 6 | `LEG-04` | `rustmark` 名称 / 包名冲突检索并留档（**声明部分已做；检索需人工完成并留档**） |
-| ~~7~~ | ~~`LEG-05`~~ | ~~`docs/release.md` 登记加密组件~~ **已闭环（`2f00a6e`）**：§7 组件表 + 开源豁免说明 + 变更纪律 |
+| ~~7~~ | ~~`LEG-05`~~ | ~~`docs/guides/release.md` 登记加密组件~~ **已闭环（`2f00a6e`）**：§7 组件表 + 开源豁免说明 + 变更纪律 |
 | ~~8~~ | ~~`LEG-06`~~ | ~~追溯 `words.txt` 来源~~ **已闭环（`2f00a6e`）**：`git log --follow` 追溯 + NOTICE / 第三方清单登记 |
 | ~~9~~ | ~~`DEP-06`~~ | ~~生成 SBOM~~ **已闭环（`2f00a6e`）**：`tools/sbom.py`（CycloneDX 1.5，388 组件）+ 随 Release 发布 + 演练断言 |
 | ~~10~~ | ~~`SEC-04` / `DOC-05`~~ | ~~Issue / PR 模板~~ **已闭环（`2f00a6e`）**：两份 Issue 表单 + config + PR 模板（含安全披露警示） |
@@ -346,10 +346,10 @@ PR 表单：四道门禁实测数字、守卫改动的变异验证、新 `pub` �
 | `tests/support.rs` + `tests/support/` | 模块布局回归 `CONSTR-03`：`support/mod.rs` 移到 `support.rs`，7 个测试入口改 `#[path]`；`Cargo.toml` 增 `autotests = false`（防 `support.rs` 被当成零用例测试目标） |
 | `deny.toml` | 移除 `OFL-1.1` / `Ubuntu-font-1.0` / `CDLA-Permissive-2.0`（对应 crate 已退出依赖图），加注释说明去向 |
 | `THIRD-PARTY-LICENSES.md` | 依 `cargo deny list` 重算分布与 §2.1 清单（43 项）；§4.1 补 4 个字体；§4.2 改写为「随包分发」 |
-| `docs/dependencies.md` | `egui` / `ureq` 行与 §6 表按新口径重写 |
-| `docs/metrics.md` | §1 `NFR-PERF-01` 状态、§2.4 闭环指针、§2.6 状态改为已闭环；**新增 §2.7**（两步缓解实测 + 残余风险） |
+| `docs/guides/dependencies.md` | `egui` / `ureq` 行与 §6 表按新口径重写 |
+| `docs/spec/metrics.md` | §1 `NFR-PERF-01` 状态、§2.4 闭环指针、§2.6 状态改为已闭环；**新增 §2.7**（两步缓解实测 + 残余风险） |
 | `.github/workflows/ci.yml` | 体积门禁注释由「越线待决策」改为「已回到红线内，macOS/Linux 待复测」 |
-| `docs/manual-qa-windows.md` / `-macos.md` | emoji 注由「egui 内置」改为「随包分发的 `fonts/`」 |
+| `docs/guides/manual-qa-windows.md` / `-macos.md` | emoji 注由「egui 内置」改为「随包分发的 `fonts/`」 |
 | `src/shared/system.rs` | 注释里的 `features = ["default_fonts"]` 过时写法修正 |
 | `README.md` / `CHANGELOG.md` / `src/lib.rs` | 版本 0.2.0 同步；`#![warn(missing_docs)]` 已启用（实测 0 告警） |
 | `NOTICE` | 补 4 个 egui 默认字体的版权 / 许可 / 用途，并注明「以 `fonts/` 文件形式分发、不编进可执行文件」 |
@@ -370,7 +370,7 @@ PR 表单：四道门禁实测数字、守卫改动的变异验证、新 `pub` �
 | 7 | 体积门禁绿且口径统一 | ✅ Windows 9.98 MiB（余量 18,944 B）；口径已统一为未压缩 exe |
 | 8 | 发布页含「未签名 + 绕过方式 + 校验和」三段式 | ✅ `SEC-03` 已闭环：生成器固定三段 + 演练断言顺序（`502ddf9`） |
 | 9 | `PRIVACY.md` / `SECURITY.md` / `NOTICE` / `THIRD-PARTY-LICENSES.md` 与实际行为、依赖一致 | ✅ 本轮已随依赖变动同步 |
-| 10 | `docs/release.md` §1 前置检查清单逐项可勾 | ✅（`LEG-05` 登记项仍属 P2） |
+| 10 | `docs/guides/release.md` §1 前置检查清单逐项可勾 | ✅（`LEG-05` 登记项仍属 P2） |
 
 ---
 

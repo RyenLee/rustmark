@@ -18,7 +18,7 @@
 //! | 不收的东西 | 理由 |
 //! |---|---|
 //! | `vec2` / `pos2` / `Rect::from_min_size` / `Sense::hover` / `Color32` / `FontId` / `Stroke` 等构造器 | 它们是 egui 的**稳定词汇**。包一层 `widgets::v2(x, y)` 只是多一次跳转；升级时反而要同时改封装与调用点两处，比直接改一处更贵。 |
-//! | `ui.horizontal_top` / `Separator::default().spacing(1.0)` / 按 `clip_rect` 推绝对坐标 / `add_space` 双计间距 / `max_rect` 污染后的块级限宽 | 它们是**调用点的选择**，不是一段可复用的代码。封成别名会隐藏 egui API 本身——而相关注释引用的正是 egui 的名字（`Placer::expand_to_include_rect`、`UiBuilder::sense`），隐藏后注释与代码对不上，反而更难查。这五条以「纪律条目」形式记在 [`rustmark_core::presentation`] 的模块文档与 `docs/06-表现层与交互实现.md` 里。 |
+//! | `ui.horizontal_top` / `Separator::default().spacing(1.0)` / 按 `clip_rect` 推绝对坐标 / `add_space` 双计间距 / `max_rect` 污染后的块级限宽 | 它们是**调用点的选择**，不是一段可复用的代码。封成别名会隐藏 egui API 本身——而相关注释引用的正是 egui 的名字（`Placer::expand_to_include_rect`、`UiBuilder::sense`），隐藏后注释与代码对不上，反而更难查。这五条以「纪律条目」形式记在 [`rustmark_core::presentation`] 的模块文档与 `docs/stages/06-表现层与交互实现.md` 里。 |
 //! | 按钮 / 标签 / 开关这类普通控件 | egui 自带即可。二次封装普通控件是「自建 GUI 框架」的起点：调用点失去 egui 文档与示例的直接对应关系，收益为零。 |
 //!
 //! # 与「收敛 egui 升级面」的关系

@@ -3,7 +3,7 @@
 - **审查基线**：工作区当前状态（v0.2.0，未提交改动前）
 - **审查方法**：静态扫描（grep/统计复算）+ `check-arch` 实际运行 + 文档与实现交叉核对 + 三个维度的独立子调查（耦合/非功能/选型与规范）
 - **前次评估**：[architecture-review.md](./architecture-review.md)（2026-10-20，基线 `e09ad2b`）——本报告核对了其问题清单的修复状态，并按用户要求的 8 个维度重新全面审查
-- **规模实测**：`src/` 324 个 `.rs` / 63 301 行（含 432 个内联 `#[test]`）；`tests/` 1 686 个 `#[test]`（`docs/testing.md` 记 2026-10-22 实测 **2101 passed / 0 failed / 4 ignored**）
+- **规模实测**：`src/` 324 个 `.rs` / 63 301 行（含 432 个内联 `#[test]`）；`tests/` 1 686 个 `#[test]`（`docs/guides/testing.md` 记 2026-10-22 实测 **2101 passed / 0 failed / 4 ignored**）
 
 ---
 
@@ -34,7 +34,7 @@
 
 ### 1.1 分层结构
 
-依赖方向 `presentation → application → domain ← infrastructure`，`shared` 为零业务依赖内核，`app` 为唯一组合根。规则真源 [architecture-constraints.md](../../architecture-constraints.md)（依赖矩阵 §3、各层禁 crate §4、判定口径 §4.1），执行者为词法/token 级的 [arch_check.rs](../../../tools/arch_check.rs)（`build.rs` 编译期 panic + `check-arch` bin 双入口）+ CI。
+依赖方向 `presentation → application → domain ← infrastructure`，`shared` 为零业务依赖内核，`app` 为唯一组合根。规则真源 [architecture-constraints.md](../../spec/architecture-constraints.md)（依赖矩阵 §3、各层禁 crate §4、判定口径 §4.1），执行者为词法/token 级的 [arch_check.rs](../../../tools/arch_check.rs)（`build.rs` 编译期 panic + `check-arch` bin 双入口）+ CI。
 
 各层规模（实测）：
 
@@ -64,7 +64,7 @@
 场景锚点：单人本地 Markdown 编辑器、三平台分发、**exe ≤ 10 MB 红线**、无后端、无 async 运行时。
 
 > 历史口径注记（2026-10-26 补）：本文写作时（2026-10-23）体积红线确为 10 MiB；该红线已于
-> 2026-10-24 上调至 **11 MiB（预警 10.5 MiB）**，当前口径见 `docs/metrics.md` §2.8 与
+> 2026-10-24 上调至 **11 MiB（预警 10.5 MiB）**，当前口径见 `docs/spec/metrics.md` §2.8 与
 > `scripts/size_gate.sh`。本段作为历史快照保留，勿按旧值判当前门禁。
 
 | 依赖 | 用途 | 适配判定 |
@@ -79,7 +79,7 @@
 | `toml + serde` / `ahash(no-rng)` / `log + env_logger` | 配置 / 缓存键 / 日志 | 前两者适配；**日志是选型链的最弱一环**（见 §四-5） |
 | **无数据库、无 web 框架、无 tokio** | — | **正确**。本地编辑器引入这些只会增加体积与复杂度；ADR-001/003 已显式否决 Tauri/SQLite 路线 |
 
-**依赖治理**：`docs/dependencies.md` 登记制度 + `deny.toml`（CI 单独跑 licenses/bans/sources/advisories，且 cargo-deny **锁版本**避免口径漂移）+ 体积预算表（约束文档 §8）。`Cargo.toml` 每个依赖都有「为什么开/关这个 feature」的注释。**这是超出项目体量的规范化程度，与体积红线匹配。**
+**依赖治理**：`docs/guides/dependencies.md` 登记制度 + `deny.toml`（CI 单独跑 licenses/bans/sources/advisories，且 cargo-deny **锁版本**避免口径漂移）+ 体积预算表（约束文档 §8）。`Cargo.toml` 每个依赖都有「为什么开/关这个 feature」的注释。**这是超出项目体量的规范化程度，与体积红线匹配。**
 
 **版本策略**：`edition 2024 / rust-version 1.99 / rust-toolchain.toml 唯一真源`；egui 0.33→0.37 升级有专门复盘（`archive/stage-reports/egui-0.37-upgrade.md`）。风险可控。
 
@@ -125,7 +125,7 @@
 
 ### 4.3 性能
 - 帧调度：ADR-009 `FrameScheduler` 单一出口（`request_repaint_after` 全仓只许出现在 `scheduler.rs`，无豁免、构建期拦截）——把「定时功能静默失效」这类历史 bug 类别机械消灭。
-- 缓存：应用层真 LRU（`highlight_cache/render_cache/spell_cache`，键含 revision）+ 表现层 Galley 缓存，设计文档 [cache-design.md](../../cache-design.md)。
+- 缓存：应用层真 LRU（`highlight_cache/render_cache/spell_cache`，键含 revision）+ 表现层 Galley 缓存，设计文档 [cache-design.md](../../design/cache-design.md)。
 - 门禁：CI release 性能冒烟（1 MB 全文查找/解析/首屏阈值断言，仅 Linux 必过）+ 体积门禁 10 MB + 近期搜索优化有独立报告（切搜索标签首帧 250ms → **0.69ms**）。
 - 判定：**强，且有回归防线**。风险点：性能阈值仅 Linux 单平台（跨平台数字不可比，已显式裁定）；帧预算依赖 `begin/flush` 成对契约（ADR-009 自认的软肋，~~现仅 `repaint_delay` 测试兜底~~ **D-7 已补 debug 断言（2026-10-24）**：漏调 `begin` 在 debug 构建即 panic，含「下一帧漏调」的消费语义用例）。
 
@@ -138,7 +138,7 @@
 
 ### 4.5 可观测性 —— 曾是最弱维度（**2026-10-26 D-5 已补帧级常态指标**）
 - 现状：`env_logger`（默认 warn，`main.rs:23`）+ 零散 `log::warn!` + `RUSTMARK_STARTUP_TIMING` 启动埋点 + panic backtrace；无结构化日志、无运行时指标、无帧耗时的用户可见归因（曾靠临时归因测试排查 TextEdit 开销）。
-- **且文档与实现矛盾**（~~已纠错~~ **2026-10-24 D-2 闭合**）：[debug-guide.md](../../debug-guide.md) §2.4/§400 旧版声称「本项目没有 logger 后端，`RUST_LOG` 无效」——F-2 已注册 env_logger，`frame.rs:717` 注释也已同步，**当时只有 debug-guide 没改**；现已按 `main.rs` 实况改写（默认 warn、`RUST_LOG=rustmark::app=debug` 模块过滤、无正则 feature 的边界注明）。
+- **且文档与实现矛盾**（~~已纠错~~ **2026-10-24 D-2 闭合**）：[debug-guide.md](../../guides/debug-guide.md) §2.4/§400 旧版声称「本项目没有 logger 后端，`RUST_LOG` 无效」——F-2 已注册 env_logger，`frame.rs:717` 注释也已同步，**当时只有 debug-guide 没改**；现已按 `main.rs` 实况改写（默认 warn、`RUST_LOG=rustmark::app=debug` 模块过滤、无正则 feature 的边界注明）。
 - 判定：对当前规模「够用」，但每次性能/行为排障都依赖临时插桩（近期两次排障均为事后复盘），**缺一层常态化的帧级/搜索级耗时指标**。
 - **补记（2026-10-26，D-5 闭合）**：帧级缺口已补——`FrameScheduler` 在 `flush` 结账本帧耗时，
   超 16ms（`NFR-PERF-04`）即 `log::warn!`（状态更新 / 绘制 / 未归因三段归因 + 本帧到期任务，
@@ -180,7 +180,7 @@
 | ID | 等级 | 问题 | 影响范围 | 可落地改进 |
 |---|:---:|---|---|---|
 | D-1 | ~~低~~ **已闭合（2026-10-23）** | **原描述「3 份并行实现 + 2 张样式表」不成立**——已由 R-10 收敛：切段唯一构造器 `span_job::build_job`、语义派发唯一 `StyleSemantics::of`，三处均为薄封装；双样式表为**有意保留**（字号体系与覆盖面不同，论证见 `span_job.rs` 模块头）。二次核查发现对拍用例也已存在（`shared_styles_have_identical_colors_in_both_tables`），但仅测 dark 主题、且注释承诺的反方向断言缺失 | 表现层（已闭合） | **已完成**：① 对拍用例参数化双主题（dark+light）；② 新增反方向用例 `exclusive_styles_stay_distinct_between_tables`（3 对特有样式不同色，防「无脑转发」退化）。`cargo test --lib mapper::tests` 17/17、fmt/clippy 全绿 |
-| D-2 | ~~中~~ **已闭合（2026-10-24）** | ~~`docs/debug-guide.md` §2.4/§400 声称「无 logger 后端、`RUST_LOG` 无效」，与 `main.rs:23` 已注册 env_logger 矛盾~~ 已按实况改写 | 全体排障者 | **已完成**：§2.4 改为「env_logger 已注册、默认 warn、`RUST_LOG` 调级别」并注明无 `regex` feature 的模块过滤边界、启动埋点独立通路；§400 脚注同步；全库排查无其他过期说法 |
+| D-2 | ~~中~~ **已闭合（2026-10-24）** | ~~`docs/guides/debug-guide.md` §2.4/§400 声称「无 logger 后端、`RUST_LOG` 无效」，与 `main.rs:23` 已注册 env_logger 矛盾~~ 已按实况改写 | 全体排障者 | **已完成**：§2.4 改为「env_logger 已注册、默认 warn、`RUST_LOG` 调级别」并注明无 `regex` feature 的模块过滤边界、启动埋点独立通路；§400 脚注同步；全库排查无其他过期说法 |
 | D-3 | ~~中~~ **已闭合（2026-10-23，阶段 1/2/3/4a/4b 全部完成）** | `presentation` 状态写入守卫：裸字段赋值已收敛至 0；egui 控件借用 `&mut app.<state>.<field>` 穿透字段（原 7 处 / 5 文件，全在 views/）。~~单 crate 下字段私有化对 views 无编译期约束力~~ workspace 拆分 + 4b 可见性收紧后，core 内部面已对 views 编译不可见 | 表现层 125 文件；新增 UI 状态字段时的心智负担 | **阶段 1**（核实已存在）：R-12 赋值规则 + fixture 四条注入用例。**阶段 2 已完成**：`tests/presentation/state_borrow_guard_test.rs`——词法级（`lex_dump`）扫描全表现层，字段借用白名单双向断言 + 2 条匹配注入用例；词法补 `TokKind::Amp`（零行为变化，fixture 87/87 回归）。**阶段 3 已完成（2026-10-23）**：7 处穿透全部方法化——6 处 TextEdit/checkbox 走「clone（或读出）→ 就地编辑 → 变化才值写回」+ 7 个 state setter（`set_only_changes`/`set_output_dir`/`set_file_stem`/`set_find_text`/`set_replace_text`/`set_writing_goal_text` + `take_blocks`），**清单归零**（`APPROVED_BORROWS = &[]`，集合相等断言双向钉死，新增穿透必红）。**阶段 4a 已完成（2026-10-23）**：拆 workspace——新建 `crates/rustmark-core`（domain/application/infrastructure/shared 四层 + presentation 的 icons/rich/shortcuts/state/theme/widgets 六子模块），shell（root）只留组合根 `app` 与 `presentation::views`；root 经 `pub use rustmark_core::{…}` re-export 拼接，存量 `crate::` 路径**零改动**；依赖方向被 cargo 锁死（`cargo tree -p rustmark-core` 无反向依赖）；校验器改 `scan_project` 三根扫描（shell src + core src + tests，core 违规带 `crates/rustmark-core/src/` 前缀）并把 `rustmark_core::X` 归一为 `crate::X` 匹配同一禁令表（拼接点天然豁免）；命令面（ci clippy/check/test/llvm-cov）加 `--workspace`；全链验证绿（2125 测试 0 失败、注入 core `crate::app` 必红、release 10 485 248 B 启动冒烟通过）。**阶段 4b（原后置待办）**：可见性收紧——~~core 内字段/方法从 `pub` 收窄（`pub(crate)` / 私有 + 受控接口），让 D-11 的编译期强制对 views 真正生效；**后置条件**：4a 合入稳定后单独批次执行，逐字段核对存量读点（约 340 处读点当期零改动），不得与 4a 混批~~ **阶段 4b 已完成（2026-10-23，五批 2995d68 / 15e9020 / a24b5ca / e21ad8c / 2952872）**：模块级 pub 项 1 664 → 1 383、字段 pub 606 → 547（58 收紧为 pub(crate) + 1 死字段删除），E0616/E0451 实测 547 对读点逐条核对；新增 `tests/field_visibility_guard_test.rs` 白名单双向断言（548 条 + 3 注入用例）钉死放宽方向。全链验证 2 125 通过 0 失败。**D-3 全阶段（1/2/3/4a/4b）闭合** |
 | D-4 | ~~中~~ **已闭合（2026-10-25，TD-02 + TD-09）** | `presentation/views` 拆分标准不一：`preview_view.rs` 1 339 行（全仓最大）+ `toolbar_view.rs` 683 行未拆，同目录 `sidebar_view/`、`settings_view/` 已拆干净 | 表现层可维护性；大文件的评审与定位成本 | 按已有先例拆：`preview_view.rs` → 保留 `preview_view.rs` 入口 + `preview_view/{media,overlay,…}.rs`（其子目录已 3 000+ 行，壳比内容大即信号）；~~在约束文档 §7 记录阈值~~ **已完成（2026-10-24）**。**拆分已落地（2026-10-25）**：`preview_view.rs` 1,421 → 入口 **458** + `image_cache.rs` 319 + `tests.rs` 664（TD-02，`999e63c`）；`toolbar_view.rs` 695 → 入口 **211** + `tab_strip.rs` 498（TD-09，`22d4550`）。两者均无 `pub` 项外泄、公开路径零变化；D-4 的行数阈值已由 `tools/check_thresholds.py` 机械校验（E-24 起），不再是「靠自觉」 |
 | D-5 | ~~中~~ **已闭合（2026-10-26，`1c58052`）** | 可观测性薄弱（§四-5）：无帧级耗时常态指标，排障靠临时插桩 + 事后复盘 | 性能回归的发现时机（近期两次卡顿均为用户反馈后排查） | **已完成（2026-10-26）**：`FrameScheduler` 兼作帧耗时观测点——它是唯一每帧首尾都会被调到的地方，挂在这里不需要新增调用点、也不会漏帧。`begin` 记墙钟，`loop.rs` 在两个阶段边界各 `lap` 一次（状态更新 / 绘制），`flush` 结账：超 `FRAME_BUDGET`（**16ms**，`NFR-PERF-04` 的一帧口径）时 `log::warn!` 一条（**仅 release 构建输出**——debug 的帧耗时不代表真实性能，全超门槛的日志
@@ -188,10 +188,10 @@
 | D-6 | ~~中~~ **已闭合（2026-10-24）** | ~~`shared` 无准入标准（§一-1）：文件数持续增长，`pattern.rs` 474 行、`fonts.rs`/`encoding.rs` 等逐次加入~~ 已改为登记制 | 一旦松口，`shared` 会成为绕过依赖矩阵的通道（历史上 `std::process` 就是这么进来的） | **已完成（2026-10-24）**：① 约束 §4.5 新增「shared 准入三问」（≥2 层需要 / 零 IO / 无可归属的层）+ `<!-- shared:registry -->` 登记表（存量 18 文件全部带理由入表）；② `check-arch` 机械核对——`shared/` 下未登记文件在 `build.rs` 构建期与 CI 报文件级违规；③ fixture 三用例钉住（未登记必报 / 已登记放行且键写法归一 / 合成扫描 `scan` 不套用登记制） |
 | D-7 | ~~低~~ **已闭合（2026-10-24）** | ~~ADR-009 `begin/flush` 成对契约仅测试兜底~~ 已加 debug 断言 | 漏调 `begin` 的表现是定时功能静默失效 | **已完成（2026-10-24）**：`FrameScheduler::flush` 入口 `debug_assert`（本帧未 `begin` 即 panic），断言后**消费** `begun` 状态位使「下一帧漏调」也报得出；2 条 `should_panic` 用例钉住断言与消费语义；release 不编译断言、体积预算不受影响；ADR-009「后果」节已回写 |
 | D-8 | ~~低~~ **已闭合（2026-10-26，`1c58052`）** | ~~`app/frame` 内部互相导入的纯函数（`group_search_hits` 被 `outline.rs` 反向导入）与三条并存的「当前文档路径」方法~~ 两项均已消解，见右列 | 组合根内 6 636 行的局部导航成本 | **完成两半**：① 路径方法在 V11-54a / R-15 已收敛——`current_document_file() -> Option<FilePath>` 是唯一出处（轻量摘要，不付全文快照），`current_document_path()` 降为面包屑用的显示包装（无路径时给「未命名文档」哨兵），`document_dir` / `active_document_title_stem` 都由它派生；② `group_search_hits` 于 2026-10-26 从 `app/frame/find.rs` 下沉到 `crates/rustmark-ui/src/presentation/state/sidebar_ui_state/search.rs`，与 `group_hits` / `locate_in_snippet` 同住一处（原先「组合函数在组合根、零件在 ui」导致 `outline.rs` 跨模块反向导入）。公开路径经 root 的 re-export 不变，端到端覆盖仍在（`tests/presentation/sidebar_view_test.rs` 的 `search_workspace` 分组与高亮断言） |
-| D-9 | 低 **（已记录，不修）** | 性能/测试门禁单平台（perf 仅 Linux）与 `panic=abort` 后无 unwind | 平台特有性能退化只在本地手测发现 | 按建议**记录为已知取舍**：`docs/PROGRESS.md` 的剩余环境项已含 macOS/Linux 真机回归（V11-02）；触发条件写明——真做 macOS 分发时补 macOS perf job，在此之前不预建 |
+| D-9 | 低 **（已记录，不修）** | 性能/测试门禁单平台（perf 仅 Linux）与 `panic=abort` 后无 unwind | 平台特有性能退化只在本地手测发现 | 按建议**记录为已知取舍**：`docs/plans/PROGRESS.md` 的剩余环境项已含 macOS/Linux 真机回归（V11-02）；触发条件写明——真做 macOS 分发时补 macOS perf job，在此之前不预建 |
 | D-10 | 低 **（维持 + 已核）** | 富文本渲染子系统（`presentation/rich/`：math + mermaid 手绘）复杂度集中 | 该子系统是未来 bug 密度最高的候选区 | 建议已落实为现状：ADR-007 的边界由 `check-arch` 编译期保障（rich 不得回指 views/state），mermaid 图元已有部分 golden 测试；**不额外拆**——rich 现已随 V11-62 批次 5 整体住 `rustmark-ui`，再拆只会把「一个子系统」切成两个 crate 的耦合 |
 | D-11 | ~~低~~ **core 侧已闭合（2026-10-23，D-3 阶段 4a + 4b）** | ~~单 crate 63 301 行~~已拆 workspace：core（`crates/rustmark-core`：四层 + presentation 六子模块）与 shell（root：`app` + `views`）两 crate，**core → shell 反向依赖已被 cargo 锁死**，**core 内部实现面已对 shell 编译不可见**（4b：模块级 pub 项 1 664 → 1 383、字段 606 → 547 + 白名单守卫）；shell 内 `app↔views` 及 core 内层间边界仍靠词法校验 | 增量编译时间；跨层误引用的检查层级 | core 侧随 4a/4b 闭合；shell 内 `app↔views` 剩余部分归 D-3 轨道（阶段 1/2/3 已闭合借用穿透，编译期强制待评估）；行数逼近 10 万或团队 >1 人时再评估拆更多 crate |
-| D-12 | 低 **（纪律，持续）** | 性能阈值、体积数值散落在 `metrics.md`/`ci.yml` 注释/ADR 多处 | 数字更新时多点漂移 | 保持 `metrics.md` 为唯一数值真源，其余处只引用不复写；2026-10-26 起阈值一半以上已**机械校验**（`docs/thresholds.baseline.yaml` + `tools/check_thresholds.py`，121 条 / 9 模块），「散落」的后果从「漂移」降为「CI 红」 |
+| D-12 | 低 **（纪律，持续）** | 性能阈值、体积数值散落在 `metrics.md`/`ci.yml` 注释/ADR 多处 | 数字更新时多点漂移 | 保持 `metrics.md` 为唯一数值真源，其余处只引用不复写；2026-10-26 起阈值一半以上已**机械校验**（`docs/spec/thresholds.baseline.yaml` + `tools/check_thresholds.py`，121 条 / 9 模块），「散落」的后果从「漂移」降为「CI 红」 |
 
 ---
 
@@ -235,7 +235,7 @@
 >
 > **2026-10-26 收口**：八条全部落地——第 1 批（D-2 / D-4 规则化）、第 2 批（D-1 对拍 + D-4 拆分）、
 > 第 3 批（D-3 阶段 2 / D-7 断言 / D-6 准入三问）、第 4 批（D-5 帧耗时观测）。
-> 本报告此后只作**历史记录**：新问题请登记到 `docs/v1.1-backlog.md` 或新的评审报告，
+> 本报告此后只作**历史记录**：新问题请登记到 `docs/plans/v1.1-backlog.md` 或新的评审报告，
 > 不在此表追加行。
 
 ---

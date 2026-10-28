@@ -1,7 +1,7 @@
 # 技术复盘：侧边栏「搜索」标签严重卡顿
 
 > 状态：**已修复并验证**（2026-10-23）
-> 详细排查过程见 [`search-tab-performance-report.md`](./search-tab-performance-report.md)；数字口径见 [`metrics.md`](../../metrics.md) §3.2.14；回归门禁见 `tests/presentation/search_perf_test.rs`。
+> 详细排查过程见 [`search-tab-performance-report.md`](./search-tab-performance-report.md)；数字口径见 [`metrics.md`](../../spec/metrics.md) §3.2.14；回归门禁见 `tests/presentation/search_perf_test.rs`。
 
 ---
 

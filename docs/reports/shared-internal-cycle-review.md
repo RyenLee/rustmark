@@ -10,11 +10,11 @@
 
 | 字段 | 内容 |
 |---|---|
-| 案件编号 | **V11-55**（本档案落地后登记入 `docs/v1.1-backlog.md`） |
+| 案件编号 | **V11-55**（本档案落地后登记入 `docs/plans/v1.1-backlog.md`） |
 | 来源 | ① V11-54 评估报告 P1「`shared` 内进程调用」的**残留半案**（进程调用部分已由 R-03 闭环，内部环部分遗留）；② R-21 第 2/3 项搁置（方案前提被实测证伪） |
 | 优先级建议 | **P2**（无用户可见影响；纯结构债；有低成本解） |
 | 建议工期 | **≤0.5 人日**（方案 A 约 20 行改动 + 1 条对拍测试；守卫项另计） |
-| 关联档案 | `docs/archive/architecture-reviews/architecture-review.md`（V11-54 评估）、`docs/archive/architecture-reviews/architecture-refactor-plan.md` R-03 / R-21、`docs/architecture-constraints.md` §3 |
+| 关联档案 | `docs/archive/architecture-reviews/architecture-review.md`（V11-54 评估）、`docs/archive/architecture-reviews/architecture-refactor-plan.md` R-03 / R-21、`docs/spec/architecture-constraints.md` §3 |
 
 ---
 
@@ -77,7 +77,7 @@ dialog.rs:26       use crate::shared::text_format::TextFormats;
 
 ### 2.3 规则覆盖现状（环为何能存在）
 
-- `docs/architecture-constraints.md` §3 依赖矩阵与 `tools/arch_check.rs:150` 的 `SHARED_FORBIDDEN`（已含 `std::process`，R-03 后加入）**只管跨层依赖**；
+- `docs/spec/architecture-constraints.md` §3 依赖矩阵与 `tools/arch_check.rs:150` 的 `SHARED_FORBIDDEN`（已含 `std::process`，R-03 后加入）**只管跨层依赖**；
 - **shared 内部模块互相 import 不在任何机械规则管辖内**——check-arch 无环检测，这是环能长期存在的直接原因；
 - R-21 验收判据「`ls src/shared/` → 模块数 ≤ 5」已随 R-07（export_format）/ R-09（theme）等落地**自然作废**（现 17 个），本档案不沿用该判据。
 
@@ -134,7 +134,7 @@ V11-54 P0「`shared/system.rs` 在共享内核做进程调用」**已由 R-03（
 
 1. **立案成立**，编号 V11-55，优先级 P2，无阻塞项；
 2. **推荐处置 = 方案 A**（≤0.5 人日）：`file_filter()` 移入 `dialog.rs`，破环 + 1 条对拍测试 + 四道门禁；实施时按项目纪律单 commit（`refactor(shared): 破除 dialog ↔ text_format 内部环（依据 V11-55）`）；
-3. **附案以「定位声明」收口，不做搬移**：建议在 `docs/architecture-constraints.md` §3 的 shared 行下补一句定位声明——「被跨层复用的纯函数 / 纯数据结构模块合法居 `shared`（现存 `text_format` / `lru` / `text`）；下沉的唯一障碍是 `dialog` 对 `text_format` 的既有依赖，破环后此依赖单向化」——把「为什么不归位」写成规则，避免后人重复提案；
+3. **附案以「定位声明」收口，不做搬移**：建议在 `docs/spec/architecture-constraints.md` §3 的 shared 行下补一句定位声明——「被跨层复用的纯函数 / 纯数据结构模块合法居 `shared`（现存 `text_format` / `lru` / `text`）；下沉的唯一障碍是 `dialog` 对 `text_format` 的既有依赖，破环后此依赖单向化」——把「为什么不归位」写成规则，避免后人重复提案；
 4. **方案 C（守卫）另立小项**，本档案仅登记意向，不并入 V11-55 验收；
 5. 本档案替代 R-21 实施记录中的搁置备注，成为该问题的唯一事实源；R-21 记录保持历史原样不改写。
 

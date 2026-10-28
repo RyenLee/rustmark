@@ -3,7 +3,7 @@
 - **状态**：已接受（2026-10-19）
 - **决策者**：项目架构负责人
 - **关联任务**：T8（优化任务清单 C2）
-- **关联文档**：`src/presentation/widgets.rs` 模块文档、`docs/06-表现层与交互实现.md`、
+- **关联文档**：`src/presentation/widgets.rs` 模块文档、`docs/stages/06-表现层与交互实现.md`、
   `docs/logs/问题记录1.txt`（问题 061 / 065）、`ADR-007`
 
 ## 背景

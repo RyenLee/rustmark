@@ -92,7 +92,7 @@ root → {core, infra, icons, ui, ports}   (root 仍造 impl 并注入)
 
 - `tools/arch_check.rs`：`layer_of` 把 `shared`→`Layer::Shared`（:397）；新增 `rustmark-ports` 需在枚举加 `Layer::Ports` 并补 `ROOT_FEDERATED_LAYERS`（:2554，当前 `["domain","shared","application"]`）与 `scan_project` 登记表键 `ports/<file>`；跑 `cargo run --bin check-arch`。
 - `tests/workspace_topology_test.rs`：**M0/M1/M2/M3 都会触发** `infra` 期望依赖 `:436` 由 `["rustmark-core"]` 改为 `["rustmark-core","rustmark-ports"]`（:439 报错文案同步）；**M2 额外**需为 `rustmark-assembly` 新增断言（期望 `[core, infra, ports]`）；`default_members_cover_every_workspace_member`（:70）随 `members` 列表自动校验新 crate。
-- `docs/architecture-constraints.md` §4.5 登记表路径 `shared/kernel/dialog` → `ports/dialog`。
+- `docs/spec/architecture-constraints.md` §4.5 登记表路径 `shared/kernel/dialog` → `ports/dialog`。
 - `core/src/lib.rs:40` `pub use rustmark_shared::shared;` — 若用桥接保 `rustmark_core::shared::<port>` 路径不变，需增 `pub use rustmark_ports::*;`。
 
 ---

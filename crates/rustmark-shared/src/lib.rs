@@ -1,7 +1,7 @@
 //! # rustmark-shared —— 共享内核（Shared Kernel，TD-04 抽出，2026-10-26）
 //!
 //! 可被任意层依赖的**纯值（值对象）/ 唯一真源**（零 IO）。分层规则见
-//! `docs/architecture-constraints.md` §3 / §4.5：本 crate 只有 serde /
+//! `docs/spec/architecture-constraints.md` §3 / §4.5：本 crate 只有 serde /
 //! thiserror / ahash 三个纯数据依赖，反向依赖任何层都会在 Cargo 解析期成环
 //! 报错——「shared 不依赖任何层」从词法规则升级为结构性事实。
 //!

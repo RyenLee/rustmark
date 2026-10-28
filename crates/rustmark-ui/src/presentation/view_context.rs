@@ -42,7 +42,7 @@
 //!
 //! **契约要独立于组合根**——这是唯一的理由。
 //!
-//! views 按 ADR-013 决策 3 **留 root**（`docs/architecture-constraints.md`
+//! views 按 ADR-013 决策 3 **留 root**（`docs/spec/architecture-constraints.md`
 //! §10.1 硬约束 2：presentation 外移采用「views 留 root 的中间 crate」形态，
 //! 否则 R-11/R-12 的「views ∈ root、state ∈ 另一 crate」跨 crate 字段保护
 //! 会被降级成同 crate 内约束）。故「为将来搬迁铺路」这条理由**不成立**，

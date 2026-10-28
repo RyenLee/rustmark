@@ -51,7 +51,7 @@ D-3 阶段 4b-5：集合相等双向断言钉死 core 的 pub 字段面）。
 > **当前状态（2026-10-21 实测）**：`cargo test --all-targets` 为 **2099 passed / 0 failed / 4 ignored**，全量回归约 44s（热构建）。相对 2026-10-21 上午基线 2090，净增 **+9**，其中 R-06「切标签保留光标」+3（`tests/app/tab_cursor_test.rs` 三层判据：应用层 per_doc_cursor 表记/取、pending_cursor 排入并被渲染帧消费、真帧读 egui `TextEditState` 脱字符落在恢复位置）、R-17「widgets 收口」+4（`tests/presentation/search_alignment_test.rs` 搜索分组头对齐集成 1 + `widgets/row.rs` 的 `paint_row_background` 单测 3）、R-20「fonts.rs 拆分」+1（`src/infrastructure/fonts/mod.rs` 的 `discovery_prefers_project_fonts_dir_over_system_candidates` 注入式单测）、V11-55「shared 内部环破除」+1（`src/shared/dialog.rs` 的 `default_filters_derives_from_the_whitelist` 对拍用例）。**R-11 整体完成 + R-12 机械规则上线 + R-06 切标签保留光标 + R-17 widgets 收口落地 + R-20 fonts 可测拆分落地 + V11-55 shared 环破除**。
 > 4 个 `ignored` 分布于 4 个测试目标，均为**有意忽略**：2 个性能基准（`#[ignore = "…需 release 下显式运行"]`）、1 个生成型 golden（`"生成型用例：需要时用 --ignored 手动跑"`）、1 个需外网（`"需外网"`）。
 > 2026-10-10 深夜曾实测 1519 passed / 7 failed，7 项分三类：① `presentation` 的 4 条 `top_menu_test`——工具栏「格式」组已**平铺为按钮**，测试仍按「分组下拉标题」定位，属**期望滞后于代码**；② `integration` 的 2 条语料快照——解析器新增 `header_spans`/`rows_spans`/`depth`/`ordinal`/`spans` 字段后 `{:?}` 快照文本已变，`tests/data/golden/*.expected` 未重生成，属**期望滞后**；③ `infrastructure` 的 `real_export_writes_a_real_pdf_to_the_chosen_path`——无头 Edge 在沙箱环境不产出 PDF，属**环境限制**。
-> **三类均已关闭**（V11-14 / V11-15，详见 `docs/v1.1-backlog.md`）：①②随 2026-10-11~14 批次修复（测试改按平铺按钮定位、golden 重生成复核），③经 2026-10-14 复测确认在当前环境通过。
+> **三类均已关闭**（V11-14 / V11-15，详见 `docs/plans/v1.1-backlog.md`）：①②随 2026-10-11~14 批次修复（测试改按平铺按钮定位、golden 重生成复核），③经 2026-10-14 复测确认在当前环境通过。
 > 本节其余数字（覆盖率、25s 耗时等）为 2026-10-09 快照，未复测。
 
 ---

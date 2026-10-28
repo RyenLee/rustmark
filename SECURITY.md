@@ -60,7 +60,7 @@
   单个上游 crate 的独立 PoC 请直接向上游报告。
 - **未签名产物的供应链提示**：当前发布产物**未做代码签名**（Windows SmartScreen /
   macOS Gatekeeper 会拦截）。发布页提供 SHA256 校验和，请先核对再运行。
-  签名证书属可选投入，见 `docs/release.md` §6。
+  签名证书属可选投入，见 `docs/guides/release.md` §6。
 
 ## 5. 产物完整性校验
 

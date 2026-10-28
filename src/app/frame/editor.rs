@@ -134,7 +134,7 @@ impl EditorApp {
     ///
     /// 与 [`rustmark_core::application::markdown::service::span_cache::HighlightPace`]
     /// 同源：打字期不每击键整篇重算（`compute_stats` 在 1MB 上 ≈ 9.5ms，
-    /// 见 `docs/metrics.md` §3.2.5），而是沿用「上一次静止时算出的结果」，
+    /// 见 `docs/spec/metrics.md` §3.2.5），而是沿用「上一次静止时算出的结果」，
     /// 直到文档**静止满 [`super::STATS_DEBOUNCE_MS`]** 才刷新。
     ///
     /// 与高亮的区别：高亮首次见某篇要立刻上色；这里**首次见某篇也要立刻算**
@@ -569,7 +569,7 @@ impl EditorApp {
     /// 领域整篇回读（那次回读会在每一帧把绑定给 egui 的字符串整体替换一遍，
     /// 迫使 `TextEdit` 每敲一个键就重新推导光标 / 选区 / 撤销栈，表现为编辑区
     /// 闪烁）。R-12 把「视图不得直写 `app.editor_text`」机械化，故这条改由
-    /// 方法入口收敛（见 `docs/architecture-constraints.md`）。
+    /// 方法入口收敛（见 `docs/spec/architecture-constraints.md`）。
     pub(crate) fn set_editor_text(&mut self, text: String) {
         self.editor_text = text;
     }

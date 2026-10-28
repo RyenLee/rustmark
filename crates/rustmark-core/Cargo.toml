@@ -19,7 +19,7 @@ publish = false
 # UiAction / MenuGroup 是菜单 / 工具栏 / 命令面板 / 快捷键共用的词汇表，
 # 抽成零依赖叶子：icons（V11-58 待拆）也只要这一份，不必反向依赖整个 core。
 # 「不得反向引用 core」由 Cargo 循环依赖 + workspace 拓扑断言兜底
-# （docs/workspace-topology.expected.txt）——零依赖是本 crate 的设计约束。
+# （docs/spec/workspace-topology.expected.txt）——零依赖是本 crate 的设计约束。
 rustmark-actions = { path = "../rustmark-actions" }
 
 # --- 本地 crate（TD-04：共享内核，2026-10-26 抽出）---

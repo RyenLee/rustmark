@@ -8,7 +8,7 @@
     cargo llvm-cov --all-targets --lcov --output-path lcov.info -- --skip large_full_text_find_is_bounded
     python tools/coverage_gate.py lcov.info [--overall 70] [--domain 90]
 
-排除项及理由（与 docs/testing.md §排除清单一致）：
+排除项及理由（与 docs/guides/testing.md §排除清单一致）：
 - `src/bin/**`：架构校验工具本身，不随应用分发。
 - `tests/` 与 `#[cfg(test)]`：lcov 报告只含 src/ 下被编译的生产代码，
   cfg(test) 天然不在内，无需额外处理。
@@ -54,7 +54,7 @@ def normalize(posix_path: str) -> str:
 
 
 def is_excluded(posix_path: str) -> bool:
-    """排除清单（理由见模块 docstring 与 docs/testing.md）。"""
+    """排除清单（理由见模块 docstring 与 docs/guides/testing.md）。"""
     rel = normalize(posix_path)
     parts = PurePosixPath(rel).parts
     return "src" in parts[:1] and "bin" in parts

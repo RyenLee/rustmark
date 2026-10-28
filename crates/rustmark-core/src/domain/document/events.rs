@@ -1,6 +1,6 @@
 //! Document 上下文的领域事件（S3-03）。
 //!
-//! 事件是**通知**而非命令（`docs/architecture-constraints.md`）：只携带 ID 与标量，
+//! 事件是**通知**而非命令（`docs/spec/architecture-constraints.md`）：只携带 ID 与标量，
 //! 不携带聚合引用；订阅者如需详情，应凭 ID 向应用层查询。
 
 use crate::ports::event::DomainEvent;

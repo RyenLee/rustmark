@@ -43,7 +43,7 @@
 | # | 契约 | 原型出处 | Rust 实施点 |
 |---|---|---|---|
 | A-16 | 统计字段：字数/字符数（含空格、不含空格）/行数/段落/标题/代码块/链接/图片/任务完成度/预计阅读时长 | `StatsDialog.vue` | S4-01 `StatsView` ⚠ 算法待核对 |
-| A-17 | 搜索命中上限：单文件 50、总量 300（**2026-10-25 偏差**：本实现 100 / 1000，见 `docs/threshold-review-2026-10-25.md`） | `lib/search.ts` | S4-07 |
+| A-17 | 搜索命中上限：单文件 50、总量 300（**2026-10-25 偏差**：本实现 100 / 1000，见 `docs/reports/threshold-review-2026-10-25.md`） | `lib/search.ts` | S4-07 |
 | A-18 | 最近文件上限 20 | `stores/workspace.ts` | S3-11 |
 | A-19 | 图片内联体积上限（原型 512KB/张，仅 warn） | `lib/assets.ts:2` | ADR-003 改为**硬约束** |
 | A-20 | 写作目标进度（0 表示不启用），达标提示 | `stores/settings.ts`、`StatusBar.vue` | S6-11（P2，视工期） |

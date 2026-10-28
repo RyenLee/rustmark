@@ -5,23 +5,23 @@
 # docs/{current,target}_dependency_graph.html 曾由一次性 `cargo depgraph` 生成、无脚本，
 # 存在腐化风险。本脚本让快照可复现：
 #
-#   1. docs/workspace-topology.expected.txt —— 保留手写注释头（基线历史），只重写机器主体：
+#   1. docs/spec/workspace-topology.expected.txt —— 保留手写注释头（基线历史），只重写机器主体：
 #      基于始终可用的 `cargo tree` 归一化输出覆盖「注释头之后的机器部分」，与
 #      tests/workspace_topology_test.rs 的 CI 拓扑门禁对账（本地依赖边 / crate 依赖面）。
 #   2. target/dependency-graph.generated.svg —— `cargo depgraph` 生成的机器图，
 #      落到 target/（不入库）供临时查看。需 `cargo install cargo-depgraph`，
 #      未安装时跳过并提示，不影响 txt 快照。
 #
-# **本脚本不写 docs/ 下的任何图**。`docs/current_dependency_graph.html` 是**人工维护**的
+# **本脚本不写 docs/ 下的任何图**。`docs/spec/current_dependency_graph.html` 是**人工维护**的
 # 架构示意图（分层布局 + 中文说明，信息量高于 cargo depgraph 的原始输出）；早先版本用
-# `cargo depgraph > docs/current_dependency_graph.html` 整体覆盖，会把这幅手绘图抹掉——
+# `cargo depgraph > docs/spec/current_dependency_graph.html` 整体覆盖，会把这幅手绘图抹掉——
 # 2026-10-28 已改为输出到 target/，两者不再互斥。
 #
 # 用法：bash scripts/gen_dep_graph.sh   （需在 workspace 根目录上下文中运行）
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-EXPECTED=docs/workspace-topology.expected.txt
+EXPECTED=docs/spec/workspace-topology.expected.txt
 
 # --- 1. 拓扑期望基线：保留注释头，重写机器主体 ---
 echo "== 生成 $EXPECTED（保留注释头）=="
@@ -45,7 +45,7 @@ if cargo depgraph --version >/dev/null 2>&1; then
   mkdir -p "$(dirname "$GEN_SVG")"
   cargo depgraph --workspace --format svg > "$GEN_SVG"
   echo "   已写入 $GEN_SVG"
-  echo "   注意：docs/current_dependency_graph.html 是人工维护的示意图，本脚本**不覆盖**它。"
+  echo "   注意：docs/spec/current_dependency_graph.html 是人工维护的示意图，本脚本**不覆盖**它。"
 else
   echo "== 跳过机器图 =="
   echo "   未安装 cargo-depgraph（运行：cargo install cargo-depgraph）。"

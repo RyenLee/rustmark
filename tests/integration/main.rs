@@ -453,7 +453,7 @@ fn exported_html_keeps_charset_and_style() {
 }
 
 // ---------------------------------------------------------------------------
-// 性能基线（写入 docs/metrics.md 的数字来源）
+// 性能基线（写入 docs/spec/metrics.md 的数字来源）
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -487,7 +487,7 @@ fn measure_10kb_parse_time() {
         "[metrics] 10KB 解析：p50={p50:.2}ms p95={p95:.2}ms（{} 字节）",
         markdown.len()
     );
-    // 宽松上限：防止数量级退化（目标 5ms 见 docs/metrics.md）。
+    // 宽松上限：防止数量级退化（目标 5ms 见 docs/spec/metrics.md）。
     assert!(
         p95 <= 50.0,
         "10KB 解析 p95 {p95:.2}ms 疑似退化（目标 ≤5ms）"
@@ -618,7 +618,7 @@ fn measure_twenty_language_highlight_time() {
 /// - **打字帧**：内容刚变、仍在 150ms 防抖窗口内 → **不进高亮器**（OPT-011 ①）；
 /// - **补算帧**：停手满 150ms 后 → 一次性上色，这是防抖的代价所在。
 ///
-/// 数字写入 `docs/metrics.md`。
+/// 数字写入 `docs/spec/metrics.md`。
 #[test]
 fn measure_editor_frame_highlight_cost() {
     use std::sync::{Arc, Mutex};

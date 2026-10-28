@@ -224,7 +224,7 @@ pub fn show(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
     //
     // # 为什么这次克隆**省不掉**（问题 053，读 egui 0.37.0 源码后的结论）
     //
-    // 1MB 上它值 0.22ms／帧（`docs/metrics.md` §3.2.5 的 S1），看着像白给，
+    // 1MB 上它值 0.22ms／帧（`docs/spec/metrics.md` §3.2.5 的 S1），看着像白给，
     // 但本项目**无法回避**：`TextEdit` 直接写调用方给的 `&mut dyn TextBuffer`
     // （`text_edit/builder.rs` 的 `insert_replacing_selection` / `insert_text_at`），
     // 编辑前的字节**就地在缓冲里被覆盖**。而「领域是内容单一真相」又要求把

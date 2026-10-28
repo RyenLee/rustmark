@@ -17,7 +17,7 @@
 //!   开销排除在样本之外（那是一次性成本，不是稳态帧成本）。
 //! - 样本取 p50 / p95：p50 代表典型体验，p95 用于钉住抖动。
 //!
-//! 数字写入 `docs/metrics.md`（唯一数字来源，禁止散落在代码注释里）。
+//! 数字写入 `docs/spec/metrics.md`（唯一数字来源，禁止散落在代码注释里）。
 
 use std::time::Instant;
 
@@ -207,7 +207,7 @@ fn measure_10kb_full_highlight_is_bounded() {
         "10KB 文档改一行只应重建 1 行，实际 {} 行（共 {} 行）",
         stats.reshaped_lines, stats.total_lines
     );
-    // 宽松上限：钉住数量级退化（目标 ≤10ms 见 docs/metrics.md）。
+    // 宽松上限：钉住数量级退化（目标 ≤10ms 见 docs/spec/metrics.md）。
     assert!(
         frame_p95 <= 40.0,
         "10KB 增量帧 p95 {frame_p95:.2}ms 疑似退化（目标 ≤10ms）"
@@ -322,7 +322,7 @@ fn measure_very_long_single_line_is_bounded() {
     // 门禁 `cargo test --all-targets` 跑的是 debug——同一段排版在两个档位差约
     // 一个数量级（2026-10-16 实测：release p95 77.5ms ／ debug p95 650.5ms，≈8.4×）。
     // 沿用 release 阈值会让门禁**稳定误报**，而这条断言的使命只是「钉住不卡死」
-    // 这一底线（是否需要行级截断由 release 实测数字裁定，见 `docs/metrics.md`
+    // 这一底线（是否需要行级截断由 release 实测数字裁定，见 `docs/spec/metrics.md`
     // §3.2：27 万字节超长单行 p95 77.5ms，无须行级保护）。
     // 故 debug 放到 1500ms：仍能拦住秒级→十秒级的真卡死，又不把正常的
     // debug 开销判成缺陷。**达标结论一律以 release 数字为准。**

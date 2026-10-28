@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """离线预发布演练（S9-06 的可离线部分）。
 
-完整的预发布演练需要 fork 仓库、CI 与三平台真机（docs/release.md §4），
+完整的预发布演练需要 fork 仓库、CI 与三平台真机（docs/guides/release.md §4），
 当前环境无远端、无 git 历史、仅 Windows，无法闭环。但发布流程中**不依赖
 远端**的环节可以先离线验证，从而把「待真机」收敛到最小且每条都有归属：
 
@@ -12,7 +12,7 @@
 3. Release Notes 阶段归组：构造 subject 列表验证分组与排序（含两位数阶段号）
 4. 无私钥 / 证书入仓：扫描工作区（排除 target / dist）无证书与私钥，
    `.gitignore` 已排除相关扩展名
-5. 回滚步骤：docs/release.md 三条命令齐备，且与 release.yml 的 tag 触发一致
+5. 回滚步骤：docs/guides/release.md 三条命令齐备，且与 release.yml 的 tag 触发一致
 6. SBOM（DEP-06）：CycloneDX 1.5 结构完整（purl / version / licenses / 根组件
    版本），且两次生成逐字节一致（不写时间戳）
 
@@ -277,9 +277,9 @@ def check_no_secrets(rep: Report) -> None:
 
 
 def check_rollback_docs(rep: Report) -> None:
-    doc = ROOT / "docs" / "release.md"
+    doc = ROOT / "docs" / "guides" / "release.md"
     if not doc.is_file():
-        rep.bad("回滚步骤", "docs/release.md 缺失")
+        rep.bad("回滚步骤", "docs/guides/release.md 缺失")
         return
     text = doc.read_text(encoding="utf-8")
     needed = {
@@ -290,7 +290,7 @@ def check_rollback_docs(rep: Report) -> None:
     }
     missing = [k for k in needed if k not in text]
     if missing:
-        rep.bad("回滚步骤", f"docs/release.md 缺少 {[needed[m] for m in missing]}")
+        rep.bad("回滚步骤", f"docs/guides/release.md 缺少 {[needed[m] for m in missing]}")
     else:
         rep.ok("回滚步骤", "删除 Release / 撤回远端 tag / 本地删 tag 三步齐备且含重打警示")
 

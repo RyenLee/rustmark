@@ -23,7 +23,7 @@
 - **AC-5（门禁全绿）**：每个 commit 后 `cargo run --bin check-arch` 退出码 0、`cargo clippy --all-targets -- -D warnings` 干净、`cargo fmt --check` 干净。
 - **AC-6（golden 快照不变）**：`tests/data/golden/*.expected` 与两个 `*_parses_to_stable_snapshot` 等快照零改动、零重新生成。
 - **AC-7（覆盖率不降）**：`python tools/coverage_gate.py lcov.info` 维持整体 ≥70%、`src/domain/**` ≥90%。
-- **AC-8（发布级验证）**：`cargo build --release` 通过且产物不超过 10 MB 红线（预期体积几乎不变）；波次 5/6 后执行 `docs/manual-qa-windows.md` 手工清单。
+- **AC-8（发布级验证）**：`cargo build --release` 通过且产物不超过 10 MB 红线（预期体积几乎不变）；波次 5/6 后执行 `docs/guides/manual-qa-windows.md` 手工清单。
 - **AC-9（可回滚）**：每个原始文件 = 1 个独立 commit，可单独 `git revert`；任一 commit 后测试不绿即回滚该 commit，不得带病前进。
 
 ---
@@ -110,7 +110,7 @@
 |---|---|
 | domain | 277 passed |
 | application | 191 passed |
-| infrastructure | 277 passed，**1 failed：`pdf_exporter_test::real_export_writes_a_real_pdf_to_the_chosen_path`**（无头 Edge 在沙箱不产出 PDF，环境限制，[docs/testing.md](file:///d:/data/WorkBuddyCache/workspace/rustmark/docs/testing.md) V11-15 已登记） |
+| infrastructure | 277 passed，**1 failed：`pdf_exporter_test::real_export_writes_a_real_pdf_to_the_chosen_path`**（无头 Edge 在沙箱不产出 PDF，环境限制，[docs/guides/testing.md](file:///d:/data/WorkBuddyCache/workspace/rustmark/docs/guides/testing.md) V11-15 已登记） |
 | integration | 79 passed，**1 ignored：`golden_fixture::generate_large_fixture`** |
 | presentation | 488 passed |
 | app | 49 passed |
@@ -118,7 +118,7 @@
 | e2e / arch_violation_fixture / startup_smoke 等 | 全绿 |
 | **合计** | **1572 passed / 1 failed / 1 ignored** |
 
-注意：[docs/testing.md](file:///d:/data/WorkBuddyCache/workspace/rustmark/docs/testing.md) 记载的「7 failed」是 2026-010 旧快照，当前 main 仅剩上述 1 个环境型失败；**一律以本次实测为准**。
+注意：[docs/guides/testing.md](file:///d:/data/WorkBuddyCache/workspace/rustmark/docs/guides/testing.md) 记载的「7 failed」是 2026-010 旧快照，当前 main 仅剩上述 1 个环境型失败；**一律以本次实测为准**。
 
 ### 1.4 黄线清单（300–500 行，本次不动，登记 follow-up）
 
@@ -329,7 +329,7 @@ src/.../foo.rs (900行)            src/.../foo.rs        ← facade：模块文�
 1. 全量行数复核（§5.5），确认 31 文件 facade+子文件全部 ≤500。
 2. 覆盖率门禁（§5.3）；release 体积门禁（§5.3）。
 3. 逐波 PR 合入 main（或整分支 squash 保留 31 commits 历史——见 Open questions）。
-4. 更新 [docs/testing.md](file:///d:/data/WorkBuddyCache/workspace/rustmark/docs/testing.md) 基线数字（1572/1/1）——这是唯一允许修改的 docs 文件，且只改数字。
+4. 更新 [docs/guides/testing.md](file:///d:/data/WorkBuddyCache/workspace/rustmark/docs/guides/testing.md) 基线数字（1572/1/1）——这是唯一允许修改的 docs 文件，且只改数字。
 
 ---
 
@@ -372,7 +372,7 @@ cargo test --release --test integration -- --test-threads=1 measure large   # �
 
 ### 5.4 手工 QA（波次 5、波次 6 后各一次）
 
-按 [manual-qa-windows.md](file:///d:/data/WorkBuddyCache/workspace/rustmark/docs/manual-qa-windows.md) 执行：启动/建文档/编辑保存/预览（代码块、表格、数学、mermaid、图片）/查找替换/设置改主题与快捷键/导出 HTML 与 PDF/侧栏四 tab/拖拽打开/崩溃恢复。重点目测 mermaid/math/preview/主题（headless 测试无像素断言，这是唯一防线）。
+按 [manual-qa-windows.md](file:///d:/data/WorkBuddyCache/workspace/rustmark/docs/guides/manual-qa-windows.md) 执行：启动/建文档/编辑保存/预览（代码块、表格、数学、mermaid、图片）/查找替换/设置改主题与快捷键/导出 HTML 与 PDF/侧栏四 tab/拖拽打开/崩溃恢复。重点目测 mermaid/math/preview/主题（headless 测试无像素断言，这是唯一防线）。
 
 ### 5.5 行数复核命令（波次 7）
 
@@ -408,7 +408,7 @@ Get-ChildItem -Path src -Recurse -Filter *.rs | ForEach-Object {
 
 1. **Scenario：编码重构后 GBK 文件打开乱码但测试全绿**（若有人同时移动了 `.bin` 或改错索引）。
    **Trigger**：波次 3 合入后用户反馈 GBK 文件乱码；`encoding.rs` 子文件 include 路径指向错误但碰巧编译通过（文件存在、表错位不可能——实际编译期即失败；更现实的 trigger 是误改 decode 分支顺序）。
-   **Mitigation**：R5——`.bin` 不移动、只改路径字符串；infrastructure 目标含 GBK/GB18030 全量用例；AC-2 禁改分支；手工 QA 含 GBK 文件打开（[manual-qa](file:///d:/data/WorkBuddyCache/workspace/rustmark/docs/manual-qa-windows.md)）。
+   **Mitigation**：R5——`.bin` 不移动、只改路径字符串；infrastructure 目标含 GBK/GB18030 全量用例；AC-2 禁改分支；手工 QA 含 GBK 文件打开（[manual-qa](file:///d:/data/WorkBuddyCache/workspace/rustmark/docs/guides/manual-qa-windows.md)）。
 
 2. **Scenario：frame.rs 拆分后启动即崩/事件丢失（update 路由顺序被扰动）**。
    **Trigger**：波次 6 后 startup_smoke 红，或手工 QA 中快捷键/保存/对话框失灵。

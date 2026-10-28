@@ -16,7 +16,7 @@
 //!
 //! 这条规则同时被三方需要：表现层（文件树置灰、双击拦截）、应用层
 //! （打开守卫、拖放分类）、基础设施层（原生对话框过滤器）。而
-//! `docs/architecture-constraints.md` §4 规定：表现层不得依赖 `domain`，
+//! `docs/spec/architecture-constraints.md` §4 规定：表现层不得依赖 `domain`，
 //! 基础设施层不得依赖 `application`。三方共同的依赖点只有 `shared`
 //! （与 [`crate::shared::encoding`] / [`rustmark_ports::dialog`] 同一模式，R-10 项 A 端口迁至 rustmark-ports）。
 //!

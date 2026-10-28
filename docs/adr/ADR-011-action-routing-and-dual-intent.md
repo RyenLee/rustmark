@@ -3,7 +3,7 @@
 - **状态**：已接受（2026-10-21 补记；决策早于本 ADR，已在代码中落地）
 - **决策者**：项目架构负责人
 - **关联任务**：V11-54a R-04（动作接线）/ 问题 066（跳转意图）/ 动作路由史（T6）
-- **关联文档**：`docs/architecture-constraints.md`、`src/app/frame/actions.rs`、
+- **关联文档**：`docs/spec/architecture-constraints.md`、`src/app/frame/actions.rs`、
   `src/presentation/views/scroll_sync.rs`、`ADR-008`
 
 ## 背景

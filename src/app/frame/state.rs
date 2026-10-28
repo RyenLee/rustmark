@@ -25,7 +25,7 @@ type LineIndexCache =
 /// 状态栏字数统计的**防抖**节拍器（建议一 / 问题 039）。
 ///
 /// 与编辑器高亮的 `HighlightPace` 同源：打字期不每击键整篇重算
-/// （1MB 上 `compute_stats` ≈ 9.5ms，见 `docs/metrics.md` §3.2.5），
+/// （1MB 上 `compute_stats` ≈ 9.5ms，见 `docs/spec/metrics.md` §3.2.5），
 /// 而是沿用「上一次静止时算出的结果」，直到文档**静止满 [`STATS_DEBOUNCE_MS`]** 才刷新。
 ///
 /// 与高亮的区别：高亮首次见某篇要立刻上色；这里**首次见某篇也要立刻算**
@@ -62,7 +62,7 @@ impl Default for StatsPace {
 /// 状态栏统计防抖窗口（毫秒）。
 ///
 /// 取 150ms：与编辑器高亮 `HighlightPace` 的静止窗口一致——用户停手约一帧半后
-/// 刷新字数，打字期完全不重算。数字来自 `docs/metrics.md` §3.2.5：`compute_stats`
+/// 刷新字数，打字期完全不重算。数字来自 `docs/spec/metrics.md` §3.2.5：`compute_stats`
 /// 在 1MB 上 ≈ 9.5ms，与其每击键付一次，不如等静止后付一次。
 pub(crate) const STATS_DEBOUNCE_MS: u64 = rustmark_core::shared::constants::DEBOUNCE_MS;
 
@@ -159,7 +159,7 @@ pub struct EditorApp {
     /// [`EditorApp::line_index`]。放在这里而不是每帧现算，是因为状态栏
     /// （光标的行列 / 选区的行列 / 「N 行」）与编辑区（`desired_rows` /
     /// 行号栏宽度）一帧要问四五次**同一份**信息，1MB 上实测每题一次
-    /// 全文扫描、每帧恒定 1.1ms（`docs/metrics.md` §3.2.5）。
+    /// 全文扫描、每帧恒定 1.1ms（`docs/spec/metrics.md` §3.2.5）。
     pub(super) line_index_cache: LineIndexCache,
     /// 状态栏字数统计的防抖节拍器（建议一 / 问题 039；见 [`StatsPace`]）。
     pub(super) stats_pace: StatsPace,

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """阈值基线校验（开发期门禁，2026-10-25）。
 
-`docs/thresholds.baseline.yaml` 是**开发期基线**：它不参与程序运行
+`docs/spec/thresholds.baseline.yaml` 是**开发期基线**：它不参与程序运行
 （文件头 `runtime_consumed: false`），但要求与源码逐条一致。本脚本把
 「改了常量没改基线」「基线行号漂移」「数值被悄悄调走」变成可执行检查。
 
@@ -288,7 +288,7 @@ def rewrite_sources(yaml_path: Path, fixes: dict[str, int]) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="校验阈值基线与源码一致")
-    parser.add_argument("--yaml", default="docs/thresholds.baseline.yaml")
+    parser.add_argument("--yaml", default="docs/spec/thresholds.baseline.yaml")
     parser.add_argument("--root", default=None, help="仓库根（默认脚本上一级）")
     parser.add_argument("--strict-lines", action="store_true", help="行号漂移也判失败")
     parser.add_argument("--fix", action="store_true", help="回写漂移的 source 行号")

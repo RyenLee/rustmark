@@ -32,7 +32,7 @@ fn write_fixture(root: &Path, rel: &str, content: &str) {
     std::fs::write(path, content).unwrap();
 }
 
-/// 写入豁免登记表（`docs/architecture-constraints.md` 的登记区段）。
+/// 写入豁免登记表（`docs/spec/architecture-constraints.md` 的登记区段）。
 ///
 /// 登记表是**豁免指令的另一半**：代码里的 `// arch-allow: X` 只在登记表里
 /// 出现过的对象上才有效。没登记的豁免会被报「豁免未登记」——
@@ -49,7 +49,10 @@ fn write_registry(root: &Path, rows: &[(&str, &str)]) {
 /// 直接以 manifest 为基准的写入口；`write_registry` 保持旧口径
 /// （传 src 根，parent 即 manifest），既有用例不动。
 fn write_registry_at(manifest: &Path, rows: &[(&str, &str)]) {
-    let path = manifest.join("docs").join("architecture-constraints.md");
+    let path = manifest
+        .join("docs")
+        .join("spec")
+        .join("architecture-constraints.md");
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     let mut text = String::from("# 架构约束\n\n<!-- arch-allow:registry -->\n");
     text.push_str("| 文件 | 对象 | 理由 |\n|---|---|---|\n");
@@ -66,7 +69,10 @@ fn write_registry_at(manifest: &Path, rows: &[(&str, &str)]) {
 /// 两者互不覆盖是标记对的职责；本 helper 只写 shared 区段，
 /// 既有用例需要豁免表时仍走 `write_registry_at`。
 fn write_shared_registry(manifest: &Path, files: &[&str]) {
-    let path = manifest.join("docs").join("architecture-constraints.md");
+    let path = manifest
+        .join("docs")
+        .join("spec")
+        .join("architecture-constraints.md");
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     let mut text = String::from("# 架构约束\n\n<!-- shared:registry -->\n");
     text.push_str("| 文件 | 三问理由 |\n|---|---|\n");
@@ -370,7 +376,7 @@ fn ui_submodule_must_be_synced_to_root_and_crate_map() {
     // §10.1 只登记了 rich。
     write_fixture(
         manifest,
-        "docs/architecture-constraints.md",
+        "docs/spec/architecture-constraints.md",
         "### 10.1 crate 地图\n\n| `rustmark-ui` | widgets / rich |\n\n### 10.2 判据\n",
     );
 
@@ -402,7 +408,7 @@ fn ui_submodule_must_be_synced_to_root_and_crate_map() {
     );
     write_fixture(
         manifest,
-        "docs/architecture-constraints.md",
+        "docs/spec/architecture-constraints.md",
         "### 10.1 crate 地图\n\n| `rustmark-ui` | widgets / rich / delta |\n\n### 10.2 判据\n",
     );
     let after = arch_check::check_ui_submodule_sync(manifest);
@@ -1473,7 +1479,7 @@ fn the_layer_root_files_are_judged_too() {
 ///
 /// R-03 B1 收官后视图层零 `crate::app` 引用，留下的豁免只剩坏处：
 /// 漏写 `use` 到 `crate::app::frame` 不会有任何提示，规则从「不该这么做」
-/// 退化成「随你」。故按 `docs/architecture-constraints.md` §10.1 硬约束 5
+/// 退化成「随你」。故按 `docs/spec/architecture-constraints.md` §10.1 硬约束 5
 /// 撤回。本用例随之反转为「必须报」——**方向反转本身就是兑现证据**。
 ///
 /// 若哪天视图真的又需要它，正确处理是重新评估 `EditorViewContext` 是否缺
@@ -2380,7 +2386,7 @@ fn the_report_is_produced_by_a_single_source() {
     let report = arch_check::format_report(&violations);
     assert!(report.contains("domain/document/aggregate.rs:7"));
     assert!(report.contains("domain 层禁止依赖 egui"));
-    assert!(report.contains("docs/architecture-constraints.md"));
+    assert!(report.contains("docs/spec/architecture-constraints.md"));
 }
 
 // ============================================================================
@@ -3340,7 +3346,7 @@ fn synthetic_scan_does_not_require_shared_registration() {
 ///
 /// 零依赖词汇 crate 没有层内边界可言；「不得引用 core / 任何 crate」由
 /// Cargo 循环依赖（core 已依赖 actions，反向加普通依赖即解析期报错）与
-/// workspace 拓扑断言（`docs/workspace-topology.expected.txt`）兜底——
+/// workspace 拓扑断言（`docs/spec/workspace-topology.expected.txt`）兜底——
 /// 两者都比词法规则强，且覆盖「获得任意依赖」而不只「引用 core」一种
 /// 形状。配套的依赖面规格断言在 `tests/workspace_topology_test.rs`。
 #[test]

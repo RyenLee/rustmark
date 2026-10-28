@@ -4,7 +4,7 @@
 //!
 //! 它同时服务两处：查找替换面板（表现层 `find_replace_ui_state`）与
 //! 侧栏跨文件搜索（应用层 `application::workspace`）。分层依赖严格单向
-//! （`presentation → application → domain`，见 `docs/architecture-constraints.md`，
+//! （`presentation → application → domain`，见 `docs/spec/architecture-constraints.md`，
 //! `check-arch` 机械校验），应用层不能反向引用表现层——引擎本体因此
 //! 下沉到所有层都能用的 [`crate::shared`]；编译与扫描的**用例**住在
 //! `application::document::find`（V11-61 上浮），表现层只留面板状态。
@@ -12,7 +12,7 @@
 //! # 为什么自己实现而不用 `regex` crate
 //!
 //! 1. **体积**：引入 `regex` + `regex-syntax` 会成为新的体积大头
-//!    （10 MiB 红线，见 `docs/metrics.md` §2），而「全字匹配 + 大小写 + 正则」
+//!    （10 MiB 红线，见 `docs/spec/metrics.md` §2），而「全字匹配 + 大小写 + 正则」
 //!    三者的组合用一个手写匹配器就够；
 //! 2. **UTF-8 安全**：手写扫描天然按 `char` 走，不会切在多字节字符中间。
 //!

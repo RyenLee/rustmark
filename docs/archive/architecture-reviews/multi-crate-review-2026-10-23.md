@@ -4,7 +4,7 @@
 > root（shell，crate `rustmark`）+ `crates/rustmark-core`（crate `rustmark-core`）。
 >
 > **评估方法**：静态盘点（文件/可见性/依赖计数）+ 实测（`cargo tree`、增量构建计时、
-> 全链验证记录）+ 与 `docs/architecture-constraints.md`、`docs/architecture-review-2026-10-23.md`
+> 全链验证记录）+ 与 `docs/spec/architecture-constraints.md`、`docs/architecture-review-2026-10-23.md`
 > 交叉核对。所有数字均为 2026-10-23 拆分合入后的实测值。
 >
 > **姊妹报告**：[架构审查报告（八维度）](./architecture-review-2026-10-23.md)——本文只聚焦

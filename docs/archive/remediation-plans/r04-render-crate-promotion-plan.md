@@ -110,17 +110,17 @@ pub use self::egui::{EguiBackend, apply_egui, rgb8_from_color32};
    - 接受准则不变：**除 `render/egui.rs` 外不得引用 egui**。
 2. **依赖面拓扑断言**（`tests/workspace_topology_test.rs`，对应 ui Cargo.toml 注释的 `ui_crate_dependency_face_is_egui_plus_core`）：
    - ui 期望依赖集由 `{egui, rustmark-core}` 扩为 `{egui, rustmark-core, rustmark-render}`。
-   - 新增 `rustmark-render` 默认面断言：`cargo tree -p rustmark-render --no-default-features` 不含 `egui`（或解析其 `Cargo.toml` 确认 `egui` 为 `optional` 且不在 `default`）。CI 已有 `docs/workspace-topology.expected.txt` 拓扑 diff 兜底。
+   - 新增 `rustmark-render` 默认面断言：`cargo tree -p rustmark-render --no-default-features` 不含 `egui`（或解析其 `Cargo.toml` 确认 `egui` 为 `optional` 且不在 `default`）。CI 已有 `docs/spec/workspace-topology.expected.txt` 拓扑 diff 兜底。
 3. **（可选）新增 `check_render_egui_free_by_default`**：在 `arch_check` 解析 `rustmark-render/Cargo.toml`，断言 `egui` 为 `optional = true` 且未列于 `default` features——把上述第 2 点的本地门禁固化。配 fixture（把 egui 改非 optional → 红）。
 
 ---
 
 ## 5. 路径 / 文档同步
 
-- **`docs/architecture-constraints.md` §10 crate 地图**：新增 `rustmark-render` 行（依赖面：默认无 / 仅 `egui` feature）；更新 `rustmark-ui` 依赖面（egui + core + render）；注明 render 主面 egui-free。
-- **`docs/thresholds.baseline.yaml`**：被搬迁文件的 `source:` 路径由 `crates/rustmark-ui/src/presentation/rich/...` → `crates/rustmark-render/src/...`（**`--fix` 只回行号，路径必须手改**）；涉及 `via` 路径同步；跨 crate 搬迁的 3 件套（field_visibility 白名单 / source / §10）照 R-09 纪律执行。
+- **`docs/spec/architecture-constraints.md` §10 crate 地图**：新增 `rustmark-render` 行（依赖面：默认无 / 仅 `egui` feature）；更新 `rustmark-ui` 依赖面（egui + core + render）；注明 render 主面 egui-free。
+- **`docs/spec/thresholds.baseline.yaml`**：被搬迁文件的 `source:` 路径由 `crates/rustmark-ui/src/presentation/rich/...` → `crates/rustmark-render/src/...`（**`--fix` 只回行号，路径必须手改**）；涉及 `via` 路径同步；跨 crate 搬迁的 3 件套（field_visibility 白名单 / source / §10）照 R-09 纪律执行。
 - **整改计划 `docs/remediation/r01-r11/remediation-plan-2026-10-27.md` §3 R-04**：状态补「升 crate ✅ 落地（commit X）」；触发线说明（行数已越 5.6k）。
-- **`docs/PROGRESS.md`**（若存在）回填实测数字。
+- **`docs/plans/PROGRESS.md`**（若存在）回填实测数字。
 - root `Cargo.toml` 第 166-195 行注释（"rich / shortcuts / widgets 在 V11-62 抽出的 rustmark-ui"）补一句：rich 已于 R-04 升 `rustmark-render`。
 
 ---

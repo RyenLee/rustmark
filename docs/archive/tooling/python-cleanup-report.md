@@ -40,7 +40,7 @@
 全部位于 `tools/`。共同特征：针对某个改造项（R-xx / S-x / V11-xx）**一次性**注入变异、
 跑测试、`try/finally` 还原源码；锚点写死了当时的源码片段，重复执行只会得到「锚点已漂移」的失败，
 没有任何长期复用价值。其结论已逐条写进 `docs/architecture-refactor-plan.md` /
-`docs/v1.1-backlog.md` / `docs/shared-internal-cycle-review.md`。
+`docs/plans/v1.1-backlog.md` / `docs/reports/shared-internal-cycle-review.md`。
 
 | 文件 | 原用途 | 删除理由 |
 |---|---|---|
@@ -91,8 +91,8 @@
 | 文件 | 改写处数 | 说明 |
 |---|---|---|
 | `docs/architecture-refactor-plan.md` | 16 | R-02 / R-03 / R-04 / R-05 / R-11 / R-12 / R-13 / R-17 / R-20 / R-21 各段的变异验证记录 |
-| `docs/v1.1-backlog.md` | 7 | 同上的回填记录 |
-| `docs/shared-internal-cycle-review.md` | 1 | V11-55 变异验证 |
+| `docs/plans/v1.1-backlog.md` | 7 | 同上的回填记录 |
+| `docs/reports/shared-internal-cycle-review.md` | 1 | V11-55 变异验证 |
 | `src/infrastructure/fonts.rs` | 1 | R-20 单测注释改为指向改造计划的 R-20 段 |
 | `tests/app/writing_goal_test.rs` | 1 | R-05 用例注释改为指向改造计划的 R-05 段 |
 

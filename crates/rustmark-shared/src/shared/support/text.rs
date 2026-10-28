@@ -9,7 +9,7 @@
 //! 连续的 ASCII 字母构成一个词，非 ASCII（中文）天然是分隔符。
 //!
 //! 放在 `shared` 而非 `domain` / `application`：表现层不得依赖 `application`
-//! 以外的层，而它同样需要这条规则（见 `docs/architecture-constraints.md`）。
+//! 以外的层，而它同样需要这条规则（见 `docs/spec/architecture-constraints.md`）。
 
 /// 返回 `offset` 所在的**英文词**的字节区间 `(start, end)`。
 ///
@@ -50,7 +50,7 @@ pub fn word_bounds_at(text: &str, offset: usize) -> Option<(usize, usize)> {
 /// `\n` 是 ASCII（0x0A），UTF-8 的续字节恒 ≥ 0x80——因此字节 `0x0A` 的个数
 /// 与 `'\n'` 字符的个数**恒等**。直接扫字节省掉了逐码位的 UTF-8 解码，
 /// 实测（release，100KB 中文 Markdown）为 `split('\n').count()` 的约 **1.8 倍速**，
-/// 1MB 文档上从 ~0.5ms 降到 ~0.27ms（`docs/metrics.md` §3.2.2）。
+/// 1MB 文档上从 ~0.5ms 降到 ~0.27ms（`docs/spec/metrics.md` §3.2.2）。
 ///
 /// # 与 `split('\n').count()` 的等价性
 ///

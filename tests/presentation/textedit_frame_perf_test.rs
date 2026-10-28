@@ -15,7 +15,7 @@
 //! 的那些工作（取高亮 span、算行数、克隆旧文本……），用于回答
 //! 「T.txt 描述的卡顿原因在本项目里还剩多少、在哪一环」。
 //!
-//! 数字写入 `docs/metrics.md`（唯一数字来源，禁止散落在代码注释里）。
+//! 数字写入 `docs/spec/metrics.md`（唯一数字来源，禁止散落在代码注释里）。
 
 use std::fs;
 use std::sync::Arc;
@@ -192,14 +192,14 @@ fn warm_editor(app: &mut EditorApp, clock: &TestClock) -> (egui::Context, f64) {
 /// 这条断言立刻红——它同时钉住「高亮降级（OPT-011 ①）仍然生效」这个用户可感的性质。
 ///
 /// **> 500KB（已降级为纯文本）**：给 **64ms**，语义退化为「防数量级退化」。
-/// 这一档**实测超指标**（1MB 约 41ms，见 `docs/metrics.md` §3.2.3）：此处不假装达标，
+/// 这一档**实测超指标**（1MB 约 41ms，见 `docs/spec/metrics.md` §3.2.3）：此处不假装达标，
 /// 只钉住「别更糟」。
 ///
 /// ⚠ **2026-10-16 问题 049 修正**：本函数原先写「这笔钱花在框架里、本项目无法规避，
 /// 真要把 1MB 打字做进 16ms 得自绘编辑器」——该归因已被实测证伪。1MB 击键帧里每帧
 /// 真正重排的行数**恒为 1**（不是 58k 行），成本构成为「空闲帧 + 排版层 +
 /// `diff_replace` + 应用层文本变更链」，其中占 58% 的应用层净开销与自绘无关。
-/// 见 `docs/metrics.md` §3.2.4 与 `docs/archive/stage-reports/textedit-cost-attribution.md`。
+/// 见 `docs/spec/metrics.md` §3.2.4 与 `docs/archive/stage-reports/textedit-cost-attribution.md`。
 fn typing_frame_limit_ms(bytes: usize) -> f64 {
     let release = if bytes >= 1024 * 1024 { 64.0 } else { 16.0 };
     if cfg!(debug_assertions) {
@@ -236,7 +236,7 @@ fn timed_ms(runs: usize, mut op: impl FnMut()) -> Vec<f64> {
 /// # 阈值为什么刻意宽松
 ///
 /// 这条断言的使命是**钉住数量级退化**，不是卡住某个具体数字——具体数字的裁定
-/// 在 release 实测（`docs/metrics.md` §3.2.2）。典型退化如「有人又把全文快照 /
+/// 在 release 实测（`docs/spec/metrics.md` §3.2.2）。典型退化如「有人又把全文快照 /
 /// 全文扫描拖回每帧路径」，在 1MB 上会立刻翻数倍，这个阈值拦得住。
 ///
 /// 按编译档位分别给：同一段代码 debug / release 差数倍
@@ -304,7 +304,7 @@ fn measure_textedit_idle_frame_at_three_sizes() {
 /// 抖动比信号还大。它由 `tests/application/markdown_service_test.rs` 里的
 /// 调用计数断言确定性钉死（`highlight_frame_path_never_snapshots_the_whole_document`、
 /// `spell_check_frame_path_never_snapshots_the_whole_document`）。
-/// 本用例只负责把**归因数字**打出来，供 `docs/metrics.md` §3.2.2 引用。
+/// 本用例只负责把**归因数字**打出来，供 `docs/spec/metrics.md` §3.2.2 引用。
 #[test]
 fn measure_editor_per_frame_subcosts() {
     let (_ws, _cfg, app, text) = app_with_doc(100 * 1024);
@@ -396,7 +396,7 @@ fn measure_editor_per_frame_subcosts() {
 /// 模型」这一段，量不到用户真正等待的部分。每帧推进 8ms，模拟约 125fps 的连续
 /// 人手节奏（间隔 < 150ms 防抖窗）——这正是「连续输入」的语义。
 ///
-/// 实测基线（release，见 `docs/metrics.md` §3.2.3）：
+/// 实测基线（release，见 `docs/spec/metrics.md` §3.2.3）：
 /// 10KB p95 0.64ms ｜ 100KB p95 4.57ms ｜ 1MB p95 43.14ms。
 #[test]
 fn measure_textedit_typing_frame_at_three_sizes() {

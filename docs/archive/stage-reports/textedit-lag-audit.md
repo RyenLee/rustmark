@@ -1,7 +1,7 @@
 # `docs/logs/T.txt` 逐条审计：egui `TextEdit` 卡顿在本项目的实际状态
 
 > 写作日期：2026-10-16 ｜ 关联问题：046 ｜ 关联前置：044（egui 0.37 升级）、043（多文档卡顿）
-> 性质：**一次性审计报告**（结论已被现行文档吸收：数字进 `docs/metrics.md` §3.2.2、
+> 性质：**一次性审计报告**（结论已被现行文档吸收：数字进 `docs/spec/metrics.md` §3.2.2、
 > 规则进 `src/shared/text.rs`）。归档后其中的「当前 / 待办」表述只在本写作日期成立。
 >
 > **为什么要写这篇**：`T.txt` 是一份针对 **egui 0.33** 的通用建议。
@@ -38,7 +38,7 @@
 2. 未命中才逐行比对上一版行布局，用「前后缀 + 中段逐行配对」求出差分映射，
    **只重排真的变了的行**，其余行 `Arc` 复用，最后 `Galley::concat` 拼回。
 
-实测（`docs/metrics.md` §3.2）：10KB 文档改一行只重建 **1** 行，增量帧 p50 远低于目标。
+实测（`docs/spec/metrics.md` §3.2）：10KB 文档改一行只重建 **1** 行，增量帧 p50 远低于目标。
 这比 `T.txt` 方案二的「段落级缓存」粒度**更细**（按行而非按段）。
 
 ### 1.2 成因②「Galley 缓存键基于整个 `LayoutJob` 哈希 → 每次编辑全失效」
@@ -101,7 +101,7 @@
 
 | `T.txt` 建议 | 本书落实 |
 |---|---|
-| 用 `puffin` / `samply` 剖析 | **不引入**。`puffin` 需要接入 egui 的 `puffin_http` + 查看器，属新依赖（本项目体积已越 NFR-PERF-01 红线 0.93 MiB，任何新依赖都要走 `docs/dependencies.md` 的复查）。改用**已有的自建基准**：`tests/presentation/{highlight,textedit_frame}_perf_test.rs` 走真实 `EditorApp` + `main_view::show`，输出分项归因，可比可比、可进 CI。 |
+| 用 `puffin` / `samply` 剖析 | **不引入**。`puffin` 需要接入 egui 的 `puffin_http` + 查看器，属新依赖（本项目体积已越 NFR-PERF-01 红线 0.93 MiB，任何新依赖都要走 `docs/guides/dependencies.md` 的复查）。改用**已有的自建基准**：`tests/presentation/{highlight,textedit_frame}_perf_test.rs` 走真实 `EditorApp` + `main_view::show`，输出分项归因，可比可比、可进 CI。 |
 | 造 2000–50000 行样本测每帧耗时 | **已做**：`textedit_frame_perf_test.rs` 覆盖 10KB(573 行) / 100KB(5,721 行) / 1MB(58,514 行) 三档，附每帧前置工作的分项计时。 |
 | 必须在 release 下测 | **已遵守**，并落成文件顶部的口径说明。本文件同时记下一条新证据：同一段代码在 debug 下行数扫描 0.093ms、release 下 0.048ms；而**按字节扫描**在 debug 下反而更慢（0.266ms）——两侧都说明「数字只认 release」。 |
 
@@ -125,7 +125,7 @@
 **修复见问题 046**，实测（release，100KB）：空闲帧 p50 0.56 → **0.33ms**，
 高亮查询命中 0.108 → **0.000ms**，光标行号 0.102 → **0.027ms**；
 1MB 空闲帧 4.44 → **3.16ms**，p95 8.33 → **4.06ms**。
-完整归因表在 `docs/metrics.md` §3.2.2。
+完整归因表在 `docs/spec/metrics.md` §3.2.2。
 
 **修完剩下的 1MB ≈ 3.16ms 全部来自 egui** 对 58,514 行 `Galley` 的逐行处理
 （该档已降级为纯文本、不着色，故不含 syntect）。这部分只有方案一能治，
@@ -135,7 +135,7 @@
 > 但由它引申出的「1MB 要达标只能自绘编辑器」**已被实测证伪**——击键帧（40.92ms）里
 > 每帧真正重排的行数恒为 **1**（100 帧计数证据），58% 的成本在应用层的文本变更链
 > （`diff_replace` 单项 6.93ms 等），与排版层、渲染层都无关；且本项目的逐行 layouter
-> 在裸宿主下比 egui 默认 layouter 还快。见 `docs/metrics.md` §3.2.4 与
+> 在裸宿主下比 egui 默认 layouter 还快。见 `docs/spec/metrics.md` §3.2.4 与
 > `docs/archive/stage-reports/textedit-cost-attribution.md`。
 
 ---

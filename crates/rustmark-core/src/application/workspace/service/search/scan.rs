@@ -544,7 +544,7 @@ mod tests {
 
     /// 上下文半径：前后各 40 字节（行足够长时精确生效）。
     ///
-    /// 阈值登记见 `docs/thresholds.baseline.yaml` 的 `search_snippet_context`；
+    /// 阈值登记见 `docs/spec/thresholds.baseline.yaml` 的 `search_snippet_context`；
     /// 改了常量而没改基线，这条用例与阈值脚本会同时红。
     #[test]
     fn snippet_window_uses_the_context_radius() {

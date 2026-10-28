@@ -3,7 +3,7 @@
 - **状态**：已接受（2026-10-24；判据与触发条件已进 `architecture-constraints.md` §10，actions / icons 两步已落地）
 - **决策者**：项目架构负责人
 - **关联任务**：V11-56（规则化）/ V11-57 / V11-58（已落地）/ V11-59~61（审计与关闭项）/ V11-62~64（待触发）
-- **关联文档**：`docs/architecture-constraints.md` §10、`docs/archive/architecture-reviews/core-structure-review-2026-10-24.md`、`docs/archive/architecture-reviews/state-field-audit.md`、`docs/workspace-topology.expected.txt`、`docs/metrics.md` §7、`tools/onboard_cost.py`
+- **关联文档**：`docs/spec/architecture-constraints.md` §10、`docs/archive/architecture-reviews/core-structure-review-2026-10-24.md`、`docs/archive/architecture-reviews/state-field-audit.md`、`docs/spec/workspace-topology.expected.txt`、`docs/spec/metrics.md` §7、`tools/onboard_cost.py`
 
 ## 背景
 
@@ -44,7 +44,7 @@ constraints §10.2，验收时任取一模块按表能复现评审结论。
 新 crate 不是法外之地：`arch_check` 扫描根与 `layer_of` 归一化随拆随扩
 （actions / icons 两例）；零依赖契约 crate 判 Free 层，反向依赖由 **Cargo
 循环依赖**结构性挡死，零依赖面由 `tests/workspace_topology_test.rs` 与
-`docs/workspace-topology.expected.txt`（CI diff）兜底。**每次新增本地依赖边
+`docs/spec/workspace-topology.expected.txt`（CI diff）兜底。**每次新增本地依赖边
 = 显式评审事件。**
 
 本节追认 V11-57 经用户裁定的「方案 b」，并推广到后续所有新 crate。

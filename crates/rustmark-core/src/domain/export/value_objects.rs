@@ -5,7 +5,7 @@
 //! [`ExportFormat`] 与 [`PageSize`] 的**唯一真源**在
 //! [`crate::shared::export_format`]：它们同时被领域层（任务校验）、
 //! 表现层（导出对话框）与基础设施层（导出器路由）需要，而
-//! `docs/architecture-constraints.md` §4 规定表现层不得依赖 `domain`——
+//! `docs/spec/architecture-constraints.md` §4 规定表现层不得依赖 `domain`——
 //! 真源留在本层，表现层就**用不到**它，于是只能再抄一份
 //! （这就是 R-07 之前 `ExportFormatChoice` 的由来：两份同构枚举靠字符串对齐，
 //! 没有编译期保证）。

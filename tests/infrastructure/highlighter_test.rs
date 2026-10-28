@@ -477,7 +477,7 @@ fn syntax_set_loads_within_cold_start_budget() {
 ///
 /// 这里刻意**不**对 NFR-PERF-05（10KB ≤ 10ms）下断言：
 /// syntect 的 `parse_line` 本身在 release 下约 24ms/7KB，
-/// 达不到该指标。处置见 `docs/metrics.md`（阶段 08 靠视口增量高亮达标）。
+/// 达不到该指标。处置见 `docs/spec/metrics.md`（阶段 08 靠视口增量高亮达标）。
 /// 此处只保证「不是平方级退化」——200 行应在 500ms 内完成。
 #[test]
 fn highlighting_throughput_has_not_regressed() {
@@ -512,7 +512,7 @@ fn highlighting_throughput_has_not_regressed() {
 /// 给「scope 栈 → 样式」加一张备忘表——纯内部记忆化，不碰领域接口、
 /// 不改变任何可见行为。这条用例就是用来判断这条路值不值得走的。
 ///
-/// 数字写入 `docs/metrics.md`（唯一数字来源）。
+/// 数字写入 `docs/spec/metrics.md`（唯一数字来源）。
 #[test]
 fn measure_markdown_highlight_parse_vs_classify() {
     use std::hint::black_box;

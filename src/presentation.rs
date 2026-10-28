@@ -16,7 +16,7 @@ pub mod views;
 // 隐患是「新增 ui 子模块被静默带入 root 命名空间」——编译与测试都不报，但
 // root 的清单与 §10.1 crate 地图已经失配。逐项后，增删都必须落到本文件；
 // `check-arch` 的 `check_ui_submodule_sync` 会拿 ui 侧 `pub mod`、本清单与
-// `docs/architecture-constraints.md` §10.1 三方对账（缺一即报）。
+// `docs/spec/architecture-constraints.md` §10.1 三方对账（缺一即报）。
 pub use rustmark_ui::presentation::rich;
 pub use rustmark_ui::presentation::shortcuts;
 pub use rustmark_ui::presentation::state;

@@ -7,7 +7,7 @@ V11-60/62 排序）提供数据，回答两个问题：
 1. **每提交的触及面**：平均「文件数 / 逻辑模块数 / workspace crate 数 /
    测试行变更数」——衡量「单功能平均要动多少地方」的维护与接入成本；
 2. **目录级提交频率**：哪些模块最热（变更频率是模块归属判据四问之一，
-   见 docs/architecture-constraints.md「模块归属判据」）。
+   见 docs/spec/architecture-constraints.md「模块归属判据」）。
 
 口径（与评审报告对齐的说明；变更口径需同步两边注释）：
 
@@ -28,7 +28,7 @@ V11-60/62 排序）提供数据，回答两个问题：
 
 与评审报告数字的关系：评审报告（docs/archive/architecture-reviews/core-structure-review-2026-10-24.md）
 记 root views 70 / presentation/state 30 / theme 19（12mo），本脚本同口径
-实测为 69 / 31 / 20（见 docs/metrics.md 接入成本基线条的差异说明）。
+实测为 69 / 31 / 20（见 docs/spec/metrics.md 接入成本基线条的差异说明）。
 差异 ≤2 提交，来自评审当时的一次性聚合方法无法完全复现；**热模块排序不变**，
 不影响 D 组触发判定。
 

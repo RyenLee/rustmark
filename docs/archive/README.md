@@ -35,7 +35,7 @@
 | [p1p2-remediation-plan.md](./stage-reports/p1p2-remediation-plan.md) | `docs/p1p2-remediation-plan.md` | 2026-10-08 | P1/P2 五项未交付功能的分析与路线 | 5/5 已实施（零依赖），另补整篇长图 |
 | [p1p2-implementation-log.md](./stage-reports/p1p2-implementation-log.md) | `docs/p1p2-implementation-log.md` | 2026-10-08~09 | 上述五项 + 四项遗留缺陷的逐步实施记录 | 已完成；记录含每项「修改文件清单/验证/已知问题」 |
 | [optimization-log.md](./stage-reports/optimization-log.md) | `docs/optimization-log.md` | 2026-10-08 | 阶段 08 优化决策日志 OPT-001~014（含放弃项） | 阶段已收尾；「放弃项及原因」对后续优化仍有参考价值 |
-| [textedit-cost-attribution.md](./stage-reports/textedit-cost-attribution.md) | `docs/logs/T.txt` 审计延伸（新建） | 2026-10-17 | 编辑区 1MB 击键帧成本归因（三轮测量 + diff_replace 落地 + 建议二/四/一/三 落地） | **归因已闭环、四项建议（052/053/054/055）全部落地**；现行数字见 `docs/metrics.md` §3.2.7/§3.2.8/§3.2.9/§3.2.10 |
+| [textedit-cost-attribution.md](./stage-reports/textedit-cost-attribution.md) | `docs/logs/T.txt` 审计延伸（新建） | 2026-10-17 | 编辑区 1MB 击键帧成本归因（三轮测量 + diff_replace 落地 + 建议二/四/一/三 落地） | **归因已闭环、四项建议（052/053/054/055）全部落地**；现行数字见 `docs/spec/metrics.md` §3.2.7/§3.2.8/§3.2.9/§3.2.10 |
 
 ## audits-2026-10-12/ · 全项目审计快照（2 篇）
 
@@ -62,12 +62,12 @@
 
 > 共同特征：任务 **100% 收官**、结论已被 `architecture-constraints.md` / ADR-010~013 吸收、
 > 文中数字为**写作时点快照**（多数已漂移）。**不要**按这里的数字判断现状——现行口径看
-> [`metrics.md`](../metrics.md) 与 [`PROGRESS.md`](../PROGRESS.md) §1.2。
+> [`metrics.md`](../spec/metrics.md) 与 [`PROGRESS.md`](../plans/PROGRESS.md) §1.2。
 
 | 文档 | 原路径 | 写作日期 | 内容 | 现状 |
 |---|---|---|---|---|
 | [architecture-review.md](./architecture-reviews/architecture-review.md) | `docs/architecture-review.md` | 2026-10-20 | 全库架构评估：3 P0 + 8 P1 + 7 P2 + 6 项改造遗留；含对 `check-arch` 判定逻辑的复刻验证 | **18 项已 100% 转为 R-01~R-21 并落地**（backlog V11-54 ✅）；`src/ 302 文件 / 33,845 行`等规模数字已失效 |
-| [architecture-layers.svg](./architecture-reviews/architecture-layers.svg) | `docs/arc/architecture-layers.svg` | 2026-10-20 | 上篇的「改造后分层依赖 + 四处违规边」示意图 | 随上篇归档；7-crate 时代图形，现状见 [`current_dependency_graph.html`](../current_dependency_graph.html) |
+| [architecture-layers.svg](./architecture-reviews/architecture-layers.svg) | `docs/arc/architecture-layers.svg` | 2026-10-20 | 上篇的「改造后分层依赖 + 四处违规边」示意图 | 随上篇归档；7-crate 时代图形，现状见 [`current_dependency_graph.html`](../spec/current_dependency_graph.html) |
 | [target-dependency-graph-2026-10-27.html](./architecture-reviews/target-dependency-graph-2026-10-27.html) | `docs/target_dependency_graph.html` | 2026-10-27 | 目标态依赖图：5 项外移计划（shared 拆 kernel+support / icons 解耦 / views 迁 ui / rich 抽出 render / ports） | **预测已被现实修正**：2 项达成（icons 解耦、render 抽出）、**2 项经决议不做**（shared 不再拆 crate、views 留 root，见 ADR-013 决策 3）、ports 已独立成 crate 而原图未画。目标态与现状合一，故与 current 图合并为单图 |
 | [architecture-refactor-plan.md](./architecture-reviews/architecture-refactor-plan.md) | `docs/architecture-refactor-plan.md` | 2026-10-20 | **21 条改造项（R-01~R-21）+ M0~M6 里程碑**，每条七字段 + 验收判据 | **§5.3 进度表 22 行全 OK**（2026-10-21 收官，`2099 passed`） |
 | [architecture-review-2026-10-23.md](./architecture-reviews/architecture-review-2026-10-23.md) | `docs/architecture-review-2026-10-23.md` | 2026-10-23 | 八维度复审：前次问题修复核对 + D-1~D-12 | D-1~D-8 全闭合；D-9 / D-12 记为**已知取舍**（不修）；D-11 core 侧闭合 |
@@ -82,8 +82,8 @@
 
 | 文档 | 原路径 | 内容 | 现状 |
 |---|---|---|---|
-| [search-tab-performance-report.md](./incident-reports/search-tab-performance-report.md) | `docs/search-tab-performance-report.md` | 侧栏「搜索」标签卡顿专项：全链路 → 根因 → 实测 → 修复 → 门禁 | **缺陷已修复**并固化为回归；性能数字锚定 2026-10-23，现行值见 [`metrics.md`](../metrics.md) §3.2 |
-| [search-tab-postmortem.md](./incident-reports/search-tab-postmortem.md) | `docs/search-tab-postmortem.md` | 同事件的 5-Why 复盘：修复方案、性能对比、经验教训 | 方法论已被 [`debug-guide.md`](../debug-guide.md) §6 吸收 |
+| [search-tab-performance-report.md](./incident-reports/search-tab-performance-report.md) | `docs/search-tab-performance-report.md` | 侧栏「搜索」标签卡顿专项：全链路 → 根因 → 实测 → 修复 → 门禁 | **缺陷已修复**并固化为回归；性能数字锚定 2026-10-23，现行值见 [`metrics.md`](../spec/metrics.md) §3.2 |
+| [search-tab-postmortem.md](./incident-reports/search-tab-postmortem.md) | `docs/search-tab-postmortem.md` | 同事件的 5-Why 复盘：修复方案、性能对比、经验教训 | 方法论已被 [`debug-guide.md`](../guides/debug-guide.md) §6 吸收 |
 
 ## remediation-plans/ · 已收官的整改方案（第二批，2 篇）
 
@@ -111,8 +111,8 @@
 
 ## 与现行文档的衔接
 
-- 体积数字的现行口径：`docs/metrics.md`（§2.4 / §2.5 为 v1.1 最新实测）；
-- 依赖清单与复查结论：`docs/dependencies.md`（§6 为 2026-10-14 复查报告）；
+- 体积数字的现行口径：`docs/spec/metrics.md`（§2.4 / §2.5 为 v1.1 最新实测）；
+- 依赖清单与复查结论：`docs/guides/dependencies.md`（§6 为 2026-10-14 复查报告）；
 - 缺陷修复的流水记录：`docs/logs/问题记录1.txt`（001~046，倒序）；
-- 调试方法论沉淀：`docs/debug-guide.md` §7（源自本归档区各篇的实战教训）；
+- 调试方法论沉淀：`docs/guides/debug-guide.md` §7（源自本归档区各篇的实战教训）；
 - 整改执行期档案（**未归档**）：`docs/remediation/`（R-01~R-11 总方案 + R-10 两份评估）。

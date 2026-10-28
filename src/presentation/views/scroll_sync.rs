@@ -139,7 +139,7 @@ pub fn line_start_offsets(text: &str) -> Vec<usize> {
 /// 状态栏一帧里要三样东西：光标的行列、选区的行列、右端的「N 行」；编辑区还要
 /// 一次行数（`desired_rows` 与行号栏宽度）。旧写法各调各的——`line_start_offsets`
 /// 一帧最多两次、`line_count` 三次，1MB 上实测每帧**恒定 1.1ms**（见
-/// `docs/metrics.md` §3.2.5 的 S3 0.82 + S4 0.28），而它们要的是**同一份信息**。
+/// `docs/spec/metrics.md` §3.2.5 的 S3 0.82 + S4 0.28），而它们要的是**同一份信息**。
 /// 合并后由 `EditorApp` 每帧只构建一次并缓存（文本不变时为零成本）。
 ///
 /// # 口径与两个旧函数逐例相等

@@ -81,7 +81,7 @@ presentation ──► application ──► domain ◄── infrastructure
 
 三例**不搬移**——「为什么不归位」在此写成规则，避免后人重复提案
 （V11-55 §2.2 的下沉方案即被该实测证伪；档案与复现命令见
-`docs/shared-internal-cycle-review.md`）。「至少 2 层需要」正是 §4.5 准入
+`docs/reports/shared-internal-cycle-review.md`）。「至少 2 层需要」正是 §4.5 准入
 第一问的**正面情形**，不是擦边球。新模块进 `shared` 先过 §4.5 三问并登记；
 `shared` 内部依赖必须无环（§4.6）。
 
@@ -424,7 +424,7 @@ cargo run --bin check-arch
 
 > 边界：`default-members` 只影响「不带 `-p`/`--workspace` 的命令跑哪些包」。
 > `cargo test --doc` 仍单独跑（`--all-targets` 不含 doc 测试），命令面见
-> `docs/testing.md`。
+> `docs/guides/testing.md`。
 
 违规注入自检：在 `crates/rustmark-core/src/domain/**` 临时加入 `use egui;`
 → `check-arch` 必须退出码非 0 并打印带 `crates/rustmark-core/src/` 前缀的
@@ -508,7 +508,7 @@ shell `src/bin/` 是工具二进制（`check-arch`），与 `main.rs` / `lib.rs`
 `crates/rustmark-actions/src/`（V11-57）整个根判 Free：零依赖词汇契约
 crate 没有层内边界可言。「不得引用 core / 任何 crate」由 Cargo 循环依赖
 （core 已依赖它，反向加普通依赖即解析期报错）与 workspace 拓扑断言
-（`docs/workspace-topology.expected.txt`，任何新依赖边都红）兜底——两者
+（`docs/spec/workspace-topology.expected.txt`，任何新依赖边都红）兜底——两者
 都比词法规则强，且覆盖「获得任意依赖」而不只「引用 core」一种形状。
 层禁令不适用于该根，但禁 `mod.rs`、帧预约唯一出口等**与层无关**的规则
 照旧生效（fixture 第十六节钉住）。
@@ -558,10 +558,10 @@ crate 入口白名单里，`layer_of` 自然判 Free（依赖面 = egui，由
 | **总计** | **5–7 MB（红线 11 MB）** |
 
 > 注：上表「5–7 MB」为**早期需求预算估算**，非实测。当前实测见
-> `docs/metrics.md` §2.8（release 产物 ≈10.5 MiB）；红线本身已于 2026-10-24
+> `docs/spec/metrics.md` §2.8（release 产物 ≈10.5 MiB）；红线本身已于 2026-10-24
 > 由 10 MiB 上调至 **11 MiB（预警 10.5 MiB）**，与 `scripts/size_gate.sh` 默认口径一致。
 
-新增依赖必须登记体积贡献（`docs/dependencies.md`）并经 ADR 追加评审。
+新增依赖必须登记体积贡献（`docs/guides/dependencies.md`）并经 ADR 追加评审。
 
 ## 9. 集成测试的库内部视角禁令（R-02）
 
@@ -736,7 +736,7 @@ V11-62 全落地，阶段 3 的 `rustmark-infra` 行已由 V11-64 提前兑现�
    root 的中间 crate」形态，否则 R-11/R-12 的「views ∈ root、state ∈ 另一
    crate」跨 crate 字段保护会被降级成同 crate 内约束；
 3. **每拆一个 crate，三件套同步**：校验器扫描根 + `layer_of` 归一化 + 本地
-   依赖边期望（`docs/workspace-topology.expected.txt`）——照 actions/icons
+   依赖边期望（`docs/spec/workspace-topology.expected.txt`）——照 actions/icons
    两例（§7）。漏任一件，新 crate 要么被误报「未知层」，要么依赖边静默增长。
 4. **ui 子模块三处对账**（R-03 B2，2026-10-27）：`rustmark-ui` 的
    `presentation/` 子模块增删，必须同时改 root `src/presentation.rs` 的
@@ -808,7 +808,7 @@ core。同一子模块内两种结论，判据的粒度是**模块**，不是目
 ### 10.3 外移触发条件（量化）
 
 触发式任务不做无据评估——任一条件满足即启动评估，度量方式随文；
-「当前状态」列随每次度量刷新，数字以 `docs/metrics.md` §7（接入成本基线）
+「当前状态」列随每次度量刷新，数字以 `docs/spec/metrics.md` §7（接入成本基线）
 为家，本表只放判定结论。
 
 | 动作 | 触发条件（任一满足即启动评估） | 度量方式 | 当前状态（2026-10-26 复核） |

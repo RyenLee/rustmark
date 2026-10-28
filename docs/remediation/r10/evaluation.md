@@ -96,7 +96,7 @@
 4. `rustmark-core` 加 `rustmark-ports` 依赖（`Cargo.toml:30` 附近）；若用桥接，`core/src/lib.rs:40` 增 `pub use rustmark_ports::*;`。`rustmark-infra` 加依赖（实现端口）。
 5. **回归地雷①**：`tests/workspace_topology_test.rs:436` infra 期望依赖恰为 `["rustmark-core"]`，加了 `rustmark-ports` 必红 → 改 `["rustmark-core","rustmark-ports"]`（:439 报错文案同步改）。
 6. **回归地雷②**：`tools/arch_check.rs` `layer_of` 把 `shared`→`Layer::Shared`（:397），新 crate 不在枚举 → 需加 `Layer::Ports` 并补 `ROOT_FEDERATED_LAYERS`（:2554）/`scan_project` 登记表键 `ports/<file>`；跑 `cargo run --bin check-arch`。
-7. 更新 `docs/architecture-constraints.md` §4.5 登记表路径（`shared/kernel/dialog` → `ports/dialog`）。
+7. 更新 `docs/spec/architecture-constraints.md` §4.5 登记表路径（`shared/kernel/dialog` → `ports/dialog`）。
 
 ---
 

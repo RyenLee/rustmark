@@ -34,7 +34,7 @@
   - **开关（PRIV-01，2026-10-26 起）**：设置 → 编辑器 → 「远程图片」，关闭后预览区
     对这些地址**一次请求都不发**（占位文案与断网一致，只多一句「已在设置中关闭」），
     状态栏常驻「远程图片已禁用」。开关默认开启、即时落盘，重启后保持。
-    对应的配置键是 `[editor] load_remote_images`（见 `docs/config-reference.md`）。
+    对应的配置键是 `[editor] load_remote_images`（见 `docs/guides/config-reference.md`）。
   - 口径说明（2026-10-26 补）：本地 `.svg` 不被渲染的真实原因是 `image` crate 的
     `svg` 解码 feature **未启用**（隐式防护），并非显式白名单拒绝；若将来启用该 feature，
     须在 `ALLOWED_IMAGE_MIME` 之外显式拒绝 svg，否则会打开脚本执行敞口（见 `SECURITY.md` §3）。

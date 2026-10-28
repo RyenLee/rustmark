@@ -36,7 +36,7 @@
 > 下文「2131 / 2136 / 2139 / 2140」表述一律按 **2144** 执行。
 > V11-59 已完成（`2880678`）；V11-60 已关闭（审计 V=0，转 V11-62）；V11-61 已降级为记录；
 > **V11-62 已收官**——五个批次（widgets → state → shortcuts → theme → rich）全部落地（见 V11-62 节末记录块）。
-> 状态表见 `docs/v1.1-backlog.md` §3 的波次登记。
+> 状态表见 `docs/plans/v1.1-backlog.md` §3 的波次登记。
 >
 > **基线再更新（2026-10-25，阈值整改 `c08fd13` 后）：2150 passed / 0 failed / 4 ignored**
 > （`--all-targets` 2149 + `--doc` 1；净 +6：撤销 64 MiB 字节预算、图片分层上限、
@@ -68,7 +68,7 @@
 > shared」）：`text_format` / `lru` / `text` 三例使用点分布实测（app 2 /
 > presentation 1 / shared 1；application 3 / presentation 1；application 2 /
 > presentation 1），下沉任一层都触发矩阵违例，与 §4.5 准入第一问「≥2 层需要」
-> 互为正反两面；立案档案 `docs/shared-internal-cycle-review.md` §2.2 补复核注
+> 互为正反两面；立案档案 `docs/reports/shared-internal-cycle-review.md` §2.2 补复核注
 > （11 处计数不变、路径漂移三处、模块 17→19 / 边 10→11，§2.3「无机械规则」
 > 同日作废）。无代码改动：测试 **2164** / release exe **10,520,576 B** /
 > check-arch 零违规均不变，门禁数字不进本次提交的差值口径。守卫加固包三项
@@ -163,7 +163,7 @@ V11-59 ─────────────────────┼──�
 
 ### V11-56 · 架构文档与模块归属判据 ｜ 优先级：高 ｜ 0.5 人日 ｜ 并行组 A
 
-- **涉及**：`docs/architecture-constraints.md`（架构规则真源）、`docs/adr/ADR-013-*.md`（新）、`docs/README.md`（ADR 索引补 013）。
+- **涉及**：`docs/spec/architecture-constraints.md`（架构规则真源）、`docs/adr/ADR-013-*.md`（新）、`docs/README.md`（ADR 索引补 013）。
 - **现状问题**：评审三大病灶（core 64% 是适配器叶层、拆分标准是编译便利、可复用性名不副实）只存在于评审报告，未进入规则真源；后续所有拆分动作缺少「模块归属判据」这一共同语言。
 - **改造目标**：把「crate 地图 + 模块归属四问判据 + 外移触发条件」写成项目规范，使每个后续 commit 有据可查。
 - **具体动作**：
@@ -206,13 +206,13 @@ V11-59 ─────────────────────┼──�
 
 ### V11-66 · CI 拓扑断言 + 接入成本度量脚本 ｜ 优先级：中 ｜ 0.5–1 人日 ｜ 并行组 A
 
-- **涉及**：`.github/workflows/ci.yml`、`docs/workspace-topology.expected.txt`（新）、`tools/onboard_cost.py`（新，沿用 `tools/mut_*.py` 风格）。
+- **涉及**：`.github/workflows/ci.yml`、`docs/spec/workspace-topology.expected.txt`（新）、`tools/onboard_cost.py`（新，沿用 `tools/mut_*.py` 风格）。
 - **现状问题**：本地依赖拓扑无机械守卫——新增一条 root→X 边不会触发任何评审；「单功能平均触及 crate 数/文件数」无度量，D 组触发条件只能拍脑袋。
 - **改造目标**：拓扑变更是显式评审事件；触发条件有数据。
 - **具体动作**：
-  1. CI 在 check-arch 步骤后加：`cargo tree --workspace --depth 1 | diff docs/workspace-topology.expected.txt -`（期望文件入库，更新它 = 拓扑评审）；
+  1. CI 在 check-arch 步骤后加：`cargo tree --workspace --depth 1 | diff docs/spec/workspace-topology.expected.txt -`（期望文件入库，更新它 = 拓扑评审）；
   2. 度量脚本：git log --stat 聚合「每提交触及 crate 数/文件数/测试行数」+ 各目录 12mo 提交频率，输出 md 表；
-  3. 首次运行并把基线写进 `docs/metrics.md`（本会话已有部分数字：root views 70 提交/12mo、core presentation/state 30、theme 19；冷构建 83s、增量 4.6/4.7s）。
+  3. 首次运行并把基线写进 `docs/spec/metrics.md`（本会话已有部分数字：root views 70 提交/12mo、core presentation/state 30、theme 19；冷构建 83s、增量 4.6/4.7s）。
 - **依赖与风险**：无。风险：CI diff 步骤在多 OS matrix 上输出稳定性（`cargo tree` 输出含路径前缀，Windows/Linux 一致——预跑一遍确认）；度量脚本的目录口径要兼容拆分前后路径（照本会话方法：新旧路径合并计数）。
 - **验收标准**：本地可复现 CI 新步骤（故意改期望文件验证会红）；脚本输出与本会话数字一致（误差 ≤1 提交）。
 - **回退**：revert；期望文件保留可作后续基线。
@@ -226,7 +226,7 @@ V11-59 ─────────────────────┼──�
 
 ### V11-67 · 过期文档校正 ｜ 优先级：低 ｜ 0.25 人日 ｜ 并行组 A
 
-- **涉及**：`crates/rustmark-core/src/domain.rs`（第 3 行注释）、`docs/metrics.md`。
+- **涉及**：`crates/rustmark-core/src/domain.rs`（第 3 行注释）、`docs/spec/metrics.md`。
 - **现状问题**：① `domain.rs:3` 写「可依赖 shared/ropey/chrono/serde/thiserror」，实测 domain 仅 serde（ropey/chrono 零使用）——允许清单被误读为使用清单，误导后续判断；② metrics.md 的 release 体积记录与实测差 +18,432 B，未 bisect（上轮发现）。
 - **改造目标**：文档与代码事实一致。
 - **具体动作**：domain.rs 注释改为「允许 serde/thiserror（实测在用）；ropey/chrono 历史上允许但当前零使用」；metrics.md 补一条 2026-10-24 实测基线（10,485,248 B，距红线 512 B），标注差异未 bisect。
@@ -374,7 +374,7 @@ V11-59 ─────────────────────┼──�
 > - **跨 crate 可见性摩擦（R-11 保证的代价，实证 2 处）**：① `ActionEntry`/`ActionTable` 从 `pub(crate)` 升 `pub` 并 re-export；② `ActionEntry::group` 与 `RecentFileView::last_opened` 字段升 `pub`。三处均登记 field_visibility_guard 白名单（548 → **550**，接口面增长留痕）。
 > - **白名单改键**：168 条 state 条目 `presentation/state/...` → `ui/presentation/state/...`（ui 根批次 1 已铺，覆盖无断档）；guard 文档注释「暂无 ui 条目」失实表述同步修正；fixture 中「state 现住 core 根」注释同步改「ui 根」。
 > - **五门禁实测（代码全绿）**：fmt OK；check-arch OK；clippy OK；`--all-targets` **2143 passed / 0 failed / 4 ignored** + `--doc` 1 = 2144（state 15 个内联测试块 core→ui 总量守恒）；topology CI 式 diff CLEAN（本地边仍 6 条，state 走既有 ui→core 边）。
-> - **⚠️ release exe 越旧红线，触发 NFR 红线决策**：批次 2 树 **10,487,808 B**，较批次 1 基线（10,485,248 B，worktree @ `9ab57ae` 共享 target 重建字节数相同）**+2,560 B**。旧红线 10 MiB（余 512 B）耗尽越线。worktree A/B 实证 +2,560 B 确由跨 crate 搬迁在 `opt-level=z` + fat LTO + `codegen-units=1` 下的 LTO 边界成本产生，无针对性修法。**维护者决策：NFR 红线 10 → 11 MiB、预警 8 → 10 MiB（原红线降级为预警）**，已同步 `scripts/size_gate.sh`、`docs/metrics.md` §2.8 + NFR-PERF-01、`docs/architecture-constraints.md` §预算、TD-01。新红线 11 MiB 下距红线余 **1,046,528 B（0.91 MiB）**，可容纳批次 3–5。
+> - **⚠️ release exe 越旧红线，触发 NFR 红线决策**：批次 2 树 **10,487,808 B**，较批次 1 基线（10,485,248 B，worktree @ `9ab57ae` 共享 target 重建字节数相同）**+2,560 B**。旧红线 10 MiB（余 512 B）耗尽越线。worktree A/B 实证 +2,560 B 确由跨 crate 搬迁在 `opt-level=z` + fat LTO + `codegen-units=1` 下的 LTO 边界成本产生，无针对性修法。**维护者决策：NFR 红线 10 → 11 MiB、预警 8 → 10 MiB（原红线降级为预警）**，已同步 `scripts/size_gate.sh`、`docs/spec/metrics.md` §2.8 + NFR-PERF-01、`docs/spec/architecture-constraints.md` §预算、TD-01。新红线 11 MiB 下距红线余 **1,046,528 B（0.91 MiB）**，可容纳批次 3–5。
 > - **文档同步**：constraints §7（state 移出 core 模块树）/§10.1；metrics.md §2.8 + NFR-PERF-01 + TD-01；本 backlog 波次表与本节。
 >
 > **动作 2 批次 3 已落地（shortcuts，2026-10-25，`6778f20`）。** 顺序（方案 A）：state → **shortcuts** → theme → rich。批次 3 实测如下。
@@ -530,7 +530,7 @@ V11-59 ─────────────────────┼──�
 >   拖进编译图。
 > - **可见性摩擦 13 处**（12 方法 + `PREFERENCES_SCHEMA_VERSION`），按「放开读点、
 >   不升字段」处理；白名单 559 条集合相等断言不变。
-> - **附带修复**：`docs/thresholds.baseline.yaml` 有 22 处路径（TD-04 的 8 处 shared +
+> - **附带修复**：`docs/spec/thresholds.baseline.yaml` 有 22 处路径（TD-04 的 8 处 shared +
 >   本波 14 处 infra）与 1 处 anchor 失配，`tools/check_thresholds.py` 报 20 条 FAIL
 >   ——**TD-04 的 shared 路径失配在上一个提交就已存在**，本波一并修正，现 OK。
 > - **门禁**：fmt 干净 · check-arch 0 违规 · clippy `-D warnings` 0 告警 ·
@@ -549,7 +549,7 @@ V11-59 ─────────────────────┼──�
 | TD-01 | release 体积吃紧（已越旧红线，红线上调后入预警窗口） | 2026-10-24 基线 10,485,248 B（旧红线 10 MiB 余 512 B）；2026-10-25 V11-62 批次 2（state 迁入 `rustmark-ui`）致 +2,560 B → 10,487,808 B，旧 10 MiB 红线越线；批次 3（shortcuts）致 +1 KiB → 10,488,832 B；批次 4（theme）致 +1 KiB → 10,489,856 B；批次 5（rich，~5,918 行，V11-62 收官）致 -2,560 B → 10,487,296 B（非单调：rich 自绘排版零跨 crate 内联，迁移回吐批次 2 的 LTO 边界成本）；新红线 11 MiB 内、超预警 10 MiB。worktree A/B 实证 +2,560 B 确由跨 crate LTO 边界成本产生，无针对性修法。**维护者决策：NFR 红线 10→11 MiB、预警 8→10 MiB（原红线降级为预警）**，见 `scripts/size_gate.sh`、metrics.md §2.8 | V11-62 收官，体积窗口稳定（距新红线 11 MiB 余 1,047,040 B）；后续加依赖动作仍须过 size_gate。**2026-10-25 阈值整改（`c08fd13`）后 10,520,576 B（+33,280 B：撤销 64 MiB 字节预算、图片分层上限、纹理 128 MiB 预算等功能常量变更），size_gate exit 0 且低于预警线（现行红线 11,534,336 B / 预警 11,010,048 B = 10.5 MiB，`c08fd13` 统一 CI 与三个打包脚本口径），距红线余 1,013,760 B（~0.97 MiB），窗口仍稳定**；**2026-10-26 V11-63 端口化后 10,540,544 B（10.052 MiB），size_gate exit 0、仍低于 10.5 MiB 预警线，距红线余 993,792 B；较 HEAD `ef7d5c2` 的 +18,432 B 已三次构建 A/B 归因（端口化代码 +17,408 / 删 egui 依赖边 +1,024），非功能增量，详见 metrics §2.8**；**2026-10-26 TD-04 + V11-64 两个新 crate 后 10,545,664 B（10.057 MiB），较 10,540,544 的 +3,072 B 是第二个跨 crate LTO 边界成本（shared 抽取先致 10,542,592 B / +2,048 B，infra 抽取再致 +3,072 B），size_gate exit 0、低于 10.5 MiB 预警线，距红线余 988,672 B**；**2026-10-26 架构评审 D-5（帧耗时观测）后 10,548,736 B（10.060 MiB），+3,072 B 为纯代码增量（Cargo.toml 未动，无 A/B 必要），size_gate exit 0、距红线余 985,600 B** | V11-62 / 所有 |
 | TD-02 | `src/presentation/views/preview_view.rs` 1,421 行 | 上轮评估 | **已闭环（2026-10-25，TD-02 专项，`999e63c`）**：按 §7 D-4 阈值拆为入口 458 行 + `preview_view/image_cache.rs`（图片纹理缓存簇 319 行）+ `preview_view/tests.rs`（外置单测 664 行）；`ImageEntry` 本体与字段转 `pub(super)`（消费者 media.rs 跨子模块）；公开路径 `preview_view::{show, image_cache_state, is_remote_url, ImageEntryState}` 经 `pub use` 零变化；四门禁绿（2144 守恒）、release 逐字节 10,487,296 B、topology CLEAN | TD-02 专项 |
 | TD-03 | `domain.rs:3` 依赖注释宽于实际 | 允许 ropey/chrono，实测零使用 | **已闭环（2026-10-24，`3cc4c42`，V11-67）**：注释改为「serde/thiserror 实测在用；ropey/chrono 历史上允许但当前零使用」，check-arch 复跑 OK | V11-67 |
-| TD-04 | shared 通用件 ≈900 行且可能继续长 | 2026-10-26 实测：shared **19 文件 / 3,061 行**；非领域通用件 6 个 = pattern 531 + text_format 310 + lru 291 + path 278 + geometry 248 + export_format 233，合计 **1,891 行**（若把 text 170 也计为通用件则为 7 个 / 2,061 行，结论不变） | **已落地（2026-10-26，`2da434e`）**：维护者拍板**整份 shared 抽 crate**（而非只抽 6 个通用件——前缀保留后两者代价相同，整抽避免「一半在内一半在外」的判层歧义）→ `crates/rustmark-shared`，19 文件 / 3,061 行保 `shared/` 前缀迁入，core 以 `pub use rustmark_shared::shared;` 桥接；crate 依赖面 = ahash + serde + thiserror（**零 workspace 成员**，新用例 `shared_crate_declares_no_workspace_dependency` 钉死）。跨 crate 可见性摩擦 1 处（`FileFilter::name` 加受控访问器，不升字段）。**附带发现**：`docs/thresholds.baseline.yaml` 的 8 处 `shared/` 路径未随迁更新，该提交后 thresholds 检查转红——已于 V11-64 提交一并修正 | 已闭环（`2da434e`） |
+| TD-04 | shared 通用件 ≈900 行且可能继续长 | 2026-10-26 实测：shared **19 文件 / 3,061 行**；非领域通用件 6 个 = pattern 531 + text_format 310 + lru 291 + path 278 + geometry 248 + export_format 233，合计 **1,891 行**（若把 text 170 也计为通用件则为 7 个 / 2,061 行，结论不变） | **已落地（2026-10-26，`2da434e`）**：维护者拍板**整份 shared 抽 crate**（而非只抽 6 个通用件——前缀保留后两者代价相同，整抽避免「一半在内一半在外」的判层歧义）→ `crates/rustmark-shared`，19 文件 / 3,061 行保 `shared/` 前缀迁入，core 以 `pub use rustmark_shared::shared;` 桥接；crate 依赖面 = ahash + serde + thiserror（**零 workspace 成员**，新用例 `shared_crate_declares_no_workspace_dependency` 钉死）。跨 crate 可见性摩擦 1 处（`FileFilter::name` 加受控访问器，不升字段）。**附带发现**：`docs/spec/thresholds.baseline.yaml` 的 8 处 `shared/` 路径未随迁更新，该提交后 thresholds 检查转红——已于 V11-64 提交一并修正 | 已闭环（`2da434e`） |
 | TD-05 | D-6/D-7 六文件未提交合入 | git status | **已闭环**：D-6/D-7 已合入（`662536b`，`git merge-base --is-ancestor 662536b HEAD` 实测成立） | BLK-03 |
 | TD-06 | 双 manifest 重复 | egui/image/syntect/log/tempfile | **已闭环（2026-10-24，`12e65bc`，V11-65）**：5 项依赖与 lint 收敛至 root `[workspace.dependencies]` / `[workspace.lints]`，两侧 `{ workspace = true }` 继承，Cargo.lock 零 diff | V11-65 |
 | TD-07 | tests/presentation 43 文件将随 V11-62 拆分 | 2026-10-25 实测：**未随迁**——43 文件仍在 root `tests/presentation/`，其中 38 个经 `rustmark::presentation::*` 公开桥接路径消费 ui 模块，零改动通过（2149+1 守恒） | 按被测模块归属拆；保持总数。**已复核决定维持 root 集成测试定位**：公开契约的测试保证属于应用 crate，随迁只增目标声明成本、零覆盖收益；仅当 ui crate 出现独立复用/发布需求时再评估 | V11-62 |
@@ -584,7 +584,7 @@ cargo test --workspace --doc                          # +1 = 合计 2227
                                  # （grep '^test result:' | awk 逐行求和；`--workspace` 仍显式书写，漏带已由 default-members 兜底）
 python tools/check_thresholds.py # 121 阈值 / 9 模块 / 数值校验 110，OK
 bash scripts/size_gate.sh       # exe ≤ 11,534,336 B（11 MiB 红线；预警 11,010,048 B = 10.5 MiB）；现 10,550,272 B
-cargo tree --workspace --depth 1   # 拓扑对 docs/workspace-topology.expected.txt（本地依赖边 9 条）
+cargo tree --workspace --depth 1   # 拓扑对 docs/spec/workspace-topology.expected.txt（本地依赖边 9 条）
 ```
 
 > 迁移类任务（V11-57/58/62/64）的额外纪律：git mv 保历史；每项独立 commit；

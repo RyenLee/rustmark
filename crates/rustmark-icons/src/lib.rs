@@ -12,7 +12,7 @@
 //!
 //! root 经 `pub use rustmark_icons as icons;` 把本 crate 拼回
 //! `crate::presentation::icons::*` 原路径（V11-58：core 内零消费者，
-//! 抽出后公开路径零变化，见 `docs/architecture-constraints.md` §7）。
+//! 抽出后公开路径零变化，见 `docs/spec/architecture-constraints.md` §7）。
 //!
 //! # 纯图形图标系统：工具栏按钮的「字形 + 文字」组合 → **向量手绘**的纯图形图标。
 //!

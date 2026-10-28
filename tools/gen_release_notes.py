@@ -38,7 +38,7 @@ def group_subjects(subjects: list[str]) -> dict[str, list[str]]:
     组名标注该阶段出现的编号区间：单编号 `阶段 9（S9-04）`，多编号
     `阶段 9（S9-01~S9-08）`。同阶段多任务必须合并为一组——若把编号写进
     组名，一个阶段的 8 条提交会碎成 8 个分组，与 S9-06「按阶段归组」的
-    验收要求相悖（该缺陷由离线演练发现，见 docs/release.md §4）。
+    验收要求相悖（该缺陷由离线演练发现，见 docs/guides/release.md §4）。
     """
     phases: dict[int, list[str]] = collections.defaultdict(list)
     numbers: dict[int, set[str]] = collections.defaultdict(set)
@@ -104,7 +104,7 @@ def render(tag: str, groups: dict[str, list[str]]) -> str:
         "",
         "本版本**未签名**，系统会拦一次：Windows 弹 SmartScreen「已保护你的电脑」；",
         "macOS 提示「无法打开，因为无法验证开发者」。这不是文件损坏，是未购买代码",
-        "签名证书的必然结果（评估见 `docs/release.md` §6）。",
+        "签名证书的必然结果（评估见 `docs/guides/release.md` §6）。",
         "",
         "### 二、绕过方式",
         "",

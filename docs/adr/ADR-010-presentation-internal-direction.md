@@ -3,7 +3,7 @@
 - **状态**：已接受（2026-10-20）
 - **决策者**：项目架构负责人
 - **关联任务**：V11-54a R-02 / R-13
-- **关联文档**：`docs/architecture-constraints.md` §4.0 / §9、
+- **关联文档**：`docs/spec/architecture-constraints.md` §4.0 / §9、
   `tools/arch_check.rs`、`tests/arch_violation_fixture.rs`、`ADR-007`、`ADR-008`
 
 ## 背景

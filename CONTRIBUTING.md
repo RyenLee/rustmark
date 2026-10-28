@@ -24,7 +24,7 @@ cargo run --bin check-arch
 
 > `--workspace` **必带**（D-3 阶段 4a workspace 化后）：不带时只检查默认成员
 > （root 包），`crates/rustmark-core` 的检查与单测会静默缺席。详见
-> `docs/architecture-constraints.md` §6。
+> `docs/spec/architecture-constraints.md` §6。
 
 任一命令失败即视为单元未完成。`cargo run --bin check-arch` 会在违规时打印 `文件:行号 —— 原因`。
 
@@ -38,12 +38,12 @@ python tools/coverage_gate.py lcov.info
 # 离线发布演练：版本守卫 / 校验和 / Notes 归组 / 无私钥入仓 / 回滚步骤
 python tools/release_dryrun.py              # 红路径验证：--tag v9.9.9 须 exit 1
 
-# 阈值基线：docs/thresholds.baseline.yaml 与源码逐条比对
+# 阈值基线：docs/spec/thresholds.baseline.yaml 与源码逐条比对
 python tools/check_thresholds.py            # 行号漂移默认 WARN；--strict-lines 升级为失败
 ```
 
 **改阈值的顺序**：先改源码里的常量（跨层共用的先落 `shared/constants.rs`），
-再改 `docs/thresholds.baseline.yaml` 的 `value`/`purpose`，最后跑上面的校验；
+再改 `docs/spec/thresholds.baseline.yaml` 的 `value`/`purpose`，最后跑上面的校验；
 纯位置变化（上方增删行）用 `python tools/check_thresholds.py --fix` 回写 `source` 行号。
 数值与基线不一致会直接失败——这是为了禁止「改了常量、基线还写着旧值」。
 
@@ -98,10 +98,10 @@ fix(editor): 撤销栈按文档隔离，修复跨文件污染 [S3-08]
 另有一条**全 src 生效**的规则：`request_repaint_after` 只允许出现在
 `app/frame/scheduler.rs`（定时任务一律 `arm` 到期点，由帧末统一预约）——**含组合根 `app/`**。
 
-完整矩阵见 `docs/architecture-constraints.md`（架构约束的唯一真源）。
+完整矩阵见 `docs/spec/architecture-constraints.md`（架构约束的唯一真源）。
 
 确需豁免时，在 `use` 行尾加 `// arch-allow: <对象>`——**只豁免你写明的那个对象**，
-不是整行放行。豁免必须在 `docs/architecture-constraints.md` §4.4 的豁免表里登记
+不是整行放行。豁免必须在 `docs/spec/architecture-constraints.md` §4.4 的豁免表里登记
 （`| 文件 | 对象 | 理由 |`），否则校验器报「豁免未登记」；若该行已没有依赖它的违规，
 则报「豁免无效」——**过时的豁免会被要求清理**。
 
@@ -119,7 +119,7 @@ fix(editor): 撤销栈按文档隔离，修复跨文件污染 [S3-08]
 
 新增依赖必须：
 
-1. 在 `docs/dependencies.md` 登记版本、用途与体积贡献；
+1. 在 `docs/guides/dependencies.md` 登记版本、用途与体积贡献；
 2. 通过 `cargo deny check licenses advisories`；
 3. 属于 P0 必需或经 ADR 追加评审——**任务单元内禁止顺手加依赖**。
 
@@ -159,7 +159,7 @@ fix(editor): 撤销栈按文档隔离，修复跨文件污染 [S3-08]
 
 **用 `cargo bloat --release --bin size-probe --crates`，不要用 `--bin rustmark`。**
 
-原因见 `docs/metrics.md` §3.1：主二进制在S6-01 接线前是空壳入口，
+原因见 `docs/spec/metrics.md` §3.1：主二进制在S6-01 接线前是空壳入口，
 LTO 会把所有未被引用的依赖整体裁掉，量出「体积达标」的假象。
 `size-probe` 会显式构造每个适配器，使链接器无法裁剪。
-S6-01 接线完成后可改回主二进制，但需同步更新本节与 `docs/metrics.md`。
+S6-01 接线完成后可改回主二进制，但需同步更新本节与 `docs/spec/metrics.md`。

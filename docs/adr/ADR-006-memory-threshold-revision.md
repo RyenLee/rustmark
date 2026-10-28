@@ -50,7 +50,7 @@ Linux VmRSS）**本身就不可横向比较**——统一数字没有意义。�
 
 ### 2. Windows 判定口径从 WorkingSet64 改为 **Private Working Set**
 
-理由（实测得来，见 `docs/metrics.md` §3.0.2 第 4 点）：WorkingSet 含共享页且受 OS
+理由（实测得来，见 `docs/spec/metrics.md` §3.0.2 第 4 点）：WorkingSet 含共享页且受 OS
 换页影响，**噪声可达 ±20 MB**——完整应用甚至测出过「低于空窗口探针」的结果
 （189.2 vs 210.1 MB）。用它判定 1 MB 量级的优化收益会得出错误结论。
 Private Working Set 只计入本进程私有页，是「应用自身占用」的正确口径。

@@ -2,7 +2,7 @@
 
 > 写作日期：2026-10-16 ｜ 动因：验证新版 `egui` 能否改善 / 解决 `TextEdit` 在**输入、长文本渲染、高频重绘**时的卡顿
 > 状态：**升级已完成并交付**（四道门禁全绿，见 §6）。本文随后进入归档区，其「当前 / 待办」表述只在写作日期成立。
-> 数字来源：本文 §3 的实测数字已登记进 [`docs/metrics.md`](../../metrics.md) §3.2（唯一数字来源）；版本事实已登记进 [`docs/dependencies.md`](../../dependencies.md) §1。
+> 数字来源：本文 §3 的实测数字已登记进 [`docs/spec/metrics.md`](../../spec/metrics.md) §3.2（唯一数字来源）；版本事实已登记进 [`docs/guides/dependencies.md`](../../guides/dependencies.md) §1。
 
 ---
 
@@ -124,7 +124,7 @@
 
 ### 3.3 本次实测（release，2026-10-16）
 
-命令：`cargo test --release --test presentation -- --nocapture measure_`（3/3 通过）。括号内为 `docs/metrics.md` §3.2 的历史值。
+命令：`cargo test --release --test presentation -- --nocapture measure_`（3/3 通过）。括号内为 `docs/spec/metrics.md` §3.2 的历史值。
 
 | 场景 | 本次实测 | 对比历史 | 判定 |
 |---|---|---|---|
@@ -139,7 +139,7 @@
 
 ### 3.4 升级**没有**解决的部分（仍属本应用侧）
 
-以下成因不在 egui 侧，换版本不会改善，需按项目既有规则排查（`docs/debug-guide.md`、`docs/metrics.md` §3.2 归因表、以及本仓库 043 号每帧热路径规则）：
+以下成因不在 egui 侧，换版本不会改善，需按项目既有规则排查（`docs/guides/debug-guide.md`、`docs/spec/metrics.md` §3.2 归因表、以及本仓库 043 号每帧热路径规则）：
 
 1. **每帧取打开文档列表走完整视图**（`list_open` 的全文快照 + 行数扫描）——必须走 `open_document_list()` 轻量摘要。
 2. **高亮 LRU 驱逐策略**——误用任意迭代序驱逐会让来回切标签触发 56 ms 级 syntect 重算尖峰。
@@ -163,7 +163,7 @@
 5. **若是高频重绘**：0.37 修掉了「截止期前的额外重绘爆发」（#8595），但前提是应用侧不滥用 `request_repaint()`；用 `ctx.request_repaint_after` 替代无条件 `request_repaint`，并检查动画类逻辑（0.35 起动画时长从 0.1 s 放慢到 0.2 s，会影响滚动动画的观感）。
 6. **若是 IME 输入路径**：组合期本项目每帧都要扫一遍输入事件、并读一次 TextEdit 状态（`composition_char_range`）；若日后测得开销可观，可改为「只在有 IME 事件或守卫生效时才读状态」。
 7. **若怀疑字形整形**：对超长单行做 `harfrust` 开关对照（0.35 起为默认），确认回退是否来自整形而不是折行。
-8. **回归守卫**：本次已把「不卡死」阈值按编译档位分开（debug 1500 ms / release 500 ms，理由见 §6.2）。若将来引入行级截断，须同步更新 `docs/metrics.md` §3.2 与 `tests/presentation/highlight_perf_test.rs`。
+8. **回归守卫**：本次已把「不卡死」阈值按编译档位分开（debug 1500 ms / release 500 ms，理由见 §6.2）。若将来引入行级截断，须同步更新 `docs/spec/metrics.md` §3.2 与 `tests/presentation/highlight_perf_test.rs`。
 
 ---
 

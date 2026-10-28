@@ -8,7 +8,7 @@
 //! # 为什么执行端不在这里
 //!
 //! `rustmark-ports` 是**零 IO** 的共享内核（R-03 起 `std::process` 亦进
-//! [`SHARED_FORBIDDEN`]，见 `docs/architecture-constraints.md`）。早先
+//! [`SHARED_FORBIDDEN`]，见 `docs/spec/architecture-constraints.md`）。早先
 //! 「`std::process` 不在禁止清单，故在此落位」是**绕规则落位**——文件头
 //! 自认绕过，与「零外部依赖」的自我描述矛盾。现按 `DialogPort` / `Clock`
 //! 的既有范式拆开：

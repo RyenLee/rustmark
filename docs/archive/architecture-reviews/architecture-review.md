@@ -351,16 +351,16 @@ vs 领域 `ThemeKind`（`domain/preferences/value_objects/theme.rs:11`，4 变�
 | `docs/README.md:64` | 问题记录 **001–027** | 实际到 **069** | **42 条** |
 | `docs/README.md:47-58` | ADR 索引只列 001–006 | `docs/adr/` 实有 **009** 篇 | 缺 3 篇 |
 | `docs/README.md:50` | `06-表现层与交互实现.md` = **76KB** | 633 行 ≈ 30KB 级 | 数字过期 |
-| `docs/testing.md:37` | **1623 passed / 0 failed / 0 ignored** | **1862 passed / 3 ignored** | 差 239 条 + ignored 数错 |
-| `docs/PROGRESS.md:53,79` | 同上 1623 passed | 同上 | 同上 |
-| `docs/PROGRESS.md:175` | egui 0.33.3 | 0.37.0 | 同上 |
-| `docs/11-预览区技术实现.md:369,371` | `src/presentation/views/math.rs`、`mermaid.rs` | 已在 `presentation/rich/{math,mermaid}/` | 路径过期（ADR-007 已迁） |
-| `docs/05-基础设施实现.md:40,56,63,70,105` | 5 个测试文件名 | 实际文件名不同 | 5 处路径过期 |
+| `docs/guides/testing.md:37` | **1623 passed / 0 failed / 0 ignored** | **1862 passed / 3 ignored** | 差 239 条 + ignored 数错 |
+| `docs/plans/PROGRESS.md:53,79` | 同上 1623 passed | 同上 | 同上 |
+| `docs/plans/PROGRESS.md:175` | egui 0.33.3 | 0.37.0 | 同上 |
+| `docs/stages/11-预览区技术实现.md:369,371` | `src/presentation/views/math.rs`、`mermaid.rs` | 已在 `presentation/rich/{math,mermaid}/` | 路径过期（ADR-007 已迁） |
+| `docs/stages/05-基础设施实现.md:40,56,63,70,105` | 5 个测试文件名 | 实际文件名不同 | 5 处路径过期 |
 | `tests/e2e/main.rs:5`、`tests/integration/large_file_test.rs:472` | `docs/e2e-cases.md` / `docs/large-file-report.md` | 在 `docs/archive/stage-reports/` 下 | 路径过期 |
-| `docs/metrics.md:211` | exe 11 892 736 B = 11.34 MiB | 11 907 584 B = 11.35 MiB | 0.02 MiB（结论仍成立） |
+| `docs/spec/metrics.md:211` | exe 11 892 736 B = 11.34 MiB | 11 907 584 B = 11.35 MiB | 0.02 MiB（结论仍成立） |
 
 **建议**　① 更新 `docs/README.md` 的 ADR 索引与问题记录编号区间；
-② `docs/testing.md` / `PROGRESS.md` 的测试数改为**当日实测**并标注日期
+② `docs/guides/testing.md` / `PROGRESS.md` 的测试数改为**当日实测**并标注日期
 （项目已有「全绿必须附当日实测命令+数字」纪律，此处只是没执行）；
 ③ 修 5+2 处路径过期。
 
@@ -373,7 +373,7 @@ vs 领域 `ThemeKind`（`domain/preferences/value_objects/theme.rs:11`，4 变�
 | 决定 | 位置 | 现状 |
 |---|---|---|
 | `ActionRoute` 穷举动作表 + `Unbound` 显式声明 | `app/frame/actions.rs:189-289` | `docs/adr/` 全无 `ActionRoute` 字样 |
-| `RevealIntent` 双意图分流（离散跳转 vs 查找） | `presentation/views/scroll_sync.rs` | 仅见于 `docs/v1.1-backlog.md:7` |
+| `RevealIntent` 双意图分流（离散跳转 vs 查找） | `presentation/views/scroll_sync.rs` | 仅见于 `docs/plans/v1.1-backlog.md:7` |
 | `presentation::icons` 的「规格 = 数据」图标系统 | `presentation/icons.rs`（562 行） | 仅见于 `docs/06:154` |
 | 草稿旁车文件 `<id>.draft.path` 协议 | 问题记录 069 | `grep 旁车 docs/` **零结果** |
 | 字体外置（改变发行包形态） | `metrics.md:203` | 无 ADR |
@@ -437,7 +437,7 @@ vs 领域 `ThemeKind`（`domain/preferences/value_objects/theme.rs:11`，4 变�
 | 3 | **ADR-009 的 `begin`/`flush` 是软肋** | 两个必须成对的调用点，唯一的兜底是「真实帧 `repaint_delay`」测试；ADR-009 已在「后果」里如实登记 |
 | 4 | **`check-arch` 的新规则（预约唯一出口）同样是文本扫描** | 但 `request_repaint_after` 是**函数调用**不是 `use` 路径，不受 P0-1 的绕过形态影响 ✓ |
 | 5 | **T4 改了 `HighlightPace` 内部结构** | `(u64, Timestamp)` → `PaceEntry{revision, at, pending}`；`snapshot()` 签名保持不变，外部无感 ✓（已核实 `tests/application/markdown_service_test.rs` 未受影响） |
-| 6 | **T9 的 `views.rs` re-export 保路径** | `views::math` / `views::mermaid` 仍是旧路径的别名 → 文档里 `docs/11-预览区技术实现.md:369,371` 仍写旧路径**反而没过期**（新路径 `rich/` 才是新的）—— 文档该写新路径 |
+| 6 | **T9 的 `views.rs` re-export 保路径** | `views::math` / `views::mermaid` 仍是旧路径的别名 → 文档里 `docs/stages/11-预览区技术实现.md:369,371` 仍写旧路径**反而没过期**（新路径 `rich/` 才是新的）—— 文档该写新路径 |
 
 ---
 
@@ -451,7 +451,7 @@ vs 领域 `ThemeKind`（`domain/preferences/value_objects/theme.rs:11`，4 变�
 |---|---|---|---|
 | 1 | 删 `application/workspace/service.rs:525` 的 `floor_char_boundary` 副本 | 改用 `shared::geometry` 版本，原测试迁移 | 消除重复实现与重复测试 |
 | 2 | 统一文件名提取到 `FilePath::file_name` | 新增一条 Windows 反斜杠路径的用例 | 修掉「对话框显示整条路径」 |
-| 3 | 修 `docs/README.md` 的 ADR 索引与问题记录编号；更新 `docs/testing.md` / `PROGRESS.md` 的测试数 | grep 校验 | 恢复文档索引可信度 |
+| 3 | 修 `docs/README.md` 的 ADR 索引与问题记录编号；更新 `docs/guides/testing.md` / `PROGRESS.md` 的测试数 | grep 校验 | 恢复文档索引可信度 |
 | 4 | `sidebar_view/search.rs:176-182` 改用 `elided_segment` | 现有真帧测试 + 变异探针 | 消除已知 065 反模式 |
 
 ### 第 2 批 · 扩展性瓶颈（1 周）
@@ -502,7 +502,7 @@ vs 领域 `ThemeKind`（`domain/preferences/value_objects/theme.rs:11`，4 变�
 | T4 增量高亮 | `HighlightPace` 增 `pending` 后**未同步 ADR**（ADR-009 提了但未单列） |
 | T6 路由表 | 路由表本身完整（穷举 + 3 守卫测试 ✓），但 `Revert` / `InsertImage` 仍是 `Unbound`（§P0-3） |
 | T8 widgets | 10 处调用点 / 5 文件；065 反模式仍在 `search.rs:176`；「可点行 + hover 底色」4 处未收口（§P2-4） |
-| T9 rich 下沉 | `docs/11-预览区技术实现.md:369,371` 仍写旧路径（§P2-5） |
+| T9 rich 下沉 | `docs/stages/11-预览区技术实现.md:369,371` 仍写旧路径（§P2-5） |
 | T11 FrameScheduler | `begin`/`flush` 成对契约是软肋（已登记在 ADR-009「后果」） |
 
 ---

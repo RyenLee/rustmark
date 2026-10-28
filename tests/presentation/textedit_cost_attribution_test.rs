@@ -2,7 +2,7 @@
 //!
 //! # 要裁决的争议
 //!
-//! `docs/metrics.md` §3.2.3 结论 3 把 1MB 档击键帧的约 39ms（击键帧 42ms −
+//! `docs/spec/metrics.md` §3.2.3 结论 3 把 1MB 档击键帧的约 39ms（击键帧 42ms −
 //! 空闲帧 3.25ms）记在「egui 文本一变即重建 58,514 行 `Galley`」上，并据此判定
 //! 「要做进 16ms 只能自绘编辑器」。但同一节的结论 1 写的是「只重建改动那一行，
 //! 增量设计重建行数 == 1」，而 `mapper::highlight_layout_with_find` 的大文件降级
@@ -761,7 +761,7 @@ fn profile_1mb_app_layer_whole_text_costs() {
     );
 
     // 建议一（问题 039）落地后：状态栏统计已防抖，打字期不再每击键整篇重算
-    // （`compute_stats` 在 1MB 上 ≈ 9.5ms，见 `docs/metrics.md` §3.2.5）。
+    // （`compute_stats` 在 1MB 上 ≈ 9.5ms，见 `docs/spec/metrics.md` §3.2.5）。
     // 故「开 / 关状态栏」的击键帧 p50 差值应从「> 2ms」降为「接近 0」
     // （只余 O(1) 的节拍器比对 + 一次缓存克隆）。这条断言钉住「防抖确实生效、
     // 热点已消除」，而非相反——若它显著 > 0，说明 `compute_stats` 仍在每击键跑。

@@ -2,7 +2,7 @@
 //!
 //! # 为什么放在 rustmark-ports 而不是 domain / application
 //!
-//! 依赖矩阵（`docs/architecture-constraints.md`）规定：
+//! 依赖矩阵（`docs/spec/architecture-constraints.md`）规定：
 //! `presentation` **不得**依赖 `domain`，`infrastructure` **不得**依赖
 //! `application` / `presentation`。而「打开文件」这件事同时被三方需要：
 //! - `presentation` 在菜单里触发「打开」；
@@ -104,7 +104,7 @@ pub trait DialogPort: Send + Sync {
 /// 该方法的返回类型是 [`FileFilter`]（本模块的类型），放在 `text_format`
 /// 就意味着 `text_format → dialog` 的依赖边；而反方向
 /// （[`default_filters`] 派生自白名单）是问题 045 的有意设计。
-/// 两条边同时存在即成环（V11-55，见 `docs/shared-internal-cycle-review.md`）。
+/// 两条边同时存在即成环（V11-55，见 `docs/reports/shared-internal-cycle-review.md`）。
 /// Rust 允许同 crate 内跨模块 `impl`，故实现落在此处，调用路径
 /// `TextFormats::file_filter()` 与行为均不变。
 const FILTER_NAME: &str = "Markdown 与文本文件";

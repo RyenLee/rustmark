@@ -1,10 +1,10 @@
 # rustmark 架构改造实施方案
 
 - **上游依据**：[`docs/architecture-review.md`](./architecture-review.md)（2026-10-20 全库架构评估，基线 `e09ad2b`）
-- **任务登记**：`docs/v1.1-backlog.md` 的 **V11-54**
+- **任务登记**：`docs/plans/v1.1-backlog.md` 的 **V11-54**
 - **编制日期**：2026-10-20
 - **适用范围**：本方案覆盖评估报告 §2 中 P0 / P1 / P2 共 18 项主问题与 P3 低成本清理包；
-  **不覆盖**性能优化主线（1MB p95 压进 16ms 属另一条线，见 `docs/metrics.md` §3.2.13）
+  **不覆盖**性能优化主线（1MB p95 压进 16ms 属另一条线，见 `docs/spec/metrics.md` §3.2.13）
   与 T7 平台真机回归（需外部机器）
 
 > **文档说明（2026-10-22）**：本文各处「变异验证」引用的 `tools/mut_*.py` 一次性脚本已在
@@ -16,7 +16,7 @@
 > **文档说明（2026-10-26，E-18）**：本文写于 V11-62（`rustmark-ui` 拆分）之前，文中多次引用的
 > `src/presentation/{state,theme,shortcuts,rich}` 路径现已迁入 `crates/rustmark-ui/src/presentation/`；
 > `views` 仍留 root（`src/presentation/views/`）。溯源请以现行布局为准（见
-> [`architecture-constraints.md`](../../architecture-constraints.md) §10 与 [`docs/README.md`](../../README.md)）。
+> [`architecture-constraints.md`](../../spec/architecture-constraints.md) §10 与 [`docs/README.md`](../../README.md)）。
 
 ---
 
@@ -201,7 +201,7 @@ presentation ──► application ──► domain ◄── infrastructure
 
 | 不涉及 | 理由 |
 |---|---|
-| **性能主线**（1MB p95 压进 16ms、增量统计） | 属 `docs/metrics.md` §3.2.13 的另一条线；本次改造**不得**引入每帧回归 |
+| **性能主线**（1MB p95 压进 16ms、增量统计） | 属 `docs/spec/metrics.md` §3.2.13 的另一条线；本次改造**不得**引入每帧回归 |
 | **T7 平台真机回归** | 需外部 macOS / Linux 机器 |
 | **crate 拆分** | ADR-007 已定：不拆（编译隔离是伪收益） |
 | **`presentation/rich/` 内部重构** | ADR-007 的边界已验证（零外部依赖），本期不动 |
@@ -394,7 +394,7 @@ UI 选格式 ──► ExportFormat（领域唯一枚举）
 
 实测 `.agent/architecture.md` **不含任何本机绝对路径**——gitignore 给它的理由对它不成立。
 
-处置：把真源迁到 **`docs/architecture-constraints.md`**（入库），`.agent/architecture.md`
+处置：把真源迁到 **`docs/spec/architecture-constraints.md`**（入库），`.agent/architecture.md`
 改为一行指针；全仓 20 个文件、26 处引用同步更新（含 `src/` 下 10 个模块的 doc 注释）。
 「一个事实一个家」得以保持：规则正文只有一份，且**必须随代码走**。
 
@@ -655,7 +655,7 @@ UI 选格式 ──► ExportFormat（领域唯一枚举）
      `tools/arch_check.rs` 的 `PRESENTATION_FORBIDDEN = ["crate::domain", "crate::infrastructure"]`
      **直接冲突**——照原文做，`check-arch` 立刻变红。
      导出格式被**三方**需要（领域：任务选项校验；表现：对话框单选组与提交 id；
-     基础设施：导出器路由），而 `docs/architecture-constraints.md` §4 规定
+     基础设施：导出器路由），而 `docs/spec/architecture-constraints.md` §4 规定
      表现层不得依赖 `domain`、基础设施层不得依赖 `application`——
      **三方共同的依赖点只有 `shared`**。
      故真源下沉 `shared::export_format`，`domain::export::value_objects`
@@ -715,7 +715,7 @@ UI 选格式 ──► ExportFormat（领域唯一枚举）
    领域 `ActionId::all()` 是「**可持久化**动作全集」（38 项），
    领域 `default_bindings()` 是「**有默认键位**的动作集」（37 项），
    差集恰为 `ToggleStatusbar`（可持久化但**不占用快捷键**，产品有意为之，
-   见 `docs/06-表现层与交互实现.md:46`）。
+   见 `docs/stages/06-表现层与交互实现.md:46`）。
    领域 `KeyCombo::parse("")` 返回 `Err`（`key` 为 `None`），
    故领域表**无法表达「无默认键位」**——要合一需先改领域 `KeyCombo`
    的表达能力或引入「未绑定」语义，**牵动 `shared`**，与 R-21 方向相反。
@@ -782,7 +782,7 @@ UI 选格式 ──► ExportFormat（领域唯一枚举）
 
 1. **真源落 `shared` 而非 `domain`**（**偏离原文**）：原文说「保留领域
    `ThemeKind` 为唯一真源」，但**表现层不得依赖领域**
-   （`docs/architecture-constraints.md` §4；`check-arch` 的
+   （`docs/spec/architecture-constraints.md` §4；`check-arch` 的
    `PRESENTATION_FORBIDDEN` 拦 `crate::domain`），而主题种类是三方
    （领域 / 应用 / 表现）共同需要的 → 真源落在 `shared::theme::ThemeKind`，
    领域侧以 `pub use` 转出（公开路径
@@ -1141,7 +1141,7 @@ UI 选格式 ──► ExportFormat（领域唯一枚举）
 #### R-13 · 表现层内部依赖规则（`views` ↔ `state`）
 
 - **改造内容**：明确并**机械守卫**表现层内部方向：`views/` 可读 `state/`，`state/` **不得**依赖 `views/`；`rich/` 不得依赖 `views/` / `state/` / `theme/` / `widgets/`（ADR-007 已有编译期保障，本项把它**机械化**）。同时规定 `widgets/` 与 `icons.rs` 不得依赖 `views/`。
-- **涉及文件**：`tools/arch_check.rs`（`layer_of` 增细粒度：`presentation/views`、`presentation/state`、`presentation/rich`、`presentation/widgets`）、`docs/architecture-constraints.md` §4（登记）、`docs/adr/ADR-010`（记录）
+- **涉及文件**：`tools/arch_check.rs`（`layer_of` 增细粒度：`presentation/views`、`presentation/state`、`presentation/rich`、`presentation/widgets`）、`docs/spec/architecture-constraints.md` §4（登记）、`docs/adr/ADR-010`（记录）
 - **影响范围**：`presentation` 内部 123 文件的依赖方向；当前预期 0 违规（实测 `rich/` 零外部依赖 ✓）。
 - **依赖关系**：**依赖 R-01**（token 匹配）。**不依赖 R-12**（两者是各自独立的守卫项）→ 本项可在 M3 内独立完成。
 - **风险点**：
@@ -1195,7 +1195,7 @@ widgets 不清 / icons 不清 / views 丢窄豁免 / 窄豁免外溢到整个 `c
 `layer_of` 丢掉根文件形态。其中 2 轮被 build.rs 架构校验先拦下
 （`captured_build`），被测用例没机会跑——单独归类，不与「无牙齿」混淆。
 
-**文档**：`docs/architecture-constraints.md` 新增 §4.0（内部方向矩阵）与 §9
+**文档**：`docs/spec/architecture-constraints.md` 新增 §4.0（内部方向矩阵）与 §9
 （tests 库内部视角禁令，R-02 的规则真源）、§4.1 补第 7/8 条判定口径、
 §4 shared 表补 `std::process`；新建 `docs/adr/ADR-010-presentation-internal-direction.md`；
 `docs/README.md` ADR 索引补 010。
@@ -1318,24 +1318,24 @@ widgets 不清 / icons 不清 / views 丢窄豁免 / 窄豁免外溢到整个 `c
   2. `docs/README.md:64` 的「001–027」→ 「001–069」；
   3. `docs/README.md:47-58` 的 ADR 索引补 **007 / 008 / 009**（R-19 新增的 010 / 011 一并补）；
   4. `docs/README.md:50` 的「76KB」→ 实测值；
-  5. `docs/testing.md:37` 与 `docs/PROGRESS.md:53,79` 的「1623 passed / 0 failed / 0 ignored」→ **当日实测数字**（含 ignored 数）；
-  6. `docs/PROGRESS.md:175` 的 egui 版本号；
-  7. `docs/11-预览区技术实现.md:369,371` 的 `views/math.rs`、`views/mermaid.rs` → `presentation/rich/math/`、`presentation/rich/mermaid/`；
-  8. `docs/05-基础设施实现.md:40,56,63,70,105` 的 5 个测试文件名；
+  5. `docs/guides/testing.md:37` 与 `docs/plans/PROGRESS.md:53,79` 的「1623 passed / 0 failed / 0 ignored」→ **当日实测数字**（含 ignored 数）；
+  6. `docs/plans/PROGRESS.md:175` 的 egui 版本号；
+  7. `docs/stages/11-预览区技术实现.md:369,371` 的 `views/math.rs`、`views/mermaid.rs` → `presentation/rich/math/`、`presentation/rich/mermaid/`；
+  8. `docs/stages/05-基础设施实现.md:40,56,63,70,105` 的 5 个测试文件名；
   9. `tests/e2e/main.rs:5` 与 `tests/integration/large_file_test.rs:472` 的文档路径 → `docs/archive/stage-reports/`；
-  10. `docs/metrics.md:211` 的 exe 字节数 → 当日实测（**注意：每次构建产物会有 0.0x MiB 波动，只更新实测值不改结论**）；
+  10. `docs/spec/metrics.md:211` 的 exe 字节数 → 当日实测（**注意：每次构建产物会有 0.0x MiB 波动，只更新实测值不改结论**）；
   11. `docs/logs/问题记录1.txt` 的**正文标题格式两套并存**（001–056 用 `YYYY-MM-DD NNN` 独占行，057–069 用 `NNN · MM-DD ·` 单段）→ 统一为新格式（**只改 057–069 的标题行，不动正文内容**）。
 - **涉及文件**：上述 8 个文件 + `docs/logs/问题记录1.txt`
 - **影响范围**：纯文档；影响「一个事实一个家」的可信度。
 - **依赖关系**：**依赖 R-19**（ADR 补齐后索引才完整）。
 - **风险点**：
   - 改 `问题记录1.txt` 的旧条目标题会**破坏历史记录的逐字性**（该文件是 append-only 流水账）→ **只统一新条目的格式，不动 001–056**；本项第 11 条实际应改为「新增条目统一用新格式」并在文件头注明；
-  - 测试数会随改造推进持续变化 → 在 `docs/testing.md` 标注「数字截至 YYYY-MM-DD」而非写死。
+  - 测试数会随改造推进持续变化 → 在 `docs/guides/testing.md` 标注「数字截至 YYYY-MM-DD」而非写死。
 - **回滚方案**：`git revert`（纯文档，无风险）。
 - **验收判据**：
   - 逐条 grep 核对 11 处**全部**与代码现状一致；
   - `docs/README.md` 的 ADR 条目数 == `ls docs/adr/*.md | wc -l`；
-  - 交叉核对：`docs/testing.md` 的测试数 == 当日 `cargo test --all-targets` 的实测 passed 数。
+  - 交叉核对：`docs/guides/testing.md` 的测试数 == 当日 `cargo test --all-targets` 的实测 passed 数。
 
 #### R-19 · ADR 补齐
 
@@ -1508,7 +1508,7 @@ widgets 不清 / icons 不清 / views 丢窄豁免 / 窄豁免外溢到整个 `c
   - `grep -rn "fn floor_char_boundary" src/` → 1 处；
   - `grep -rn "rsplit" src/app/frame/` → 只剩统一形态；
   - `docs/README.md` ADR 条目数 == `ls docs/adr/*.md | wc -l`；
-  - `docs/testing.md` 的测试数 == 当日实测。
+  - `docs/guides/testing.md` 的测试数 == 当日实测。
 
 **M2 · 扩展性瓶颈（5 人日）**
 
@@ -1585,7 +1585,7 @@ widgets 不清 / icons 不清 / views 丢窄豁免 / 窄豁免外溢到整个 `c
 | 测试 | **1862 passed / 0 failed / 4 ignored** | `cargo test --all-targets`；4 个 ignore 分布在 4 个目标（2 个性能基准 + 1 个生成型 golden + 1 个需外网），**均有意忽略** |
 | 架构守卫 | **OK（未发现分层依赖违规）** | `cargo run --bin check-arch` |
 | clippy | **0 lint** | `cargo clippy --all-targets --all-features -- -D warnings`（仅 Windows 增量编译锁文件清理告警，**非 lint**） |
-| release exe | **11,911,168 B = 11.36 MiB** | `stat -c%s target/x86_64-pc-windows-msvc/release/rustmark.exe`；`docs/metrics.md` §2.6 记 11.34 MiB，差 18,432 B（0.16%）属同配置重建波动，**仍越 10 MB 红线 1.36 MiB** |
+| release exe | **11,911,168 B = 11.36 MiB** | `stat -c%s target/x86_64-pc-windows-msvc/release/rustmark.exe`；`docs/spec/metrics.md` §2.6 记 11.34 MiB，差 18,432 B（0.16%）属同配置重建波动，**仍越 10 MB 红线 1.36 MiB** |
 | 源码规模 | `src/` 302 文件 / 33 845 行 | 与评估报告 §1.1 同基线 |
 
 | 里程碑 | 改造项 | 起始 | 完成 | 门禁数字（passed / ignored / check-arch） | 备注 |
@@ -1599,7 +1599,7 @@ widgets 不清 / icons 不清 / views 丢窄豁免 / 窄豁免外溢到整个 `c
 | M2 | R-08① | 2026-10-20 | 2026-10-20 | **1909** / 4 / OK | `8cdf083`；`persisted_key` 改穷举（38 `Some` + 19 `None` / 共 57 变体，**修正原文「16 个」的偏差**）；②默认键位表合一**未做**（两侧表语义不同，领域无法表达「无默认键位」，牵动 `shared`）；**修掉领域 `ActionId::all()` 漏登记 `ToggleStatusbar` 的真实缺陷**（改「显示/隐藏状态栏」键位弹「尚未映射到领域动作」）；新增 13 例；变异验证 3 轮（兜底写回 / 领域清单漏登记 → 4 例红 / 表现清单漏登记 → 3 例红） |
 | M2 | R-09 | 2026-10-20 | 2026-10-20 | **1927** / 4 / OK | `b1f951b`；主题种类收敛为唯一真源 `shared::theme`（**偏离原文**，理由见 §4.2 R-09「实施偏差」）；**六份**副本全部收敛（原文只提到三份）；**修掉 `refresh_system_theme` 恒提前返回**（跟随系统时系统外观变化不刷新）+ 契约值硬编码 3 处；新增 18 例；变异验证 2 轮（`as_str` 写错 → 2 例红 / 注入同构枚举 → 守卫红） |
 | M2 | R-10 | 2026-10-20 | 2026-10-20 | **1979** / 4 / OK | `7f96b55` + `ec8926a`（拆 2 commit）；三套 span→`LayoutJob` 实现收敛为 `mapper::span_job::build_job`（差异由 `SpanPolicy` 显式参数化）；两张样式表合并为一份派发 `StyleSemantics::of`（**偏离原文**：字面「并表」会破坏字号/字体族/行高的刻意差异，改为「派发合并、度量分离」）；**修掉代码块同一行两种字号 + 重叠 span 文本重复**（8 字符 → 10/13 字符）两个真实缺陷；新增 21 例（对拍 13 + 行内 4 + 样式表 3 + 真帧 1）+ 变异验证 **19 轮**（详见 §4.2 R-10「实施结果」「实施偏差」） |
-| M3 | R-01 | 2026-10-20 | 2026-10-20 | **1958** / 4 / OK | **提前至 M2 期间实施**（R-10 被打断时插入）；判定由「行首 `use `」重写为**词法 + use-tree 展开**；实测额外发现并修掉 8 类漏检 + 3 处实现缺陷；`crate::app` 禁令改为**更窄豁免前缀**（表现层放行 `crate::app::frame`，54 个文件依赖它）；豁免机制加**登记表**校验（未登记/过时均报错）；**规则真源由 `.agent/architecture.md` 迁入 `docs/architecture-constraints.md`**（`.agent/` 整目录不入库 → CI 上豁免机制死锁）；删死代码 `signature()`/`file_stamp()`；报告格式收敛到单一来源 `format_report`；用例 13 → **45** 条；变异验证 **10 轮**（详见 §4.1 R-01「实施结果」） |
+| M3 | R-01 | 2026-10-20 | 2026-10-20 | **1958** / 4 / OK | **提前至 M2 期间实施**（R-10 被打断时插入）；判定由「行首 `use `」重写为**词法 + use-tree 展开**；实测额外发现并修掉 8 类漏检 + 3 处实现缺陷；`crate::app` 禁令改为**更窄豁免前缀**（表现层放行 `crate::app::frame`，54 个文件依赖它）；豁免机制加**登记表**校验（未登记/过时均报错）；**规则真源由 `.agent/architecture.md` 迁入 `docs/spec/architecture-constraints.md`**（`.agent/` 整目录不入库 → CI 上豁免机制死锁）；删死代码 `signature()`/`file_stamp()`；报告格式收敛到单一来源 `format_report`；用例 13 → **45** 条；变异验证 **10 轮**（详见 §4.1 R-01「实施结果」） |
 | M3 | R-02 | 2026-10-20 | 2026-10-20 | **2005** / 4 / OK | 新增 `scan_with_tests`，`scan` 签名不变；`tests/` 侧统一判 `Layer::Tests`（**不按目录名判层**——`tests/domain/` 是测试目标划分不是层，按名判会误套禁令）；`TESTS_FORBIDDEN` 只列库层名，放行 `crate::support`（243 处）；报告带 `tests/` 前缀；帧预约规则照样罩住测试侧；新增 8 例 + 变异验证 **6 轮全捕获**；构建耗时 +0.27s（+4.6%，方案预估的 35% 指扫描量非总耗时）；存量实测 `crate::<库层名>` 真实引用 = 0（命中全在注释/字符串里） |
 | M3 | R-03 | 2026-10-20 | 2026-10-20 | **2017** / 4 / OK | `shared/system.rs` 端口化：新增 `ExternalOpener` trait（`std::process` 移出 `shared`，`is_safe_to_open` 纯校验留下）；实现搬 `infrastructure/system.rs`；`Services.opener` + 装配链最深层 `assemble_with_opener`（**偏离原文**：直接给 `assemble_with_clock_and_dialogs` 加参数会一次性改 20+ 测试调用点，故新增最深层让旧链转发，既有调用点零改动）；预览区两处调用改经端口；`SHARED_FORBIDDEN` 加 `std::process`；新增 **9 例**（5 例假 opener 用户可见 + 4 例禁令）+ 变异 **7 轮全捕获** |
 | M3 | R-13 | 2026-10-20 | 2026-10-20 | **2024** / 4 / OK | `layer_of` 细粒度化（`state`/`views`/`rich`/`widgets`/`icons` 五子层，**层根文件与目录同规则**）；四条新禁令全部叠加父层；**方案预警的风险点真的发生了**——`views/` 独立成层后 `allowed_for` 没跟上，**35 个视图文件同时报错**，按「放宽到具体前缀而非放弃规则」把 `crate::app::frame` 窄豁免扩到全部子层（窄前缀不变）；存量实测 **0 处真实违规**（命中全在文档注释）→ 本项不改变任何编译结果；新增 7 例 + 修正 1 条旧筛子 + 变异 **8 轮全捕获**；约束文档加 §4.0/§9，新建 ADR-010 |
@@ -1635,7 +1635,7 @@ widgets 不清 / icons 不清 / views 丢窄豁免 / 窄豁免外溢到整个 `c
 
 ### 6.2 目录与命名规范
 
-**目录**（沿用 `docs/architecture-constraints.md` §7 的「禁 `mod.rs`」约定）：
+**目录**（沿用 `docs/spec/architecture-constraints.md` §7 的「禁 `mod.rs`」约定）：
 
 ```text
 src/

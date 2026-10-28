@@ -22,7 +22,7 @@
 //! 命令面板、差异对比）——这与 VS Code「编辑器字体」的语义一致，
 //! 且比一个随时可能 panic 的自建族可靠得多。
 //!
-//! 本模块**不引入 egui**（见 `docs/architecture-constraints.md`：`shared` 层禁止依赖
+//! 本模块**不引入 egui**（见 `docs/spec/architecture-constraints.md`：`shared` 层禁止依赖
 //! `egui`）。这里只提供字符串契约与纯数据。
 //!
 //! # 与「字体族设置」的来龙去脉

@@ -1,7 +1,7 @@
 # RustMark 调试与运行命令手册
 
 > 适用对象：需要在本机运行、调试 `rustmark`（egui + wgpu 原生 Markdown 编辑器）的开发者。
-> 本文档与 `docs/troubleshooting.md` 互补：本文偏「命令怎么敲 + 缺陷怎么定位」，后者偏「终端用户的已知故障怎么修」。
+> 本文档与 `docs/guides/troubleshooting.md` 互补：本文偏「命令怎么敲 + 缺陷怎么定位」，后者偏「终端用户的已知故障怎么修」。
 > **§6「GUI 缺陷定位方法论」**沉淀自问题记录 001–027 的真实排障（运行时取证 / 插桩量 rect /
 > 逐字形实测 / panic=abort 纪律 / 依赖审查法），排障前建议先读。
 
@@ -58,7 +58,7 @@ available binaries: check-arch, rustmark
 RUSTMARK_STARTUP_TIMING=1 cargo run --bin rustmark
 ```
 
-五个里程碑（口径对齐 `docs/metrics.md` §3）：`进程启动` → `装配完成`（配置读盘 + 语法集加载 +
+五个里程碑（口径对齐 `docs/spec/metrics.md` §3）：`进程启动` → `装配完成`（配置读盘 + 语法集加载 +
 最近文件恢复）→ `应用构造完成`（主题解析 + 快捷键注册 + 草稿扫描）→ `首帧提交`（窗口骨架可见）→
 `内容就绪`（文档解析 + 高亮完成，有文档打开时才有意义）。
 
@@ -84,7 +84,7 @@ RUSTMARK_STARTUP_TIMING=1 cargo run --bin rustmark
    自动三选一（Windows→dx12 / macOS→metal / Linux→vulkan+gles），交叉编译时自动切换，无需手工指定。
 3. **当前 release 已超打包红线**：`target/x86_64-pc-windows-msvc/release/rustmark.exe` 实测
    11,463,680 字节（10.93 MiB）> `package-windows.ps1` 内置的 10 MB 门禁——**现在直接跑打包脚本
-   会在体积检查处 throw**。缓解方案待 v1.1 评审（见 `docs/metrics.md` §2.4）；方案落地前只是想
+   会在体积检查处 throw**。缓解方案待 v1.1 评审（见 `docs/spec/metrics.md` §2.4）；方案落地前只是想
    验证打包流程，可本地临时调大脚本里的 `$limitBytes`（**勿提交该改动**）。
 
 > 工具链由 `rust-toolchain.toml` 固定为 **1.99.0**（含 rustfmt / clippy 组件，`profile = "minimal"`），
@@ -293,7 +293,7 @@ grep "超预算" frame.log | head
 
 | 记录里的形态 | 含义 | 下一步 |
 |---|---|---|
-| `绘制` 占绝大部分 | 慢在排版 / 视图树（大文档、复杂预览） | 对照 `docs/metrics.md` §3.2 的排版层数字，或开 `textedit_cost_attribution` 那套测试级归因 |
+| `绘制` 占绝大部分 | 慢在排版 / 视图树（大文档、复杂预览） | 对照 `docs/spec/metrics.md` §3.2 的排版层数字，或开 `textedit_cost_attribution` 那套测试级归因 |
 | `状态更新` 占绝大部分 | 慢在自动保存 / 高亮补算 / 快捷键扫描等**非绘制**工作 | 看同一行的「本帧到期任务」：`autosave`/`highlight` 同帧出现时，多半是它们在抢帧 |
 | `未归因` 占绝大部分 | 阶段边界漏打点，或 `flush` 之后还有活（草稿提示、截图回路） | 按 §6.2 的逐帧插桩先确认区间 |
 
@@ -304,7 +304,7 @@ grep "超预算" frame.log | head
 
 ## 6. GUI 缺陷定位方法论（实战沉淀）
 
-> 本章内容全部来自本项目的真实排障记录（`docs/logs/问题记录1.txt` 001–027、`docs/metrics.md`、
+> 本章内容全部来自本项目的真实排障记录（`docs/logs/问题记录1.txt` 001–027、`docs/spec/metrics.md`、
 > `docs/archive/stage-reports/` 各报告），不是通用教条。每条注明案例编号以便追溯。
 
 ### 6.1 第一原则：渲染层缺陷必须「运行时取证」，单测注入事件会集体打偏
@@ -377,9 +377,9 @@ grep "超预算" frame.log | head
 1. **debug 与 release 差约 40%**（`docs/07` 已知问题）——性能门禁一律放 release；
    debug 下的耗时断言只打印 `[metrics]` 不做门禁（V11-13 裁定），否则会把达标项误判为不达标。
 2. **LTO 项目里「未接线的空壳入口」会让 `cargo bloat` 量到假达标**——链接器把未引用代码全裁掉，
-   小体积是假象。体积探针的寿命绑定在「主二进制是否已引用该依赖」上，**用完即删**（`docs/metrics.md` §3.1 教训）。
+   小体积是假象。体积探针的寿命绑定在「主二进制是否已引用该依赖」上，**用完即删**（`docs/spec/metrics.md` §3.1 教训）。
 3. **归因先做地板探针**：本项目空闲内存 125.3 MB 里自有代码只贡献约 0.9 MB，其余全是
-   egui + wgpu + dx12 基线——不探明地板就会为「不存在的优化空间」做无用功（`docs/metrics.md` §3.0.2）。
+   egui + wgpu + dx12 基线——不探明地板就会为「不存在的优化空间」做无用功（`docs/spec/metrics.md` §3.0.2）。
 
 ### 6.7 依赖审查方法（可复现）
 
@@ -390,7 +390,7 @@ grep "超预算" frame.log | head
    （实例：`ahash` 的 `runtime-rng` 是 `getrandom 0.3.4` 的唯一引入者）；
 3. 重复版本扫描：`cargo tree -d`；
 4. 体积：**同一 release 口径**（`cargo build --release --bin rustmark`）前后对比；
-5. 「复核后保持现状」的结论也要**记录理由**（`docs/dependencies.md` §6.2），避免反复讨论。
+5. 「复核后保持现状」的结论也要**记录理由**（`docs/guides/dependencies.md` §6.2），避免反复讨论。
 
 ### 6.8 诊断插桩的纪律
 

@@ -1,6 +1,6 @@
 //! workspace 结构守卫（V11-57 建立）：契约 crate 的**依赖面**断言。
 //!
-//! 与 CI 的拓扑 diff（`docs/workspace-topology.expected.txt`）是一对：
+//! 与 CI 的拓扑 diff（`docs/spec/workspace-topology.expected.txt`）是一对：
 //! 那条在远端兜底「任何依赖边变更必须是显式评审事件」，本文件在本地门禁里
 //! 钉住单个 crate 的依赖面规格——改 `Cargo.toml` 的人先撞到的是这里的红，
 //! 而不是推到远端才红。

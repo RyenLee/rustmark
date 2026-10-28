@@ -145,7 +145,7 @@ workspace = true
 # accesskit / accesskit_winit / accesskit_windows / accesskit_consumer 四个 crate，
 # 以及仅被它们引用的重复版本 hashbrown 0.15 / foldhash 0.1。代价是放弃
 # 屏幕阅读器可达性——对单人本地 Markdown 编辑器是已知且可接受的取舍。
-# REL-03 体积缓解（docs/metrics.md §2.4 方案①）：**两个字体 feature 都不启用**。
+# REL-03 体积缓解（docs/spec/metrics.md §2.4 方案①）：**两个字体 feature 都不启用**。
 # `default_fonts` + `monochrome_emoji_fonts` 会把 epaint_default_fonts 的 5 个字体
 # （Ubuntu-Light / Hack / NotoEmoji / emoji-icon-font / egui-icons，合计 1,417,504 B）
 # 以 `include_bytes!` 编进 exe——这是 10 MB 未压缩红线（NFR-PERF-01）下
@@ -222,7 +222,7 @@ anyhow = "1"
 # --- 远程图片下载 ---
 # ureq / rustls-native-certs 已下沉 core（infrastructure::persistence::asset_loader）。
 
-# --- 日志（基础设施层越界告警用；未列入需求 §5.1，已在 docs/dependencies.md 登记）---
+# --- 日志（基础设施层越界告警用；未列入需求 §5.1，已在 docs/guides/dependencies.md 登记）---
 log = { workspace = true }
 # 日志后端（F-2：此前 log 的 12 个告警调用点无后端接收，全部静默丢弃）。
 # 只开 `humantime`：默认特性的 `regex` 会链入整个 `regex` crate
@@ -246,7 +246,7 @@ env_logger = { version = "0.11", default-features = false, features = ["humantim
 #     "No wgpu backend feature that is implemented for the target platform was enabled."
 #
 # 结论：**关掉 eframe 的 default 后必须自己补 wgpu 后端 feature**。
-# 这里按平台各启**一个**后端（体积增量最小，见 docs/metrics.md §2.3），
+# 这里按平台各启**一个**后端（体积增量最小，见 docs/spec/metrics.md §2.3），
 # 而不是开 `wgpu/default`（那会在每个平台都编译用不到的后端）。
 #
 # `wgpu` 是本已在依赖树内的 crate（经 eframe 引入），此处只是补一份直接声明
@@ -341,7 +341,7 @@ name = "field_visibility_guard"
 path = "tests/field_visibility_guard_test.rs"
 
 # workspace 结构守卫（V11-57）：契约 crate 的依赖面断言（零依赖 / 期望依赖集），
-# 与 CI 的拓扑 diff（docs/workspace-topology.expected.txt）互为本地门禁与远端兜底。
+# 与 CI 的拓扑 diff（docs/spec/workspace-topology.expected.txt）互为本地门禁与远端兜底。
 [[test]]
 name = "workspace_topology"
 path = "tests/workspace_topology_test.rs"
