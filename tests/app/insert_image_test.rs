@@ -13,14 +13,14 @@ use std::sync::Arc;
 use rustmark::app::bootstrap::{ConfigPaths, Services};
 use rustmark::app::frame::EditorApp;
 use rustmark::application::document::queries::GetContentQuery;
+use rustmark::ports::image_asset::{ImageAssetStore, ImportedImage};
+use rustmark::ports::system::ExternalOpener;
+use rustmark::ports::time::SystemClock;
 use rustmark::presentation::shortcuts::registry::UiAction;
 use rustmark::shared::error::AppError;
 use rustmark::shared::ids::DocumentId;
-use rustmark::shared::image_asset::{ImageAssetStore, ImportedImage};
 use rustmark::shared::path::FilePath;
 use rustmark::shared::result::AppResult;
-use rustmark::shared::system::ExternalOpener;
-use rustmark::shared::time::SystemClock;
 
 use crate::support::fake_dialog::FakeDialog;
 

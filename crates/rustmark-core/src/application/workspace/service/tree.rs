@@ -27,7 +27,7 @@ impl WorkspaceAppService {
             ws.replace_entries(entries.clone());
         }
         self.bus
-            .publish(crate::shared::event::DomainEvent::WorkspaceChanged(self.id));
+            .publish(crate::ports::event::DomainEvent::WorkspaceChanged(self.id));
         Ok(entries
             .iter()
             .map(|entry| FileEntryView {

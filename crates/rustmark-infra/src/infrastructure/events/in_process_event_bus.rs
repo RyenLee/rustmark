@@ -27,7 +27,7 @@
 use std::sync::{Arc, RwLock};
 
 use rustmark_core::shared::error::AppError;
-use rustmark_core::shared::event::{DomainEvent, EventBus, EventHandler};
+use rustmark_ports::event::{DomainEvent, EventBus, EventHandler};
 
 /// 进程内同步事件总线。
 #[derive(Default)]

@@ -27,9 +27,9 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use crate::domain::workspace::aggregate::Workspace;
 use crate::domain::workspace::repository::WorkspaceRepository;
-use crate::shared::event::EventBus;
+use crate::ports::event::EventBus;
+use crate::ports::time::Clock;
 use crate::shared::ids::WorkspaceId;
-use crate::shared::time::Clock;
 
 use crate::application::document::DocumentContentProvider;
 

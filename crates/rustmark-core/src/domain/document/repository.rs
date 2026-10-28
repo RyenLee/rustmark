@@ -5,11 +5,11 @@
 
 use std::path::Path;
 
+use crate::ports::time::Timestamp;
 use crate::shared::encoding::TextEncoding;
 use crate::shared::error::AppError;
 use crate::shared::ids::DocumentId;
 use crate::shared::path::FilePath;
-use crate::shared::time::Timestamp;
 
 /// 文档在磁盘上的一次完整读写契约。
 ///

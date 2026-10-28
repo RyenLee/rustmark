@@ -13,10 +13,10 @@
 //! 保存动作只在此处**记录状态**（`mark_saved`），真正的磁盘写入由应用层调用
 //! [`crate::domain::document::repository::DocumentRepository`] 完成。
 
+use crate::ports::time::Timestamp;
 use crate::shared::geometry::{ByteOffset, TextRange};
 use crate::shared::ids::DocumentId;
 use crate::shared::path::FilePath;
-use crate::shared::time::Timestamp;
 
 use super::errors::DocumentError;
 use super::events::DocumentEvent;

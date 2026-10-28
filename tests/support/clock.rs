@@ -25,7 +25,7 @@
 // 理由与 `support.rs` 里 `run_ui` / `settle` 的豁免相同。
 #![allow(dead_code)]
 
-use rustmark::shared::time::{Clock, Timestamp};
+use rustmark::ports::time::{Clock, Timestamp};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// 以毫秒为单位的可控时钟，初值取一个真实量级的时间戳。

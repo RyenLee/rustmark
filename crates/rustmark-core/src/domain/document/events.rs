@@ -3,7 +3,7 @@
 //! 事件是**通知**而非命令（`docs/architecture-constraints.md`）：只携带 ID 与标量，
 //! 不携带聚合引用；订阅者如需详情，应凭 ID 向应用层查询。
 
-use crate::shared::event::DomainEvent;
+use crate::ports::event::DomainEvent;
 use crate::shared::geometry::TextRange;
 use crate::shared::ids::DocumentId;
 use crate::shared::path::FilePath;

@@ -20,11 +20,11 @@ use rustmark::domain::document::value_objects::{Edit, EditPlan};
 use rustmark::domain::markdown::errors::{HighlightError, ParseError, SpellCheckError};
 use rustmark::domain::preferences::errors::PreferencesError;
 use rustmark::infrastructure::text::rope_text_buffer::RopeTextBuffer;
+use rustmark::ports::time::Timestamp;
 use rustmark::shared::error::AppError;
 use rustmark::shared::geometry::{ByteOffset, TextRange};
 use rustmark::shared::ids::DocumentId;
 use rustmark::shared::path::FilePath;
-use rustmark::shared::time::Timestamp;
 
 /// 文档上下文：TextBufferError 三变体 + 向 DocumentError 的收敛。
 #[test]

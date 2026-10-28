@@ -1012,7 +1012,7 @@ fn the_port_trait_may_live_in_shared() {
     );
 }
 
-/// **R-03 点名的变异验证**：把预览区的调用改回直连 `shared::system::open_external`
+/// **R-03 点名的变异验证**：把预览区的调用改回直连 `ports::system::open_external`
 /// → 该自由函数若留在 `shared` 就会带 `std::process`，被新禁令拦下。
 ///
 /// # 这条测的是什么

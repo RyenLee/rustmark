@@ -1,6 +1,6 @@
 //! 系统原生对话框抽象（S5-08 的端口侧）。
 //!
-//! # 为什么放在 shared而不是 domain / application
+//! # 为什么放在 rustmark-ports 而不是 domain / application
 //!
 //! 依赖矩阵（`docs/architecture-constraints.md`）规定：
 //! `presentation` **不得**依赖 `domain`，`infrastructure` **不得**依赖
@@ -9,8 +9,9 @@
 //! - `application` 的 `OpenDocument` 用例需要一个可替换的取路径途径；
 //! - `infrastructure` 提供 rfd 实现。
 //!
-//! 三方共同的依赖点只有 `shared`（`EventBus` / `Clock` 也在此），
-//! 故端口定义在此，与那两个抽象保持同一模式。
+//! 三方共同的依赖点只有 `rustmark-ports`（R-10 项 A 从 `rustmark-shared`
+//! 抽出；`EventBus` / `Clock` 也在此），故端口定义在此，与那两个抽象
+//! 保持同一模式。
 //!
 //! # 为什么方法返回 `Result<_, AppError>` 而非 `Option`
 //!
@@ -21,9 +22,9 @@
 //! 用 `Option` 表达会把两者混成"没选到文件"，导致不可用时静默失败——
 //! 这是验收标准「取消操作返回 `Err(Cancelled)` 而非空路径」的本意。
 
-use crate::shared::error::AppError;
-use crate::shared::path::FilePath;
-use crate::shared::text_format::TextFormats;
+use rustmark_shared::shared::error::AppError;
+use rustmark_shared::shared::path::FilePath;
+use rustmark_shared::shared::text_format::TextFormats;
 
 /// 文件类型过滤器。
 ///
@@ -108,15 +109,26 @@ pub trait DialogPort: Send + Sync {
 /// `TextFormats::file_filter()` 与行为均不变。
 const FILTER_NAME: &str = "Markdown 与文本文件";
 
-impl TextFormats {
+/// 由 `TextFormats`（共享值类型，定义在 `rustmark-shared`）派生原生对话框过滤器。
+///
+/// 以 trait 形式落在 `rustmark-ports`：`file_filter` 返回 [`FileFilter`]
+/// （端口侧类型），故**不能**为 `TextFormats` 写固有 `impl`（会触发孤儿规则
+/// E0116——固有 impl 必须位于定义该类型的 crate）。采用「本地 trait + 外来类型」
+/// 的合法组合（trait 与 `FileFilter` 均在 ports，满足孤儿规则「至少一项本地」）。
+/// 调用方仍可用 `text_formats.file_filter()` 的方法语法（trait 在 ports 内可见）。
+pub trait FileFilterOf {
     /// 原生「打开」对话框的扩展名过滤器。
     ///
     /// 由白名单派生而非另写一份清单：对话框选不中、但拖放进得来的
     /// 格式（曾经的 `.csv`）是用户最容易碰到的自相矛盾。
     ///
     /// 取扩展名走 [`TextFormats::extensions`] 访问器而非字段——字段私有，
-    /// 跨模块 `impl` 也碰不到（同 crate 不豁免字段可见性）。
-    pub fn file_filter(&self) -> FileFilter {
+    /// 跨 crate `impl` 本就碰不到（且孤儿规则禁止此类固有 impl）。
+    fn file_filter(&self) -> FileFilter;
+}
+
+impl FileFilterOf for TextFormats {
+    fn file_filter(&self) -> FileFilter {
         FileFilter::new(
             FILTER_NAME,
             &self
@@ -158,7 +170,7 @@ pub fn image_filters() -> Vec<FileFilter> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::shared::text_format::BUILTIN_TEXT_EXTENSIONS;
+    use rustmark_shared::shared::text_format::BUILTIN_TEXT_EXTENSIONS;
 
     /// 派生判据（自 `text_format` 随实现迁入）：过滤器内容 == 白名单内容。
     #[test]

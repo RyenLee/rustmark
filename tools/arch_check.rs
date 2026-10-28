@@ -317,6 +317,10 @@ enum Layer {
     PresentationWidgets,
     /// `presentation/icons.rs`（R-13）：字形图标出口。
     PresentationIcons,
+    /// 架构端口层（R-10 项 A，2026-10-28 从 `rustmark-shared` 抽出为独立
+    /// crate `rustmark-ports`）：dialog / event / system / image_asset / time。
+    /// 单向依赖共享内核（复用纯值类型），自身零 IO、零业务归属层。
+    Ports,
     /// 集成测试（`tests/**`）：**消费者**，不是层。
     ///
     /// 测试可以引用任何层的公开 API（`rustmark::domain::…`），但**不许**以
@@ -348,6 +352,7 @@ impl Layer {
             Layer::Shared => "shared",
             Layer::App => "app",
             Layer::Free => "free",
+            Layer::Ports => "ports",
             Layer::Tests => "tests",
             Layer::Unknown => "unknown",
         }
@@ -455,9 +460,16 @@ fn forbidden_for(layer: Layer) -> Vec<&'static str> {
             v.extend_from_slice(PRESENTATION_ICONS_FORBIDDEN);
             v
         }
-        // 组合根 / 自由文件 / 未登记位置：没有可判的层禁令。
+        // 组合根 / 自由文件 / 端口层 / 未登记位置：没有可判的层禁令。
         // （Unknown 的「报未知层」在 `check_file` 里做——它要先于层禁令返回。）
-        Layer::App | Layer::Free | Layer::Unknown => Vec::new(),
+        //
+        // `Ports` 是 R-10 项 A 抽出的独立 crate `rustmark-ports`：自身零 IO、
+        // 零业务归属层，仅单向依赖 `rustmark-shared`（复用纯值类型）。其模块
+        // 名（`dialog` / `event` / `image_asset` / `system` / `time`）不属任何
+        // 业务层，故内部不会出现 `crate::domain` 等跨层引用；跨 crate 依赖面
+        // 由 `workspace_topology_test::ports_crate_declares_no_workspace_dependency`
+        // 兜底，此处不重复套层禁令（避免对 `crate::dialog` 之类合法内部路径误伤）。
+        Layer::App | Layer::Free | Layer::Ports | Layer::Unknown => Vec::new(),
     }
 }
 
@@ -1399,6 +1411,11 @@ fn src_roots(manifest: &Path) -> Vec<(PathBuf, &'static str, Option<Layer>)> {
             manifest.join("crates").join("rustmark-infra").join("src"),
             "crates/rustmark-infra/src/",
             None,
+        ),
+        (
+            manifest.join("crates").join("rustmark-ports").join("src"),
+            "crates/rustmark-ports/src/",
+            Some(Layer::Ports),
         ),
     ]
 }

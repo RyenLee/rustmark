@@ -62,8 +62,8 @@ pub trait Clock: Send + Sync {
 
 /// 真实系统时钟。
 ///
-/// 位于 `shared` 而非 `infrastructure`：它不触碰文件系统或网络，
-/// 仅读取单调时钟源，属于共享内核的一部分。
+/// 位于 `rustmark-ports`（R-10 项 A 从 shared 抽出）而非 `infrastructure`：
+/// 它不触碰文件系统或网络，仅读取单调时钟源，属于共享内核的一部分。
 #[derive(Clone, Copy, Debug, Default)]
 pub struct SystemClock;
 

@@ -13,8 +13,8 @@
 //! - `undo` / `redo` 由调用方传入「当前快照」，返回「应恢复到的快照」；
 //! - 合并只在**同一栈内、同一类型、同一时间窗**内发生。
 
+use crate::ports::time::Timestamp;
 use crate::shared::geometry::TextRange;
-use crate::shared::time::Timestamp;
 
 use super::value_objects::ModificationKind;
 

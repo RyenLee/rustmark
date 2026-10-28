@@ -2429,6 +2429,7 @@ dependencies = [
  "ahash",
  "log",
  "rustmark-actions",
+ "rustmark-ports",
  "rustmark-shared",
  "serde",
  "thiserror 2.0.21",
@@ -2452,12 +2453,23 @@ dependencies = [
  "ropey",
  "rustls-native-certs",
  "rustmark-core",
+ "rustmark-ports",
  "serde",
  "syntect",
  "tempfile",
  "thiserror 2.0.21",
  "toml",
  "ureq",
+]
+
+[[package]]
+name = "rustmark-ports"
+version = "0.2.0"
+dependencies = [
+ "ahash",
+ "rustmark-shared",
+ "serde",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

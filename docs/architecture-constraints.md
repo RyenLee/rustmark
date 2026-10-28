@@ -326,25 +326,27 @@ rich / widgets ──► （不得回指 views / state / theme / widgets）
 | `shared/kernel.rs` | 伞形重导出模块（R-02，2026-10-27）：仅 `pub mod …;` + `pub use kernel::*;`，把 `shared/kernel/` 子目录下的端口与值对象拼回 `shared::<名>`，自身无独立职责，不属三问对象 |
 | `shared/support.rs` | 伞形重导出模块（R-02，2026-10-27）：仅 `pub mod …;` + `pub use support::*;`，把 `shared/support/` 子目录下的工具拼回 `shared::<名>`；其下各模块按职责分别登记于 `shared/kernel/`、`shared/support/` |
 | `shared/support/constants.rs` | 跨层阈值常量（大文件 500KB / 防抖 150ms / 滚动容差 0.5pt）：core 的应用层、基础设施层、表现层与 `rustmark-ui`、root 五处消费，改一处漏一处即行为分叉；纯常量零 IO，无业务归属层 |
-| `shared/kernel/dialog.rs` | 对话框端口：presentation（菜单触发）、application（用例取路径）、infrastructure（rfd 实现）三方共用——矩阵禁 presentation→domain、infrastructure→application，共同落点只有 shared |
 | `shared/support/encoding.rs` | 编码**标签**纯值：infrastructure 探测编码（IO），presentation 状态栏展示，两层方向互禁，抽值共享 |
 | `shared/support/error.rs` | `AppError` 跨层统一错误：domain / application 具体错误的汇聚点，全部层与二进制入口共用 |
-| `shared/kernel/event.rs` | 事件总线（Shared Kernel）：事件只携带 ID 与标量，订阅者横跨各层，总线契约须被全部层引用 |
 | `shared/kernel/export_format.rs` | 导出格式与页面尺寸唯一真源（R-07）：domain 校验、presentation 选择、infrastructure 路由三方需要 |
 | `shared/kernel/fonts.rs` | 编辑区等宽字体契约（哨兵 + 选项）：设置页（presentation）与装配两侧需要；本模块不引入 egui、零 IO |
 | `shared/support/geometry.rs` | 文本坐标值对象（字节偏移 / 区间 / 行列）：domain 与 presentation 共用的纯值，零 IO |
 | `shared/support/ids.rs` | 强类型 ID（Shared Kernel）：四个上下文共用防 `u64` 误传；进程内计数器，零依赖零 IO |
-| `shared/kernel/image_asset.rs` | 图片导入端口（R-04b）：app 编排与 infrastructure 实现共享同一契约；写盘在实现侧，端口零 IO |
 | `shared/support/lru.rs` | 有界 LRU：高亮 / 拼写 / 渲染 / 图片四处缓存（应用层与表现层）的唯一实现，纯逻辑 |
 | `shared/support/path.rs` | `FilePath` 路径值对象：document / workspace / export / preferences 四上下文共享内核；领域层禁 `PathBuf`，纯规则零 IO |
 | `shared/support/pattern.rs` | 迷你正则引擎：表现层查找面板与应用层跨文件搜索共用（依赖方向单向，两层不能互引），自研控体积 |
 | `shared/support/result.rs` | `AppResult` 结果别名：全应用统一错误结果，`error.rs` 的配套，被各层引用 |
-| `shared/kernel/system.rs` | 外部打开器**端口**与链接安全校验：app 与 infrastructure 共用契约；执行端已按 R-03 移出，本体零 IO |
-| `shared/support/text_format.rs` | 可打开文本格式白名单唯一出处：拖放分类（app）、对话框过滤（shared）、状态栏标签（presentation）三处共用 |
+| `shared/support/text_format.rs` | 可打开文本格式白名单唯一出处：拖放分类（app）、对话框过滤（`rustmark-ports` 的 `dialog` 端口）、状态栏标签（presentation）三处共用 |
 | `shared/support/text.rs` | 英文分词规则唯一出处：应用层拼写建议与表现层右键菜单共用，与检查器同源 |
 | `shared/kernel/theme.rs` | 主题种类唯一真源（R-09）：原散落六处的枚举 / 映射收敛，domain / application / presentation 共用 |
-| `shared/kernel/time.rs` | `Clock` 可注入时钟与毫秒标量：领域逻辑禁读系统时间（可单测性），各层共用，零依赖 |
 <!-- /shared:registry -->
+
+> **R-10 项 A 搬出记录（2026-10-28）**：`dialog` / `event` / `image_asset` /
+> `system` / `time` 五个端口已从 `shared/kernel/` 物理迁入独立 crate
+> `rustmark-ports`（`crates/rustmark-ports/src/`），不再是 `shared/` 成员，
+> 故不在上表登记；其「≥2 层需要 + 零 IO + 无业务归属层」理由随迁——端口
+> crate 只单向依赖 `rustmark-shared` 的纯值类型（跨 crate 依赖面由
+> `workspace_topology_test::ports_crate_declares_no_workspace_dependency` 兜底）。
 
 > 新增文件的流程：**先答三问，再加一行**；答不出「≥2 层需要」就放回所属层。
 > 表头行与分隔行不算登记项；文件列写 `shared/x.rs`、`src/shared/x.rs`、
@@ -629,26 +631,29 @@ crate 入口白名单里，`layer_of` 自然判 Free（依赖面 = egui，由
 
 ### 10.1 crate 地图
 
-**当前拓扑**（2026-10-26 实测，`cargo tree --workspace --depth 1`；本地依赖边共 9 条）：
+**当前拓扑**（2026-10-28 实测，`cargo tree --workspace --depth 1`；本地依赖边共 12 条）：
 
 ```
 rustmark（root：组合根 + views + bin）
 ├──► rustmark-core   ──► rustmark-actions
-│                     └► rustmark-shared
-├──► rustmark-infra  ──► rustmark-core ──► {rustmark-actions, rustmark-shared}
+│                     ├► rustmark-shared
+│                     └► rustmark-ports ──► rustmark-shared
+├──► rustmark-infra  ──► rustmark-core
+│                     └► rustmark-ports
 ├──► rustmark-icons
-└──► rustmark-ui     ──► rustmark-core ──► rustmark-shared
+└──► rustmark-ui     ──► rustmark-core
     └──► rustmark-render（默认 egui-free；egui 仅 `feature="egui"` 门控）
-                        （9 条本地边，无环；actions 与 shared 是叶）
+                        （12 条本地边，无环；actions 是唯一零依赖叶）
 ```
 
 | crate | 角色 | 实测规模（2026-10-26，`src/` 口径） | 外部依赖面 |
 |---|---|---|---|
 | `rustmark`（root） | 组合根 + 视图层 + 工具 bin | 92 文件 / 22,113 行（2026-10-27 实测） | eframe / egui / image / rfd / anyhow / env_logger / log / wgpu(build) + 4 个本地 crate（core / infra / icons / ui） |
-| `rustmark-core` | 六边形脊柱：domain / application（表现层非视图子模块已于 V11-62 全抽去 `rustmark-ui`，infrastructure 于 V11-64 全抽去 `rustmark-infra`；`presentation` 退化为 doc-only 空壳）；**零 egui 依赖**（V11-63） | **105 文件 / 15,276 行**（2026-10-27 实测；R-06 三步后的口径：步 1 新增 `application/workspace/service/search/scan.rs` 483 行、同目录 `search.rs` 626 → 346；步 2 拆 `application/document/service/stats.rs` 为 facade 114 + `stats/{classify,links,accumulator,equivalence}.rs` 118+138+193+285，原 639；步 3 拆 `application/document/find.rs` 为 facade 359 + `find/matching.rs` 370，原 535） | **4 个**直接外部依赖（serde / thiserror / log / ahash）+ 2 个本地（actions / shared） |
-| `rustmark-infra` | 基础设施层：外部库适配与 IO（解析 / 高亮 / 文本缓冲 / 对话框 / 远程图片 / 图片解码 / 导出 / 字体装配）。**端口与领域类型仍住 core**（V11-64） | 55 文件 / 11,011 行 | **11 个**直接外部依赖（pulldown-cmark / syntect / image / ropey / rfd / serde / toml / thiserror / ureq / rustls-native-certs / log）+ 1 个本地（core） |
+| `rustmark-core` | 六边形脊柱：domain / application（表现层非视图子模块已于 V11-62 全抽去 `rustmark-ui`，infrastructure 于 V11-64 全抽去 `rustmark-infra`；`presentation` 退化为 doc-only 空壳）；**零 egui 依赖**（V11-63） | **105 文件 / 15,565 行**（2026-10-28 实测；R-06 三步后的口径：步 1 新增 `application/workspace/service/search/scan.rs` 483 行、同目录 `search.rs` 626 → 346；步 2 拆 `application/document/service/stats.rs` 为 facade 114 + `stats/{classify,links,accumulator,equivalence}.rs` 118+138+193+285，原 639；步 3 拆 `application/document/find.rs` 为 facade 359 + `find/matching.rs` 370，原 535） | **4 个**直接外部依赖（serde / thiserror / log / ahash）+ 3 个本地（actions / shared / ports） |
+| `rustmark-infra` | 基础设施层：外部库适配与 IO（解析 / 高亮 / 文本缓冲 / 对话框 / 远程图片 / 图片解码 / 导出 / 字体装配）。**端口与领域类型仍住 core**（V11-64） | 65 文件 / 11,062 行（2026-10-28 实测） | **11 个**直接外部依赖（pulldown-cmark / syntect / image / ropey / rfd / serde / toml / thiserror / ureq / rustls-native-certs / log）+ 2 个本地（core / ports） |
 | `rustmark-actions` | 动作词汇表契约（V11-57） | 4 文件 / 687 行 | **零依赖** |
-| `rustmark-shared` | 共享内核：纯值 / 端口 / 唯一真源（TD-04） | 21 文件 / 3,153 行 | ahash + serde + thiserror（**零本地**） |
+| `rustmark-shared` | 共享内核：纯值 / 唯一真源（TD-04；端口已按 R-10 项 A 迁出为 `rustmark-ports`） | 18 文件 / 2,715 行（2026-10-28 实测） | ahash + serde + thiserror（**零本地**） |
+| `rustmark-ports` | 架构端口层（R-10 项 A，2026-10-28）：`dialog` / `event` / `system` / `image_asset` / `time` 五个跨层契约，自 `rustmark-shared` 的 `kernel/` 物理搬出；自身零 IO、零业务归属层，单向依赖 shared 的纯值类型（error / path / text_format / geometry / ids / result）；core 经 `pub use rustmark_ports` 拼回 `rustmark_core::ports`，消费方零改动 | 6 文件 / 585 行（2026-10-28 实测；`src/` 口径不含 tests） | rustmark-shared + serde / thiserror / ahash（**零外部 IO**） |
 | `rustmark-icons` | 16×16 图标规格 + Painter 渲染器（V11-58） | 1 文件 / 630 行 | egui |
 | `rustmark-ui` | 表现层非视图部分：widgets（批次 1）/ state（批次 2）/ shortcuts（批次 3）/ theme（批次 4）/ view_context（R-03 B1：视图窄接口 `EditorViewContext`）；`presentation::rich` 为兼容 shim（R-04 升 crate 为 `rustmark-render`，经 `pub use rustmark_render::*` 拼回原路径，消费方零改动） | 48 文件 / 12,265 行（2026-10-28 实测，rich 升 crate 后；`src/` 口径不含 tests） | egui + rustmark-core + rustmark-render |
 | `rustmark-render` | 富内容渲染引擎：数学排版 / Mermaid 自绘（`rustmark-ui::presentation::rich` 物理搬出，R-04 升 crate，2026-10-28）；默认 egui-free，唯一 egui 后端 `render/egui.rs` 走 `feature="egui"` 双门控（`#[cfg(feature = "egui")]`），依赖面仅 egui（optional）；对 `rustmark-core` 零依赖 | 27 文件 / 5,579 行（2026-10-28 实测；`src/` 口径不含 tests） | egui（optional，仅 `feature="egui"`） |

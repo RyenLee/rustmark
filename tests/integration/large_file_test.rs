@@ -36,9 +36,9 @@ use rustmark::domain::markdown::services::MarkdownParser;
 use rustmark::domain::markdown::value_objects::RenderedBlock;
 use rustmark::infrastructure::highlighting::syntect_highlighter::SyntectHighlighter;
 use rustmark::infrastructure::parsing::pulldown_parser::PulldownMarkdownParser;
+use rustmark::ports::time::{Clock, Timestamp};
 use rustmark::presentation::state::find_replace_ui_state::{FindOptions, Finder};
 use rustmark::shared::ids::DocumentId;
-use rustmark::shared::time::{Clock, Timestamp};
 
 use crate::support::text_buffer::buffer_of;
 

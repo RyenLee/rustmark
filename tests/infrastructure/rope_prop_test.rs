@@ -20,8 +20,8 @@ use rustmark::domain::document::services::TextBuffer;
 use rustmark::domain::document::undo::{Snapshot, UndoStack};
 use rustmark::domain::document::value_objects::ModificationKind;
 use rustmark::infrastructure::text::rope_text_buffer::RopeTextBuffer;
+use rustmark::ports::time::Timestamp;
 use rustmark::shared::geometry::{ByteOffset, TextRange};
-use rustmark::shared::time::Timestamp;
 
 use crate::support::text_buffer::StringTextBuffer;
 

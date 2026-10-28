@@ -39,6 +39,12 @@ pub mod presentation;
 // 反向依赖由 Cargo 结构性挡死：shared 不依赖 core，core 依赖 shared。
 pub use rustmark_shared::shared;
 
+// R-10 项 A（2026-10-28）：架构端口抽为独立 crate `rustmark-ports`（原住
+// `rustmark-shared`）。此处把整个 crate 以 `ports` 之名拼回——`crate::ports::…`
+// （core 内）与 `rustmark_core::ports::…`（root / ui / tests）公开路径可用。
+// 端口的实现仍在 `rustmark-infra`，经组合根装配；shared 不反向依赖 ports。
+pub use rustmark_ports as ports;
+
 // V11-62 批次 3：`shortcuts` 迁入 `rustmark-ui` 后，其 `registry` 仍需 actions crate 的
 // 类型（MenuGroup / UiAction / action）。ui crate 不直接依赖 `rustmark-actions`（保持
 // ui 依赖面 = egui + core，拓扑断言 `ui_crate_dependency_face_is_egui_plus_core` 不变），

@@ -1,4 +1,4 @@
-//! 外部打开器端口与链接安全校验（共享内核，零外部依赖）。
+//! 外部打开器端口与链接安全校验（rustmark-ports，R-10 项 A 从 shared 抽出，零外部依赖）。
 //!
 //! egui 在本项目编译时未启用 `open_url` feature（见 `Cargo.toml` 的
 //! `egui = { version = "0.37.0", default-features = false }`），且项目对运行时依赖一贯
@@ -7,7 +7,7 @@
 //!
 //! # 为什么执行端不在这里
 //!
-//! `shared` 是**零 IO** 的共享内核（R-03 起 `std::process` 亦进
+//! `rustmark-ports` 是**零 IO** 的共享内核（R-03 起 `std::process` 亦进
 //! [`SHARED_FORBIDDEN`]，见 `docs/architecture-constraints.md`）。早先
 //! 「`std::process` 不在禁止清单，故在此落位」是**绕规则落位**——文件头
 //! 自认绕过，与「零外部依赖」的自我描述矛盾。现按 `DialogPort` / `Clock`
@@ -15,11 +15,11 @@
 //!
 //! - **端口**（[`ExternalOpener`] trait）留在这里——表现层（预览区）需要
 //!   这个能力，而架构约束禁止 `presentation` 依赖 `crate::infrastructure`；
-//!   `shared` 可被任意层依赖，端口本身零 IO；
+//!   `rustmark-ports` 可被任意层依赖，端口本身零 IO；
 //! - **实现**（三平台 `Command::new(...).spawn()`）移到
 //!   `infrastructure::system::SystemExternalOpener`；
 //! - **链接安全校验**（[`is_safe_to_open`]，纯逻辑）**必须留在这里**——
-//!   若随执行一起搬走，`shared` 会重新含 IO，且校验逻辑会被拆到
+//!   若随执行一起搬走，`rustmark-ports` 会重新含 IO，且校验逻辑会被拆到
 //!   infrastructure 侧，表现层再想复用就得反向依赖 infrastructure。
 
 /// 用系统默认程序打开一个外部地址 / 本地文件。
@@ -35,8 +35,8 @@
 /// （`spawn` 一个真 `cmd` 既不幂等也没法观察）。抽成端口后，测试可注入
 /// 假实现，断言「点了链接、参数正确、且**只在通过安全校验后**才调」。
 ///
-/// 与 [`crate::shared::dialog::DialogPort`] / [`crate::shared::time::Clock`]
-/// 同一范式：端口在 `shared`，实现在 `infrastructure`。
+/// 与 [`crate::dialog::DialogPort`] / [`crate::time::Clock`]
+/// 同一范式：端口在 `rustmark-ports`，实现在 `infrastructure`。
 pub trait ExternalOpener: Send + Sync {
     /// 打开 `target`（URL 或本地路径）。
     fn open(&self, target: &str) -> std::io::Result<()>;

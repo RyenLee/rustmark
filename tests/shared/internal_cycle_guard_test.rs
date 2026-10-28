@@ -61,30 +61,24 @@ use std::path::PathBuf;
 
 /// 已批准的 `shared` 内部依赖边（破环后的期望集合，2026-10-25）。
 ///
-/// 每条边的实证（引用点）：
+/// R-10 项 A（2026-10-28）把 5 个端口模块（`dialog` / `event` /
+/// `image_asset` / `system` / `time`）整体搬出为独立 crate
+/// `rustmark-ports`，它们对 `error` / `path` / `text_format` /
+/// `geometry` / `ids` / `result` 的出边随之离开 `shared`（消失记录：
+/// `dialog→error/path/text_format`、`event→error/geometry/ids`、
+/// `image_asset→path/result`）。
 ///
-/// - `dialog → error` / `path` / `text_format`：`AppError` / `FilePath` /
-///   `TextFormats`、`BUILTIN_TEXT_EXTENSIONS`（对话框过滤器与白名单同源）；
-/// - `event → error` / `geometry` / `ids`：事件载荷只带 ID 与标量
-///   （模块文档的设计约束）；
-/// - `image_asset → path` / `result`：`FilePath` 定位资源、`AppResult` 归口错误；
+/// 现存每条边的实证（引用点）：
+///
 /// - `result → error`：`AppResult` 是 `AppError` 的别名出口；
 /// - `text → geometry`：`floor_char_boundary` 防 UTF-8 切片 panic；
 /// - `text_format → path`：原始路径串的扩展名判定经 `file_name_of` 与
 ///   `extension_index`（后者即二环的破环迁移点）。
 ///
 /// 增删规则：**新增 = shared 内部依赖面增长**，先证明必要性（谁依赖谁、
-/// 为什么不能在调用侧解决）再登记；**删除 = 破环成果**，同样落清单
-/// （如 `path → text_format` 边的消失记录在 git 历史）。
+/// 为什么不能在调用侧解决）再登记；**删除 = 破环成果或模块搬出**，同样落
+/// 清单（如 `path → text_format` 边的消失记录在 git 历史）。
 const EXPECTED_EDGES: &[(&str, &str)] = &[
-    ("dialog", "error"),
-    ("dialog", "path"),
-    ("dialog", "text_format"),
-    ("event", "error"),
-    ("event", "geometry"),
-    ("event", "ids"),
-    ("image_asset", "path"),
-    ("image_asset", "result"),
     ("result", "error"),
     ("text", "geometry"),
     ("text_format", "path"),

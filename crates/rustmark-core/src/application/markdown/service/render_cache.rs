@@ -1,9 +1,9 @@
 //! 渲染防抖策略与渲染缓存（文档 ID → (版本号, 块序列)，真 LRU）。
 
 use crate::domain::markdown::value_objects::RenderedBlock;
+use crate::ports::time::Timestamp;
 use crate::shared::ids::DocumentId;
 use crate::shared::lru::LruMap;
-use crate::shared::time::Timestamp;
 
 /// 防抖策略（FR-01，150ms）：把时间相关决策做成可注入、可单测的纯函数。
 ///

@@ -17,7 +17,7 @@
 //!
 //! 只返回 `Err`，不 panic——打开器不可用（或平台不支持）不应拖垮编辑器。
 
-use rustmark_core::shared::system::ExternalOpener;
+use rustmark_ports::system::ExternalOpener;
 
 /// 基于操作系统默认程序的打开器。
 ///

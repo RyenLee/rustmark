@@ -2,7 +2,7 @@
 //!
 //! 编排渲染、高亮、滚动同步与大纲：
 //! - **防抖策略（FR-01，150ms）下沉到应用层**：[`DebouncePolicy::should_render`]
-//!   是纯函数，由注入的 [`crate::shared::time::Clock`] 与领域事件时间驱动，可单测；
+//!   是纯函数，由注入的 [`crate::ports::time::Clock`] 与领域事件时间驱动，可单测；
 //! - **渲染缓存**：以 `文档 ID → (版本号, 块序列)` 为键，命中时不重新解析
 //!   （断言 fake parser 调用次数即可验证）；
 //! - **大文件降级（FR-06）**：源超过 [`TRUNCATE_THRESHOLD_BYTES`] 时返回
@@ -43,8 +43,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use crate::domain::markdown::services::{
     HighlightSession, MarkdownParser, SpellChecker, SyntaxHighlighter,
 };
+use crate::ports::time::{Clock, Timestamp};
 use crate::shared::ids::DocumentId;
-use crate::shared::time::{Clock, Timestamp};
 
 use crate::application::document::DocumentContentProvider;
 

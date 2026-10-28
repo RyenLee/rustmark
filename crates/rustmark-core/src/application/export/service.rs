@@ -16,8 +16,8 @@ use crate::domain::export::errors::ExportError;
 use crate::domain::export::services::Exporter;
 use crate::domain::export::value_objects::{ExportFormat, ExportOptions, ExportStatus, PageSize};
 
+use crate::ports::event::{DomainEvent, EventBus};
 use crate::shared::error::AppError;
-use crate::shared::event::{DomainEvent, EventBus};
 use crate::shared::ids::JobId;
 use crate::shared::result::AppResult;
 

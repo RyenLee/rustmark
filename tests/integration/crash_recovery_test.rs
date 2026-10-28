@@ -47,9 +47,9 @@ use rustmark::application::preferences::commands::SetEditorCommand;
 use rustmark::application::preferences::queries::GetSettingsQuery;
 use rustmark::domain::document::repository::{DocumentRepository, DocumentSnapshot};
 use rustmark::infrastructure::persistence::fs_document_repository::FsDocumentRepository;
+use rustmark::ports::time::Timestamp;
 use rustmark::shared::ids::DocumentId;
 use rustmark::shared::path::FilePath;
-use rustmark::shared::time::Timestamp;
 
 use crate::support::fake_dialog::FakeDialog;
 

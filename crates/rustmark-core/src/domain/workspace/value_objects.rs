@@ -5,9 +5,9 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::ports::time::Timestamp;
 use crate::shared::ids::DocumentId;
 use crate::shared::path::FilePath;
-use crate::shared::time::Timestamp;
 
 /// 文件树条目的类型。
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]

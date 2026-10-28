@@ -30,7 +30,7 @@ impl WorkspaceAppService {
         };
         self.repository.save_recent(&items)?;
         self.bus
-            .publish(crate::shared::event::DomainEvent::WorkspaceChanged(self.id));
+            .publish(crate::ports::event::DomainEvent::WorkspaceChanged(self.id));
         Ok(())
     }
 
@@ -43,7 +43,7 @@ impl WorkspaceAppService {
         };
         self.repository.save_recent(&items)?;
         self.bus
-            .publish(crate::shared::event::DomainEvent::WorkspaceChanged(self.id));
+            .publish(crate::ports::event::DomainEvent::WorkspaceChanged(self.id));
         Ok(())
     }
 

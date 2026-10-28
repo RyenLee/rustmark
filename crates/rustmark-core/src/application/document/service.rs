@@ -35,10 +35,10 @@ use crate::application::dto::StatsView;
 use crate::domain::document::repository::DocumentRepository;
 use crate::domain::document::services::BufferFactory;
 use crate::domain::document::undo::UndoPolicy;
+use crate::ports::event::EventBus;
+use crate::ports::time::Clock;
 use crate::shared::encoding::TextEncoding;
-use crate::shared::event::EventBus;
 use crate::shared::ids::DocumentId;
-use crate::shared::time::Clock;
 
 use super::DocumentContentProvider;
 use super::registry::{DocumentRegistry, RegistryProvider};

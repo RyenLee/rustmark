@@ -15,10 +15,10 @@ use rustmark::application::markdown::service::{
 use rustmark::domain::markdown::value_objects::{
     BlockKind, ImageAlign, ImageDisplay, InlineImage, Misspelling, SpanStyle,
 };
+use rustmark::ports::time::Timestamp;
 use rustmark::shared::geometry::{ByteOffset, TextRange};
 use rustmark::shared::ids::DocumentId;
 use rustmark::shared::path::FilePath;
-use rustmark::shared::time::Timestamp;
 
 use super::fakes::*;
 

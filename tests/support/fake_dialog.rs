@@ -36,7 +36,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use rustmark::shared::dialog::{DialogPort, FileFilter};
+use rustmark::ports::dialog::{DialogPort, FileFilter};
 use rustmark::shared::error::AppError;
 use rustmark::shared::path::FilePath;
 

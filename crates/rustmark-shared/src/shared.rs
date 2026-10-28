@@ -9,8 +9,11 @@
 //!
 //! `shared/` 内的模块按职责切为两组子目录，落点即语义：
 //!
-//! - **[`kernel`]** —— 端口与值对象（跨层契约真源）：`dialog` `event`
-//!   `system` `image_asset` `time` + 值对象 `theme` `fonts` `export_format`；
+//! - **[`kernel`]** —— 仅余**值对象**（跨层共用纯值）：`theme` `fonts`
+//!   `export_format`。端口（`dialog` `event` `system` `image_asset` `time`）
+//!   已迁至独立的 `rustmark-ports` crate（R-10 项 A，契约归领域、实现归
+//!   infra），由 `rustmark-core` 经 `pub use rustmark_ports;` 拼回
+//!   `rustmark_core::ports::…`；
 //! - **[`support`]** —— 与层无关的工具：常量 / 编码 / 错误 / 几何 / ID /
 //!   LRU / 路径 / 正则 / 结果 / 分词 / 文本格式。
 //!

@@ -51,13 +51,13 @@ use rustmark_core::domain::export::services::Exporter;
 use rustmark_core::domain::preferences::repository::PreferencesRepository;
 use rustmark_core::domain::workspace::aggregate::Workspace;
 use rustmark_core::domain::workspace::repository::WorkspaceRepository;
-use rustmark_core::shared::dialog::DialogPort;
-use rustmark_core::shared::event::EventBus;
+use rustmark_core::ports::dialog::DialogPort;
+use rustmark_core::ports::event::EventBus;
+use rustmark_core::ports::image_asset::ImageAssetStore;
+use rustmark_core::ports::system::ExternalOpener;
+use rustmark_core::ports::time::{Clock, SystemClock};
 use rustmark_core::shared::ids::WorkspaceId;
-use rustmark_core::shared::image_asset::ImageAssetStore;
 use rustmark_core::shared::result::AppResult;
-use rustmark_core::shared::system::ExternalOpener;
-use rustmark_core::shared::time::{Clock, SystemClock};
 
 /// 预览防抖间隔（毫秒，FR-01）。
 ///
@@ -167,7 +167,7 @@ pub struct Services {
     /// 外部打开器端口：预览区点击外链时用系统默认程序打开。
     ///
     /// R-03 把 `std::process` 移出 `shared` 后，预览区不能再直调
-    /// `shared::system::open_external`，改经此端口（端口在 `shared`、
+    /// `ports::system::open_external`，改经此端口（端口在 `shared`、
     /// 实现在 `infrastructure`，与 `dialogs` / 时钟同一范式）。
     /// 测试可注入假实现断言「点了链接且参数正确」。
     pub opener: Arc<dyn ExternalOpener>,
@@ -234,7 +234,7 @@ impl Services {
     /// 「窗口内」与「窗口已超时」两种状态下断言回车行为，而真实 `SystemClock`
     /// 下整个用例跑完也未必跨过 800ms，窗口超时分支**永远测不到**。
     ///
-    /// 传 [`rustmark_core::shared::time::SystemClock`] 之外的可控时钟即可推进时间。
+    /// 传 [`rustmark_core::ports::time::SystemClock`] 之外的可控时钟即可推进时间。
     ///
     /// [`IME_GUARD_MS`]: crate::app::frame::IME_GUARD_MS
     pub fn assemble_with_clock_and_dialogs(

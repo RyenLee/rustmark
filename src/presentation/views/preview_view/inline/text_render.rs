@@ -10,7 +10,7 @@ use crate::presentation::theme::builtin::Theme;
 use crate::presentation::theme::mapper::{SpanHit, SpanPolicy, build_job};
 use crate::presentation::view_context::EditorViewContext;
 use rustmark_core::application::dto::SpanView;
-use rustmark_core::shared::system;
+use rustmark_core::ports::system;
 
 use super::delimiters::{footnote_ref_mark, strip_math_delimiters};
 use super::math::render_with_math;

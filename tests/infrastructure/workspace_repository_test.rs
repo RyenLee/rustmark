@@ -9,9 +9,9 @@ use rustmark::infrastructure::persistence::fs_workspace_repository::{
     FsWorkspaceRepository, TraversalRules,
 };
 use rustmark::infrastructure::persistence::recent_files_store::RecentFilesStore;
+use rustmark::ports::time::Timestamp;
 use rustmark::shared::error::AppError;
 use rustmark::shared::path::FilePath;
-use rustmark::shared::time::Timestamp;
 
 /// 测试用临时目录守卫。
 pub struct TempDir(PathBuf);

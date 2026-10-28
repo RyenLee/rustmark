@@ -433,10 +433,107 @@ fn infra_crate_depends_on_core_only() {
         }
     }
 
-    let expected: BTreeSet<String> = ["rustmark-core"].iter().map(|s| s.to_string()).collect();
+    let expected: BTreeSet<String> = ["rustmark-core", "rustmark-ports"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
     assert_eq!(
         workspace_deps, expected,
-        "rustmark-infra 的 workspace 依赖面必须恰为 rustmark-core（端口与领域类型在 core）；\
+        "rustmark-infra 的 workspace 依赖面必须恰为 rustmark-core + rustmark-ports\
+         （R-10 项 A：端口契约迁至独立 crate，infra 直接依赖 ports 取契约）；\
          多一条即层级倒置或成环，少一条则端口不可见"
+    );
+}
+
+/// `rustmark-core` 的 workspace 依赖面必须恰为 **rustmark-shared +
+/// rustmark-actions + rustmark-ports**（R-10 项 A，2026-10-28）。
+///
+/// core 是六边形脊柱：它的本地依赖必须逐条可解释——
+/// - `rustmark-shared`：零 IO 的纯值 / 唯一真源；
+/// - `rustmark-actions`：UI 动作词汇表契约（V11-57）；
+/// - `rustmark-ports`：架构端口契约（R-10 项 A 从 shared 抽出）。
+///
+/// 多出任何一条 `rustmark-*` 依赖即说明 core 在反向拉某层（域/应用/基础设施/
+/// 表现），或把「端口」与「实现」混回了 core——层级纪律失守。
+#[test]
+fn core_crate_dependency_face() {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("crates")
+        .join("rustmark-core")
+        .join("Cargo.toml");
+    let text = std::fs::read_to_string(&path).expect("core crate 的 Cargo.toml 应可读");
+
+    let mut workspace_deps = BTreeSet::new();
+    let mut section = String::new();
+    for raw in text.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if line.starts_with('[') {
+            section = line.to_string();
+            continue;
+        }
+        if !section.contains("dependencies") {
+            continue;
+        }
+        if let Some((name, _)) = line.split_once('=') {
+            let name = name.trim();
+            if name.starts_with("rustmark") {
+                workspace_deps.insert(name.to_string());
+            }
+        }
+    }
+
+    let expected: BTreeSet<String> = ["rustmark-actions", "rustmark-shared", "rustmark-ports"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    assert_eq!(
+        workspace_deps, expected,
+        "rustmark-core 的 workspace 依赖面必须恰为 rustmark-actions + rustmark-shared + \
+         rustmark-ports（R-10 项 A 端口迁至独立 crate）；多一条即层级倒置，少一条则端口不可见"
+    );
+}
+
+/// `rustmark-ports` 的 workspace 依赖面必须**只有** `rustmark-shared`（R-10 项 A）。
+///
+/// 端口契约单向依赖共享内核（复用其纯值类型）；它**不得**依赖 core / infra /
+/// actions / ui / render / 其它任何成员——否则既成环（shared 不反向依赖 ports，
+/// 但 ports→core→shared 已是更长链），又让「契约归领域、实现归 infra」的边界
+/// 出现一条多余的边。外部纯数据依赖（serde / thiserror / ahash）不受此限。
+#[test]
+fn ports_crate_declares_no_workspace_dependency() {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("crates")
+        .join("rustmark-ports")
+        .join("Cargo.toml");
+    let text = std::fs::read_to_string(&path).expect("ports crate 的 Cargo.toml 应可读");
+
+    let mut offenders = Vec::new();
+    let mut section = String::new();
+    for raw in text.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if line.starts_with('[') {
+            section = line.to_string();
+            continue;
+        }
+        if !section.contains("dependencies") {
+            continue;
+        }
+        if let Some((name, _)) = line.split_once('=') {
+            let name = name.trim();
+            if name.starts_with("rustmark") && name != "rustmark-shared" {
+                offenders.push(format!("{section} → {name}"));
+            }
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "rustmark-ports 仅可依赖 rustmark-shared，不得依赖 core/infra/actions/其它 workspace \
+         成员（否则成环或越界）：{offenders:?}"
     );
 }

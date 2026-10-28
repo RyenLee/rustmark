@@ -4,9 +4,9 @@
 use crate::domain::document::aggregate::Document;
 use crate::domain::document::errors::DocumentError;
 use crate::domain::document::repository::DocumentSnapshot;
+use crate::ports::event::DomainEvent;
 use crate::shared::encoding::TextEncoding;
 use crate::shared::error::AppError;
-use crate::shared::event::DomainEvent;
 use crate::shared::geometry::{ByteOffset, TextRange};
 use crate::shared::ids::DocumentId;
 use crate::shared::path::FilePath;

@@ -3,7 +3,7 @@
 //! 全部收敛到 [`DomainEvent::WorkspaceChanged`]：订阅方只需知道「结构变了」，
 //! 具体变化通过重新查询获得，避免事件载荷与聚合结构重复演进。
 
-use crate::shared::event::DomainEvent;
+use crate::ports::event::DomainEvent;
 use crate::shared::ids::{DocumentId, WorkspaceId};
 use crate::shared::path::FilePath;
 

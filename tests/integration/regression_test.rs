@@ -14,8 +14,8 @@ use rustmark::domain::preferences::value_objects::{
 };
 use rustmark::infrastructure::export::html_sanitize::sanitize_html;
 use rustmark::infrastructure::export::pulldown_html_exporter::render_toc;
+use rustmark::ports::time::Timestamp;
 use rustmark::shared::geometry::{ByteOffset, TextRange};
-use rustmark::shared::time::Timestamp;
 
 const T0: Timestamp = Timestamp::from_millis(1_000);
 

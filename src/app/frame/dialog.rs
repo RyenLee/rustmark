@@ -252,7 +252,7 @@ impl EditorApp {
     ///
     /// # 为什么不能在这里直接删
     ///
-    /// 原生确认框是模态同步调用（见 [`rustmark_core::shared::dialog::DialogPort::confirm`]），
+    /// 原生确认框是模态同步调用（见 [`rustmark_core::ports::dialog::DialogPort::confirm`]），
     /// 在 `update()` 里调用会让窗口在用户思考的那几秒里完全失去响应。
     /// 故与「打开 / 另存为」同一套路：登记意图 → 后台线程问 → 每帧取回。
     ///

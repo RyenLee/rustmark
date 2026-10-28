@@ -7,8 +7,8 @@ use rustmark::domain::document::aggregate::Document;
 use rustmark::domain::document::errors::DocumentError;
 use rustmark::domain::document::undo::{Snapshot, UndoPolicy, UndoStack};
 use rustmark::domain::document::value_objects::ModificationKind;
+use rustmark::ports::time::Timestamp;
 use rustmark::shared::geometry::{ByteOffset, TextRange};
-use rustmark::shared::time::Timestamp;
 
 use crate::support::text_buffer::buffer_of;
 

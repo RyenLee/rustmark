@@ -24,13 +24,13 @@ fn build(
     repo: Arc<dyn DocumentRepository>,
 ) -> (
     DocumentAppService,
-    Arc<dyn rustmark::shared::event::EventBus>,
+    Arc<dyn rustmark::ports::event::EventBus>,
 ) {
     let registry = Arc::new(RwLock::new(DocumentRegistry::new()));
-    let bus: Arc<dyn rustmark::shared::event::EventBus> = Arc::new(InMemoryEventBus::new());
+    let bus: Arc<dyn rustmark::ports::event::EventBus> = Arc::new(InMemoryEventBus::new());
     let buffer_factory: Arc<dyn rustmark::domain::document::services::BufferFactory> =
         Arc::new(FakeBufferFactory);
-    let clock: Arc<dyn rustmark::shared::time::Clock> = Arc::new(FakeClock::new(0));
+    let clock: Arc<dyn rustmark::ports::time::Clock> = Arc::new(FakeClock::new(0));
     let service = DocumentAppService::new(registry, repo, bus.clone(), buffer_factory, clock);
     (service, bus.clone())
 }
@@ -701,7 +701,7 @@ fn undo_merge_window_from_preferences_reaches_documents() {
 
     let repo = Arc::new(InMemoryDocumentRepository::new());
     let registry = Arc::new(RwLock::new(DocumentRegistry::new()));
-    let bus: Arc<dyn rustmark::shared::event::EventBus> = Arc::new(InMemoryEventBus::new());
+    let bus: Arc<dyn rustmark::ports::event::EventBus> = Arc::new(InMemoryEventBus::new());
     let buffer_factory: Arc<dyn rustmark::domain::document::services::BufferFactory> =
         Arc::new(FakeBufferFactory);
     let clock = Arc::new(FakeClock::new(0));

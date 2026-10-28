@@ -16,7 +16,7 @@ impl WorkspaceAppService {
     pub fn open_tab(&self, cmd: OpenTabCommand) -> AppResult<()> {
         self.lock_write()?.open_tab(cmd.doc_id);
         self.bus
-            .publish(crate::shared::event::DomainEvent::WorkspaceChanged(self.id));
+            .publish(crate::ports::event::DomainEvent::WorkspaceChanged(self.id));
         Ok(())
     }
 
@@ -27,7 +27,7 @@ impl WorkspaceAppService {
             .close_tab(cmd.doc_id, cmd.dirty)
             .map_err(|e: WorkspaceError| AppError::domain(e.to_string()))?;
         self.bus
-            .publish(crate::shared::event::DomainEvent::WorkspaceChanged(self.id));
+            .publish(crate::ports::event::DomainEvent::WorkspaceChanged(self.id));
         Ok(match decision {
             CloseDecision::Closed => CloseDecisionView::Closed,
             CloseDecision::NeedsSave => CloseDecisionView::NeedsSave,
@@ -38,7 +38,7 @@ impl WorkspaceAppService {
     pub fn force_close_tab(&self, cmd: ForceCloseTabCommand) -> AppResult<()> {
         self.lock_write()?.force_close_tab(cmd.doc_id);
         self.bus
-            .publish(crate::shared::event::DomainEvent::WorkspaceChanged(self.id));
+            .publish(crate::ports::event::DomainEvent::WorkspaceChanged(self.id));
         Ok(())
     }
 

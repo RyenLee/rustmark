@@ -14,10 +14,10 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use crate::shared::event::{DomainEvent, EventBus};
+use crate::ports::event::{DomainEvent, EventBus};
+use crate::ports::time::{Clock, Timestamp};
 use crate::shared::ids::DocumentId;
 use crate::shared::result::AppResult;
-use crate::shared::time::{Clock, Timestamp};
 
 use crate::application::document::DocumentContentProvider;
 use crate::application::markdown::commands::ClearCacheCommand;

@@ -50,6 +50,7 @@ use rustmark_core::application::workspace::queries::{ListRecentQuery, ReadFileQu
 use rustmark_core::application::workspace::service::TREE_MAX_DEPTH;
 use rustmark_core::domain::export::errors::ExportError;
 use rustmark_core::domain::preferences::value_objects::ActionId;
+use rustmark_core::ports::time::Timestamp;
 use rustmark_core::shared::encoding::TextEncoding;
 use rustmark_core::shared::error::AppError;
 use rustmark_core::shared::export_format::{ExportFormat, PageSize};
@@ -58,7 +59,6 @@ use rustmark_core::shared::path::{FilePath, file_name_of};
 use rustmark_core::shared::result::AppResult;
 use rustmark_core::shared::text_format::{self, TextFormats};
 use rustmark_core::shared::theme::ThemeKind;
-use rustmark_core::shared::time::Timestamp;
 
 use crate::presentation::shortcuts::dispatcher::{Dispatch, ShortcutDispatcher};
 use crate::presentation::shortcuts::registry::{ShortcutRegistry, UiAction};

@@ -1,4 +1,4 @@
-//! 领域事件与事件总线抽象（Shared Kernel）。
+//! 领域事件与事件总线抽象（rustmark-ports，R-10 项 A 从 shared 抽出）。
 //!
 //! 设计约束：
 //! - 事件**只携带 ID 与标量**，不携带聚合引用，避免 `shared` 反向依赖 `domain`；
@@ -7,9 +7,9 @@
 
 use std::sync::Arc;
 
-use crate::shared::error::AppError;
-use crate::shared::geometry::TextRange;
-use crate::shared::ids::{DocumentId, JobId, WorkspaceId};
+use rustmark_shared::shared::error::AppError;
+use rustmark_shared::shared::geometry::TextRange;
+use rustmark_shared::shared::ids::{DocumentId, JobId, WorkspaceId};
 
 /// 领域事件。
 ///

@@ -15,7 +15,7 @@
 //!
 //! 二者都不对，所以按时间到期。
 //!
-//! 时间的注入走 [`rustmark_core::shared::time::Clock`]：直接调 `now_millis()`
+//! 时间的注入走 [`rustmark_core::ports::time::Clock`]：直接调 `now_millis()`
 //! 会让「3 秒后消失」这条规则无法被测试验证。
 
 use rustmark_core::application::dto::GoalProgressView;

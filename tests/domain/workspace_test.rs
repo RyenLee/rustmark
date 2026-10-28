@@ -6,9 +6,9 @@ use rustmark::domain::workspace::aggregate::Workspace;
 use rustmark::domain::workspace::errors::WorkspaceError;
 use rustmark::domain::workspace::events::WorkspaceEvent;
 use rustmark::domain::workspace::value_objects::{CloseDecision, EntryKind, WorkspaceEntry};
+use rustmark::ports::time::Timestamp;
 use rustmark::shared::ids::{DocumentId, WorkspaceId};
 use rustmark::shared::path::FilePath;
-use rustmark::shared::time::Timestamp;
 
 fn path(raw: &str) -> FilePath {
     FilePath::new(raw).expect("测试路径应合法")

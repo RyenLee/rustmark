@@ -20,8 +20,8 @@ use rustmark::application::document::registry::DocumentRegistry;
 use rustmark::application::document::service::DocumentAppService;
 use rustmark::domain::document::repository::DocumentRepository;
 use rustmark::domain::document::services::BufferFactory;
+use rustmark::ports::time::Clock;
 use rustmark::shared::geometry::{ByteOffset, TextRange};
-use rustmark::shared::time::Clock;
 
 use super::fakes::*;
 
@@ -29,7 +29,7 @@ use super::fakes::*;
 fn setup(content: &str) -> (DocumentAppService, rustmark::shared::ids::DocumentId) {
     let repo: Arc<dyn DocumentRepository> = Arc::new(InMemoryDocumentRepository::new());
     let registry = Arc::new(RwLock::new(DocumentRegistry::new()));
-    let bus: Arc<dyn rustmark::shared::event::EventBus> = Arc::new(InMemoryEventBus::new());
+    let bus: Arc<dyn rustmark::ports::event::EventBus> = Arc::new(InMemoryEventBus::new());
     let buffer_factory: Arc<dyn BufferFactory> = Arc::new(FakeBufferFactory);
     let clock: Arc<dyn Clock> = Arc::new(FakeClock::new(0));
     let mut svc = DocumentAppService::new(registry, repo, bus, buffer_factory, clock);

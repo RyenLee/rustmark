@@ -4,9 +4,9 @@ use rustmark::domain::document::aggregate::Document;
 use rustmark::domain::document::errors::DocumentError;
 use rustmark::domain::document::events::DocumentEvent;
 use rustmark::domain::document::value_objects::{Cursor, ModificationState};
+use rustmark::ports::time::Timestamp;
 use rustmark::shared::geometry::{ByteOffset, TextRange};
 use rustmark::shared::path::FilePath;
-use rustmark::shared::time::Timestamp;
 
 use crate::support::text_buffer::buffer_of;
 
@@ -273,7 +273,7 @@ fn mark_closed_emits_event() {
 
 #[test]
 fn document_event_converts_to_domain_event_preserving_id() {
-    use rustmark::shared::event::DomainEvent;
+    use rustmark::ports::event::DomainEvent;
 
     let mut document = doc("hello");
     document.insert_at(ByteOffset::new(5), "!", T0).unwrap();

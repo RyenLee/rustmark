@@ -20,9 +20,9 @@
 use std::path::{Path, PathBuf};
 
 use rustmark_core::shared::error::AppError;
-use rustmark_core::shared::image_asset::{IMAGE_ASSET_DIR, ImageAssetStore, ImportedImage};
 use rustmark_core::shared::path::FilePath;
 use rustmark_core::shared::result::AppResult;
+use rustmark_ports::image_asset::{IMAGE_ASSET_DIR, ImageAssetStore, ImportedImage};
 
 /// 重名去重的序号上限。
 ///

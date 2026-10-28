@@ -27,12 +27,12 @@ use rustmark::domain::preferences::aggregate::Preferences;
 use rustmark::domain::preferences::repository::PreferencesRepository;
 use rustmark::domain::workspace::repository::WorkspaceRepository;
 use rustmark::domain::workspace::value_objects::{RecentFile, WorkspaceEntry};
+use rustmark::ports::event::{DomainEvent, EventBus, EventHandler};
+use rustmark::ports::time::{Clock, Timestamp};
 use rustmark::shared::error::AppError;
-use rustmark::shared::event::{DomainEvent, EventBus, EventHandler};
 use rustmark::shared::geometry::{ByteOffset, TextRange};
 use rustmark::shared::ids::DocumentId;
 use rustmark::shared::path::FilePath;
-use rustmark::shared::time::{Clock, Timestamp};
 
 #[path = "../support.rs"]
 mod support;

@@ -1,12 +1,13 @@
 //! 图片资源导入端口（R-04b：「插入图片」的第二跳）。
 //!
-//! # 为什么放在 `shared`
+//! # 为什么放在 `rustmark-ports`
 //!
-//! 与 [`crate::shared::dialog::DialogPort`] / [`crate::shared::system::ExternalOpener`]
+//! 与 [`crate::dialog::DialogPort`] / [`crate::system::ExternalOpener`]
 //! 同一范式：导入图片要写盘（`std::fs`），而 `app` 层只应看到端口——
 //! 实现在 `infrastructure`（`FsImageAssetStore`），组合根装配时选定。
-//! 表现层不直接接触本端口（它经 `EditorApp` 编排），放 `shared` 是因为
-//! `app` 与 `infrastructure` 都需要引用同一份契约。
+//! 表现层不直接接触本端口（它经 `EditorApp` 编排），放 `rustmark-ports`
+//! （R-10 项 A 从 shared 抽出）是因为 `app` 与 `infrastructure` 都需要
+//! 引用同一份契约。
 //!
 //! # 为什么返回「链接」而不是「落点路径」
 //!
@@ -15,8 +16,8 @@
 //! 就会出现「这里拼 `assets/`、那里拼 `./assets/`」的漂移——而拼错
 //! 不会有任何报错，只是预览里图裂了。
 
-use crate::shared::path::FilePath;
-use crate::shared::result::AppResult;
+use rustmark_shared::shared::path::FilePath;
+use rustmark_shared::shared::result::AppResult;
 
 /// 文档资源目录名（相对文档所在目录）。
 ///
@@ -48,7 +49,7 @@ pub trait ImageAssetStore: Send + Sync {
     /// # 失败语义
     ///
     /// 源不存在 / 不可读、目标目录建不出来、复制失败均返回 `Err`
-    /// （[`AppError::Io`](crate::shared::error::AppError::Io)）；
+    /// （[`AppError::Io`](rustmark_shared::shared::error::AppError::Io)）；
     /// 调用方负责把原因告诉用户。
     fn import_image(
         &self,

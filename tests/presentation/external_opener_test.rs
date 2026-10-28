@@ -13,7 +13,7 @@
 //!    端口之前）——这一条是 XSS 防护的回归，端口化时最容易顺手丢掉。
 //!
 //! 另有一条守「端口真的被用」：若哪天有人把调用改回直连
-//! `shared::system::open_external`，编译会先失败（函数已不存在），
+//! `ports::system::open_external`，编译会先失败（函数已不存在），
 //! 而这条用例保证**即便将来又把自由函数加回来**，行为仍走端口。
 
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -22,9 +22,9 @@ use std::sync::{Arc, Mutex};
 use rustmark::app::bootstrap::Services;
 use rustmark::app::frame::EditorApp;
 use rustmark::application::dto::{RangeView, SpanView};
+use rustmark::ports::system::{ExternalOpener, is_safe_to_open};
+use rustmark::ports::time::SystemClock;
 use rustmark::presentation::views::preview_view::test_only::handle_span_click;
-use rustmark::shared::system::{ExternalOpener, is_safe_to_open};
-use rustmark::shared::time::SystemClock;
 
 use super::support::fake_dialog::FakeDialog;
 

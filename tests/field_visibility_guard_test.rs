@@ -495,10 +495,10 @@ const APPROVED_PUB_FIELDS: &[&str] = &[
     "ui/presentation/view_context.rs::TextEdit::byte_start",
     "ui/presentation/view_context.rs::TextEdit::cursor_char",
     "ui/presentation/view_context.rs::TextEdit::inserted",
-    "shared/kernel/dialog.rs::FileFilter::extensions",
+    "ports/dialog.rs::FileFilter::extensions",
     "shared/kernel/fonts.rs::EditorFontChoice::display_name",
     "shared/kernel/fonts.rs::EditorFontChoice::key",
-    "shared/kernel/image_asset.rs::ImportedImage::link",
+    "ports/image_asset.rs::ImportedImage::link",
     "ui/presentation/shortcuts/registry/keys.rs::Modifiers::alt",
     "ui/presentation/shortcuts/registry/keys.rs::Modifiers::ctrl",
     "ui/presentation/shortcuts/registry/keys.rs::Modifiers::meta",
@@ -831,10 +831,11 @@ fn pub_fields_in(source: &str) -> Vec<String> {
 ///
 /// 键前缀见 [`APPROVED_PUB_FIELDS`]：core / shared / infra 为 `""`（历史口径，
 /// 559 条不动；后两者保留 `shared/` `infrastructure/` 子目录，裸相对路径恰好
-/// 复现搬迁前的 core 键），icons / ui 为 crate 短名 + `/`（防 `lib.rs` 同键碰撞）。
+/// 复现搬迁前的 core 键），icons / ui / render / ports 为 crate 短名 + `/`
+/// （防 `lib.rs` 同键碰撞；`ports` 为 R-10 项 A 从 `shared/kernel` 抽出的端口 crate）。
 fn scan_pub_fields() -> (BTreeSet<String>, Vec<String>) {
     let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let roots: [(&str, PathBuf); 6] = [
+    let roots: [(&str, PathBuf); 7] = [
         ("", base.join("crates").join("rustmark-core").join("src")),
         (
             "icons/",
@@ -846,6 +847,10 @@ fn scan_pub_fields() -> (BTreeSet<String>, Vec<String>) {
         (
             "render/",
             base.join("crates").join("rustmark-render").join("src"),
+        ),
+        (
+            "ports/",
+            base.join("crates").join("rustmark-ports").join("src"),
         ),
     ];
 

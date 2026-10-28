@@ -22,9 +22,9 @@
 
 use rfd::{FileDialog, MessageButtons, MessageDialog, MessageLevel};
 
-use rustmark_core::shared::dialog::{DialogPort, FileFilter, image_filters};
 use rustmark_core::shared::error::AppError;
 use rustmark_core::shared::path::FilePath;
+use rustmark_ports::dialog::{DialogPort, FileFilter, image_filters};
 
 /// 基于 `rfd` 的原生对话框适配器。
 #[derive(Debug, Clone, Copy, Default)]

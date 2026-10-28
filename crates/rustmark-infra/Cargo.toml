@@ -12,6 +12,12 @@ publish = false
 # --- 本地 crate（端口与领域类型在 core，实现在此）---
 rustmark-core = { path = "../rustmark-core" }
 
+# --- 本地 crate（R-10 项 A：架构端口契约，2026-10-28 从 shared 抽出）---
+# infra 直接依赖本 crate 取端口契约（dialog / event / system / image_asset /
+# time），不再经 `rustmark_core::shared::<port>` 间接取——端口已迁至
+# `rustmark-ports`，core 只负责把 crate 拼回 `rustmark_core::ports::…`。
+rustmark-ports = { path = "../rustmark-ports" }
+
 # --- 解析与高亮（ADR-002）---
 # 与 core 时期同规格声明；V11-65 起版本继承 root [workspace.dependencies]。
 pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }

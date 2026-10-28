@@ -9,9 +9,9 @@
 //! - 最近文件去重、按最近使用排序、上限 20；
 //! - 关闭脏文档返回 [`CloseDecision::NeedsSave`]，由应用层决定是否弹保存对话框。
 
+use crate::ports::time::Timestamp;
 use crate::shared::ids::{DocumentId, WorkspaceId};
 use crate::shared::path::FilePath;
-use crate::shared::time::Timestamp;
 
 use super::errors::WorkspaceError;
 use super::events::WorkspaceEvent;

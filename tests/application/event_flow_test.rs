@@ -23,10 +23,10 @@ use rustmark::application::workspace::queries::*;
 use rustmark::application::workspace::service::WorkspaceAppService;
 use rustmark::domain::markdown::value_objects::{BlockKind, SpanStyle};
 use rustmark::domain::workspace::aggregate::Workspace;
-use rustmark::shared::event::{DomainEvent, EventBus};
+use rustmark::ports::event::{DomainEvent, EventBus};
+use rustmark::ports::time::Timestamp;
 use rustmark::shared::ids::{DocumentId, WorkspaceId};
 use rustmark::shared::path::FilePath;
-use rustmark::shared::time::Timestamp;
 
 use super::fakes::*;
 
@@ -39,7 +39,7 @@ struct Wiring {
     bus: Arc<InMemoryEventBus>,
     doc_service: DocumentAppService,
     doc_repo: Arc<InMemoryDocumentRepository>,
-    clock: Arc<dyn rustmark::shared::time::Clock>,
+    clock: Arc<dyn rustmark::ports::time::Clock>,
     ws_service: Arc<WorkspaceAppService>,
     md_service: Arc<MarkdownAppService>,
     md_parser: Arc<FakeMarkdownParser>,
@@ -55,7 +55,7 @@ fn wiring() -> Wiring {
     let doc_repo = Arc::new(InMemoryDocumentRepository::new());
     let buffer_factory: Arc<dyn rustmark::domain::document::services::BufferFactory> =
         Arc::new(FakeBufferFactory);
-    let clock: Arc<dyn rustmark::shared::time::Clock> = Arc::new(FakeClock::new(0));
+    let clock: Arc<dyn rustmark::ports::time::Clock> = Arc::new(FakeClock::new(0));
     let doc_service = DocumentAppService::new(
         registry.clone(),
         doc_repo.clone(),

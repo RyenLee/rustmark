@@ -20,7 +20,7 @@ impl WorkspaceAppService {
     /// 发布工作区变更事件。
     pub(super) fn publish_changed(&self) {
         self.bus
-            .publish(crate::shared::event::DomainEvent::WorkspaceChanged(self.id));
+            .publish(crate::ports::event::DomainEvent::WorkspaceChanged(self.id));
     }
 
     pub(super) fn lock_read(&self) -> AppResult<std::sync::RwLockReadGuard<'_, Workspace>> {

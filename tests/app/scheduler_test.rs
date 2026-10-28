@@ -25,8 +25,8 @@ use rustmark::app::bootstrap::{ConfigPaths, Services};
 use rustmark::app::frame::EditorApp;
 use rustmark::application::preferences::commands::SetEditorCommand;
 use rustmark::application::preferences::queries::GetSettingsQuery;
+use rustmark::ports::time::Clock;
 use rustmark::presentation::state::status_bar_ui_state::MESSAGE_TTL_MS;
-use rustmark::shared::time::Clock;
 
 use crate::support::clock::TestClock;
 use crate::support::fake_dialog::FakeDialog;

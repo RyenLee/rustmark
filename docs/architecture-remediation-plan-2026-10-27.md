@@ -1,6 +1,6 @@
 # rustmark 架构整改细化实施方案
 
-> 文档编号：ADR-REM-2026-10-27　|　作者：架构评审（专家视角）　|　状态：**已基本收官**（R-01~R-09 全部落地/闭项；**R-10 组合根直连仓储+端口 明确延后**至未来拆库/端口升 crate 时处理；R-11 整词语义已于 `7201e11` 落地）。R-04 升 crate `22e8a86`；R-09 可复现脚本+LF 基线 `f4ba740`。
+> 文档编号：ADR-REM-2026-10-27　|　作者：架构评审（专家视角）　|　状态：**整改收官，R-10 项 A 已落地**（R-01~R-09 全部落地/闭项；R-10 项 A「端口升 crate」2026-10-28 落地为 `rustmark-ports`，项 B「M3 core DI 边界」设计已落盘 `docs/R-10-max-solution.md`、待实施；R-11 整词语义已于 `7201e11` 落地）。R-04 升 crate `22e8a86`；R-09 可复现脚本+LF 基线 `f4ba740`。
 > 综合来源：架构评审 `architecture-review-2026-10-23.md`、评估报告 `rustmark-evaluation-2026-10-25.md`、合规差额报告、多轮 refactor 波次（V11-56~67）、「去双源」批次（2026-10-26）、专家架构评审（2026-10-27）。
 > 本文件是上述所有讨论的**可执行汇总**。任何一条改造项落地后，请在 `docs/PROGRESS.md` / `docs/v1.1-backlog.md` §3 回填实测数字，并同步本文件的「状态」列。
 
@@ -18,7 +18,7 @@
 | 门禁状态 | fmt / check-arch / clippy(-D warnings) / 全量测试 / doc / thresholds(121 条) / size_gate / release_dryrun(15/15) | 全绿 |
 | 远端 | 本地 `main` 领先 `origin/main` ~80 提交 | agent 侧不可达，**push 由维护者本机执行** |
 
-> **当前（2026-10-28 全整改收官后）实测**：crate 数 **8**（新增 `rustmark-render`）；本地依赖边 **9 条无环**（ui→render 新增）；测试基线 **2297 passed / 4 ignored**（all-targets 2296 + doc 1）；release 体积 **10,565,632 B = 10.076 MiB**（R-04 升 crate +5,120 B，仍在红线内）；thresholds 121 条 OK；门禁全绿。R-10（组合根直连仓储+端口）明确延后。
+> **当前（2026-10-28 R-10 项 A 落地后）实测**：crate 数 **9**（`rustmark-render` R-04 + `rustmark-ports` R-10 项 A）；本地依赖边 **12 条无环**（core→ports、infra→ports、ports→shared 新增）；测试基线 **2299 passed / 4 ignored**（all-targets 2299 + doc 1；较 R-04 的 2297 增 2 条拓扑用例）；release 体积 **10,565,120 B ≈ 10.076 MB**（较 R-04 基线 -512 B，端口抽独立 crate 后 DCE 略优，远低于 10.5 MB 预警）；thresholds 121 条 OK；门禁全绿。R-10 项 B（M3 core DI 边界）设计落盘、待实施。
 
 ## 1. 背景与现状概述
 

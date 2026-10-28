@@ -64,7 +64,7 @@ use super::aggregate::ExportJob;
 /// 导出器抽象：由基础设施层实现（S5-09），应用层据此触发具体格式的导出。
 ///
 /// 实现负责把 `content` 渲染为目标格式并写入 `job.destination()`；
-/// 应用层只负责选项校验、状态机推进与 [`crate::shared::event::DomainEvent::ExportFinished`]
+/// 应用层只负责选项校验、状态机推进与 [`crate::ports::event::DomainEvent::ExportFinished`]
 /// 事件发布，**不在本层触碰文件系统**（违反分层会被 `check-arch` 拦截）。
 pub trait Exporter: Send + Sync {
     /// 执行导出，返回**实际写入**的字节数。

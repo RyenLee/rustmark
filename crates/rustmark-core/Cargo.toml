@@ -29,6 +29,13 @@ rustmark-actions = { path = "../rustmark-actions" }
 # core）。core 以 `pub use rustmark_shared::shared;` 桥接，公开路径零变化。
 rustmark-shared = { path = "../rustmark-shared" }
 
+# --- 本地 crate（R-10 项 A：架构端口，2026-10-28 从 shared 抽出）---
+# 跨层契约（dialog / event / system / image_asset / time）。ports 单向依赖
+# shared（复用其纯值类型），shared 不反向依赖 ports（否则成环）。core 以
+# `pub use rustmark_ports;` 桥接，公开路径 `rustmark_core::ports::…` 与
+# core 内 `crate::ports::…` 可用；infra 直接依赖本 crate 取端口契约。
+rustmark-ports = { path = "../rustmark-ports" }
+
 # --- 配置与序列化（DTO / 偏好值对象的 serde）---
 serde = { version = "1", features = ["derive"] }
 

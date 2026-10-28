@@ -14,7 +14,7 @@
 
 use rustmark::domain::document::undo::{Snapshot, UndoPolicy, UndoStack};
 use rustmark::domain::document::value_objects::ModificationKind;
-use rustmark::shared::time::Timestamp;
+use rustmark::ports::time::Timestamp;
 
 /// 默认合并窗口（`UndoPolicy::default_policy()` 为 400ms）。
 const WINDOW_MS: u64 = 400;

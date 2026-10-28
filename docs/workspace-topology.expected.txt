@@ -113,6 +113,7 @@ rustmark-core v0.2.0
 │   [build-dependencies]
 ├── log v0.4.34
 ├── rustmark-actions v0.2.0
+├── rustmark-ports v0.2.0
 ├── rustmark-shared v0.2.0
 ├── serde v1.0.229
 └── thiserror v2.0.21
@@ -128,6 +129,7 @@ rustmark-infra v0.2.0
 ├── ropey v1.6.1
 ├── rustls-native-certs v0.8.5
 ├── rustmark-core v0.2.0
+├── rustmark-ports v0.2.0
 ├── serde v1.0.229
 ├── syntect v5.3.0
 ├── thiserror v2.0.21
@@ -135,6 +137,13 @@ rustmark-infra v0.2.0
 └── ureq v3.5.0
 [dev-dependencies]
 └── tempfile v3.27.0
+
+rustmark-ports v0.2.0
+├── ahash v0.8.12
+│   [build-dependencies]
+├── rustmark-shared v0.2.0
+├── serde v1.0.229
+└── thiserror v2.0.21
 
 rustmark-render v0.2.0
 └── egui v0.37.0

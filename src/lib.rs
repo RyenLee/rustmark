@@ -8,7 +8,8 @@
 //!                                     └── trait 实现反向注入
 //! ```
 //!
-//! - [`shared`]：共享内核（错误、结果、事件总线抽象、ID、文本坐标）
+//! - [`shared`]：共享内核（错误、结果、ID、文本坐标）
+//! - [`ports`]：架构端口（dialog / event / system / image_asset / time，R-10 项 A 从 shared 抽出）
 //! - [`domain`]：领域层，零 IO、零 UI 依赖（阶段 03）
 //! - [`application`]：应用层，用例编排与 DTO（阶段 04）
 //! - [`infrastructure`]：基础设施层，外部库适配（阶段 05）
@@ -49,4 +50,8 @@ pub mod presentation;
 // 历史：D-3 阶段 4a 曾用整层转发把 core 的四层拼回 `crate::<层>`，使存量
 // 源码与测试零改动；TD-04 / V11-64 抽出 shared / infra 后继续经 core 取用。
 pub use rustmark_core::{application, domain, shared};
+// R-10 项 A（2026-10-28）：架构端口从 `rustmark-shared` 升为独立 crate
+// `rustmark-ports`，core 以 `pub use rustmark_ports;` 拼回 `rustmark_core::ports`；
+// 此处一并转发为 `rustmark::ports`，保持对外（集成测试 / 下游）路径稳定。
+pub use rustmark_core::ports;
 pub use rustmark_infra::infrastructure;

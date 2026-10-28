@@ -48,7 +48,7 @@ use rustmark_core::domain::document::repository::{DocumentRepository, DocumentSn
 use rustmark_core::shared::error::AppError;
 use rustmark_core::shared::ids::DocumentId;
 use rustmark_core::shared::path::FilePath;
-use rustmark_core::shared::time::Timestamp;
+use rustmark_ports::time::Timestamp;
 
 use super::encoding::UTF8_BOM;
 

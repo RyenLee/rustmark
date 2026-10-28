@@ -5,7 +5,7 @@
 //! 「哪些文件能被当作文本打开」这条规则原先散落在三处，各写一份：
 //!
 //! - `app::frame::drag_drop::is_openable_text`（拖放分类）；
-//! - `shared::dialog::default_filters`（原生「打开」对话框的扩展名过滤器）；
+//! - `ports::dialog::default_filters`（原生「打开」对话框的扩展名过滤器，R-10 项 A 迁至 rustmark-ports）；
 //! - `app::frame::files::current_document_kind`（状态栏的类型标签）。
 //!
 //! 三份清单必然漂移：拖放放行了 `.csv`，原生对话框却选不中它；状态栏的
@@ -18,7 +18,7 @@
 //! （打开守卫、拖放分类）、基础设施层（原生对话框过滤器）。而
 //! `docs/architecture-constraints.md` §4 规定：表现层不得依赖 `domain`，
 //! 基础设施层不得依赖 `application`。三方共同的依赖点只有 `shared`
-//! （与 [`crate::shared::encoding`] / [`crate::shared::dialog`] 同一模式）。
+//! （与 [`crate::shared::encoding`] / [`rustmark_ports::dialog`] 同一模式，R-10 项 A 端口迁至 rustmark-ports）。
 //!
 //! # 为什么按扩展名而不是按内容嗅探
 //!

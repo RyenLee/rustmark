@@ -18,7 +18,7 @@ use super::fakes::*;
 
 fn build() -> (PreferencesAppService, Arc<InMemoryPreferencesRepository>) {
     let repo = Arc::new(InMemoryPreferencesRepository::new());
-    let bus: Arc<dyn rustmark::shared::event::EventBus> = Arc::new(InMemoryEventBus::new());
+    let bus: Arc<dyn rustmark::ports::event::EventBus> = Arc::new(InMemoryEventBus::new());
     let svc = PreferencesAppService::new(repo.clone(), bus).unwrap();
     (svc, repo)
 }
@@ -189,7 +189,7 @@ fn get_conflicts_reports_duplicate() {
     let mut prefs = Preferences::default_preferences();
     prefs.rebind(ActionId::Bold, KeyCombo::parse("Ctrl+S").unwrap());
     let repo = Arc::new(InMemoryPreferencesRepository::new());
-    let bus: Arc<dyn rustmark::shared::event::EventBus> = Arc::new(InMemoryEventBus::new());
+    let bus: Arc<dyn rustmark::ports::event::EventBus> = Arc::new(InMemoryEventBus::new());
     let svc = PreferencesAppService::with_preferences(repo, bus, prefs);
 
     let conflicts: Vec<ConflictView> = svc.get_conflicts(GetConflictsQuery).unwrap();

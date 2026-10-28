@@ -23,7 +23,7 @@ fn fp(s: &str) -> FilePath {
     FilePath::new(s).unwrap()
 }
 
-type DynBus = Arc<dyn rustmark::shared::event::EventBus>;
+type DynBus = Arc<dyn rustmark::ports::event::EventBus>;
 
 struct WsFixture {
     service: WorkspaceAppService,
@@ -37,7 +37,7 @@ fn build() -> WsFixture {
     let provider = Arc::new(FakeDocumentContentProvider::new());
     let bus: DynBus = Arc::new(InMemoryEventBus::new());
     let fake_clock = Arc::new(FakeClock::new(1000));
-    let clock: Arc<dyn rustmark::shared::time::Clock> = fake_clock.clone();
+    let clock: Arc<dyn rustmark::ports::time::Clock> = fake_clock.clone();
     let workspace = Arc::new(RwLock::new(Workspace::new(WorkspaceId::new())));
     let service = WorkspaceAppService::new(
         repo.clone(),

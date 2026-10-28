@@ -5,9 +5,9 @@ use std::sync::Arc;
 use ahash::{HashMap, HashMapExt};
 
 use crate::application::dto::SpanView;
+use crate::ports::time::Timestamp;
 use crate::shared::ids::DocumentId;
 use crate::shared::lru::LruMap;
-use crate::shared::time::Timestamp;
 
 /// 一份缓存的高亮结果。
 ///

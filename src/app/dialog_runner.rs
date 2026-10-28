@@ -28,7 +28,7 @@
 
 use std::sync::mpsc::{Receiver, Sender, channel};
 
-use rustmark_core::shared::dialog::{DialogPort, default_filters};
+use rustmark_core::ports::dialog::{DialogPort, default_filters};
 use rustmark_core::shared::error::AppError;
 use rustmark_core::shared::path::FilePath;
 

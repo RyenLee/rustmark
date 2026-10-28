@@ -3,9 +3,9 @@
 //! 全部字段私有、通过访问器暴露（`.agent/conventions.md` 第 10 条）。
 //! 值对象不持有任何 IO 或 UI 状态。
 
+use crate::ports::time::Timestamp;
 use crate::shared::geometry::{ByteOffset, TextRange};
 use crate::shared::path::FilePath;
-use crate::shared::time::Timestamp;
 
 /// 光标与选区。
 ///

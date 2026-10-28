@@ -131,11 +131,11 @@ use rustmark_core::application::dto::{
 };
 use rustmark_core::application::markdown::service::MarkdownAppService;
 use rustmark_core::application::preferences::service::PreferencesAppService;
+use rustmark_core::ports::system::ExternalOpener;
 use rustmark_core::shared::encoding::TextEncoding;
 use rustmark_core::shared::ids::DocumentId;
 use rustmark_core::shared::kernel::export_format::PageSize;
 use rustmark_core::shared::kernel::fonts::EditorFontChoice;
-use rustmark_core::shared::kernel::system::ExternalOpener;
 use rustmark_core::shared::result::AppResult;
 
 /// 一次文本编辑的结果：在旧文本的 `[byte_start, byte_end)` 区间替换为 `inserted`。

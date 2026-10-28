@@ -4,8 +4,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use rustmark::infrastructure::events::in_process_event_bus::InProcessEventBus;
+use rustmark::ports::event::{DomainEvent, EventBus, EventHandler};
 use rustmark::shared::error::AppError;
-use rustmark::shared::event::{DomainEvent, EventBus, EventHandler};
 use rustmark::shared::ids::{DocumentId, JobId};
 
 fn event() -> DomainEvent {

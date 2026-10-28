@@ -45,7 +45,7 @@ modules:
       rust_msrv:
         value: 1.99
         unit: "Rust version"
-        source: "Cargo.toml:96"
+        source: "Cargo.toml:98"
         anchor: "rust-version = \"1.99\""
         purpose: "包级最低 Rust 版本声明，cargo 解析依赖时据此拒绝过低版本。与 toolchain_channel 须同步。"
         recommended: "1.99（与工具链同步）"

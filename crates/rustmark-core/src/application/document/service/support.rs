@@ -1,8 +1,8 @@
 //! 服务内部并发与事件原语：注册表读写锁、聚合事件抽取、锁外事件发布。
 
 use crate::domain::document::aggregate::Document;
+use crate::ports::event::DomainEvent;
 use crate::shared::error::AppError;
-use crate::shared::event::DomainEvent;
 use crate::shared::result::AppResult;
 
 use super::super::registry::DocumentRegistry;

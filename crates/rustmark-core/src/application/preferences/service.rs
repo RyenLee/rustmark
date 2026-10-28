@@ -18,8 +18,8 @@ use crate::domain::preferences::value_objects::{
     ThemeKind, WritingGoal,
 };
 
+use crate::ports::event::{DomainEvent, EventBus};
 use crate::shared::error::AppError;
-use crate::shared::event::{DomainEvent, EventBus};
 use crate::shared::result::AppResult;
 
 use crate::application::dto::{

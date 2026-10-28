@@ -3,7 +3,7 @@
 //! 时间必须**可注入**（`.agent/conventions.md` 第 21 条），故领域逻辑只依赖
 //! [`Clock`] trait；这里验证时间戳的比较与饱和语义。
 
-use rustmark::shared::time::{Clock, SystemClock, Timestamp};
+use rustmark::ports::time::{Clock, SystemClock, Timestamp};
 
 #[test]
 fn within_is_inclusive_at_window_boundary() {

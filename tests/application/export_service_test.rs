@@ -9,7 +9,7 @@ use rustmark::application::dto::{ExportRequestView, ExportResultView};
 use rustmark::application::export::commands::*;
 use rustmark::application::export::queries::*;
 use rustmark::application::export::service::ExportAppService;
-use rustmark::shared::event::{DomainEvent, EventBus};
+use rustmark::ports::event::{DomainEvent, EventBus};
 use rustmark::shared::ids::{DocumentId, JobId};
 use rustmark::shared::path::FilePath;
 
