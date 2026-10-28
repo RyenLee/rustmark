@@ -102,13 +102,18 @@
 > 01–09 的「任务清单 / 验收记录」是各阶段收尾时的快照。**当前状态一律以 `PROGRESS.md` §1.2 与
 > `v1.1-backlog.md` 为准**（历史快照与新结论冲突时，新结论胜）。
 
-### 3.5 依赖图与拓扑快照（2 图 + 1 文本基线）
+### 3.5 依赖图与拓扑快照（1 图 + 1 文本基线）
 
 | 路径 | 内容 | 维护方式 |
 |---|---|---|
-| [`current_dependency_graph.html`](./current_dependency_graph.html) | 当前 workspace 依赖图（SVG） | **手工维护**；`scripts/gen_dep_graph.sh` 会用 `cargo depgraph` 覆盖同名文件（见该脚本注释），重生成后需补回手绘 `<title>/<desc>` |
-| [`target_dependency_graph.html`](./target_dependency_graph.html) | 目标态依赖图（shared 二分 / icons 解耦 / views 迁 ui / rich 抽出 / ports 独立） | 手工；5 项中 4 项已达成，仅「views 迁 ui」未做 |
-| [`workspace-topology.expected.txt`](./workspace-topology.expected.txt) | 12 条本地依赖边的机器基线 | `scripts/gen_dep_graph.sh` 重写主体、保留注释头 |
+| [`current_dependency_graph.html`](./current_dependency_graph.html) | **9 crate / 12 条本地依赖边**的实测依赖图（SVG，含分层布局与每 crate 规模） | `scripts/gen_dep_graph.sh` 只重写 `workspace-topology.expected.txt` 与 `target/` 下的机器图，**不覆盖本文**——本图由人工维护。2026-10-28 依实测重绘 |
+| [`workspace-topology.expected.txt`](./workspace-topology.expected.txt) | 12 条本地依赖边的机器基线（含手写注释头） | `scripts/gen_dep_graph.sh` 重写主体、保留注释头；与 `tests/workspace_topology_test.rs`、CI diff 对账 |
+
+> 原 `target_dependency_graph.html`（2026-10-27 目标态）已归档：
+> [archive/architecture-reviews/target-dependency-graph-2026-10-27.html](./archive/architecture-reviews/target-dependency-graph-2026-10-27.html)。
+> 它预测的 5 项中 2 项达成（icons 解耦 / render 抽出）、**2 项经决议不做**
+> （`shared` 拆 kernel+support 两 crate、`views` 迁入 ui，见 ADR-013 决策 3）、
+> 且未预见 `rustmark-ports` 独立成 crate。目标态与现状已合一，故合并为单图。
 
 ### 3.6 流水与素材（`logs/` 与 `pic/`）
 

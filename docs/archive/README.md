@@ -58,7 +58,7 @@
 |---|---|---|
 | [crash-20261014135941-29300.txt](./crash-reports/crash-20261014135941-29300.txt) | 2026-10-14 用户报告「搜索功能崩溃」时附的崩溃报告（panic at workspace/service.rs:468，UTF-8 字符边界） | 对应缺陷 **028 已修复**（`floor_char_boundary` + 回归 `search_snippet_never_splits_utf8_chars`）；原件从 `docs/logs/` 移至此处（诊断工件不进流水账），问题记录 028 的路径引用已同步 |
 
-## architecture-reviews/ · 架构评审与改造收官（第二批，9 篇 + 1 图）
+## architecture-reviews/ · 架构评审与改造收官（第二批，9 篇 + 2 图）
 
 > 共同特征：任务 **100% 收官**、结论已被 `architecture-constraints.md` / ADR-010~013 吸收、
 > 文中数字为**写作时点快照**（多数已漂移）。**不要**按这里的数字判断现状——现行口径看
@@ -68,6 +68,7 @@
 |---|---|---|---|---|
 | [architecture-review.md](./architecture-reviews/architecture-review.md) | `docs/architecture-review.md` | 2026-10-20 | 全库架构评估：3 P0 + 8 P1 + 7 P2 + 6 项改造遗留；含对 `check-arch` 判定逻辑的复刻验证 | **18 项已 100% 转为 R-01~R-21 并落地**（backlog V11-54 ✅）；`src/ 302 文件 / 33,845 行`等规模数字已失效 |
 | [architecture-layers.svg](./architecture-reviews/architecture-layers.svg) | `docs/arc/architecture-layers.svg` | 2026-10-20 | 上篇的「改造后分层依赖 + 四处违规边」示意图 | 随上篇归档；7-crate 时代图形，现状见 [`current_dependency_graph.html`](../current_dependency_graph.html) |
+| [target-dependency-graph-2026-10-27.html](./architecture-reviews/target-dependency-graph-2026-10-27.html) | `docs/target_dependency_graph.html` | 2026-10-27 | 目标态依赖图：5 项外移计划（shared 拆 kernel+support / icons 解耦 / views 迁 ui / rich 抽出 render / ports） | **预测已被现实修正**：2 项达成（icons 解耦、render 抽出）、**2 项经决议不做**（shared 不再拆 crate、views 留 root，见 ADR-013 决策 3）、ports 已独立成 crate 而原图未画。目标态与现状合一，故与 current 图合并为单图 |
 | [architecture-refactor-plan.md](./architecture-reviews/architecture-refactor-plan.md) | `docs/architecture-refactor-plan.md` | 2026-10-20 | **21 条改造项（R-01~R-21）+ M0~M6 里程碑**，每条七字段 + 验收判据 | **§5.3 进度表 22 行全 OK**（2026-10-21 收官，`2099 passed`） |
 | [architecture-review-2026-10-23.md](./architecture-reviews/architecture-review-2026-10-23.md) | `docs/architecture-review-2026-10-23.md` | 2026-10-23 | 八维度复审：前次问题修复核对 + D-1~D-12 | D-1~D-8 全闭合；D-9 / D-12 记为**已知取舍**（不修）；D-11 core 侧闭合 |
 | [multi-crate-review-2026-10-23.md](./architecture-reviews/multi-crate-review-2026-10-23.md) | `docs/multi-crate-review-2026-10-23.md` | 2026-10-23 | 多 crate 拆分专项评估（DDD 边界 / 依赖 / 内聚 / DX / 构建） | 结论已由 D-3 阶段 4a/4b 落地，量化触发表沉淀为 [ADR-013](../adr/ADR-013-core-adapter-residency-and-leaf-extraction.md) |
