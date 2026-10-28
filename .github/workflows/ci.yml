@@ -16,7 +16,9 @@ name: CI
 #    改名会让必需检查「永远等不到」。职责拆分只在 step 层做。
 #
 # 3. **工具链版本唯一真源是 `rust-toolchain.toml`**：这里不再硬编码
-#    `1.99.0`（曾与该文件重复，升级时两处漂移）。
+#    `1.99.0`（曾与该文件重复，升级时两处漂移）。实现上由 runner 预装的
+#    rustup 在 Install Rust 步骤里读取该文件（`rustup show`），不引入
+#    任何会把版本号复制一份的第三方 action。
 #
 # 4. **不再全局设置 `RUSTFLAGS: -D warnings`**：RUSTFLAGS 会作用于
 #    **所有**编译单元（含第三方依赖），任何上游新告警都会让整个 CI 变红，
@@ -77,9 +79,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # 不指定 `toolchain`：由仓库根 `rust-toolchain.toml` 决定（唯一真源）。
+      # 工具链唯一真源 = 仓库根 `rust-toolchain.toml`（channel / components / profile）。
+      #
+      # 不用 `dtolnay/rust-toolchain`：它的 `toolchain` 是 **required** 输入，而 Actions
+      # runner 不在解析期强制该约束——workflow 能解析、CI 能排队，只有运行到这一步才报
+      # "'toolchain' is a required input" 并 exit 1。本仓库 CI 因此 9/9 全红，全部倒在
+      # Install Rust（7~24 秒，根本没到编译），且本地从不跑 CI 所以长期无人察觉。
+      # 改用 runner 预装的 rustup：它读仓库根 `rust-toolchain.toml`，版本号不重复。
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@master
+        shell: bash
+        run: |
+          rustup show
+          rustc --version
+          cargo --version
 
       - uses: Swatinem/rust-cache@v2
 
@@ -230,8 +242,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # 工具链由仓库根 `rust-toolchain.toml` 驱动（唯一真源），见 check job 的同名注释。
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@master
+        shell: bash
+        run: |
+          rustup show
+          rustc --version
+          cargo --version
 
       - uses: Swatinem/rust-cache@v2
 
@@ -266,10 +283,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@master
-        with:
-          components: llvm-tools-preview
+      # 同上：工具链由 rust-toolchain.toml 驱动；本 job 额外需要 llvm-tools-preview。
+      - name: Install Rust (+ llvm-tools-preview)
+        shell: bash
+        run: |
+          rustup show
+          rustup component add llvm-tools-preview
+          rustc --version
+          cargo --version
 
       - uses: Swatinem/rust-cache@v2
 
@@ -340,8 +361,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # 工具链由仓库根 `rust-toolchain.toml` 驱动（唯一真源），见 check job 的同名注释。
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@master
+        shell: bash
+        run: |
+          rustup show
+          rustc --version
+          cargo --version
 
       - uses: Swatinem/rust-cache@v2
 

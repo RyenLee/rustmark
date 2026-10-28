@@ -11,9 +11,9 @@ name: Release
 # Windows 暂无签名步骤（SmartScreen 提示必须在 Release Notes 说明）。
 # 私钥严禁入仓：只经 secrets 注入，`.gitignore` 已排除证书文件。
 #
-# 与 ci.yml 同源的三条约定：① 工具链由 `rust-toolchain.toml` 决定，不在
-# workflow 里重复版本号；② 最小权限（构建只读，发布 job 才声明 write）；
-# ③ 每步一条可复制到本地执行的命令。
+# 与 ci.yml 同源的三条约定：① 工具链由 `rust-toolchain.toml` 决定（runner
+# 预装的 rustup 读取），不在 workflow 里重复版本号；② 最小权限（构建只读，
+# 发布 job 才声明 write）；③ 每步一条可复制到本地执行的命令。
 
 on:
   push:
@@ -49,8 +49,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # 工具链唯一真源 = 仓库根 `rust-toolchain.toml`（channel / components / profile）。
+      #
+      # 不用 `dtolnay/rust-toolchain`：它的 `toolchain` 是 **required** 输入，而 Actions
+      # runner 不在解析期强制该约束——workflow 能解析、CI 能排队，只有运行到这一步才报
+      # "'toolchain' is a required input" 并 exit 1。改用 runner 预装的 rustup：
+      # 它读仓库根 `rust-toolchain.toml`，版本号不重复。
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@master
+        shell: bash
+        run: |
+          rustup show
+          rustc --version
+          cargo --version
 
       - uses: Swatinem/rust-cache@v2
 
@@ -145,8 +155,13 @@ jobs:
       # DEP-06：SBOM（CycloneDX 1.5）随产物发布。`cargo metadata --locked`
       # 需要本机有 cargo，故这一步先装工具链（本 job 之前不需要 Rust）。
       # 生成器零第三方依赖，判据（结构 / 确定性）由 tools/release_dryrun.py 守着。
+      # 工具链由仓库根 `rust-toolchain.toml` 驱动（唯一真源），见 build job 的同名注释。
       - name: Install Rust (for cargo metadata)
-        uses: dtolnay/rust-toolchain@master
+        shell: bash
+        run: |
+          rustup show
+          rustc --version
+          cargo --version
 
       - name: Generate SBOM (CycloneDX 1.5)
         shell: bash
