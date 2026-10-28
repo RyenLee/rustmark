@@ -492,7 +492,7 @@ modules:
       search_snippet_context:
         value: 40
         unit: "bytes"
-        source: "crates/rustmark-core/src/application/workspace/service/search/scan.rs:262"
+        source: "crates/rustmark-core/src/application/workspace/service/search/scan.rs:296"
         anchor: "saturating_sub(40)"
         purpose: "命中摘要前后各取的字节数（随后对齐 UTF-8 边界）；24 字节在混合排版下上下文过短，放宽到 40。"
         recommended: "16-40"

@@ -14,23 +14,34 @@
 //!
 //! # 片段窗口与高亮区间
 //!
-//! [`snippet_window`] 只回答「该截哪一段」；命中在片段里的**高亮区间**由
-//! 窗口边界与命中偏移共同决定（`start_off - window.start`）。窗口两端都向下
-//! 对齐到 UTF-8 字符边界且**不跨行**，故高亮区间必然落在窗口内、且不会切在
-//! 多字节字符中间——这两条不变量分别由 [`snippet_bounds`] 的 `debug_assert`、
+//! [`snippet_bounds`] 只回答「该截哪一段」；命中在片段里的**高亮区间**由
+//! [`SnippetWindow::highlight`] 给出（窗口边界 + 命中偏移 → 片段内**字符**
+//! 区间）。窗口两端都向下对齐到 UTF-8 字符边界且**不跨行**，故高亮区间必然
+//! 落在窗口内、且不会切在多字节字符中间——这两条不变量分别由
+//! [`snippet_bounds`] 的 `debug_assert`、
 //! [`tests::snippet_bounds_cover_the_match`] 与
 //! [`tests::snippet_bounds_never_split_a_utf8_char`] 守住。
+//!
+//! 高亮区间是**唯一出处**：此前 UI 侧拿片段再搜一遍 query 自己算
+//! （DS-1 双源），既重复劳动，又与 core 的口径分家——片段里取第一处命中
+//! （上下文抢高亮）、忽略 `whole_word`、大小写折叠走另一套实现、命中被窗口
+//! 截断时直接放弃高亮。
 
 use crate::shared::geometry::floor_char_boundary;
 use crate::shared::pattern::Regex;
 
-/// 单次命中的中间结果（字节偏移 + 行列 + 上下文片段）。
+/// 单次命中的中间结果（行列 + 上下文片段 + 片段内高亮）。
+///
+/// 刻意**不带**绝对字节偏移：命中区间只用于算片段与高亮，算完即弃；
+/// 留在结构里就是又一个「无人消费的字段」——DS-1 的 `SearchHitView::
+/// match_range` 正是这么漂出来的（`pub(crate)`、实测零消费）。
 pub(super) struct RawHit {
-    pub(super) start: usize,
-    pub(super) end: usize,
     pub(super) line: usize,
     pub(super) col: usize,
     pub(super) snippet: String,
+    /// 命中在**片段内**的高亮区间（**字符**坐标，见
+    /// [`SnippetWindow::highlight`]）。
+    pub(super) highlight: (usize, usize),
 }
 
 /// 大小写不敏感的单字符比较，不分配。
@@ -116,6 +127,29 @@ impl SnippetWindow {
     pub(super) fn slice<'a>(&self, text: &'a str) -> &'a str {
         &text[self.start..self.end]
     }
+
+    /// 命中在本窗口内的**高亮区间**（**片段内字符坐标**）。
+    ///
+    /// 换算只有两步：绝对字节偏移减窗口首字节得到片段内字节偏移，再按字符
+    /// 计数。两端都必然是字符边界（窗口两端已向下对齐、命中两端由扫描器
+    /// 给出），故切片不会 panic。
+    ///
+    /// 返回**字符**坐标而不是字节：片段最终要交给 egui 排版，字节下标在
+    /// 中文里会切错位置（「一」占 3 字节，字节 7 落在字符中间）。
+    ///
+    /// 这是高亮区间的**唯一出处**（R-11 / DS-1）：此前 UI 侧拿片段再搜一遍
+    /// query 自己算，与 core 的口径在四处不一致（见模块文档）。
+    pub(super) fn highlight(&self, text: &str, start_off: usize, end_off: usize) -> (usize, usize) {
+        let snippet = self.slice(text);
+        let from = start_off.saturating_sub(self.start).min(snippet.len());
+        let to = end_off
+            .saturating_sub(self.start)
+            .clamp(from, snippet.len());
+        (
+            snippet[..from].chars().count(),
+            snippet[..to].chars().count(),
+        )
+    }
 }
 
 /// 在文本中搜索：`regex` 为 `Some` 走正则分支，否则按字面量
@@ -172,14 +206,14 @@ pub(super) fn search_text(
         // 把到命中起点为止的新字节数进游标（两端都是字符边界）。
         cursor.advance_to(text, start_off);
         let col = cursor.col_at(start_off);
-        let snippet = snippet_window(text, cursor.line_start, start_off, end_off);
+        let window = snippet_bounds(text, cursor.line_start, start_off, end_off);
+        let highlight = window.highlight(text, start_off, end_off);
 
         hits.push(RawHit {
-            start: start_off,
-            end: end_off,
             line: cursor.line,
             col,
-            snippet,
+            snippet: window.slice(text).to_string(),
+            highlight,
         });
         if hits.len() >= max_per_file {
             break;
@@ -217,14 +251,14 @@ pub(super) fn search_text_regex(text: &str, regex: &Regex, max_per_file: usize) 
         // 与字面量路径同一段增量行号逻辑（同一个 [`LineCursor`]）。
         cursor.advance_to(text, start_off);
         let col = cursor.col_at(start_off);
-        let snippet = snippet_window(text, cursor.line_start, start_off, end_off);
+        let window = snippet_bounds(text, cursor.line_start, start_off, end_off);
+        let highlight = window.highlight(text, start_off, end_off);
 
         hits.push(RawHit {
-            start: start_off,
-            end: end_off,
             line: cursor.line,
             col,
-            snippet,
+            snippet: window.slice(text).to_string(),
+            highlight,
         });
         // 前进：普通命中跳到终点；零宽命中（`a*` 可匹配空串）向前推进
         // 一个字符——原地不动会在同一位置无限重配（`find_in` 只扫
@@ -252,7 +286,7 @@ pub(super) fn search_text_regex(text: &str, regex: &Regex, max_per_file: usize) 
 /// 本就是边界，对齐是恒等的。
 ///
 /// 返回的窗口必然覆盖 `[start_off, end_off]`——高亮区间
-/// （[`SnippetWindow::highlight`]）由此成立。
+/// （[`SnippetWindow::highlight`]，即 `start_off - start`）由此成立。
 pub(super) fn snippet_bounds(
     text: &str,
     line_start: usize,
@@ -275,20 +309,6 @@ pub(super) fn snippet_bounds(
         "片段窗口 [{start}, {end}) 未覆盖命中 [{start_off}, {end_off})"
     );
     SnippetWindow { start, end }
-}
-
-/// 取命中上下文片段（前后各 40 字节，行内截断）。
-///
-/// 边界计算见 [`snippet_bounds`]；本函数只负责切片与分配。
-pub(super) fn snippet_window(
-    text: &str,
-    line_start: usize,
-    start_off: usize,
-    end_off: usize,
-) -> String {
-    snippet_bounds(text, line_start, start_off, end_off)
-        .slice(text)
-        .to_string()
 }
 
 #[cfg(test)]
@@ -366,7 +386,7 @@ mod tests {
         let via_regex = search_text(text, "alpha", true, false, Some(&regex), 100);
         let shape = |hits: &[RawHit]| {
             hits.iter()
-                .map(|h| (h.start, h.end, h.line, h.col, h.snippet.clone()))
+                .map(|h| (h.highlight, h.line, h.col, h.snippet.clone()))
                 .collect::<Vec<_>>()
         };
         assert_eq!(
@@ -390,8 +410,62 @@ mod tests {
         let loose = search_text(text, "cat", true, false, None, 100);
         assert_eq!(loose.len(), 3, "不加整词开关时三处都命中");
         let strict = search_text(text, "cat", true, true, None, 100);
-        let starts: Vec<usize> = strict.iter().map(|h| h.start).collect();
-        assert_eq!(starts, vec![0, 13], "整词开关必须滤掉 category 里的 cat");
+        let highlight: Vec<(usize, usize)> = strict.iter().map(|h| h.highlight).collect();
+        assert_eq!(
+            highlight,
+            vec![(0, 3), (13, 16)],
+            "整词开关必须滤掉 category 里的 cat（纯 ASCII，字符下标 = 字节下标）"
+        );
+    }
+
+    /// **DS-1 的核心不变量**：片段上下文里也含查询词时，高亮必须落在**真命中**上。
+    ///
+    /// UI 侧此前拿片段再搜一遍 query、取**第一处**命中（DS-1 分歧 1）：搜
+    /// `cat` 而同一行前半句也有 `cat` 时，第二条命中的高亮会打在第一条身上。
+    /// 高亮改由 core 直接给出后不再有这个问题。
+    #[test]
+    fn later_hit_is_highlighted_at_its_own_occurrence() {
+        let text = "cat dog cat";
+        let hits = search_text(text, "cat", true, false, None, 100);
+        assert_eq!(hits.len(), 2);
+        // 两条命中的片段都是整行；第二条必须高亮在下标 8，而不是 0。
+        assert_eq!(hits[0].highlight, (0, 3));
+        assert_eq!(hits[1].highlight, (8, 11), "上下文不得抢走高亮");
+    }
+
+    /// 高亮区间落在**真命中**上：按字符下标切出来的片段逐字等于命中原文。
+    ///
+    /// 覆盖三种容易分家的口径：大小写不敏感（core 的 `char_eq_ignore_case`
+    /// 与 UI 的 `to_lowercase` 折叠）、整词（UI 侧根本不认这个开关）、
+    /// 多字节字符（字符下标 ≠ 字节下标）。
+    #[test]
+    fn highlight_marks_exactly_the_matched_text() {
+        let cases = [
+            // (文本, 模式, 大小写敏感, 整词)
+            ("Cat 中文 dog cat", "cat", false, false),
+            ("cat category cat", "cat", true, true),
+            ("中文 needle 结尾", "needle", true, false),
+            ("ÄÖ äö", "äö", false, false),
+        ];
+        for (text, pattern, case_sensitive, whole_word) in cases {
+            for hit in search_text(text, pattern, case_sensitive, whole_word, None, 100) {
+                let marked = marked_text(&hit.snippet, hit.highlight);
+                assert_eq!(
+                    marked.to_lowercase(),
+                    pattern.to_lowercase(),
+                    "片段 {text:?} 的高亮必须落在真命中上（实测高亮出 {marked:?}）"
+                );
+            }
+        }
+    }
+
+    /// 按字符下标取出片段里被高亮的那一截（UI 侧 `snippet_job` 的同款切法）。
+    fn marked_text(snippet: &str, highlight: (usize, usize)) -> String {
+        snippet
+            .chars()
+            .skip(highlight.0)
+            .take(highlight.1.saturating_sub(highlight.0))
+            .collect()
     }
 
     /// 大小写不敏感比较：ASCII 走快速路径，非 ASCII 走 Unicode 小写迭代。
@@ -407,11 +481,11 @@ mod tests {
         assert!(!char_eq_ignore_case('a', 'b'));
     }
 
-    /// 片段窗口必须**完整覆盖**命中：高亮区间（`SnippetWindow::highlight`）
-    /// 落在窗口内，且窗口内该区间的切片逐字节等于命中原文。
+    /// 片段窗口必须**完整覆盖**命中：[`SnippetWindow::highlight`] 落在窗口内，
+    /// 且按它切出来的片段逐字等于命中原文。
     ///
-    /// 这是「高亮区间」的唯一不变量：UI 侧按 `start_off - window.start`
-    /// 定位高亮，窗口一旦没盖住命中，高亮就会错位或越界。
+    /// 这是「高亮区间」的唯一不变量：UI 侧直接拿这个区间排版，窗口一旦没
+    /// 盖住命中，高亮就会错位或越界。
     #[test]
     fn snippet_bounds_cover_the_match() {
         // 20 个中文（60 字节）+ "ab" + 20 个中文：命中落在多字节字符之间。
@@ -426,11 +500,9 @@ mod tests {
             window.start,
             window.end
         );
-        // 高亮区间 = 命中偏移相对窗口首字节（UI 侧 `locate_in_snippet` 的等价物）。
-        let hi = start_off - window.start;
-        let hj = end_off - window.start;
+        let (hi, hj) = window.highlight(&text, start_off, end_off);
         assert_eq!(
-            &window.slice(&text)[hi..hj],
+            marked_text(window.slice(&text), (hi, hj)),
             "ab",
             "高亮区间内的切片必须等于命中原文"
         );
@@ -478,6 +550,22 @@ mod tests {
         let window = snippet_bounds(&text, 0, 50, 52);
         assert_eq!(window.start, 10, "左侧 40 字节");
         assert_eq!(window.end, 92, "右侧 40 字节");
-        assert_eq!(snippet_window(&text, 0, 50, 52), &text[10..92]);
+        assert_eq!(window.slice(&text), &text[10..92]);
+        // 高亮相对窗口首字节：命中在片段内的第 40 个字符起、宽 2。
+        assert_eq!(window.highlight(&text, 50, 52), (40, 42));
+    }
+
+    /// 命中被窗口**截断**时高亮退化为片段末尾的收尾区间，而不是 `(0, 0)`。
+    ///
+    /// UI 侧旧实现（`locate_in_snippet`）在片段里搜不到完整 query 时直接
+    /// 返回 `None` → `unwrap_or((0, 0))`，等于不高亮。core 给的区间即使被
+    /// 截断也仍指向命中残留在片段内的那一截。
+    #[test]
+    fn highlight_is_clamped_when_the_window_cuts_the_match() {
+        let text = "abcdef";
+        let window = snippet_bounds(text, 0, 0, 6);
+        // 假装命中比窗口还长（真实扫描不会这样，但换算必须不出界、不 panic）。
+        assert_eq!(window.highlight(text, 0, 99), (0, 6));
+        assert_eq!(window.highlight(text, 99, 99), (6, 6), "越界一律收敛到末尾");
     }
 }

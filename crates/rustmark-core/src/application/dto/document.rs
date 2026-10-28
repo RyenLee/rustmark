@@ -140,6 +140,12 @@ pub struct SearchHitView {
     pub col: usize,
     /// 命中上下文片段（含前后若干字符）。
     pub snippet: String,
-    /// 命中区间（相对整篇内容的字节偏移）。
-    pub(crate) match_range: RangeView,
+    /// 命中在 [`Self::snippet`] 内的**字符**区间（高亮用）。
+    ///
+    /// 由 core 在算窗口时一并给出（`search::scan::SnippetWindow::highlight`），
+    /// 是**唯一出处**：UI 不再拿片段自己再搜一遍 query（R-11 / DS-1）。
+    ///
+    /// 用字符而非字节：片段最终要交给 egui 排版，字节下标在中文里会切错
+    /// 位置。
+    pub highlight: (usize, usize),
 }

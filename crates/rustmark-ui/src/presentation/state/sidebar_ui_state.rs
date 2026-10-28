@@ -362,28 +362,18 @@ mod tests {
     #[test]
     fn hits_are_grouped_by_file() {
         let hits = vec![
-            ("/w/b.md".to_string(), 1, "one".to_string()),
-            ("/w/a.md".to_string(), 0, "two".to_string()),
-            ("/w/b.md".to_string(), 4, "three".to_string()),
+            ("/w/b.md".to_string(), 1, "one".to_string(), (0, 3)),
+            ("/w/a.md".to_string(), 0, "two".to_string(), (0, 0)),
+            ("/w/b.md".to_string(), 4, "three".to_string(), (2, 5)),
         ];
         let groups = group_hits(&hits);
         assert_eq!(groups.len(), 2);
         assert_eq!(groups[0].file_name, "b.md");
         assert_eq!(groups[0].hits.len(), 2, "同一文件的命中应合并");
         assert_eq!(groups[1].file_name, "a.md");
-    }
-
-    /// 片段里定位查询词返回**字符**下标（中文片段按字节切会错位）。
-    #[test]
-    fn snippet_lookup_returns_character_offsets() {
-        assert_eq!(
-            locate_in_snippet("needle 一处", "needle", false),
-            Some((0, 6))
-        );
-        // 中文在「needle」之后：字节下标会是 6..12，字符下标才是 6..7。
-        assert_eq!(locate_in_snippet("needle 一处", "一", false), Some((7, 8)));
-        assert_eq!(locate_in_snippet("Needle", "needle", true), None);
-        assert_eq!(locate_in_snippet("Needle", "needle", false), Some((0, 6)));
+        // 高亮区间是**搬运** core 给的，分组不得改写。
+        assert_eq!(groups[0].hits[0].highlight, (0, 3));
+        assert_eq!(groups[0].hits[1].highlight, (2, 5));
     }
 
     /// 新建 / 重命名共用一套草稿存取。

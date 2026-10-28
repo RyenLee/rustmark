@@ -133,6 +133,7 @@ const APPROVED_PUB_FIELDS: &[&str] = &[
     "application/dto/document.rs::RangeView::end",
     "application/dto/document.rs::RangeView::start",
     "application/dto/document.rs::SearchHitView::col",
+    "application/dto/document.rs::SearchHitView::highlight",
     "application/dto/document.rs::SearchHitView::line",
     "application/dto/document.rs::SearchHitView::path",
     "application/dto/document.rs::SearchHitView::snippet",

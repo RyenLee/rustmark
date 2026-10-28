@@ -209,6 +209,14 @@ pub struct SearchHitRow {
     /// 命中在该片段内的**字符**区间（用于高亮）。
     ///
     /// 用字符而非字节：片段最终要交给 egui 排版，字节下标在中文里会切错位置。
+    ///
+    /// 值**取自 core 的 `SearchHitView::highlight`**（唯一真源，R-11 / DS-1）。
+    /// 此前由本模块的 `locate_in_snippet` 在片段里重搜一遍 query 得出，
+    /// 与 core 的扫描口径在四处不一致：
+    /// 1. 取片段内**第一处** query——上下文里也有 query 时高亮打在上下文上；
+    /// 2. 只收 `case_sensitive`，忽略 `whole_word`——整词命中可能落到非整词位置；
+    /// 3. 大小写折叠用 `to_lowercase()`，与 core 的 `char_eq_ignore_case` 不同；
+    /// 4. 命中被窗口截断时返回 `None` → `unwrap_or((0, 0))`，等于不高亮。
     pub highlight: (usize, usize),
 }
 
@@ -216,87 +224,53 @@ pub struct SearchHitRow {
 ///
 /// 分组而非平铺的原因与原型一致：跨文件搜索里同一文件的命中往往连成一片，
 /// 平铺会让同一个文件名在结果里重复十几次，用户得自己扫着找。
-pub fn group_hits(hits: &[(String, usize, String)]) -> Vec<SearchGroup> {
+///
+/// 入参第 4 项是**片段内字符**高亮区间，由 core 的 `SearchHitView::highlight`
+/// 直接给出（R-11 / DS-1 的唯一真源）；本函数只搬运，不重新计算——此前
+/// 这里有 `locate_in_snippet`，拿片段再搜一遍 query，与 core 的口径在
+/// 四处不一致（见 `SearchHitRow::highlight`）。
+pub fn group_hits(hits: &[(String, usize, String, (usize, usize))]) -> Vec<SearchGroup> {
     let mut groups: Vec<SearchGroup> = Vec::new();
-    for (path, line, snippet) in hits {
+    for (path, line, snippet, highlight) in hits {
         let file_name = file_name_of(path).to_string();
+        let row = SearchHitRow {
+            line: *line,
+            snippet: snippet.clone(),
+            highlight: *highlight,
+        };
         match groups.iter_mut().find(|g| &g.path == path) {
-            Some(existing) => existing.hits.push(SearchHitRow {
-                line: *line,
-                snippet: snippet.clone(),
-                highlight: (0, 0),
-            }),
+            Some(existing) => existing.hits.push(row),
             None => groups.push(SearchGroup {
                 path: path.clone(),
                 file_name,
-                hits: vec![SearchHitRow {
-                    line: *line,
-                    snippet: snippet.clone(),
-                    highlight: (0, 0),
-                }],
+                hits: vec![row],
             }),
         }
     }
     groups
-}
-
-/// 在片段里定位查询词，返回**字符**区间（未找到时返回 `None`）。
-///
-/// 找不到不是错误：大小写不敏感 + 全词匹配时片段可能不含完整查询
-/// （片段被截断过），此时不高亮比高亮错位置好。
-pub fn locate_in_snippet(
-    snippet: &str,
-    query: &str,
-    case_sensitive: bool,
-) -> Option<(usize, usize)> {
-    if query.is_empty() {
-        return None;
-    }
-    let haystack: Vec<char> = snippet.chars().collect();
-    let needle: Vec<char> = query.chars().collect();
-    if needle.len() > haystack.len() {
-        return None;
-    }
-    let hit = haystack.windows(needle.len()).position(|w| {
-        w.iter().zip(&needle).all(|(a, b)| {
-            if case_sensitive {
-                a == b
-            } else {
-                a.to_lowercase().eq(b.to_lowercase())
-            }
-        })
-    })?;
-    Some((hit, hit + needle.len()))
 }
 
 /// 把领域命中直接转成展示用的分组结构（含每条命中的高亮区间）。
 ///
-/// 这是 [`group_hits`] + [`locate_in_snippet`] 的组合入口，两个零件与组合
-/// **同住一处**（D-8）：此前组合函数留在组合根的 `app/frame/find.rs`，而两个
-/// 零件在 ui 的 state 里，`app/frame/outline.rs` 只好跨模块反向导入——纯函数
-/// 与其数据投影分居两个 crate，导航时要在两处之间跳。
+/// 分组逻辑在 [`group_hits`]，本入口只做 DTO → 元组的投影。
 ///
-/// 查询词与选项由调用方传入而不是从 `result` 里找：`SearchResultView`
-/// 本身不携带查询（它是领域 DTO，不该知道 UI 传了什么）。
-pub fn group_search_hits(
-    result: &SearchResultView,
-    query: &str,
-    case_sensitive: bool,
-) -> Vec<SearchGroup> {
-    let rows: Vec<(String, usize, String)> = result
+/// 高亮区间**取自 DTO**（`SearchHitView::highlight`）而不是在这里重算：
+/// 本文件此前还有一个 `locate_in_snippet` 拿片段再搜一遍 query，那正是
+/// DS-1 的双源——片段里取第一处命中（上下文抢高亮）、忽略 `whole_word`、
+/// 大小写折叠走另一套实现、命中被窗口截断时直接放弃高亮。故本函数也**不再
+/// 需要**查询词与选项参数：它们只是给那套重算用的。
+pub fn group_search_hits(result: &SearchResultView) -> Vec<SearchGroup> {
+    let rows: Vec<(String, usize, String, (usize, usize))> = result
         .hits
         .iter()
-        .map(|hit| (hit.path.as_str().to_string(), hit.line, hit.snippet.clone()))
+        .map(|hit| {
+            (
+                hit.path.as_str().to_string(),
+                hit.line,
+                hit.snippet.clone(),
+                hit.highlight,
+            )
+        })
         .collect();
-    let mut groups = group_hits(&rows);
-    for group in &mut groups {
-        for hit in &mut group.hits {
-            // 高亮区间在**字符**坐标下算（理由见 `SearchHitRow::highlight`）：
-            // 片段要交给 egui 排版，按字节切中文会错位——「一」在 UTF-8 里
-            // 3 字节，字节 7 落在字符 9 的中间，切出来的两半都不是完整字符。
-            hit.highlight =
-                locate_in_snippet(&hit.snippet, query, case_sensitive).unwrap_or((0, 0));
-        }
-    }
-    groups
+    group_hits(&rows)
 }

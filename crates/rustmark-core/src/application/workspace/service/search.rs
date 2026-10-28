@@ -35,7 +35,7 @@ use crate::shared::path::FilePath;
 use crate::shared::pattern::Regex;
 use crate::shared::result::AppResult;
 
-use crate::application::dto::{RangeView, SearchHitView, SearchResultView};
+use crate::application::dto::{SearchHitView, SearchResultView};
 
 use super::super::queries::*;
 use super::{MAX_HITS_PER_FILE, MAX_TOTAL_HITS, WorkspaceAppService};
@@ -168,7 +168,7 @@ impl WorkspaceAppService {
                     line: hit.line,
                     col: hit.col,
                     snippet: hit.snippet,
-                    match_range: RangeView::new(hit.start, hit.end),
+                    highlight: hit.highlight,
                 });
             }
         }

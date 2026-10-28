@@ -136,11 +136,7 @@ impl EditorApp {
             only_open_documents: self.sidebar.search_scope == SearchScope::OpenDocuments,
         })?;
         Ok(WorkspaceSearch {
-            groups: group_search_hits(
-                &result,
-                &self.sidebar.search_query,
-                self.sidebar.search_options.case_sensitive,
-            ),
+            groups: group_search_hits(&result),
             truncated: result.truncated,
         })
     }

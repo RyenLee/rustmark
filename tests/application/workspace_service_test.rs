@@ -333,6 +333,86 @@ fn search_snippet_never_splits_utf8_chars() {
     assert_eq!(hit.col, 128);
 }
 
+/// DTO 的 `highlight` 必须指向**真命中**（R-11 / DS-1）。
+///
+/// 这条用例守的是**管线**：`scan` 里的换算是纯函数、有自己的用例，但
+/// `search_uncached` 把 `RawHit::highlight` 搬进 `SearchHitView` 的那一
+/// 步若漏了（写成 `(0, 0)`），纯函数的用例一条都不会红。
+///
+/// 同时覆盖旧 UI 侧 `locate_in_snippet` 的四处分歧里最要命的一条：
+/// **上下文抢高亮**——同一行前半句也有 `cat` 时，第二条命中的高亮此前会
+/// 打在第一条身上。
+#[test]
+fn search_highlight_points_at_the_real_match() {
+    let f = build();
+    seed_files(&f, &["/d/twice.md"], "cat dog cat\n");
+
+    let result = f
+        .service
+        .search(SearchQuery {
+            pattern: "cat".to_string(),
+            regex: false,
+            case_sensitive: false,
+            whole_word: false,
+            only_document: None,
+            only_open_documents: false,
+        })
+        .unwrap();
+    assert_eq!(result.hits.len(), 2, "同一行两处都应命中");
+    // 按字符下标切出高亮那一截，必须逐字等于命中原文。
+    let marked: Vec<String> = result
+        .hits
+        .iter()
+        .map(|h| {
+            h.snippet
+                .chars()
+                .skip(h.highlight.0)
+                .take(h.highlight.1 - h.highlight.0)
+                .collect()
+        })
+        .collect();
+    assert_eq!(marked, vec!["cat".to_string(), "cat".to_string()]);
+    // 第二条必须高亮在第二处（上下文不得抢走高亮）。
+    assert_eq!(result.hits[0].highlight, (0, 3));
+    assert_eq!(result.hits[1].highlight, (8, 11));
+}
+
+/// 整词与大小写开关也必须反映在高亮区间上（旧 UI 侧只收 `case_sensitive`）。
+#[test]
+fn search_highlight_honors_whole_word() {
+    let f = build();
+    seed_files(&f, &["/d/word.md"], "cat category cat\n");
+
+    let run = |whole_word: bool| {
+        f.service
+            .search(SearchQuery {
+                pattern: "cat".to_string(),
+                regex: false,
+                case_sensitive: false,
+                whole_word,
+                only_document: None,
+                only_open_documents: false,
+            })
+            .unwrap()
+    };
+    let loose = run(false)
+        .hits
+        .iter()
+        .map(|h| h.highlight)
+        .collect::<Vec<_>>();
+    assert_eq!(loose, vec![(0, 3), (4, 7), (13, 16)], "不整词时三处都命中");
+    let strict = run(true)
+        .hits
+        .iter()
+        .map(|h| h.highlight)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        strict,
+        vec![(0, 3), (13, 16)],
+        "整词必须滤掉 category 里的 cat"
+    );
+}
+
 /// 摘要窗口的字符边界必须**向下**吸附（V11-54a / R-14）。
 ///
 /// # 为什么上面那条用例不够
