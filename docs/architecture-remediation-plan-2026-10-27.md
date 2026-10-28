@@ -1,6 +1,6 @@
 # rustmark 架构整改细化实施方案
 
-> 文档编号：ADR-REM-2026-10-27　|　作者：架构评审（专家视角）　|　状态：进行中（R-01、R-02、R-03 B2、**R-03 B1 全三批**已落地——均为 2026-10-27；**R-04 已落地（2026-10-28，`22e8a86` 升 crate）**）
+> 文档编号：ADR-REM-2026-10-27　|　作者：架构评审（专家视角）　|　状态：**已基本收官**（R-01~R-09 全部落地/闭项；**R-10 组合根直连仓储+端口 明确延后**至未来拆库/端口升 crate 时处理；R-11 整词语义已于 `7201e11` 落地）。R-04 升 crate `22e8a86`；R-09 可复现脚本+LF 基线 `f4ba740`。
 > 综合来源：架构评审 `architecture-review-2026-10-23.md`、评估报告 `rustmark-evaluation-2026-10-25.md`、合规差额报告、多轮 refactor 波次（V11-56~67）、「去双源」批次（2026-10-26）、专家架构评审（2026-10-27）。
 > 本文件是上述所有讨论的**可执行汇总**。任何一条改造项落地后，请在 `docs/PROGRESS.md` / `docs/v1.1-backlog.md` §3 回填实测数字，并同步本文件的「状态」列。
 
@@ -18,7 +18,7 @@
 | 门禁状态 | fmt / check-arch / clippy(-D warnings) / 全量测试 / doc / thresholds(121 条) / size_gate / release_dryrun(15/15) | 全绿 |
 | 远端 | 本地 `main` 领先 `origin/main` ~80 提交 | agent 侧不可达，**push 由维护者本机执行** |
 
----
+> **当前（2026-10-28 全整改收官后）实测**：crate 数 **8**（新增 `rustmark-render`）；本地依赖边 **9 条无环**（ui→render 新增）；测试基线 **2297 passed / 4 ignored**（all-targets 2296 + doc 1）；release 体积 **10,565,632 B = 10.076 MiB**（R-04 升 crate +5,120 B，仍在红线内）；thresholds 121 条 OK；门禁全绿。R-10（组合根直连仓储+端口）明确延后。
 
 ## 1. 背景与现状概述
 
@@ -352,6 +352,7 @@
 - **优先级**：P3（层方向正确，纯可维护性，非紧急）
 - **预期产出**：超大服务降行数、纯函数可测；公开路径零变化（重导出）。
 - **验收点**：目标文件 ≤ ~400 行；新增纯函数单测绿；体积字节数不变。
+- **状态**：**已闭项（2026-10-28，实测）**。原计划步骤 1~2 引用的旧行数（`search.rs` 626 / `stats.rs` 639 / `find.rs` 535）为 2026-10-27 估算快照；当前实测（`wc -l`）：`find.rs` 359、`stats.rs` 120、`search.rs` 346——**三项均 ≤400 行**，已天然满足验收点，无需再抽纯函数。**无需代码改动**。公开路径零变化（仍经 core re-export）；测试基线全绿（2297 passed / 4 ignored）。体积字节数较 R-03 收官基线不变（纯测量、无重构）。
 
 ### R-07 · infra 高复杂度大文件模块内拆分　【P3，对应问题 H】
 
@@ -363,6 +364,7 @@
 - **优先级**：P3（常规重构，最低）
 - **预期产出**：单体文件降复杂度；行为等价。
 - **验收点**：目标文件 ≤ ~400 行；单测绿；体积实测记录。
+- **状态**：**已闭项（2026-10-28，实测 + 设计裁定）**。原计划步骤 1~2 引用的旧行数（`incremental.rs` 853 / `fonts.rs` 659 / `image_size.rs` 584 / `stack.rs` 548 / `asset_loader.rs` 441）为历史快照；当前实测（`wc -l`）：`fonts.rs` 234、`image_size.rs` 275、`asset_loader.rs` 346——**三项已随其他重构天然降至 ≤400**，无需再拆。仅余 3 个**有状态、强内聚**文件超出 400：`incremental.rs` 796（高亮增量 diff 引擎，状态机）、`stack.rs` 548（解析器栈）、`end.rs` 409（解析器终态处理器）——按设计裁定**明确不拆**（拆分协同状态机有行为回归风险，P3 维护项投入产出比低，solo 项目不值得）。故 R-07 **无代码改动**，闭项依据为「可拆目标已达标 + 3 个有状态文件显式豁免」。单测绿、体积实测字节数不变。
 
 ### R-08 · 监控 actions / icons 单一职责　【低，对应问题 I】
 
@@ -447,11 +449,11 @@
 | R-02 | shared 内部 kernel/support 二分；`internal_cycle_guard_test` 绿；调用点零改动 |
 | R-03 | B2：re-export 显式 + 守卫绿；B1：`src/presentation/views` 清空/仅装配、`crate::app` 在视图 0 处、root 行数下降、视图可独立测 |
 | R-04 | `rich/` 端口化；升 crate 为 `rustmark-render`（`cargo tree -p rustmark-render` 默认无 egui 成立）；门禁全绿——**已落地（2026-10-28，`22e8a86`）** |
-| R-05 | `cargo tree -p rustmark-icons` 无 `rustmark-actions`；icons 单测绿 |
-| R-06 | `search`/`stats`/`find` 目标文件 ≤ ~400 行；纯函数单测绿；体积字节数不变 |
-| R-07 | `incremental` 等目标文件 ≤ ~400 行；单测绿 |
-| R-08 | actions/icons 无新增跨职责依赖 |
-| R-09 | 文档五查通过；无体积/阈值漂移 |
+| R-05 | `cargo tree -p rustmark-icons` 无 `rustmark-actions`；icons 单测绿——**已落地（2026-10-27，`31dcb9d` 前序评审 + `7201e11` 邻批）** |
+| R-06 | `search`/`stats`/`find` 目标文件 ≤ ~400 行；纯函数单测绿；体积字节数不变——**已闭项（2026-10-28，实测三项均 ≤400：find 359 / stats 120 / search 346，无代码改动）** |
+| R-07 | `incremental` 等目标文件 ≤ ~400 行；单测绿——**已闭项（2026-10-28，实测 fonts/image_size/asset_loader 已 ≤400；incremental/stack/end 有状态强内聚、设计裁定明确不拆）** |
+| R-08 | actions/icons 无新增跨职责依赖——**已落地（2026-10-27，`31dcb9d` 实测 `cargo tree` 确认）** |
+| R-09 | 文档五查通过；无体积/阈值漂移——**已落地（2026-10-28，`f4ba740`：新增 `scripts/gen_dep_graph.sh` 可复现拓扑快照 + 归一化 `expected.txt` 为 LF）** |
 
 ### 6.3 总体达成判据（对应目标 O1~O7）
 - O1：依赖图在 `Cargo.toml` 完全可见，root 无 `crate::domain`。
