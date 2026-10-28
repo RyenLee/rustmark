@@ -3,7 +3,7 @@
 //! 几何类型走 `render` 端口层（`Pt` / `geom::Rect` / `Rgb8`），不依赖 egui
 //! （问题 F / O4）。
 
-use crate::presentation::rich::render::{Pt, Rgb8, geom::Rect};
+use crate::render::{Pt, Rgb8, geom::Rect};
 
 /// 节点外形。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

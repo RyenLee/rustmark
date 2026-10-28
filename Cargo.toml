@@ -20,6 +20,7 @@ members = [
     "crates/rustmark-core",
     "crates/rustmark-icons",
     "crates/rustmark-infra",
+    "crates/rustmark-render",
     "crates/rustmark-shared",
     "crates/rustmark-ui",
 ]
@@ -31,6 +32,7 @@ default-members = [
     "crates/rustmark-core",
     "crates/rustmark-icons",
     "crates/rustmark-infra",
+    "crates/rustmark-render",
     "crates/rustmark-shared",
     "crates/rustmark-ui",
 ]

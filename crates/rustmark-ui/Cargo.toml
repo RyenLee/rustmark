@@ -20,8 +20,15 @@ egui = { workspace = true }
 # widgets 是主题的消费者，依赖方向 ui → core 与阶段 2 规划一致
 # （root → {ui, core, icons, actions}；ui → core → actions 与
 # icons → actions 两条链在 actions 汇合，无环）。
-# 依赖面由 tests/workspace_topology_test.rs 断言（= egui + rustmark-core）。
+# 依赖面由 tests/workspace_topology_test.rs 断言（= egui + rustmark-core + rustmark-render）。
 rustmark-core = { path = "../rustmark-core" }
+
+# --- 本地 crate（R-04 升 crate，2026-10-28）：富内容渲染引擎 ---
+# 数学 / Mermaid 排版（egui-free 的几何层 + 唯一 egui 后端）。ui 经
+# `presentation.rs` 的 `pub mod rich { pub use rustmark_render::*; }` 拼回
+# `crate::presentation::rich` 原路径，消费方零改动。开启 `egui` feature 以
+# 启用唯一 egui 后端（`render::apply_egui` / `render::rgb8_from_color32`）。
+rustmark-render = { path = "../rustmark-render", features = ["egui"] }
 
 # V11-65：lint 经 [workspace.lints] 单点继承。
 [lints]

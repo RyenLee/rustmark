@@ -31,25 +31,25 @@
 //!   `use egui`；唯一允许 `use egui` 的是 `render::egui`（`RenderBackend`
 //!   实现与 `apply_egui`）。配色由调用方经 `Rgb8`（`MermaidStyle` / `emit`
 //!   的颜色参数）传入，不依赖 `presentation` 的其他模块（不碰主题、不碰
-//!   icons、不碰 state）。这条由 `check-arch` 的 rich-egui 白名单断言守护。
+//!   icons、不碰 state）。这条由 `check-arch` 的 render-egui 白名单断言守护。
 //!
-//! # 为什么没有拆成独立 crate（2026-10-19 评估）
+//! # 现在是独立 crate（R-04 升 crate，2026-10-28）
 //!
-//! 结论：**负收益**。
+//! 原 `rustmark-ui::presentation::rich` 于此物理搬出，成为 `rustmark-render`。
+//! 设计要点：
 //!
-//! 1. **编译隔离不成立**：Rust 以 crate 为编译单元。`rustmark` 依赖
-//!    `rustmark-math` 之后，改一行 math 仍要重编主 crate（依赖元数据变了，
-//!    rustc 不做 API 兼容判定），总工作量反而比现在更大；
-//! 2. **没有复用收益**：唯一消费方就是本 crate；
-//! 3. **会削弱架构语义**：`egui` 依赖会扩散到非 presentation 的
-//!    `Cargo.toml`，而「egui 只在表现层」是 `check-arch` 的一条守卫；
-//! 4. **门禁要跟着改**：新成员的单测需要 `cargo test --workspace` 才会跑，
-//!    漏改就是静默降低覆盖率。
-//!
-//! 触发物理拆分的条件（满足任一再动）：
-//! - 出现第二个消费方（CLI 批量导出 / 插件系统）；
-//! - `rich` 需要独立发布或独立版本节奏；
-//! - 主 crate 编译时间成为日常瓶颈，且实测证明拆出去能缩短（而不是变长）。
+//! 1. **默认依赖面 egui-free**：唯一 egui 后端（`render::egui`）走
+//!    `feature = "egui"`；`rustmark-ui` 经 `pub use rustmark_render::*;`
+//!    拼回 `rustmark_ui::presentation::rich::*` 原路径，全部消费方
+//!    （`views::preview_view` / `views::inline::math`）零代码改动；
+//! 2. **触发拆分的条件**（2026-10-19 评估时尚未满足，R-04 因 `rich/`
+//!    实测超 5.6k 行阈值而执行）：出现第二个消费方（CLI 批量导出 / 插件
+//!    系统）、需要独立发布或独立版本节奏、或主 crate 编译时间成为日常
+//!    瓶颈且实测证明拆出去能缩短。
+
+// 测试代码豁免 unwrap / expect / panic（D-6 守卫惯例：与 `rustmark-ui` 等 crate
+// 的 lib.rs 一致）。富内容引擎的单测用 `expect` 断言排版结果，属有意许可。
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
 pub mod math;
 pub mod mermaid;

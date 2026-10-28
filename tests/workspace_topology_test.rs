@@ -178,16 +178,18 @@ fn icons_crate_dependency_face_is_egui_only() {
     }
 }
 
-/// `rustmark-ui` 的依赖面必须恰为 **egui + rustmark-core**
-/// （V11-62 批次 1 验收第 1 条的机械化）。
+/// `rustmark-ui` 的依赖面必须恰为 **egui + rustmark-core + rustmark-render**
+/// （V11-62 批次 1 验收第 1 条的机械化；R-04 升 crate，2026-10-28 增补 render）。
 ///
 /// widgets 是「egui 布局配方 + 主题配色消费者」：绘制原语只要 egui，
 /// `row::paint_row_background` 读 `Theme` 的 accent_soft / bg_tertiary 只要
-/// core。任何第三个依赖都说明表现层 crate 在长领域逻辑——「抽出」只换了
-/// 住处、没换职责。判据同样走 manifest 文本：`[dependencies]` 段键集合与
-/// 期望集合**相等**断言，再全文禁掉其余依赖段（dev / build / target）。
+/// core；R-04 后富内容渲染引擎（`rustmark-render`）也由 ui 经 re-export 拼回
+/// `rustmark_ui::presentation::rich`，故 ui 多要这一条本地依赖。任何第四个
+/// 依赖都说明表现层 crate 在长领域逻辑——「抽出」只换了住处、没换职责。
+/// 判据同样走 manifest 文本：`[dependencies]` 段键集合与期望集合**相等**
+/// 断言，再全文禁掉其余依赖段（dev / build / target）。
 ///
-/// 与 CI 拓扑 diff 的分工：那条守「root→ui、ui→core 两条边的增减」，
+/// 与 CI 拓扑 diff 的分工：那条守「root→ui、ui→core、ui→render 各边的增减」，
 /// 本条守「ui 自身不再多要依赖」——后者是前者的细化，本地先红。
 #[test]
 fn ui_crate_dependency_face_is_egui_plus_core() {
@@ -215,13 +217,13 @@ fn ui_crate_dependency_face_is_egui_plus_core() {
             deps.insert(name.trim().to_string());
         }
     }
-    let expected: BTreeSet<String> = ["egui", "rustmark-core"]
+    let expected: BTreeSet<String> = ["egui", "rustmark-core", "rustmark-render"]
         .iter()
         .map(|s| s.to_string())
         .collect();
     assert_eq!(
         deps, expected,
-        "rustmark-ui 的依赖面必须恰为 egui + rustmark-core——\
+        "rustmark-ui 的依赖面必须恰为 egui + rustmark-core + rustmark-render——\
          表现层 crate 不长领域逻辑，要加依赖先来改这条断言"
     );
 
@@ -236,6 +238,105 @@ fn ui_crate_dependency_face_is_egui_plus_core() {
                 || line.starts_with("[target")),
             "rustmark-ui 只许有 normal [dependencies] 一段；\
              dev / build / target-specific 依赖段同样稀释「纯表现层」定位：{line}"
+        );
+    }
+}
+
+/// `rustmark-render` 默认依赖面必须 **egui-free**（R-04 升 crate，2026-10-28）。
+///
+/// 富内容渲染引擎拆成独立 crate 的核心收益是「无头 / 导出环境可复用同一套
+/// 排版而不背负 egui」：唯一允许 `use egui` 的 `render/egui.rs` 走
+/// `feature = "egui"`，默认（无 feature）构建不引入 egui。判据走 manifest
+/// 文本：
+/// - `[dependencies]` 仅 `egui`，且 `optional = true`；
+/// - `egui` 不出现在 `default` features（默认编译面 egui-free）；
+/// - 不得有任何 dev / build / target-specific 依赖段。
+///
+/// 与 `check_rich_egui_isolation` 的分工：那条守「`render/` 下除 `egui.rs`
+/// 外不得引用 egui」，本条守「**默认**特征下 egui 根本不在依赖图里」——
+/// 前者防运行时误用，后者防依赖面静默膨胀，两道防线互补。
+#[test]
+fn render_crate_egui_free_by_default() {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("crates")
+        .join("rustmark-render")
+        .join("Cargo.toml");
+    let text = std::fs::read_to_string(&path).expect("render crate 的 Cargo.toml 应可读");
+
+    let mut deps = BTreeSet::new();
+    let mut section = String::new();
+    let mut egui_spec = String::new();
+    for raw in text.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if line.starts_with('[') {
+            section = line.to_string();
+            continue;
+        }
+        if section != "[dependencies]" {
+            continue;
+        }
+        if let Some((name, rest)) = line.split_once('=') {
+            let name = name.trim();
+            deps.insert(name.to_string());
+            if name == "egui" {
+                egui_spec = rest.trim().to_string();
+            }
+        }
+    }
+    let expected: BTreeSet<String> = ["egui"].iter().map(|s| s.to_string()).collect();
+    assert_eq!(
+        deps, expected,
+        "rustmark-render 的 [dependencies] 必须仅含 egui（其余依赖都说明渲染层在长领域逻辑）：{deps:?}"
+    );
+    assert!(
+        egui_spec.contains("optional = true"),
+        "rustmark-render 的 egui 必须是 optional——默认（无 feature）构建不应引入 egui：{egui_spec}"
+    );
+
+    // default features 不得含 egui（默认编译面 egui-free）。
+    let mut features_section = String::new();
+    let mut default_features: Vec<String> = Vec::new();
+    for raw in text.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if line.starts_with('[') {
+            features_section = line.to_string();
+            continue;
+        }
+        if features_section == "[features]"
+            && line.starts_with("default")
+            && let Some((_, rest)) = line.split_once('=')
+        {
+            default_features = rest
+                .trim()
+                .trim_matches(['[', ']'])
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+        }
+    }
+    assert!(
+        !default_features.iter().any(|f| f == "egui"),
+        "rustmark-render 的 default features 不得含 egui——默认编译面必须 egui-free：{default_features:?}"
+    );
+
+    for raw in text.lines() {
+        let line = raw.trim();
+        if line.starts_with('#') {
+            continue;
+        }
+        assert!(
+            !(line.starts_with("[dev-dependencies")
+                || line.starts_with("[build-dependencies")
+                || line.starts_with("[target")),
+            "rustmark-render 只许有 normal [dependencies] 一段；\
+             dev / build / target-specific 依赖段同样稀释「纯渲染」定位：{line}"
         );
     }
 }

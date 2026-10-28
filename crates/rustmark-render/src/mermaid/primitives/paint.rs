@@ -3,7 +3,7 @@
 //! 本文件不再 `use egui`：几何用 `render` 端口层的 `Pt` / `geom::Rect` / `Rgb8`，
 //! 绘制由唯一 egui 后端 `render::apply_egui` 完成。
 
-use crate::presentation::rich::render::{Pt, RenderCommand, Rgb8, TextAnchor, geom::Rect};
+use crate::render::{Pt, RenderCommand, Rgb8, TextAnchor, geom::Rect};
 
 use super::super::model::{MermaidLayout, Prim};
 

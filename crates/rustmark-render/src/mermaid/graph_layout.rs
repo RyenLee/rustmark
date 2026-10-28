@@ -1,6 +1,6 @@
 //! 流程图布局：分层（Sugiyama 骨架）→ 层内排序 → 定位。
 
-use crate::presentation::rich::render::{Pt, geom::Rect};
+use crate::render::{Pt, geom::Rect};
 
 use super::model::{Graph, NodeShape, Placed};
 use super::primitives::{collect_clicks, emit, finalize, first_md_link};

@@ -1,6 +1,6 @@
 //! `sequenceDiagram` 时序图的解析与布局。
 
-use crate::presentation::rich::render::{Pt, geom::Rect};
+use crate::render::{Pt, geom::Rect};
 
 use super::graph_parse::leading_word;
 use super::model::Prim;

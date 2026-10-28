@@ -10,7 +10,7 @@
 
 use std::collections::HashMap;
 
-use crate::presentation::rich::render::{Pt, Rgb8, geom::Rect};
+use crate::render::{Pt, Rgb8, geom::Rect};
 
 use super::graph_parse::leading_word;
 use super::model::Prim;

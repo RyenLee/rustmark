@@ -2,7 +2,7 @@
 //!
 //! 几何类型走 `render` 端口层（`Pt`），不依赖 egui（问题 F / O4）。
 
-use crate::presentation::rich::render::Pt;
+use crate::render::Pt;
 
 use super::super::model::{Edge, Graph, Head, LineStyle, NodeShape, Placed, Prim};
 use super::super::*;

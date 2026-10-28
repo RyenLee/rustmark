@@ -396,23 +396,23 @@ const APPROVED_PUB_FIELDS: &[&str] = &[
     "infrastructure/persistence/fs_workspace_repository.rs::TraversalRules::ignored_dirs",
     "infrastructure/persistence/fs_workspace_repository.rs::TraversalRules::max_entries",
     "infrastructure/persistence/fs_workspace_repository.rs::TraversalRules::skip_hidden",
-    "ui/presentation/rich/math/layout.rs::MathLayout::ascent",
-    "ui/presentation/rich/math/layout.rs::MathLayout::width",
-    "ui/presentation/rich/mermaid/model.rs::MermaidLayout::height",
-    "ui/presentation/rich/mermaid/model.rs::MermaidLayout::width",
-    "ui/presentation/rich/mermaid/primitives/paint.rs::MermaidStyle::edge",
-    "ui/presentation/rich/mermaid/primitives/paint.rs::MermaidStyle::label_bg",
-    "ui/presentation/rich/mermaid/primitives/paint.rs::MermaidStyle::node_fill",
-    "ui/presentation/rich/mermaid/primitives/paint.rs::MermaidStyle::node_stroke",
-    "ui/presentation/rich/mermaid/primitives/paint.rs::MermaidStyle::text",
-    "ui/presentation/rich/render.rs::Pt::x",
-    "ui/presentation/rich/render.rs::Pt::y",
-    "ui/presentation/rich/render/geom.rs::Rect::max",
-    "ui/presentation/rich/render/geom.rs::Rect::min",
-    "ui/presentation/rich/render.rs::Rgb8::a",
-    "ui/presentation/rich/render.rs::Rgb8::b",
-    "ui/presentation/rich/render.rs::Rgb8::g",
-    "ui/presentation/rich/render.rs::Rgb8::r",
+    "render/math/layout.rs::MathLayout::ascent",
+    "render/math/layout.rs::MathLayout::width",
+    "render/mermaid/model.rs::MermaidLayout::height",
+    "render/mermaid/model.rs::MermaidLayout::width",
+    "render/mermaid/primitives/paint.rs::MermaidStyle::edge",
+    "render/mermaid/primitives/paint.rs::MermaidStyle::label_bg",
+    "render/mermaid/primitives/paint.rs::MermaidStyle::node_fill",
+    "render/mermaid/primitives/paint.rs::MermaidStyle::node_stroke",
+    "render/mermaid/primitives/paint.rs::MermaidStyle::text",
+    "render/render.rs::Pt::x",
+    "render/render.rs::Pt::y",
+    "render/render/geom.rs::Rect::max",
+    "render/render/geom.rs::Rect::min",
+    "render/render.rs::Rgb8::a",
+    "render/render.rs::Rgb8::b",
+    "render/render.rs::Rgb8::g",
+    "render/render.rs::Rgb8::r",
     "ui/presentation/theme/builtin.rs::Theme::accent",
     "ui/presentation/theme/builtin.rs::Theme::accent_soft",
     "ui/presentation/theme/builtin.rs::Theme::bg_primary",
@@ -834,7 +834,7 @@ fn pub_fields_in(source: &str) -> Vec<String> {
 /// 复现搬迁前的 core 键），icons / ui 为 crate 短名 + `/`（防 `lib.rs` 同键碰撞）。
 fn scan_pub_fields() -> (BTreeSet<String>, Vec<String>) {
     let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let roots: [(&str, PathBuf); 5] = [
+    let roots: [(&str, PathBuf); 6] = [
         ("", base.join("crates").join("rustmark-core").join("src")),
         (
             "icons/",
@@ -843,6 +843,10 @@ fn scan_pub_fields() -> (BTreeSet<String>, Vec<String>) {
         ("", base.join("crates").join("rustmark-shared").join("src")),
         ("", base.join("crates").join("rustmark-infra").join("src")),
         ("ui/", base.join("crates").join("rustmark-ui").join("src")),
+        (
+            "render/",
+            base.join("crates").join("rustmark-render").join("src"),
+        ),
     ];
 
     let mut actual: BTreeSet<String> = BTreeSet::new();

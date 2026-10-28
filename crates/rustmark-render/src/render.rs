@@ -13,14 +13,16 @@
 //! 通过 [`egui::apply_egui`] 传入的 `rect` / 自然尺寸决定）。后端只做
 //! `abs = origin + coord * scale` 的线性映射，不关心坐标系语义。
 //!
-//! [`egui`]: crate::presentation::rich::render::egui
+//! [`egui`]: crate::render::egui
 
+#[cfg(feature = "egui")]
 mod egui;
 pub mod geom;
 
 // `self::egui` 而非 `egui`：`egui` 是本模块的子模块名，写成裸 `egui::`
-// 会与 egui crate 同名而读不出差别——且 rich-egui 守卫（`check_rich_egui_isolation`）
+// 会与 egui crate 同名而读不出差别——且 render-egui 守卫（`check_rich_egui_isolation`）
 // 按「首段是否 `egui`」判定，重导出自家后端不该被当成「引用了 egui」。
+#[cfg(feature = "egui")]
 pub use self::egui::{EguiBackend, apply_egui, rgb8_from_color32};
 pub use geom::Rect;
 

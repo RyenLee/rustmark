@@ -74,6 +74,20 @@
 #   rustmark-core   → {rustmark-actions, rustmark-shared}                  （2 条）
 #   rustmark-infra  → rustmark-core                                       （1 条）
 #   rustmark-ui     → rustmark-core                                       （1 条）
+#
+# 基线更新：2026-10-28，R-04 升 crate 把富内容渲染引擎 `rich` 物理搬出为独立
+# `rustmark-render`（默认 egui-free，唯一 egui 后端走 `feature = "egui"`，由
+# rustmark-ui 经 `features = ["egui"]` 开启）。拓扑 = 本地依赖边 **8 → 9 条**
+# （无环）：新增 `rustmark-ui → rustmark-render` 一条边；`icons` 仍纯 egui、
+# `ui` 依赖面变为 `egui + rustmark-core + rustmark-render`（由
+# tests/workspace_topology_test.rs 的 ui_crate_dependency_face_is_egui_plus_core
+# 与 render_crate_egui_free_by_default 断言）。当前边表：
+#   root → {rustmark-core, rustmark-infra, rustmark-icons, rustmark-ui}   （4 条）
+#   rustmark-core   → {rustmark-actions, rustmark-shared}                  （2 条）
+#   rustmark-infra  → rustmark-core                                       （1 条）
+#   rustmark-ui     → {rustmark-core, rustmark-render}                     （2 条）
+# `rustmark-render` 自身无本地依赖边（egui 为 optional 外部依赖，默认不引入）。
+
 rustmark v0.2.0
 ├── anyhow v1.0.104
 ├── eframe v0.37.0
@@ -122,6 +136,9 @@ rustmark-infra v0.2.0
 [dev-dependencies]
 └── tempfile v3.27.0
 
+rustmark-render v0.2.0
+└── egui v0.37.0
+
 rustmark-shared v0.2.0
 ├── ahash v0.8.12
 │   [build-dependencies]
@@ -130,4 +147,5 @@ rustmark-shared v0.2.0
 
 rustmark-ui v0.2.0
 ├── egui v0.37.0
-└── rustmark-core v0.2.0
+├── rustmark-core v0.2.0
+└── rustmark-render v0.2.0

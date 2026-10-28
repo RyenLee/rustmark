@@ -1,0 +1,27 @@
+[package]
+# 独立 crate 版本号不随应用发版（publish = false，仅参与本地 workspace 构建）。
+name = "rustmark-render"
+version = "0.2.0"
+edition = "2024"
+rust-version = "1.99"
+license = "MIT OR Apache-2.0"
+description = "rustmark 的富内容渲染引擎（数学公式 / Mermaid 图表）：egui-free 几何层 + 唯一 egui 后端"
+publish = false
+
+[dependencies]
+# --- UI 绘制原语（ADR-001：egui 原生）---
+# **仅 `feature = "egui"` 下才引入**：默认（无 feature）的 `rustmark-render`
+# 是 egui-free 的纯几何 / 排版层，可被无头 / 导出环境复用而不背负 egui。
+# 唯一允许 `use egui` 的文件是 `render/egui.rs`（`RenderBackend` 实现与
+# `apply_egui`），由 `check-arch` 的 render-egui 白名单断言守护。
+# 消费方 `rustmark-ui` 经 `features = ["egui"]` 开启本依赖，使预览渲染可用。
+# V11-65：版本/规格继承 root [workspace.dependencies]（单点真源）。
+egui = { workspace = true, optional = true }
+
+# V11-65：lint 经 [workspace.lints] 单点继承（原为 src/lib.rs 顶部的 attribute）。
+[features]
+# 开启唯一 egui 后端（`render/egui.rs`）。默认不开启 → 依赖面 egui-free。
+egui = ["dep:egui"]
+
+[lints]
+workspace = true

@@ -1386,6 +1386,11 @@ fn src_roots(manifest: &Path) -> Vec<(PathBuf, &'static str, Option<Layer>)> {
             None,
         ),
         (
+            manifest.join("crates").join("rustmark-render").join("src"),
+            "crates/rustmark-render/src/",
+            Some(Layer::Free),
+        ),
+        (
             manifest.join("crates").join("rustmark-shared").join("src"),
             "crates/rustmark-shared/src/",
             None,
@@ -1402,14 +1407,16 @@ fn src_roots(manifest: &Path) -> Vec<(PathBuf, &'static str, Option<Layer>)> {
 // R-04 步4：`presentation/rich/` 主体 egui-free（唯一白名单 render/egui.rs）
 // ============================================================================
 
-/// `presentation/rich/` 相对各 src 根的目录名。
+/// 遗留的 `presentation/rich` 目录名（相对各 src 根）。R-04 升 crate 后真实
+/// workspace 已无此目录，仅用于兼容合成夹具与捕捉任何 stray；真实的
+/// `rustmark-render` crate 由其 src 根路径（`ends_with("rustmark-render/src")`）识别。
 const RICH_DIR: &str = "presentation/rich";
 
-/// 唯一允许 `use egui` 的 `rich/` 文件：渲染端口层的 egui 后端。
+/// 唯一允许 `use egui` 的 `render/` 文件：渲染端口层的 egui 后端。
 ///
 /// 它持有 `RenderBackend` 实现与 `apply_egui`，把 egui-free 的
 /// `RenderCommand` 翻译成 `Painter` 调用——**只此一处**需要认识 egui。
-const RICH_EGUI_BACKEND: &str = "presentation/rich/render/egui.rs";
+const RICH_EGUI_BACKEND: &str = "render/egui.rs";
 
 /// rich-egui 白名单（初始仅 [`RICH_EGUI_BACKEND`] 一条）。
 ///
@@ -1447,22 +1454,36 @@ pub fn check_rich_egui_isolation(manifest: &Path) -> Vec<Violation> {
 pub fn check_rich_egui_isolation_with(manifest: &Path, allowlist: &[&str]) -> Vec<Violation> {
     let mut violations = Vec::new();
     for (root, display_prefix, _) in src_roots(manifest) {
-        let rich_root = root.join(RICH_DIR);
-        if !rich_root.is_dir() {
+        // R-04 升 crate：扫描两处——
+        // 1) 真实 `rustmark-render` crate 的整 `src`（math / mermaid / render 全覆盖）；
+        // 2) 遗留的 `presentation/rich` 目录（兼容合成夹具 + 任何 stray；真实
+        //    workspace 已无此目录，扫描自然跳过）。
+        let mut scan_dirs: Vec<PathBuf> = Vec::new();
+        if root.ends_with("rustmark-render/src") {
+            scan_dirs.push(root.clone());
+        }
+        let legacy = root.join(RICH_DIR);
+        if legacy.is_dir() {
+            scan_dirs.push(legacy);
+        }
+        if scan_dirs.is_empty() {
             continue;
         }
-        let mut files = Vec::new();
-        collect_rs_files(&rich_root, &mut files);
-        files.sort();
-        for path in &files {
-            let rel = path
-                .strip_prefix(&root)
-                .unwrap_or(path)
-                .to_string_lossy()
-                .replace('\\', "/");
-            if allowlist.contains(&rel.as_str()) {
-                continue;
-            }
+        for rich_root in &scan_dirs {
+            let mut files = Vec::new();
+            collect_rs_files(rich_root, &mut files);
+            files.sort();
+            for path in &files {
+                let rel = path
+                    .strip_prefix(&root)
+                    .unwrap_or(path)
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                // 白名单按路径后缀匹配：真实 `render/egui.rs` 与合成夹具的
+                // `presentation/rich/render/egui.rs` 同一条规则放行。
+                if allowlist.iter().any(|a| rel.ends_with(a)) {
+                    continue;
+                }
             let Ok(content) = fs::read_to_string(path) else {
                 continue;
             };
@@ -1474,12 +1495,13 @@ pub fn check_rich_egui_isolation_with(manifest: &Path, allowlist: &[&str]) -> Ve
                 file: format!("{display_prefix}{rel}"),
                 line,
                 detail: format!(
-                    "R-04：`{rel}` 引用了 egui —— `presentation/rich/` 是 egui-free 的渲染层，\
+                    "R-04：`{rel}` 引用了 egui —— `rustmark-render` 是 egui-free 的渲染层，\
                      几何一律走 `render::Pt` / `render::Rgb8` / `render::geom::Rect`，\
                      绘制命令由 `render::apply_egui` 发出；唯一允许 `use egui` 的是后端 \
                      `{RICH_EGUI_BACKEND}`（`RenderBackend` 实现与 `apply_egui`）"
                 ),
             });
+        }
         }
     }
     violations
