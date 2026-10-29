@@ -790,3 +790,31 @@ impl SpellChecker for FakeSpellChecker {
         self.suggestions.clone()
     }
 }
+
+/// 等待语法高亮的**后台补算**完成（把结果收干并落进高亮缓存）。
+///
+/// # 为什么测试需要它
+///
+/// P1 起「停手后一次性全文重算」交给后台线程：`MarkdownAppService::highlight`
+/// 在缓存未命中的静止帧只**分发**请求，本帧返回空片段。没有帧循环的用例
+/// （直接调服务的分层测试 / 基准）因此必须显式驱动结果回收，
+/// 否则会看到「永远无色」——那是正常的工作中状态，不是缺陷。
+///
+/// 有帧循环的用例（`EditorApp`）不需要它：帧循环每帧都会轮询结果。
+///
+/// 超时 2s：debug 构建下 syntect 解析 10KB 约数百毫秒，留足余量；
+/// 真的超时说明后台线程没把结果送回来（线程已死 / 通道断了），必须报出来
+/// 而不是让用例随后以「片段为空」这种误导性理由失败。
+pub fn drain_highlight(service: &rustmark::application::markdown::service::MarkdownAppService) {
+    for _ in 0..2_000 {
+        let _ = service.poll_highlight_results();
+        if service.highlight_pending() == 0 {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    panic!(
+        "后台高亮补算 2s 内未完成：仍有 {} 条在途（线程已死或结果通道断了）",
+        service.highlight_pending()
+    );
+}

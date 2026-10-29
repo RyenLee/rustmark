@@ -304,7 +304,7 @@ modules:
       perf_nfr_10kb_highlight_settle:
         value: 10
         unit: "ms"
-        source: "tests/integration/main.rs:764"
+        source: "tests/integration/main.rs:828"
         anchor: "NFR-PERF-05：交互帧 p95"
         purpose: "NFR 合规断言（仅 release）：10KB 交互帧（打字帧）p95 ≤10ms，正对 NFR-PERF-05 重定义后的口径（2026-10-28：测量对象由「停手后一次性全文重算」改为「交互帧」；后者约 64ms / CI Linux 125–132ms，已单独立项优化，不计入本 NFR，基线见 metrics.md §3.2.11）。"
         recommended: "10"
@@ -336,7 +336,7 @@ modules:
       perf_idle_frame_limit:
         value: "8 / 24"
         unit: "ms"
-        source: "tests/presentation/textedit_frame_perf_test.rs:247"
+        source: "tests/presentation/textedit_frame_perf_test.rs:263"
         anchor: "24.0 } else { 8.0"
         purpose: "编辑区空闲帧 p50 上限：文档 <1MiB 取 8ms，≥1MiB 取 24ms（release）；超线说明 O(全文) 工作回到每帧路径。"
         recommended: "8（小文档）/ 24（1MB）"
@@ -352,7 +352,7 @@ modules:
       perf_debug_multiplier:
         value: 8
         unit: "ratio"
-        source: "tests/presentation/textedit_frame_perf_test.rs:249"
+        source: "tests/presentation/textedit_frame_perf_test.rs:265"
         anchor: "release * 8.0"
         purpose: "debug 构建下空闲帧/击键帧阈值的统一放大倍数（debug 排版约慢一个数量级）。"
         recommended: "6-10"
@@ -519,7 +519,7 @@ modules:
       truncate_threshold_bytes:
         value: 512000
         unit: "bytes"
-        source: "crates/rustmark-core/src/application/markdown/service.rs:61"
+        source: "crates/rustmark-core/src/application/markdown/service.rs:60"
         anchor: "TRUNCATE_THRESHOLD_BYTES: usize = crate::shared::constants::LARGE_FILE_BYTES"
         via: "crates/rustmark-shared/src/shared/support/constants.rs"
         purpose: "源文档超过 500 KiB 即标记截断预览（FR-06），不调用解析器；用户看到的是降级纯文本。"
@@ -528,7 +528,7 @@ modules:
       render_cache_capacity:
         value: 32
         unit: "entries"
-        source: "crates/rustmark-core/src/application/markdown/service.rs:69"
+        source: "crates/rustmark-core/src/application/markdown/service.rs:68"
         anchor: "RENDER_CACHE_CAPACITY: usize = 32"
         purpose: "渲染缓存 LRU 容量（按文档）；超出驱逐旧条目，再次切换标签会重解析。"
         recommended: "16-64"
@@ -536,7 +536,7 @@ modules:
       highlight_cache_capacity:
         value: 32
         unit: "entries"
-        source: "crates/rustmark-core/src/application/markdown/service.rs:78"
+        source: "crates/rustmark-core/src/application/markdown/service.rs:77"
         anchor: "HIGHLIGHT_CACHE_CAPACITY: usize = 32"
         purpose: "高亮缓存 + 防抖计时表 + 拼写缓存共用的容量；小于同时打开文档数会反复触发全文重算。"
         recommended: "16-64"
@@ -783,7 +783,7 @@ modules:
       window_min_width:
         value: 960
         unit: "pt"
-        source: "src/app/frame/loop.rs:169"
+        source: "src/app/frame/loop.rs:197"
         anchor: "with_min_inner_size([960.0, 600.0])"
         purpose: "主窗口最小宽度；小于该值布局无法保证编辑区可用（侧栏动态上界的下限由此兜底）。"
         recommended: "800-1024"
@@ -791,7 +791,7 @@ modules:
       window_min_height:
         value: 600
         unit: "pt"
-        source: "src/app/frame/loop.rs:169"
+        source: "src/app/frame/loop.rs:197"
         anchor: "with_min_inner_size([960.0, 600.0])"
         purpose: "主窗口最小高度；低于该值顶栏 + 状态栏 + 正文无法同时容纳。"
         recommended: "540-720"

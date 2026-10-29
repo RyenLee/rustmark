@@ -149,15 +149,25 @@ fn highlight_returns_spans() {
     f.provider
         .insert(doc_id, "hello world", 0, Some(fp("/d/a.md")));
 
+    let q = || HighlightQuery {
+        doc_id,
+        range: TextRange::new(ByteOffset::new(0), ByteOffset::new(10)),
+        lang: None,
+    };
+    // P1：缓存未命中的静止帧只**分发**后台补算，本帧不解析（不付 ~64ms）。
+    let dispatched = f.service.highlight(q()).unwrap();
+    assert!(
+        dispatched.is_empty(),
+        "分发帧不得同步解析（真实解析在后台线程，见 highlight_worker）"
+    );
+    // 后台算完、结果落库后，同一查询命中缓存。
+    // 时钟推进 = 真实帧循环里两次查询之间过去了至少一个防抖窗口；
+    // 时钟不动时防抖会一直认为「刚变过」（见 `HighlightPace::settled`）。
+    drain_highlight(&f.service);
+    f.clock.set(200);
+
     // 服务层返回共享快照（`Arc<Vec<SpanView>>`），只读使用。
-    let out = f
-        .service
-        .highlight(HighlightQuery {
-            doc_id,
-            range: TextRange::new(ByteOffset::new(0), ByteOffset::new(10)),
-            lang: None,
-        })
-        .unwrap();
+    let out = f.service.highlight(q()).unwrap();
     assert_eq!(out.len(), 2);
     assert_eq!(out[0].style, "plain");
     assert_eq!(out[1].style, "keyword");
@@ -598,9 +608,13 @@ fn highlight_reuses_cache_when_document_unchanged() {
         range: TextRange::new(ByteOffset::new(0), ByteOffset::new(4)),
         lang: Some("markdown".to_string()),
     };
-    let first = f.service.highlight(q()).expect("高亮应成功");
-    // 防抖期内（版本刚变 / 距变化不足 150ms）不上色；推进时钟表示「已静止」。
+    // 首次：分发一次后台补算（miss 1），本帧无片段。
+    assert!(f.service.highlight(q()).expect("高亮应成功").is_empty());
+    drain_highlight(&f.service);
+    // 推进时钟表示「已静止」（时钟不动时防抖会一直认为刚变过）。
     f.clock.set(200);
+    let first = f.service.highlight(q()).expect("高亮应成功");
+    assert!(!first.is_empty(), "补算完成后应命中缓存并上色");
     let second = f.service.highlight(q()).expect("高亮应成功");
 
     assert_eq!(first.len(), second.len(), "缓存结果必须与重算一致");
@@ -610,7 +624,7 @@ fn highlight_reuses_cache_when_document_unchanged() {
         "文档未变时第二次高亮应命中缓存，不得再走进高亮器"
     );
     let (hits, misses) = f.service.highlight_cache_stats();
-    assert_eq!((hits, misses), (1, 1));
+    assert_eq!((hits, misses), (2, 1), "分发算一次未命中，其后两次命中");
 }
 
 /// 编辑区每帧的廉价决策**不得**把全文从 rope 快照出来（问题 046）。
@@ -636,7 +650,9 @@ fn highlight_frame_path_never_snapshots_the_whole_document() {
     };
     // 首次必须真的取一次全文——那时确实要解析（这时取文本是正当成本）。
     let _ = f.service.highlight(q()).expect("高亮应成功");
-    assert_eq!(f.provider.snapshot_calls(), 1, "首次解析应取一次全文");
+    assert_eq!(f.provider.snapshot_calls(), 1, "首次分发应取一次全文");
+    // P1：解析在后台，等结果落库后再进稳态帧。
+    drain_highlight(&f.service);
 
     // 稳态：时钟推进表示「已静止」，此后每帧都走缓存命中。
     f.clock.set(200);
@@ -702,15 +718,17 @@ fn highlight_recomputes_after_document_changed() {
         lang: Some("markdown".to_string()),
     };
     let _ = f.service.highlight(q()).expect("高亮应成功");
+    drain_highlight(&f.service);
     // 内容变化 + 版本递增（领域保证）。
     f.provider.insert(doc_id, "fn ab", 1, Some(fp("/d/a.md")));
     // 刚变的第一帧：防抖期内不上色（OPT-011 ①）。
     f.clock.set(200);
     let blank = f.service.highlight(q()).expect("高亮应成功");
     assert!(blank.is_empty(), "版本刚变的那 150ms 内不应上色");
-    // 停手满 150ms：必须失效缓存并重新解析。
+    // 停手满 150ms：必须失效缓存并重新分发一次补算。
     f.clock.set(400);
     let _ = f.service.highlight(q()).expect("高亮应成功");
+    drain_highlight(&f.service);
 
     assert_eq!(
         f.highlighter.call_count(),
@@ -739,6 +757,14 @@ fn highlight_stays_blank_while_typing() {
         lang: Some("markdown".to_string()),
     };
     // 首次见该文档：立刻上色（打开 / 切换文档不该闪一下无色）。
+    // P1 起「立刻」= 分发帧之后的下一两帧（解析在后台），用例显式把结果收干。
+    let opened = f.service.highlight(q()).expect("高亮应成功");
+    assert!(
+        opened.is_empty(),
+        "分发帧本身不解析（P1），颜色由后台结果回送后的帧补上"
+    );
+    drain_highlight(&f.service);
+    f.clock.set(200);
     let opened = f.service.highlight(q()).expect("高亮应成功");
     assert!(!opened.is_empty(), "首次打开应立刻有颜色");
 
@@ -772,6 +798,8 @@ fn highlight_recomputes_once_after_typing_settles() {
         lang: Some("markdown".to_string()),
     };
     let _ = f.service.highlight(q()).expect("高亮应成功");
+    drain_highlight(&f.service);
+    let parses_after_open = f.service.highlight_parse_count();
 
     // 敲 5 个字符，每 60ms 一个。
     for i in 1..=5u64 {
@@ -782,10 +810,21 @@ fn highlight_recomputes_once_after_typing_settles() {
     }
     let last_edit_at = 200 + 5 * 60;
 
-    // 停手：等到超过 150ms 防抖窗口。
+    // 停手：等到超过 150ms 防抖窗口。这一帧只分发，不解析（P1）。
     f.clock.set(last_edit_at + 200);
+    let dispatched = f.service.highlight(q()).expect("高亮应成功");
+    assert!(
+        dispatched.is_empty(),
+        "停手那一帧不得同步解析（10KB ≈ 64ms 的解析已交给后台线程）"
+    );
+    drain_highlight(&f.service);
     let settled = f.service.highlight(q()).expect("高亮应成功");
     assert!(!settled.is_empty(), "停手后必须补上颜色");
+    assert_eq!(
+        f.service.highlight_parse_count(),
+        parses_after_open + 1,
+        "停手补算只许发生一次"
+    );
 
     // 之后连续多帧（文档未变）应全部命中缓存，不再重算。
     let after = f.highlighter.call_count();
@@ -797,6 +836,11 @@ fn highlight_recomputes_once_after_typing_settles() {
         f.highlighter.call_count(),
         after,
         "停手后补算一次即可，后续帧必须命中缓存"
+    );
+    assert_eq!(
+        f.service.highlight_parse_count(),
+        parses_after_open + 1,
+        "后续帧不得再次分发补算"
     );
 }
 
@@ -822,12 +866,17 @@ fn highlight_reports_a_deadline_only_while_a_window_is_open() {
     };
     let interval = f.service.policy().interval_ms();
 
-    // 首次见：立刻上色，没有等待中的窗口。
+    // 首次见：立刻分发，在途期间**必须**报出「轮询到期点」（P1 新增职责）。
     let _ = f.service.highlight(q()).expect("高亮应成功");
+    assert!(
+        f.service.highlight_next_due_in().is_some(),
+        "后台补算在途时必须报出轮询到期点 —— 缺了它，颜色要等用户下一次输入才出现"
+    );
+    drain_highlight(&f.service);
     assert_eq!(
         f.service.highlight_next_due_in(),
         None,
-        "刚上过色，不应有待补算窗口（否则帧循环会为一个过去时刻反复叫醒自己）"
+        "补算完成、无待办时不应再报到期点（否则帧循环会为一个过去时刻反复叫醒自己）"
     );
 
     // 敲一下：版本变了 → 本帧不上色 → 到期点 = 本次变化时刻 + 窗口。
@@ -840,9 +889,10 @@ fn highlight_reports_a_deadline_only_while_a_window_is_open() {
         "窗口内必须报出到期点 —— 缺了它，编辑器失焦后语法色不会自己恢复"
     );
 
-    // 窗口到期后重算：到期点必须消失。
+    // 窗口到期后：分发一次补算，到期点转为「轮询」直到结果落库。
     f.clock.set(1_000 + interval);
     let _ = f.service.highlight(q()).expect("高亮应成功");
+    drain_highlight(&f.service);
     assert_eq!(
         f.service.highlight_next_due_in(),
         None,
@@ -864,8 +914,23 @@ fn highlight_skips_debounce_for_a_newly_seen_document() {
         range: TextRange::new(ByteOffset::new(0), ByteOffset::new(4)),
         lang: Some("markdown".to_string()),
     };
+    // 首次见 a：分发后由后台补算完成，下一帧即可上色。
+    assert!(
+        f.service.highlight(q(a)).expect("ok").is_empty(),
+        "分发帧本身不解析（P1）"
+    );
+    drain_highlight(&f.service);
+    f.clock.set(200);
     assert!(!f.service.highlight(q(a)).expect("ok").is_empty());
-    f.clock.set(10); // 距上次编辑仅 10ms：若在防抖窗口内，切文档也会立刻上色
+    // 距 a 那次查询只过了 10ms：若防抖表按「全局最近一次编辑」计时，
+    // 切到 b 就会被误判成「刚变过」而不上色。b 是首次见，必须立刻分发。
+    f.clock.set(210);
+    assert!(
+        f.service.highlight(q(b)).expect("ok").is_empty(),
+        "分发帧本身不解析"
+    );
+    drain_highlight(&f.service);
+    f.clock.set(400);
     assert!(
         !f.service.highlight(q(b)).expect("ok").is_empty(),
         "首次见某篇文档必须立刻上色（切换文档不该闪一下无色）"
@@ -1434,7 +1499,14 @@ fn highlight_reuses_incremental_session_across_revisions() {
         lang: Some("markdown".to_string()),
     };
 
-    // 首次：新建会话，由它的第一次 advance 完成全量，不额外调全量接口。
+    // 首次：分发一次后台补算，由会话的第一次 advance 完成全量，不额外调全量接口。
+    assert!(
+        service.highlight(q()).expect("高亮应成功").is_empty(),
+        "分发帧本身不解析（P1）"
+    );
+    drain_highlight(&service);
+    // 时钟推进：两次查询之间在真实帧循环里必过一个防抖窗口。
+    clock.set(200);
     let first = service.highlight(q()).expect("高亮应成功");
     assert_eq!(first.len(), 1);
     assert_eq!(highlighter.starts(), 1);
@@ -1454,15 +1526,19 @@ fn highlight_reuses_incremental_session_across_revisions() {
     // 静止后：复用同一会话，而不是重建。
     clock.set(400);
     let _ = service.highlight(q()).expect("高亮应成功");
+    drain_highlight(&service);
     assert_eq!(highlighter.starts(), 1, "跨版本应复用同一个会话");
     assert_eq!(highlighter.advances(), vec![4, 4]);
 
     // 关文档清缓存：会话持有整篇文本，必须一并释放。
+    // P1 起释放是**异步**的（会话表归后台线程独占，见 `clear_cache` 文档）：
+    // 请求排在这次补算之前，故下面这次补算一定用的是**新建**的会话。
     service.clear_cache(ClearCacheCommand {
         doc_id: Some(doc_id),
     });
     clock.set(600);
     let _ = service.highlight(q()).expect("高亮应成功");
+    drain_highlight(&service);
     assert_eq!(highlighter.starts(), 2, "清缓存后应重建会话");
     assert_eq!(highlighter.advances().len(), 3);
 }

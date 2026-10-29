@@ -609,7 +609,7 @@ fn measure_twenty_language_highlight_time() {
     );
 }
 
-/// 编辑区「每帧请求全文 span」的真实成本（S8-05，OPT-011 ① 后重测）。
+/// 编辑区「每帧请求全文 span」的真实成本（S8-05，OPT-011 ① 后重测，P1 后重定口径）。
 ///
 /// 四种帧各测一次，因为它们的成本差着三个数量级：
 ///
@@ -617,6 +617,19 @@ fn measure_twenty_language_highlight_time() {
 /// - **空闲帧**：文档未变（滚动 / 空闲 / 切换面板）→ 命中高亮缓存；
 /// - **打字帧**：内容刚变、仍在 150ms 防抖窗口内 → **不进高亮器**（OPT-011 ①）；
 /// - **补算帧**：停手满 150ms 后 → 一次性上色，这是防抖的代价所在。
+///
+/// # P1 之后：补算帧量的是「分发」，真实解析成本单独量
+///
+/// 停手那次全文解析已交给后台线程（`HighlightWorker`）。若照旧把
+/// `highlight()` 的返回时间当作「补算成本」，它会掉到微秒级——那不是
+/// 「成本消失」，是**成本换了地方**。故这里两个数都要：
+///
+/// - `cold_dispatch` / `settle_dispatch`：帧内只构造请求 + 投递 + 返回空片段，
+///   实测应 ≤5ms（P1 的验收口径）；
+/// - `cold_parse` / `settle_parse`：后台线程回传的**真实解析耗时**
+///   （`last_highlight_parse_ms`）。冷会话是全量解析，10KB 实测 release ≈64ms
+///   （debug 数倍于此），这就是「搬走了多少成本」的证据，也仍是 NFR-PERF-05
+///   之外的性能基线（`docs/spec/metrics.md` §3.2.11）。
 ///
 /// 数字写入 `docs/spec/metrics.md`。
 #[test]
@@ -655,14 +668,34 @@ fn measure_editor_frame_highlight_cost() {
         lang: Some("markdown".to_string()),
     };
 
-    // 1) 冷启动：首次见该文档（打开 / 切换文档），必须立刻上色。
-    let cold = {
+    // 1) 冷启动：首次见该文档（打开 / 切换文档）。
+    //
+    // 这一帧只**分发**后台补算（P1）：10KB 冷会话的全文解析在后台跑，
+    // 帧内不付这笔钱。真实解析耗时从 `last_highlight_parse_ms` 取。
+    let cold_dispatch = {
         let start = Instant::now();
         let v = service.highlight(hq(text.len())).expect("高亮应成功");
-        assert!(!v.is_empty(), "首次见该文档不得被防抖拦下");
+        assert!(
+            v.is_empty(),
+            "冷启动帧不得同步解析（P1：全文解析在后台线程）"
+        );
         std::hint::black_box(v);
         start.elapsed().as_secs_f64() * 1000.0
     };
+    // 等后台补算落地（无帧循环的用例靠显式轮询；生产里由帧循环每帧轮询）。
+    fakes::drain_highlight(&service);
+    let cold_parse = service
+        .last_highlight_parse_ms()
+        .expect("冷启动必须真的解析一次");
+    // 时钟推进 = 真实帧循环里两帧之间必过的时间；时钟不动时防抖会一直
+    // 认为「版本刚变过」（`HighlightPace::settled`），与上色与否无关。
+    clock.set(200);
+    let cold_after = service.highlight(hq(text.len())).expect("高亮应成功");
+    assert!(
+        !cold_after.is_empty(),
+        "补算完成后首次见该文档必须有颜色（缓存命中）"
+    );
+    std::hint::black_box(cold_after);
 
     // 2) 空闲帧：文档未变，连测 20 帧。
     clock.set(1_000);
@@ -696,14 +729,26 @@ fn measure_editor_frame_highlight_cost() {
     }
 
     // 4) 补算帧：停手满 150ms 后一次性上色（防抖的代价，只付一次）。
+    //
+    // 同样只分发：这一帧不许出现 64ms 级的解析。
     clock.set(last_edit_ms + 200);
-    let settle = {
+    let settle_dispatch = {
         let start = Instant::now();
         let v = service.highlight(hq(text.len() + 20)).expect("高亮应成功");
-        assert!(!v.is_empty(), "停手后必须补上颜色");
+        assert!(v.is_empty(), "停手补算帧不得同步解析（P1：解析在后台线程）");
         std::hint::black_box(v);
         start.elapsed().as_secs_f64() * 1000.0
     };
+    fakes::drain_highlight(&service);
+    let settle_parse = service
+        .last_highlight_parse_ms()
+        .expect("停手补算必须真的解析一次");
+    let settle_after = service.highlight(hq(text.len() + 20)).expect("高亮应成功");
+    assert!(
+        !settle_after.is_empty(),
+        "停手补算完成后必须补上颜色（缓存命中）"
+    );
+    std::hint::black_box(settle_after);
 
     // 补算之后再来的帧应全部命中缓存。
     let mut after = Vec::new();
@@ -726,20 +771,22 @@ fn measure_editor_frame_highlight_cost() {
     let after_p95 = pct(after.clone(), 0.95);
 
     println!(
-        "[metrics] 编辑区高亮（10KB / {} 字节）：冷 {cold:.2}ms ｜ 空闲帧 p50={idle_p50:.2}ms \
-         p95={idle_p95:.2}ms ｜ 打字帧 p50={typing_p50:.2}ms p95={typing_p95:.2}ms ｜ \
-         停手补算 {settle:.2}ms（一次性）｜ 补算后帧 p95={after_p95:.2}ms",
+        "[metrics] 编辑区高亮（10KB / {} 字节）：冷分发 {cold_dispatch:.2}ms \
+         （后台解析 {cold_parse:.2}ms）｜ 空闲帧 p50={idle_p50:.2}ms p95={idle_p95:.2}ms ｜ \
+         打字帧 p50={typing_p50:.2}ms p95={typing_p95:.2}ms ｜ \
+         停手分发 {settle_dispatch:.2}ms（后台解析 {settle_parse:.2}ms，一次性）｜ \
+         补算后帧 p95={after_p95:.2}ms",
         text.len()
     );
 
     // 空闲帧必须命中缓存（优化前每帧都是「冷」的成本）。
     assert!(
         idle_p95 <= 5.0,
-        "空闲帧 p95 {idle_p95:.2}ms 疑似未命中高亮缓存（应与冷启动 {cold:.2}ms 同量级才对）"
+        "空闲帧 p95 {idle_p95:.2}ms 疑似未命中高亮缓存（应与冷分发 {cold_dispatch:.2}ms 同量级才对）"
     );
     assert!(
-        idle_p95 < cold,
-        "空闲帧 {idle_p95:.2}ms 未比冷启动 {cold:.2}ms 更快，缓存未生效"
+        idle_p95 < cold_parse,
+        "空闲帧 {idle_p95:.2}ms 未比一次冷解析 {cold_parse:.2}ms 更快，缓存未生效"
     );
     // OPT-011 ① 的核心收益：打字帧必须落在帧预算内（此前 67.9ms，超预算 4.2 倍）。
     assert!(
@@ -750,6 +797,23 @@ fn measure_editor_frame_highlight_cost() {
     assert!(
         after_p95 <= 5.0,
         "停手补算后 p95 {after_p95:.2}ms 仍居高，说明每帧都在重算（防抖退化成节流）"
+    );
+
+    // P1 验收：停手/冷启动的**帧内**成本只剩「分发」——两个分发帧都必须
+    // 远低于一帧预算。解析成本已登记在 `cold_parse` / `settle_parse` 里，
+    // 不是靠把测试口径改小来「达标」。
+    assert!(
+        cold_dispatch <= 5.0,
+        "冷启动分发帧 {cold_dispatch:.2}ms 超过 5ms —— 全文解析又回到了帧路径"
+    );
+    assert!(
+        settle_dispatch <= 5.0,
+        "停手分发帧 {settle_dispatch:.2}ms 超过 5ms —— 全文解析又回到了帧路径"
+    );
+    assert!(
+        cold_parse >= 2.0,
+        "冷启动后台解析只报了 {cold_parse:.2}ms —— 10KB 全文解析不该这么快，\
+         高亮器疑似被短路（真实基线 release ≈64ms，见 docs/spec/metrics.md §3.2.11）"
     );
 
     // NFR-PERF-05（2026-10-28 重新定义测量对象）：守「交互帧」——

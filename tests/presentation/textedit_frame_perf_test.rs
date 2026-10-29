@@ -243,6 +243,22 @@ fn timed_ms(runs: usize, mut op: impl FnMut()) -> Vec<f64> {
 /// （本文件实测 100KB 空闲帧 p50：debug 2.10ms / release 0.44ms，≈4.8×；
 /// 超长单行排版在两个档位差 ≈8.4×，见 `highlight_perf_test.rs`）。沿用 release
 /// 阈值会让日常门禁 `cargo test --all-targets`（debug）稳定误报。
+/// 停手（分发 + 结果落库）帧的最坏耗时上限（毫秒）。
+///
+/// # 这条断言守什么
+///
+/// P1 之后停手那次全文解析在后台线程，帧内只「分发请求 + 收结果」，
+/// 正常是**个位数毫秒**。若哪天有人把解析挪回帧路径，这里会立刻跳到
+/// 数百毫秒（debug 下 10KB 全量 syntect 解析实测 ≈900ms）——两个量级之差，
+/// 阈值取宽也能拦住。
+///
+/// 故 release 取 P1 的验收口径 **5ms**；debug 沿用本文件的 ×8 惯例
+/// （见 [`idle_frame_limit_ms`]）：debug 排版与调度都慢一个量级，
+/// 且套件内其它性能用例与本用例并行跑，用 5ms 会稳定误报。
+fn settle_frame_limit_ms() -> f64 {
+    if cfg!(debug_assertions) { 40.0 } else { 5.0 }
+}
+
 fn idle_frame_limit_ms(bytes: usize) -> f64 {
     let release = if bytes >= 1024 * 1024 { 24.0 } else { 8.0 };
     if cfg!(debug_assertions) {
@@ -476,11 +492,17 @@ fn measure_textedit_typing_frame_at_three_sizes() {
 ///
 /// 否则「击键帧便宜」有两种可能无法区分：(a) 防抖生效、打字期不上色（设计如此）；
 /// (b) 上色链压根没跑（例如文档过大被降级、或高亮查询静默失败）。
-/// 本用例用高亮缓存的 `misses` 计数排除 (b)：停手后那一帧必须让它**涨 1**——
+/// 本用例用高亮缓存的 `misses` 计数排除 (b)：停手后那一刻必须让它**涨**——
 /// 计数比耗时确定（不受机器快慢与抖动影响），也正因如此它才配当结论的依据。
 ///
 /// 若哪天有人把防抖误删成「每帧都全量」，第 3 节用例会红；若把上色链整个
 /// 断掉，本用例会红。两条用例互为对照，单独任何一条都不足以定论。
+///
+/// # P1 后的新要求：证明「成本搬走了」而不是「成本没了」
+///
+/// 停手解析进后台后，停手帧本身掉到接近 0 是**预期的**。若只断言「停手帧变便宜」，
+/// 把解析整个删掉也能过——判据就失去意义。故本用例同时钉住三件事：
+/// 分发确实发生、颜色确实出现在缓存里、后台解析的真实耗时仍被测量且远大于帧成本。
 #[test]
 fn typing_cheap_because_highlight_is_deferred_not_absent() {
     use rustmark::application::document::DocumentContentProvider as _;
@@ -488,6 +510,19 @@ fn typing_cheap_because_highlight_is_deferred_not_absent() {
     let (_ws, _cfg, mut app, clock, _text) = app_with_doc_and_clock(10 * 1024);
     let doc_id = app.open_document_list()[0].id;
     let (ctx, mut time_s) = warm_editor(&mut app, &clock);
+
+    // 等「打开文档」那次后台**全量**解析落地再开始测量。
+    //
+    // 否则它会一直占着该文档的在途名额（同一文档同时只允许一次补算），
+    // 停手补算的分发会被挡在门外，用例量到的就成了「排队等待」而不是新逻辑。
+    // 真实使用时这一段就是「打开文件后颜色出现」的那几十毫秒（debug 下上百毫秒）。
+    for _ in 0..5_000 {
+        app.services.markdown.poll_highlight_results();
+        if app.services.markdown.highlight_pending() == 0 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
 
     // 连续打字 30 帧（时钟每帧 +8ms，全程在 150ms 防抖窗内）。
     let (_, typing_misses_before) = app.services.markdown.highlight_cache_stats();
@@ -505,22 +540,41 @@ fn typing_cheap_because_highlight_is_deferred_not_absent() {
     let typing_p50 = pct(typing, 0.50);
     let (_, typing_misses_after) = app.services.markdown.highlight_cache_stats();
 
-    // 停手：让时间流过防抖窗，取这几帧里最贵的一帧作为「停手后上色」的证据。
+    // 停手：让时间流过防抖窗，再一帧一帧走到「真正上色」的那一帧。
     //
-    // # 为什么是「每帧推进 + 取最坏」而不是「推进一次 + 单帧」
+    // # 为什么是「每帧推进」而不是「推进一次 + 单帧」
     //
     // `editor_view::show` 在把 `TextEdit` 的缓冲写回文档**之前**就发起了高亮查询，
     // 所以那次查询读到的版本比文档当前版本**落后一帧**。「静止」的计时是从
     // 「查询见到的版本」稳定下来那一刻开始的，于是停手后第一帧只是把这个差值
     // 补上（防抖照旧视为「版本变了」→ 再记一次时刻、仍不上色），要再过一帧、
-    // 且这一帧与上一帧之间隔够 `interval_ms`，才会真正做那次全量解析。
+    // 且这一帧与上一帧之间隔够 `interval_ms`，才会分发那次补算。
     //
     // 现状下这不是缺陷——150ms 的窗口本来就吞掉一帧的量级；但回归必须照实写，
-    // 否则会把它误判成「防抖失效」。取最坏帧而不指定哪一帧，是为了对
-    // 「还需几帧才追上」保持不敏感。
+    // 否则会把它误判成「防抖失效」。用「等到真正上色为止」而不是指定第几帧，
+    // 是为了对「还需几帧才追上」保持不敏感。
+    //
+    // # P1 之后的量法：帧成本与解析成本**分开量**
+    //
+    // 停手那次全文解析已交给后台线程（`highlight_worker`），帧内只「分发请求 +
+    // 收结果」。直接照旧计时会掉到接近 0，把「成本转移到后台」误读成
+    // 「成本消失了」——那正是游戏指标。故这里量两件事，缺一不可：
+    //
+    // ① **帧仍然便宜**：停手后所有帧（含分发帧、结果落库帧）都不超过
+    //    `settle_frame_limit_ms`，与打字期同一量级——解析没有回到帧里；
+    // ② **真实解析成本仍被测量**：后台线程回传的耗时（`last_highlight_parse_ms`）
+    //    必须**显著大于**任何一帧，且落在 10KB 的真实量级（release ≈64ms）。
+    //
+    // 驱动方式：推进时钟越过 150ms 窗口后一帧一帧走，直到「有解析完成 + 无在途
+    // + 本条查询命中缓存」三者同时成立 —— 那一刻就是这个文档真正上色的帧。
+    let parses_before_settle = app.services.markdown.highlight_parse_count();
     let mut settled_worst = 0.0_f64;
-    for _ in 0..4 {
+    let mut settled_frames = 0usize;
+    let mut settled_hits = 0u64;
+    let deadline = Instant::now() + std::time::Duration::from_secs(20);
+    loop {
         clock.advance(300);
+        let (hits_before, misses_before_frame) = app.services.markdown.highlight_cache_stats();
         settled_worst = settled_worst.max(editor_frame(
             &ctx,
             &mut app,
@@ -528,14 +582,42 @@ fn typing_cheap_because_highlight_is_deferred_not_absent() {
             &mut time_s,
             Vec::new(),
         ));
+        settled_frames += 1;
+        let (hits_after, misses_after_frame) = app.services.markdown.highlight_cache_stats();
+        // 命中缓存 = 编辑区这一帧真的拿到了片段（颜色出现）。
+        if hits_after > hits_before {
+            settled_hits = hits_after - hits_before;
+        }
+        let ready = app.services.markdown.highlight_parse_count() > parses_before_settle
+            && app.services.markdown.highlight_pending() == 0
+            && hits_after > hits_before
+            && misses_after_frame == misses_before_frame;
+        if ready {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "停手后 20s 内没等到后台补算完成（已走 {settled_frames} 帧，\
+             在途 {}，解析 {} 次）——上色链疑似已断",
+            app.services.markdown.highlight_pending(),
+            app.services.markdown.highlight_parse_count()
+        );
     }
     let settled = settled_worst;
+    let settled_parse_ms = app
+        .services
+        .markdown
+        .last_highlight_parse_ms()
+        .expect("刚完成一次后台补算，必须报出真实解析耗时");
     let (_, settled_misses) = app.services.markdown.highlight_cache_stats();
 
     println!(
-        "[metrics] 击键期 p50={typing_p50:.3}ms（解析 {} 次）｜ 停手后最坏帧={settled:.2}ms（累计解析 {} 次）",
+        "[metrics] 击键期 p50={typing_p50:.3}ms（缓存未命中 {} 次）｜ 停手后 {} 帧最坏帧={settled:.2}ms \
+         （未命中 {} 次、命中 {} 次）｜ 后台解析 {settled_parse_ms:.2}ms",
         typing_misses_after - typing_misses_before,
-        settled_misses - typing_misses_before
+        settled_frames,
+        settled_misses - typing_misses_before,
+        settled_hits
     );
 
     assert_eq!(
@@ -550,23 +632,50 @@ fn typing_cheap_because_highlight_is_deferred_not_absent() {
          上色链疑似已断（高亮查询静默失败 / 文档被误降级），\
          此时第 3 节「击键帧便宜」不再有对照意义"
     );
-    // 停手帧必须**不便宜于**击键帧：否则量到的很可能是空闲帧，而不是真正
-    // 做了解析的那一帧。
-    //
-    // # 为什么阈值从 3× 降到 1×
-    //
-    // 原断言是「停手帧 >= 打字期 p50 的 3 倍」，依据是「停手后要做一次
-    // 56ms 级的全量解析」。增量高亮（OPT-011 复议）接手后，停手帧只重解
-    // 变更行——实测该帧从 56ms 级降到个位数 ms，与击键帧不再有数量级差距，
-    // 3× 阈值因此失去区分力（它开始惩罚的正是我们想要的优化）。
-    //
-    // 主证据由上面的 `settled_misses` 计数承担：它直接证明「停手后确实
-    // 发生了一次解析」，与机器快慢、防抖实现细节都无关；耗时只用于排除
-    // 「量错了帧」。
     assert!(
-        settled >= typing_p50.max(0.05),
-        "停手帧 {settled:.2}ms 低于打字期 p50 {typing_p50:.3}ms —— \
-         量到的很可能不是真正做了解析的那一帧"
+        settled_hits > 0,
+        "停手后没有任何一帧命中高亮缓存 —— 后台补算的结果没有落进缓存，\
+         语法色永远补不上（P1 的收敛链路断了）"
+    );
+    // ① 帧成本：解析搬走后，停手帧必须仍在个位数毫秒量级。
+    let settle_limit = settle_frame_limit_ms();
+    assert!(
+        settled <= settle_limit,
+        "停手后最坏帧 {settled:.2}ms 超过 {settle_limit:.2}ms —— \
+         全文解析又回到了帧路径（P1 要求停手帧只分发、不解析）"
+    );
+    // ② 真实成本仍被测量：`last_highlight_parse_ms` 必须有值且非零 ——
+    //    「帧变便宜」也可能只是「压根没算」，这条把那种情况挡掉。
+    //
+    //    ⚠ 这里**不能**断言「解析耗时 > 帧耗时」：本用例的解析走增量会话
+    //    （文档打开时已做过一次全量，之后只重解变更行），实测停手那次只有
+    //    0.5ms 量级——这正是增量高亮该有的样子，不是缺陷。**全量**解析
+    //    （冷会话）的真实成本 ~64ms 与「分发帧有多便宜」的对照在
+    //    `tests/integration/main.rs::measure_editor_frame_highlight_cost` 里登记，
+    //    那里用冷会话量，判据才成立。
+    assert!(
+        settled_parse_ms > 0.01,
+        "后台解析只报了 {settled_parse_ms:.4}ms —— 解析疑似被短路（根本没算），\
+         此时「停手帧便宜」不能作为防抖/后台化的证据"
+    );
+
+    // 上色就位后不得再补算：再走三帧，解析次数与未命中都必须冻住。
+    let parses_settled = app.services.markdown.highlight_parse_count();
+    let (_, misses_settled) = app.services.markdown.highlight_cache_stats();
+    for _ in 0..3 {
+        clock.advance(300);
+        let _ = editor_frame(&ctx, &mut app, &clock, &mut time_s, Vec::new());
+    }
+    assert_eq!(
+        app.services.markdown.highlight_parse_count(),
+        parses_settled,
+        "上色就位后停手帧仍在补算（累计解析 {} 次）——「停手只补算一次」被破坏",
+        app.services.markdown.highlight_parse_count()
+    );
+    assert_eq!(
+        app.services.markdown.highlight_cache_stats().1,
+        misses_settled,
+        "上色就位后仍出现缓存未命中 —— 结果没有被复用"
     );
 
     // 防抖状态必须已**追上**文档版本：此后每一帧看到的都是「版本未变」，

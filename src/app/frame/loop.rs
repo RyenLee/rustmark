@@ -93,6 +93,17 @@ impl eframe::App for EditorApp {
             //     放后台无副作用。其他扫描路径（reload / refresh）保持同步。
             self.poll_scan_result();
 
+            // 2.2) 高亮后台补算结果轮询（P1）。
+            //
+            //     停手后那次全文 syntect 解析（10KB ≈ 64ms）已交给后台线程
+            //     （`core/application/markdown/service/highlight_worker`）。这里每帧
+            //     非阻塞取一次结果：取到就落进高亮缓存，本帧绘制即可上色；
+            //     没取到立即返回（**不做任何等待**）。
+            //
+            //     放在绘制之前是关键：`editor_view` 在本帧稍后才会向服务要高亮
+            //     片段，结果先进缓存，颜色就赶得上这一帧，而不是下一帧。
+            self.services.markdown.poll_highlight_results();
+
             // 2.5) 文件拖放：把 .md 文件拖入窗口即打开（P2 拖拽打开）。
             //      放在快捷键之前，与对话框结果同级——拖入文件即开，不被残留按键干扰。
             self.handle_dropped_files(ctx);
@@ -110,7 +121,9 @@ impl eframe::App for EditorApp {
             // 3.6) 高亮的「到期帧」（T11）：`highlight` 在防抖窗口内返回空片段，
             //      必须有人在窗口到期时再跑一帧才补得上颜色。编辑器失焦后没有
             //      光标闪烁兜底，缺这行语法色会一直停在无色状态。
-            //      到期点由 `HighlightPace` 给出（只统计「还没算完」的文档）。
+            //      P1 起这条还兼顾「后台补算在途」：结果没回来就按固定间隔
+            //      预约下一次轮询（否则颜色要等下一次输入才出现）。
+            //      到期点由 `HighlightPace` 与在途请求数共同给出。
             if let Some(due_ms) = self.services.markdown.highlight_next_due_in() {
                 self.scheduler.arm(Deadline::HighlightDebounce, due_ms);
             }
@@ -130,6 +143,21 @@ impl eframe::App for EditorApp {
         // 4.05) 耗时归因的第二段边界（D-5）：`main_view::show` 整棵视图树 = 绘制。
         //       下一行是 `flush`，两者之间的差就是本帧的「未归因」尾巴。
         self.scheduler.lap(FramePhase::Draw);
+
+        // 4.07) 绘制期**刚发起**的高亮补算也要预约（P1）。
+        //
+        //       3.6 的登记在绘制**之前**，那时编辑区还没查询高亮，本帧新发起的
+        //       补算不在表里。对「停手补算」不要紧——那一刻防抖窗口本身就到点了，
+        //       3.6 已按窗口登记；但**首次见某文档**（打开 / 切换）既没有到期窗口、
+        //       也没有更早的在途请求，3.6 什么都不登记。少了这一处，那次补算的
+        //       结果就只能等下一次输入带来的帧才被取走——用户打开文件后走开，
+        //       语法色会一直停在无色。
+        //
+        //       下一帧起由 3.6 接管（在途 > 0 → 4ms 后轮询），结果落库即自动消失。
+        //       这处补登记是对「egui 首帧自带若干重绘请求」的兜底：不能依赖它。
+        if let Some(due_ms) = self.services.markdown.highlight_next_due_in() {
+            self.scheduler.arm(Deadline::HighlightDebounce, due_ms);
+        }
 
         // 4.1) 帧末统一预约（T11）：本帧所有 `arm` 过的到期点在此换算成
         //      **一次** `request_repaint_after`。位置必须在 `main_view::show`

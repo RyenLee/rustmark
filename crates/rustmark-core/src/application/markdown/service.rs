@@ -20,6 +20,7 @@
 //! - `render_cache`：防抖策略与渲染缓存；
 //! - `spell_cache`：拼写检查缓存；
 //! - `highlight_cache`：高亮缓存与高亮防抖计时表；
+//! - `highlight_worker`：语法高亮的后台补算线程（P1）；
 //! - `preview`：预览渲染用例与内容获取 / 解析缓存原语；
 //! - `highlight`：语法高亮用例；
 //! - `navigation`：滚动映射与大纲重建；
@@ -28,6 +29,7 @@
 //! - `view_mapper`：领域渲染产物 → DTO 的映射函数。
 
 mod highlight;
+mod highlight_worker;
 mod lint;
 mod navigation;
 mod preview;
@@ -37,18 +39,15 @@ mod spell;
 mod spell_cache;
 mod view_mapper;
 
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use crate::domain::markdown::services::{
-    HighlightSession, MarkdownParser, SpellChecker, SyntaxHighlighter,
-};
+use crate::domain::markdown::services::{MarkdownParser, SpellChecker, SyntaxHighlighter};
 use crate::ports::time::{Clock, Timestamp};
-use crate::shared::ids::DocumentId;
 
 use crate::application::document::DocumentContentProvider;
 
 use super::commands::ClearCacheCommand;
+use highlight_worker::HighlightWorker;
 
 pub use render_cache::{DebouncePolicy, RenderCache};
 pub use span_cache::{HighlightCache, HighlightPace};
@@ -102,12 +101,12 @@ pub struct MarkdownAppService {
     highlight_cache: Arc<Mutex<HighlightCache>>,
     /// 高亮防抖的计时表（OPT-011 ①）。
     highlight_pace: Arc<Mutex<HighlightPace>>,
-    /// 文档 → 增量高亮会话（`FR-03` / OPT-011 复议）。
+    /// 语法高亮的后台补算线程（P1）。
     ///
-    /// 命中 [`HighlightCache`] 时不碰这把锁；只有「真要重算」才取。
-    /// 与缓存不同，会话**不按 range 分键**：它维护的是全文解析状态，
-    /// 与调用方当前想看哪一段无关。
-    highlight_sessions: Arc<Mutex<HashMap<DocumentId, Box<dyn HighlightSession>>>>,
+    /// 文档 → 增量高亮会话的映射由它**独占持有**（线程本地，不加锁）：
+    /// 会话持有整篇文本与解析检查点，是 P1 里唯一必须活在后台线程里的状态。
+    /// 命中 [`HighlightCache`] 时不碰它；只有「真要重算」才投递一次请求。
+    highlight_worker: HighlightWorker,
     /// 拼写检查器；`None` 表示未注入 → 拼写检查整体降级为「不检查」。
     ///
     /// 用 `Option` 而非必填，理由与`SpellCheckError` 不进 `AppError` 一致：
@@ -127,6 +126,8 @@ impl MarkdownAppService {
         policy: DebouncePolicy,
         cache: Arc<Mutex<RenderCache>>,
     ) -> Self {
+        // 后台线程要自己的一份句柄（`highlight_snippet` 仍用本服务的那份）。
+        let highlight_worker = HighlightWorker::spawn(Arc::clone(&highlighter));
         Self {
             parser,
             highlighter,
@@ -136,7 +137,7 @@ impl MarkdownAppService {
             cache,
             highlight_cache: Arc::new(Mutex::new(HighlightCache::new(HIGHLIGHT_CACHE_CAPACITY))),
             highlight_pace: Arc::new(Mutex::new(HighlightPace::new(HIGHLIGHT_CACHE_CAPACITY))),
-            highlight_sessions: Arc::new(Mutex::new(HashMap::new())),
+            highlight_worker,
             spell: None,
             spell_cache: Arc::new(Mutex::new(SpellCache::new(HIGHLIGHT_CACHE_CAPACITY))),
         }
@@ -179,24 +180,28 @@ impl MarkdownAppService {
     ///
     /// 高亮缓存虽键带版本号（本不必手动失效），但显式清一次可让「切主题 / 关文档」
     /// 后立刻释放 span 占用的内存。
+    ///
+    /// 增量会话由后台线程独占持有，这里只能**请求**释放（投递即返回）。
+    /// 不为此加锁等待：解析期持锁会让本方法最坏卡一次解析（10KB ~64ms），
+    /// 而那正是 P1 要消灭的卡顿。会话是解析状态而非可见结果，
+    /// 晚一点释放不会让任何陈旧片段被读到（缓存条目已同步失效）。
     pub fn clear_cache(&self, cmd: ClearCacheCommand) {
         let mut cache = lock_or_recover(&self.cache);
         let mut hl = lock_or_recover(&self.highlight_cache);
         let mut spell = lock_or_recover(&self.spell_cache);
-        let mut sessions = lock_or_recover(&self.highlight_sessions);
         match cmd.doc_id {
             Some(id) => {
                 cache.invalidate(id);
                 hl.invalidate(id);
                 spell.invalidate(id);
                 // 会话持有整篇文本与检查点，文档关闭时必须一并释放（G2 同类问题）。
-                sessions.remove(&id);
+                self.highlight_worker.request_clear(Some(id));
             }
             None => {
                 cache.invalidate_all();
                 hl.invalidate_all();
                 spell.invalidate_all();
-                sessions.clear();
+                self.highlight_worker.request_clear(None);
             }
         }
     }
