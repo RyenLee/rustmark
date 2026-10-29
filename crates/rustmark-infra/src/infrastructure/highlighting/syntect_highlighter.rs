@@ -243,6 +243,18 @@ const PREWARM_SAMPLES: &[(&str, &str)] = &[
 /// lazy 层是纯记忆化。由 root 启动路径在装配后、建窗口前用后台线程调用，
 /// 与 eframe 建窗口（实测 ~682ms）并发跑。
 ///
+/// # 共享前提（P3 全部价值系于此）
+///
+/// 预热线程、worker 持有的 `SyntectHighlighter`、增量会话 `SyntectSession`
+/// （其 `new()` 同样调 [`default_syntax_set`]，见 `incremental.rs`）三方
+/// **必须都经 [`default_syntax_set`] 取同一份 `&'static SyntaxSet`**。
+/// 谁改成 per-instance 加载或自建一份 SyntaxSet，谁就会让预热填的
+/// `LazyContexts` / `Regex` `OnceCell` 落到另一份上——首开静默退回 ~200ms，
+/// 而解析结果仍正确（正确性测试全绿，唯有 P3 收益消失）。
+/// 单测 `prewarm_shares_one_global_syntax_set` 用 `std::ptr::eq` 钉死「两个
+/// 独立 `SyntectHighlighter` 共享同一份」这半边；`SyntectSession` 那半边靠
+/// 「它同样调 [`default_syntax_set`]」+ 本注释覆盖。
+///
 /// 走生产同一条 `highlight` 路径：resolve → `ParseState::new`（②）→
 /// `parse_line`（③）→ classify，避免「预热 A 路径但生产走 B 路径」。
 /// 未知语言/解析失败按纯文本降级、尽力而为：预热失败不影响功能，只是没优化到。
@@ -291,6 +303,25 @@ mod tests {
     use rustmark_core::domain::markdown::services::SyntaxHighlighter;
 
     use super::{PREWARM_SAMPLES, SyntectHighlighter, prewarm_highlighting};
+
+    /// P3 生效的命门：三方共享同一份全局 `SyntaxSet`。
+    ///
+    /// 只 `new()` 不 `highlight()`，故不填 ②③、不受另两条并行预热单测影响，
+    /// 也不碰 integration 的 198ms 冷基线（不同 test binary）。用 `ptr::eq`
+    /// 而非时间断言：单测进程里 `&'static` OnceCell 一旦被任一用例填过就不再
+    /// 冷，且 debug 慢一个量级、进程内时间断言必 flaky（收益只在 release
+    /// `#[ignore]` 基准观测，见 `measure_prewarm_cold_start_benefit`）。
+    #[test]
+    fn prewarm_shares_one_global_syntax_set() {
+        let a = SyntectHighlighter::new();
+        let b = SyntectHighlighter::new();
+        assert!(
+            std::ptr::eq(a.syntaxes, b.syntaxes),
+            "两个独立构造的 SyntectHighlighter 必须共享同一份全局 SyntaxSet（default_syntax_set 的 OnceLock 单例）。\
+             若改成 per-highlighter 加载，prewarm_highlighting() 填的 LazyContexts/Regex OnceCell 会落到另一份上，\
+             首开静默退回 ~200ms 而所有正确性测试仍全绿——P3 全部收益即失效。"
+        );
+    }
 
     /// P3 最关键回归守卫：预热只填 `OnceCell`，绝不能改变解析结果。
     ///

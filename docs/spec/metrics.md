@@ -1394,11 +1394,11 @@ rust，以及 8 种高频围栏 python / javascript / json / bash / html / css /
   （既有测试一个数字未改）。
 
 **门禁（本次提交实测）**：fmt ✔｜check-arch 0 ✔｜clippy 真实零告警 ✔｜
-`test --workspace --all-targets` **2305 passed / 0 failed / 6 ignored** ✔｜
+`test --workspace --all-targets` **2306 passed / 0 failed / 6 ignored** ✔｜
 `test --doc` 1/0/1 ✔｜`check_thresholds` 121（`--fix` 回写 `startup_timing.rs:34→35`）✔｜
 `size_gate` **10,599,936 B = 10.109 MB** ✔。新增 1 条 `#[ignore]` 收益基准（release
-口径）与 2 条 infra 正确性单测；2305 比 §3.2.16 的 2303 多 2 条 passed，
-6 ignored 比 5 多 1 条（即本项收益基准）。
+口径）与 3 条 infra 单测（2 条正确性对拍 + 1 条 `ptr::eq` 共享守卫）；2306 比
+§3.2.16 的 2303 多 3 条 passed，6 ignored 比 5 多 1 条（即本项收益基准）。
 
 ### 3.3 防抖与窗口值校准（S8-06）
 
