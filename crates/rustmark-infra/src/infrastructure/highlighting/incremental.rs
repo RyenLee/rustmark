@@ -34,8 +34,9 @@
 //!
 //! 插入/删除整行会让新旧行号错位。若按「每 N 行一个检查点」的行号相位
 //! 判收敛，插一行后相位永久错位，收敛点一次都命中不了，增量退化为全量。
-//! 故收敛判定在**新文本的每一个行首**做，把 `line_start - delta` 映射回
-//! 旧文本坐标，再用二分查旧检查点表——行数怎么变都不影响映射的正确性。
+//! 故收敛判定在**新文本的每一个行首**做，把新坐标经编辑区间累计偏移映射回
+//! 旧文本坐标（多处编辑下偏移非均匀，须用累计偏移逐点计算，不能用全局 `delta`
+//! 近似），再用二分查旧检查点表——行数怎么变都不影响映射的正确性。
 
 use syntect::easy::ScopeRangeIterator;
 use syntect::parsing::{ParseState, Scope, ScopeStack, SyntaxReference, SyntaxSet};
@@ -49,15 +50,31 @@ use rustmark_core::shared::geometry::TextRange;
 #[cfg(test)]
 use rustmark_core::shared::geometry::ByteOffset;
 
-use super::diff::{changed_range, push_shifted};
+use super::diff::{
+    EditRun, changed_range, cumulative_delta, edit_runs, old_in_edit, old_offset_for_new,
+    push_shifted,
+};
 use super::syntect_highlighter::{classify, default_syntax_set, push_span, resolve_language};
 
-/// 检查点间隔（行）。
+/// 大文档（> 64KiB）的检查点间隔（行）；内存与恢复精度的折中。
+const CHECKPOINT_INTERVAL_LINES_LARGE: usize = 25;
+/// 小文档（≤ 64KiB）的检查点间隔（行）：更密，以密集捕获「编辑之间的未变内部孤岛」。
+const CHECKPOINT_INTERVAL_LINES_SMALL: usize = 10;
+
+/// 检查点间隔（行），按文档大小自适应。
 ///
 /// 间隔越小，恢复点离变更行越近、但检查点数量（及其 `ParseState` /
-/// `ScopeStack` 克隆的内存）越大。25 行在 10KB（约 300 行）量级下
-/// 约 12 个检查点、几十 KB 内存，平均恢复距离 12.5 行。
-const CHECKPOINT_INTERVAL_LINES: usize = 25;
+/// `ScopeStack` 克隆的内存）越大。≤ 64KiB 用小间隔 [`CHECKPOINT_INTERVAL_LINES_SMALL`]
+/// （密集捕获「编辑之间的未变内部孤岛」），否则回退 [`CHECKPOINT_INTERVAL_LINES_LARGE`]
+/// （大文档限内存）。512KB 文档 25 行一个约 520 个检查点，每个克隆
+/// `ParseState`+`ScopeStack`，内存可控。
+fn checkpoint_interval(text_len: usize) -> usize {
+    if text_len <= 64 * 1024 {
+        CHECKPOINT_INTERVAL_LINES_SMALL
+    } else {
+        CHECKPOINT_INTERVAL_LINES_LARGE
+    }
+}
 
 /// 超过该字节数的文档不做增量（与预览降级共用同一常量，不再各写一份）。
 const MAX_INCREMENTAL_BYTES: usize = rustmark_core::shared::constants::LARGE_FILE_BYTES;
@@ -126,15 +143,43 @@ struct ParseStart {
     stack: ScopeStack,
 }
 
-/// 收敛判定所需的旧侧信息。
+/// 收敛 / 分块跳过判定所需的旧侧信息。
 struct ConvergeCtx<'a> {
     /// 旧检查点表（按 offset 升序）。
     old: &'a [Checkpoint],
-    /// 新文本长度 − 旧文本长度（单次连续编辑下全文档恒定）。
-    delta: i64,
-    /// 新文本中变更区间的结束：收敛点必须不早于它，否则会把
-    /// 「状态碰巧相同」的变更区间内部误判为可复用。
-    changed_end: usize,
+    /// 新旧文本的编辑区间（多处编辑下偏移非均匀，须用累计偏移映射）。
+    runs: &'a [EditRun],
+}
+
+/// 在收敛判定里，把「当前新坐标 `pos`」对应的旧检查点找出来并验证可复用。
+///
+/// 返回 `(检查点下标, 该干净段的累计偏移)`；任一条件不满足返回 `None`
+/// （不跳过、照常逐行解析）。把这段判定抽成函数，可让主循环只用一个
+/// `let`-chain 而非嵌套 `if`，既规避 clippy 的 `collapsible_if`，也避免深层
+/// 嵌套括号带来的括号配平风险。
+fn converge_checkpoint(
+    ctx: &ConvergeCtx<'_>,
+    pos: usize,
+    state: &ParseState,
+    stack: &ScopeStack,
+) -> Option<(usize, i64)> {
+    // 新坐标映射回旧坐标；落在编辑段内部（无可复用旧内容）则无法收敛。
+    let old_offset = old_offset_for_new(ctx.runs, pos)?;
+    // 旧侧二分查检查点；查不到（pos 不落在任何干净段边界）则照常解析。
+    let index = ctx
+        .old
+        .binary_search_by_key(&old_offset, |c| c.offset)
+        .ok()?;
+    // 候选检查点须落在某「干净段」里（不能夹在编辑段内部），否则旧内容已改、不可复用。
+    if old_in_edit(ctx.runs, ctx.old[index].offset) {
+        return None;
+    }
+    // 解析状态须与旧检查点记录的（行首状态）完全一致，否则后缀不可用。
+    if ctx.old[index].state != *state || ctx.old[index].stack != *stack {
+        return None;
+    }
+    // 该干净段内偏移恒定：新坐标 = 旧坐标 + 该段累计偏移。
+    Some((index, cumulative_delta(ctx.runs, ctx.old[index].offset)))
 }
 
 /// 一段连续解析的产物。
@@ -199,7 +244,8 @@ impl SyntectSession {
 
         // --- 2. 判定能否走增量 ---
         let reusable = changed.filter(|range| self.can_reuse(text, &lang_key, *range));
-        let delta = text.len() as i64 - self.text.len() as i64;
+        // 编辑区间：多处编辑下偏移非均匀，增量引擎须用它把旧检查点映射到新坐标。
+        let runs = edit_runs(&self.text, text);
 
         let outcome = match reusable {
             Some(range) => {
@@ -221,8 +267,7 @@ impl SyntectSession {
                             },
                             Some(ConvergeCtx {
                                 old: &self.checkpoints,
-                                delta,
-                                changed_end: range.end().value(),
+                                runs: &runs,
                             }),
                         )?;
                         // 复用恢复点之前的旧片段：它们完整落在未变前缀里，
@@ -235,9 +280,6 @@ impl SyntectSession {
                             merged.extend_from_slice(&self.spans[..head]);
                             merged.append(&mut outcome.spans);
                             outcome.spans = merged;
-                        }
-                        if let Some(converge_offset) = outcome.converged_at {
-                            self.append_reused_tail(&mut outcome, converge_offset, delta);
                         }
                         outcome
                     }
@@ -310,48 +352,21 @@ impl SyntectSession {
         )
     }
 
-    /// 把收敛点之后的旧片段平移 `delta` 后接上，并平移旧检查点。
-    fn append_reused_tail(&self, outcome: &mut ParseOutcome, converge_offset: usize, delta: i64) {
-        // 收敛点在旧文本中的坐标。delta 恒定 ⇒ 该处之后的文本逐字节相同。
-        let old_signed = converge_offset as i64 - delta;
-        if old_signed < 0 {
-            return;
-        }
-        let old_offset = old_signed as usize;
-
-        // `push_span` 保证片段不跨行，而 old_offset 是旧检查点（行首），
-        // 故不存在被收敛点切断的片段，按 start 二分即可整体复用。
-        let tail = self
-            .spans
-            .partition_point(|span| span.range().start().value() < old_offset);
-        for span in &self.spans[tail..] {
-            push_shifted(&mut outcome.spans, *span, delta);
-        }
-
-        // 旧检查点本身也继续有效：它们之后的文本未变，只是偏移平移。
-        for checkpoint in self
-            .checkpoints
-            .iter()
-            .filter(|checkpoint| checkpoint.offset >= old_offset)
-        {
-            let shifted = checkpoint.offset as i64 + delta;
-            if shifted < 0 {
-                continue;
-            }
-            let offset = shifted as usize;
-            // 收敛点自身可能同时被新解析段与旧检查点表产出，去重。
-            if outcome.checkpoints.last().map(|last| last.offset) == Some(offset) {
-                continue;
-            }
-            outcome.checkpoints.push(Checkpoint {
-                offset,
-                state: checkpoint.state.clone(),
-                stack: checkpoint.stack.clone(),
-            });
-        }
-    }
-
-    /// 从 `start` 起顺序解析，收集片段与检查点；给了 `converge` 时提前截断。
+    /// 从 `start` 起顺序解析，收集片段与检查点；给了 `converge` 时沿途安全分块跳过。
+    ///
+    /// # 分块跳过（chunk-skip）
+    ///
+    /// 语法是有状态的：`parse_line((state, line)) → ops` 是确定性函数。若在某旧检查点
+    /// C（经累计偏移映射到新坐标）处当前解析状态 `==` 旧检查点记录的 `(state, stack)`，且从 C
+    /// 到下一旧检查点 C2 的新文本字节**逐字节等于**旧文本 `[C, C2)`（memcmp），则解析新
+    /// 文本 `[C + delta, C2 + delta)` 必与旧文本 `[C, C2)` 逐片段相同——可直接平移复用旧
+    /// spans，跳过这些行的 `parse_line`。这 100% 正确，且天然覆盖「编辑之间的未变内部孤岛」
+    /// 与「后缀」，无需知道编辑内部位置。memcmp 失败（该 chunk 含编辑）→ 照常逐行解析。
+    ///
+    /// 与旧实现的关键区别：旧实现只在 `line_start >= changed_end` 之后尝试收敛且命中一次就
+    /// `break`，导致编辑之间的未变内部孤岛被白解；本实现以 memcmp 闸门替代该过保守过滤，
+    /// 让内部孤岛与后缀都能被级联复用。`parsed_lines` 只计真正 `parse_line` 的行，便于用
+    /// `parsed_lines < total_lines` 这类断言证明「部分增量」非空话。
     fn run(
         &self,
         text: &str,
@@ -365,11 +380,15 @@ impl SyntectSession {
         let mut converged_at = None;
         let mut parsed_lines = 0usize;
 
-        let mut line_start = start.offset;
+        let mut pos = start.offset;
         let mut is_first_line = true;
         // 相邻区间的 scope 栈常完全相同，用快照做记忆化（与生产实现同款）。
         let mut cached_scopes: Vec<Scope> = Vec::new();
         let mut cached_style = SpanStyle::Plain;
+
+        let interval = checkpoint_interval(text.len());
+        let new_bytes = text.as_bytes();
+        let old_bytes = self.text.as_bytes();
 
         // 起点自身登记为检查点：否则「改文档开头」时找不到可恢复的锚点，
         // 每次都会退化成全量。相位与后续每 N 行的检查点一致。
@@ -379,28 +398,59 @@ impl SyntectSession {
             stack: stack.clone(),
         });
 
-        for line in text[start.offset..].split_inclusive('\n') {
-            // 收敛判定必须在**进入本行之前**：此刻的 (state, stack) 正是
-            // 旧检查点记录的形状（行首状态）。
+        while pos < text.len() {
+            // 收敛 / 分块跳过判定必须在**进入本行之前**：此刻的 (state, stack) 正是
+            // 旧检查点记录的形状（行首状态）。首行不尝试（它本就是锚点行）。
             if let Some(ctx) = &converge
                 && !is_first_line
-                && line_start >= ctx.changed_end
+                && let Some((index, shift)) = converge_checkpoint(ctx, pos, &state, &stack)
             {
-                let old_offset = line_start as i64 - ctx.delta;
-                if old_offset >= 0
-                    && let Ok(index) = ctx
-                        .old
-                        .binary_search_by_key(&(old_offset as usize), |c| c.offset)
-                    && ctx.old[index].state == state
-                    && ctx.old[index].stack == stack
-                {
-                    converged_at = Some(line_start);
-                    break;
+                let c = &ctx.old[index];
+                if let Some(next) = ctx.old.get(index + 1) {
+                    let chunk_len = next.offset - c.offset;
+                    // 越界保护；长度不符时下方 memcmp 必失败，照常解析。
+                    if pos + chunk_len <= text.len()
+                        && new_bytes[pos..pos + chunk_len] == old_bytes[c.offset..next.offset]
+                    {
+                        // 复用该 chunk 内、且落在锚点之后的旧片段（避免与 head 重复）。
+                        for span in self.spans.iter() {
+                            let s = span.range().start().value();
+                            if s >= start.offset && s >= c.offset && s < next.offset {
+                                push_shifted(&mut spans, *span, shift);
+                            }
+                        }
+                        // 下一检查点（已平移）继续有效：其后的文本未变。
+                        checkpoints.push(Checkpoint {
+                            offset: pos + chunk_len,
+                            state: next.state.clone(),
+                            stack: next.stack.clone(),
+                        });
+                        state = next.state.clone();
+                        stack = next.stack.clone();
+                        pos += chunk_len;
+                        continue;
+                    }
+                } else {
+                    // 最后一个旧检查点：整体尾部跳过。
+                    if new_bytes[pos..] == old_bytes[c.offset..] {
+                        for span in self.spans.iter() {
+                            let s = span.range().start().value();
+                            if s >= start.offset && s >= c.offset {
+                                push_shifted(&mut spans, *span, shift);
+                            }
+                        }
+                        converged_at = Some(pos);
+                        break;
+                    }
                 }
             }
             is_first_line = false;
 
-            let line_len = line.len();
+            // 手动按字节偏移取「当前这一行」（含行尾 `\n`），以便跳过时直接前跳多行。
+            // 注意：必须是单行的切片 `text[pos..pos+line_len]`，不能取 `text[pos..]` 整段剩余——
+            // 否则 `parse_line` 会把后续所有行当作同一行解析，导致每行的片段被重复生成（O(n²)）。
+            let line_len = text[pos..].find('\n').map_or(text.len() - pos, |i| i + 1);
+            let line = &text[pos..pos + line_len];
             let ops = state
                 .parse_line(line, self.syntaxes)
                 .map_err(|e| HighlightError::new(format!("解析语法失败：{e}")))?;
@@ -420,8 +470,8 @@ impl SyntectSession {
                 if range_in_line.is_empty() {
                     continue;
                 }
-                let span_start = line_start + range_in_line.start;
-                let span_end = line_start + range_in_line.end;
+                let span_start = pos + range_in_line.start;
+                let span_end = pos + range_in_line.end;
                 let style = if cached_scopes.as_slice() == stack.as_slice() {
                     cached_style
                 } else {
@@ -434,28 +484,28 @@ impl SyntectSession {
                 if style == SpanStyle::Plain {
                     continue;
                 }
-                push_span(&mut spans, span_start, span_end, style, line_start);
+                push_span(&mut spans, span_start, span_end, style, pos);
             }
 
-            line_start += line_len;
+            pos += line_len;
             // 行首检查点：解析完这一行后，下一行行首的状态。
-            if parsed_lines.is_multiple_of(CHECKPOINT_INTERVAL_LINES) {
+            if parsed_lines.is_multiple_of(interval) {
                 checkpoints.push(Checkpoint {
-                    offset: line_start,
+                    offset: pos,
                     state: state.clone(),
                     stack: stack.clone(),
                 });
             }
         }
 
-        // 文末补一个检查点：否则「在文档最后 25 行内编辑」解析到文末后
+        // 文末补一个检查点：否则「在文档最后若干行内编辑」解析到文末后
         // 重建的检查点表会退化到只剩起点，下一轮直接失去可恢复锚点。
         if converged_at.is_none()
-            && line_start > start.offset
-            && checkpoints.last().map(|last| last.offset) != Some(line_start)
+            && pos > start.offset
+            && checkpoints.last().map(|last| last.offset) != Some(pos)
         {
             checkpoints.push(Checkpoint {
-                offset: line_start,
+                offset: pos,
                 state: state.clone(),
                 stack: stack.clone(),
             });
@@ -792,5 +842,164 @@ fn generated_{index}(input: &str) -> Result<usize, String> {{
         );
 
         assert!(ratio >= 5.0, "PoC 门槛：加速比应 ≥ 5×，实测 {ratio:.2}×");
+    }
+
+    /// 生成「稀疏 token 文档」：每隔 `period` 行出现一处唯一 token（`generated_{i}`），
+    /// 其余行完全相同。用于验证「状态保持型散布编辑」下，未变内部孤岛被安全复用——
+    /// 若改为密集 token（如 `sample_rust` 每函数一个），则每个 10 行 chunk 都含变更、
+    /// 无干净 chunk 可跳过，本就退化为近全量，无法演示「部分增量」，故此处用稀疏样本。
+    fn sparse_token_doc(line_count: usize, period: usize) -> String {
+        let mut text = String::new();
+        for i in 0..line_count {
+            if i % period == period / 2 {
+                text.push_str(&format!(
+                    "fn generated_{i}(x: u32) -> u32 {{ x.wrapping_add({i}) }}\n"
+                ));
+            } else {
+                text.push_str("fn ordinary_fn(y: u32) -> u32 { let z = y + 1; z }\n");
+            }
+        }
+        text
+    }
+
+    #[test]
+    fn replace_all_token_reuses_islands_and_matches_full() {
+        let text = sparse_token_doc(400, 30);
+        let mut session = SyntectSession::new();
+        session.highlight(&text, Some("rust"), None).unwrap();
+
+        // 状态保持型「替换所有」：等长替换散布各处的 token。
+        let next = text.replace("generated_", "produced__");
+        assert_ne!(next, text, "样本须含 generated_ 以便替换");
+        let changed = changed_range(&text, &next);
+        let (spans, stats) = session
+            .highlight_with_stats(&next, Some("rust"), Some(changed))
+            .expect("增量不应失败");
+        assert!(stats.incremental, "应走增量路径");
+        assert!(
+            stats.parsed_lines < stats.total_lines / 2,
+            "未变内部孤岛须被复用（重解应远少于全量）：{}/{}",
+            stats.parsed_lines,
+            stats.total_lines
+        );
+        assert_same(&spans, &full(&next, "rust"), "token replace-all");
+    }
+
+    #[test]
+    fn replace_all_state_breaking_still_matches_full() {
+        let text = sample_rust(10 * 1024);
+        let mut session = SyntectSession::new();
+        session.highlight(&text, Some("rust"), None).unwrap();
+
+        // 破坏词法状态：在块注释内删除闭合 `*/`，使后文状态错位（状态破坏型扰动）。
+        let next = text.replace("*/", "/");
+        if next == text {
+            // 样本无块注释闭合，跳过（不应发生）。
+            return;
+        }
+        let changed = changed_range(&text, &next);
+        let (spans, _stats) = session
+            .highlight_with_stats(&next, Some("rust"), Some(changed))
+            .expect("增量不应失败");
+        // 状态破坏型可能退化为近全量，但字节一致是硬闸门，不可妥协。
+        assert_same(&spans, &full(&next, "rust"), "state-breaking replace-all");
+    }
+
+    #[test]
+    fn large_block_insert_in_middle_matches_full() {
+        let text = sample_rust(10 * 1024);
+        let mut session = SyntectSession::new();
+        session.highlight(&text, Some("rust"), None).unwrap();
+
+        // 在中部（某顶层函数之前）插入一大块合法 rust（状态保持）。
+        let block = "\nfn inserted_block(a: u32) -> u32 {\n    let mut s = 0u32;\n    let v = a.wrapping_add(s);\n    v\n}\n";
+        let at = find_nth(&text, "fn generated_", 20);
+        let (inserted, changed) = replace(&text, at, at, block);
+        let (spans, stats) = session
+            .highlight_with_stats(&inserted, Some("rust"), Some(changed))
+            .unwrap();
+        assert!(stats.incremental);
+        assert!(
+            stats.parsed_lines < stats.total_lines,
+            "中段之后应被复用：{}/{}",
+            stats.parsed_lines,
+            stats.total_lines
+        );
+        assert_same(&spans, &full(&inserted, "rust"), "中段大块插入");
+    }
+
+    #[test]
+    fn reformat_preserves_balance_matches_full() {
+        let text = sparse_token_doc(400, 30);
+        let mut session = SyntectSession::new();
+        session.highlight(&text, Some("rust"), None).unwrap();
+
+        // 重排版（状态保持）：删掉所有含 token 的稀疏行，其余行不变。
+        let lines: Vec<&str> = text.lines().filter(|l| !l.contains("generated_")).collect();
+        let next = lines.join("\n");
+        assert_ne!(next, text, "须确有行被删");
+        let changed = changed_range(&text, &next);
+        let (spans, stats) = session
+            .highlight_with_stats(&next, Some("rust"), Some(changed))
+            .unwrap();
+        assert!(stats.incremental);
+        assert!(
+            stats.parsed_lines < stats.total_lines,
+            "未变行须被复用：{}/{}",
+            stats.parsed_lines,
+            stats.total_lines
+        );
+        assert_same(&spans, &full(&next, "rust"), "重排版");
+    }
+
+    /// PoC 收益基准：稀疏 token「替换所有」（状态保持型大编辑）。默认 `#[ignore]`。
+    #[test]
+    #[ignore = "收益基准：需 release 下显式运行"]
+    fn bench_replace_all_token_on_16kb() {
+        const ROUNDS: usize = 20;
+        let text = sparse_token_doc(400, 30); // 与 16KB 同量级
+        let highlighter = SyntectHighlighter::new();
+        let _ = highlighter.highlight(&text, Some("rust")).unwrap(); // 预热
+
+        let mut full_samples = Vec::with_capacity(ROUNDS);
+        for _ in 0..ROUNDS {
+            let started = Instant::now();
+            let spans = highlighter.highlight(&text, Some("rust")).unwrap();
+            std::hint::black_box(&spans);
+            full_samples.push(started.elapsed());
+        }
+
+        let base = text.clone();
+        let mut incremental_samples = Vec::with_capacity(ROUNDS);
+        for _ in 0..ROUNDS {
+            let mut session = SyntectSession::new();
+            session.highlight(&base, Some("rust"), None).unwrap();
+            let next = base.replace("generated_", "produced__");
+            let changed = changed_range(&base, &next);
+            let started = Instant::now();
+            let (spans, _stats) = session
+                .highlight_with_stats(&next, Some("rust"), Some(changed))
+                .unwrap();
+            let elapsed = started.elapsed();
+            std::hint::black_box(&spans);
+            incremental_samples.push(elapsed);
+        }
+
+        let median = |mut values: Vec<f64>| -> f64 {
+            values.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            values[values.len() / 2]
+        };
+        let full_ms = median(full_samples.iter().map(|d| d.as_secs_f64() * 1e3).collect());
+        let incremental_ms = median(
+            incremental_samples
+                .iter()
+                .map(|d| d.as_secs_f64() * 1e3)
+                .collect(),
+        );
+        let ratio = full_ms / incremental_ms;
+        println!(
+            "[metrics] token replace-all 全量 {full_ms:.3} ms · 增量 {incremental_ms:.3} ms · 加速 {ratio:.2}×"
+        );
+        assert!(ratio >= 2.0, "PoC 门槛：加速比应 ≥ 2×，实测 {ratio:.2}×");
     }
 }

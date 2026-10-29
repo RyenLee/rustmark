@@ -69,7 +69,7 @@ modules:
       artifact_size_limit_ci:
         value: 11534336
         unit: "bytes"
-        source: ".github/workflows/ci.yml:60"
+        source: ".github/workflows/ci.yml:62"
         anchor: "SIZE_LIMIT_BYTES"
         purpose: "CI 体积红线（11 MiB），由 size_gate.sh 读取；越线 exit 1 使 check job 失败。按基线 10,487,296 B 尚有约 1.0 MiB 余量。"
         recommended: "11534336（须与 NFR-PERF-01 单一真源一致）"
@@ -77,7 +77,7 @@ modules:
       artifact_size_warn_ci:
         value: 11010048
         unit: "bytes"
-        source: ".github/workflows/ci.yml:61"
+        source: ".github/workflows/ci.yml:63"
         anchor: "SIZE_WARN_BYTES"
         purpose: "CI 体积预警线（10.5 MiB），越线只输出 ::warning 不失败；保留约 512 KiB 可行动窗口，当前产物不触发。"
         recommended: "11010048（10.5 MiB，保留约 512 KiB 可行动窗口）"
@@ -125,7 +125,7 @@ modules:
       ci_timeout_check:
         value: 45
         unit: "minutes"
-        source: ".github/workflows/ci.yml:76"
+        source: ".github/workflows/ci.yml:78"
         anchor: "timeout-minutes: 45"
         purpose: "check job（三平台编译 + 全量测试）超时上限；超时即取消并判定失败。"
         recommended: "30-60"
@@ -133,7 +133,7 @@ modules:
       ci_timeout_perf:
         value: 30
         unit: "minutes"
-        source: ".github/workflows/ci.yml:229"
+        source: ".github/workflows/ci.yml:244"
         anchor: "timeout-minutes: 30"
         purpose: "perf job（release 性能冒烟）超时上限；超时即失败。"
         recommended: "40（整帧 smoke）；NFR 另测服务层 ≤10ms"
@@ -141,7 +141,7 @@ modules:
       ci_timeout_coverage:
         value: 30
         unit: "minutes"
-        source: ".github/workflows/ci.yml:265"
+        source: ".github/workflows/ci.yml:285"
         anchor: "timeout-minutes: 30"
         purpose: "coverage job（llvm-cov 全量插桩）超时上限；超时即无 lcov.info，门禁失败。"
         recommended: "30-45"
@@ -149,7 +149,7 @@ modules:
       ci_timeout_release_dryrun:
         value: 10
         unit: "minutes"
-        source: ".github/workflows/ci.yml:319"
+        source: ".github/workflows/ci.yml:343"
         anchor: "timeout-minutes: 10"
         purpose: "release-dryrun job 超时上限；离线演练为纯 Python，超时即流程异常。"
         recommended: "5-15"
@@ -157,7 +157,7 @@ modules:
       ci_timeout_deny:
         value: 20
         unit: "minutes"
-        source: ".github/workflows/ci.yml:339"
+        source: ".github/workflows/ci.yml:363"
         anchor: "timeout-minutes: 20"
         purpose: "deny job（依赖许可 / 安全公告）超时上限；超时即门禁未判定。"
         recommended: "10-20"
@@ -173,7 +173,7 @@ modules:
       ci_timeout_release_publish:
         value: 15
         unit: "minutes"
-        source: ".github/workflows/release.yml:112"
+        source: ".github/workflows/release.yml:122"
         anchor: "timeout-minutes: 15"
         purpose: "release 汇总与 gh release create 的超时上限；超时即 tag 已推但 Release 未生成。"
         recommended: "10-20"
@@ -545,14 +545,14 @@ modules:
         value: 25
         unit: "lines"
         source: "crates/rustmark-infra/src/infrastructure/highlighting/incremental.rs:60"
-        anchor: "CHECKPOINT_INTERVAL_LINES: usize = 25"
-        purpose: "增量高亮检查点间隔；越小恢复点越近但检查点内存越大，越大则增量收益下降。"
-        recommended: "16-64"
-        configurable: "硬编码 const"
+        anchor: "CHECKPOINT_INTERVAL_LINES_LARGE: usize = 25"
+        purpose: "增量高亮检查点间隔（按文档大小自适应）：≤ 64KiB 用 10 行以密集捕获「编辑之间的未变内部孤岛」，否则回退 25 行限内存。间隔越小恢复点越近但检查点内存越大，越大则增量收益下降。"
+        recommended: "10（小文档）/ 25（大文档）"
+        configurable: "硬编码函数"
       max_incremental_bytes:
         value: 512000
         unit: "bytes"
-        source: "crates/rustmark-infra/src/infrastructure/highlighting/incremental.rs:63"
+        source: "crates/rustmark-infra/src/infrastructure/highlighting/incremental.rs:80"
         anchor: "MAX_INCREMENTAL_BYTES: usize = rustmark_core::shared::constants::LARGE_FILE_BYTES"
         via: "crates/rustmark-shared/src/shared/support/constants.rs"
         purpose: "超过该字节数不做增量高亮（降级纯文本）；与截断阈值、排版阈值共用同一常量。"

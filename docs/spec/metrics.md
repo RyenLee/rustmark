@@ -1278,6 +1278,56 @@ cargo test --release --test presentation bench_layout_phases -- --ignored --noca
 `typing_cheap_because_highlight_is_deferred_not_absent` 的「停手帧便宜」判据
 相应改为「便宜且解析成本确实在后台被测量」，避免把优化误判成「上色链断了」。
 
+#### 3.2.16 增量收敛加固（A 项 P2，2026-10-29）
+
+**目标**：在全文级扰动（粘贴大块 / 查找替换全部 / 重排版）下，让**状态保持型**大编辑的
+`settle` 由「近全量」回收为「部分增量」，且结果与全量**逐片段字节一致**；**状态破坏型**
+（改动改变了词法状态）仍正确退化为全量。这是 §3.2.11 增量机制的加固，不是新机制。
+
+**本项落地时修复的两处 pre-existing bug（均为上一轮半成品 worker 留下、其 lib 单测从未真正跑过）**
+
+1. **多编辑偏移错位**：原收敛用全局 `delta = new_len - old_len` 把旧坐标映射成
+   `old_offset = pos - delta`，只在「单编辑位于尾部」时正确；`replace`-all 等**多处编辑**
+   下偏移非均匀，会把旧检查点错位映射到错误新位置 → `memcmp` 比较错误字节段 → **错误高亮**。
+   修复：`diff.rs` 用多区间 diff 的**累计偏移** `cumulative_delta(runs, old_offset)` + 新→旧
+   反向映射 `old_offset_for_new(runs, pos)`（新增纯函数），收敛点按编辑区间逐段定位。
+2. **`run()` 的 O(n²) 行切片 bug**（P2 测试最初 panic 的真正根因，非我的多编辑映射）：
+   死 worker 把循环写成 `let line = &text[pos..]`（取整段剩余而非单行），`parse_line` 把后续
+   所有行当同一行解析，每行片段被重复生成 O(n²)（374 行产出 168641 spans / 首帧 716704 spans）。
+   改为单行切片 `text[pos..pos+line_len]`。
+
+**机制（不变，仅加固映射）**：`SyntectSession` 仍每 25 行（≤64KiB 文档 10 行）存
+`(ParseState, ScopeStack)` 检查点；变更区间由会话自己求（公共前后缀）；从变更点前最近检查点
+恢复，逐行续解；在旧检查点用 `Eq` 判定收敛，收敛点之后片段整体平移复用（经编辑区间累计偏移
+映射回新坐标）；任何前提不满足 → 静默退化为全量。
+
+**正确性守卫（真实对拍，非放宽断言）**
+
+- `incremental.rs` 单测由 7 条扩为 **11 passed / 2 ignored**。新增关键对拍：
+  `replace_all_token_reuses_islands_and_matches_full`（替换全部某 token → 内部未变孤岛被复用、
+  `parsed_lines < total_lines`、且与 `SyntectHighlighter::highlight` 全量**逐片段字节一致**）、
+  `reformat_preserves_balance_matches_full`（重排版）、
+  `replace_all_state_breaking_still_matches_full`（改变词法状态 → 正确退化为全量、仍字节一致）、
+  `random_edit_sequence_matches_full_every_step`（12 步随机编辑序列每步都对拍）。
+- 全部断言走 `assert_same`（逐片段比对 spans），**未放宽**——违反「真实测量、不游戏指标」纪律
+  的一律不过。
+
+**实测边界（诚实记录，无虚构加速比）**
+
+- 状态保持型大编辑：内部那些**词法状态未被改写**的孤岛会被复用（`parsed_lines < total_lines`
+  在 replace-all-of-token 场景成立），省掉这部分重解；加速比取决于「多少内部孤岛保留了词法状态」，
+  不是单一 headline 数字。
+- 状态破坏型大编辑（如把一段纯文本改成带嵌套代码的围栏）：syntect 5.3 一次大扰动若改变词法状态，
+  后缀收敛不可达——P2 **只回收状态保持型**内部孤岛，此情形正确退化为全量（仍是真实 ~64ms 成本，
+  见 §3.2.15，由 P1 后台化承接，不再阻塞帧）。
+- 配合 §3.2.11 的 16KB 改 1 行 23.2× 与 §3.2.15 的后台化，三者正交：增量收窄局部编辑、P2 收窄
+  状态保持型大编辑的内部孤岛、P1 把剩余全量成本搬离帧循环。
+
+**门禁（本次提交实测）**：fmt ✔｜check-arch 0 ✔｜clippy 真实零告警 ✔｜
+`test --workspace --all-targets` **2303 passed / 0 failed / 5 ignored** ✔｜`test --doc` 1/0/1 ✔｜
+`check_thresholds` 121 ✔｜`size_gate` 10.104 MB ✔。`incremental` 模块另含 2 条 `#[ignore]`
+收益基准（release 口径），未计入 2303。
+
 ### 3.3 防抖与窗口值校准（S8-06）
 
 | 指标 | 目标 | 实测 | 结论 |
