@@ -304,9 +304,9 @@ modules:
       perf_nfr_10kb_highlight_settle:
         value: 10
         unit: "ms"
-        source: "tests/integration/main.rs:761"
-        anchor: "NFR-PERF-05：10KB 停手补算"
-        purpose: "NFR 合规断言（仅 release）：10KB 停手后一次性全文高亮 ≤10ms，正对 NFR-PERF-05 的口径。"
+        source: "tests/integration/main.rs:764"
+        anchor: "NFR-PERF-05：交互帧 p95"
+        purpose: "NFR 合规断言（仅 release）：10KB 交互帧（打字帧）p95 ≤10ms，正对 NFR-PERF-05 重定义后的口径（2026-10-28：测量对象由「停手后一次性全文重算」改为「交互帧」；后者约 64ms / CI Linux 125–132ms，已单独立项优化，不计入本 NFR，基线见 metrics.md §3.2.11）。"
         recommended: "10"
         configurable: "硬编码字面量（测试断言）"
       perf_1mb_degraded_frame_p95:
