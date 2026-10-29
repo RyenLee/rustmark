@@ -1023,7 +1023,7 @@ modules:
       env_startup_timing:
         value: "1 / true"
         unit: "switch"
-        source: "src/app/startup_timing.rs:34"
+        source: "src/app/startup_timing.rs:35"
         anchor: "RUSTMARK_STARTUP_TIMING"
         purpose: "开启启动阶段耗时埋点；仅接受字符串 1 或 true，其它值视作关闭。"
         recommended: "1 / true"

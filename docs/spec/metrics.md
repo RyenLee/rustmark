@@ -1328,6 +1328,78 @@ cargo test --release --test presentation bench_layout_phases -- --ignored --noca
 `check_thresholds` 121 ✔｜`size_gate` 10.104 MB ✔。`incremental` 模块另含 2 条 `#[ignore]`
 收益基准（release 口径），未计入 2303。
 
+#### 3.2.17 冷启动预热（A 项 P3，2026-10-29）
+
+**问题**：§3.2.15 量到冷启动后台解析 **198.99–204.56ms**，而稳态（同进程后续）
+仅 **65.41–67.18ms**——差出的 ~135ms 是「进程内首次真正解析」才付的一次性成本。
+根因是 syntect 5.3.0 语法数据的**三层 lazy**：
+
+| 层 | 内容 | 何时付 | 实测 / 现状 |
+|---|---|---|---|
+| ① | `SyntaxSet::load_defaults_newlines()` 反序列化内嵌 packdump | `SyntectHighlighter::new()` → `default_syntax_set()` 的 `OnceLock` | **1.97ms**（§3 启动耗时分解表 :376），**装配期已付**（`src/app/bootstrap.rs:204`）；`OnceLock` 只缓存这一层 |
+| ② | 每个 `SyntaxReference.lazy_contexts: OnceCell<LazyContexts>` | 首次 `ParseState::new(syntax)` 现场反序列化 | **30.4ms/语言**（§3 :377，见 §3.0 已知问题；20 语言冷首调合计 493ms，`measure_twenty_language_highlight_time`）；挂在语法引用上，打开文档首次真解析时仍空 |
+| ③ | 每个 `Regex.regex: OnceCell`（fancy-regex） | 首次 `parse_line` 匹配到该 pattern 才编译 | 与 ② 合占 ~135ms 冷首调 |
+
+**硬约束**：`Regex` 的 `Clone`（syntect `parsing/regex.rs`）会清空 `OnceCell`——
+**绝不能 clone `SyntaxSet`/`SyntaxReference`**。现有实现只持 `&'static SyntaxSet`
+（`syntect_highlighter.rs:83`），预热复用同一份实例即满足；`once_cell::sync::OnceCell`
+线程安全，后台预热线程与前台解析并发 `get_or_init` 只会有一个线程付成本。
+
+**做法**：`prewarm_highlighting()`（`rustmark-infra` 的 `syntect_highlighter.rs`）遍历
+10 种语言样本，走**生产同一条** `highlight` 路径（resolve → `ParseState::new`(②) →
+`parse_line`(③) → classify），把 ②③ 的 `OnceCell` 前移到启动期。清单含 markdown
+（**带 ```rust 围栏**——syntect 的 Markdown 语法会 embed 子语法，顺带预热 rust）、
+rust，以及 8 种高频围栏 python / javascript / json / bash / html / css / sql / yaml
+（别名归并覆盖 ts/tsx/typescript、shell/sh/zsh/fish、vue）。触发点在 `src/app.rs::run()`：
+`装配完成` 之后、`frame::run` 之前起独立后台线程 `rustmark-prewarm`（detach 不 join），
+与 eframe 建窗口（实测 ~682ms、占冷启动 99.3%，§3 :371）**并发**跑。预热**绝不**塞进
+`SyntectHighlighter::new()` / `default_syntax_set()` / `MarkdownAppService::new()`
+同步段——`measure_syntax_set_load_time` 的 load ≤30ms 断言、20 语言冷首调（493ms）、
+`measure_editor_frame_highlight_cost` 的 198ms 冷基线全部保持真实冷态。
+
+**实测（release / Windows x86_64，5 轮，`measure_prewarm_cold_start_benefit`
+`#[ignore]` 用 `cargo test --release --test integration <name> -- --ignored --nocapture`
+单独进程跑 → `OnceLock` 干净）**
+
+| 项 | 值（5 轮） | 说明 |
+|---|---|---|
+| 预热线程 `prewarm_highlighting()` | **299.05–303.95ms** | 10 种语言的 ②③ 一次性成本；< ~682ms 建窗口时间，并发期内完成 |
+| 预热后首开后台解析 | **67.97–71.44ms** | 10KB markdown（带 ```rust 围栏），与 §3.2.15 语料同构 |
+| 对照：冷基线（无预热，§3.2.15） | **198.99–204.56ms** | ②③ 现场付 |
+| 对照：稳态（§3.2.15） | **65.41–67.18ms** | ②③ 已热 |
+
+首开解析由 ~199–205ms 降到 ~68–71ms（≈稳态 65–67ms），证明 ②③ 已被后台预热填满。
+
+**正确性守卫（infra crate 单测，2 条 passed）**：`prewarm_does_not_change_highlight_results`
+对 10 样本在预热前（冷）/预热后（热）逐片段（`Vec<SyntaxSpan>` 的 range + style）
+对拍完全相等，并断言 `supports` 不变 false；`prewarm_covers_all_listed_languages`
+断言清单每种语言预热后都可识别。单测放 infra crate（`syntect_highlighter.rs` 内），
+**不放** `tests/integration/main.rs`——后者是独立 test binary，
+`measure_editor_frame_highlight_cost` 的冷态基线必须不被同进程预热污染。
+
+**诚实边界（成本前移，不是消失）**
+
+- 预热线程 ~300ms **并非全部**来自本次 markdown 文档：markdown+rust 约占 ~130ms
+  （对应冷基线差出的 ~135ms），其余 ~170ms 是为高频围栏语言（python/js/json/bash/…）
+  **主动**预热，对当前文档无收益、对打开含这些围栏的文档有收益。
+- ~300ms < ~682ms 建窗口时间，预热几乎必然在窗口就绪前完成，用户无感；
+  线程 spawn 失败、或用户**极快**开文档抢在预热前触发该语言的 `get_or_init`，
+  则无收益但**不回归**——`once_cell::sync::OnceCell` 保证并发只一人付成本、结果一致。
+- **未列入清单的语言仍按需冷**：go/java/c/cpp/csharp/php/ruby/diff 等首次解析仍付
+  ②③ 一次性成本（清单只覆盖 markdown+rust+8 高频）。
+- **198ms 冷基线被保留为对照**：`measure_editor_frame_highlight_cost` 等**直接**构造
+  service/highlighter 的测试不经 root 启动路径、不触发预热，198ms 冷态可复现；
+  **生产**经预热后首开降至 ~68ms——这是同一笔成本从「用户等待的首开」前移到
+  「建窗口并发期」，**不是消失**，符合本项目「真实测量、不游戏指标」纪律
+  （既有测试一个数字未改）。
+
+**门禁（本次提交实测）**：fmt ✔｜check-arch 0 ✔｜clippy 真实零告警 ✔｜
+`test --workspace --all-targets` **2305 passed / 0 failed / 6 ignored** ✔｜
+`test --doc` 1/0/1 ✔｜`check_thresholds` 121（`--fix` 回写 `startup_timing.rs:34→35`）✔｜
+`size_gate` **10,599,936 B = 10.109 MB** ✔。新增 1 条 `#[ignore]` 收益基准（release
+口径）与 2 条 infra 正确性单测；2305 比 §3.2.16 的 2303 多 2 条 passed，
+6 ignored 比 5 多 1 条（即本项收益基准）。
+
 ### 3.3 防抖与窗口值校准（S8-06）
 
 | 指标 | 目标 | 实测 | 结论 |

@@ -828,3 +828,80 @@ fn measure_editor_frame_highlight_cost() {
         "NFR-PERF-05：交互帧 p95 {typing_p95:.2}ms 超过 10ms 预算"
     );
 }
+
+/// P3 冷启动缓解收益基准（A 项 P3，2026-10-29）。
+///
+/// **默认 ignore**：必须在 release 下用
+/// `cargo test --release --test integration measure_prewarm_cold_start_benefit -- --ignored --nocapture`
+/// 单独跑——`--ignored` 让本进程只跑这一条，`default_syntax_set()` 的
+/// `OnceLock` 是干净的，测到的才是真实「进程首次」成本。与
+/// `measure_editor_frame_highlight_cost` 的冷基线（§3.2.15：后台解析
+/// 198.99–204.56ms）/ 稳态（65.41–67.18ms）对照：预热把 ②③ 的一次性
+/// lazy 成本前移到建窗口并发期，首开解析应降到 ~65ms 量级。
+///
+/// 口径：先 `prewarm_highlighting()`（X ms = 被前移的成本），再构造与
+/// `measure_editor_frame_highlight_cost` **完全相同**的最小驱动，对 10KB
+/// markdown 文档首次分发 + `drain_highlight()`，读 `last_highlight_parse_ms()`（Y ms）。
+/// X + Y 近似原冷基线——「成本前移」而非「消失」。本用例只打印、不强断言时间，
+/// 避免 CI 机器波动造成 flaky（数字由人工单次运行登记进 metrics §3.2.17）。
+#[test]
+#[ignore = "收益基准：需 release 下显式单独运行"]
+fn measure_prewarm_cold_start_benefit() {
+    use std::sync::{Arc, Mutex};
+
+    use rustmark::application::markdown::queries::HighlightQuery;
+    use rustmark::application::markdown::service::{
+        DebouncePolicy, MarkdownAppService, RENDER_CACHE_CAPACITY, RenderCache,
+    };
+    use rustmark::infrastructure::highlighting::syntect_highlighter::prewarm_highlighting;
+    use rustmark::shared::geometry::{ByteOffset, TextRange};
+
+    // 1) 预热：进程内首次，真正做 ②③ 的 lazy 反序列化 / 正则编译。
+    let prewarm_start = Instant::now();
+    prewarm_highlighting();
+    let prewarm_ms = prewarm_start.elapsed().as_secs_f64() * 1000.0;
+
+    // 2) 与冷基线完全同构的最小驱动：10KB markdown（带 ```rust 围栏）。
+    let base = "# 标题 H1\n\n这是一段中文正文，包含 **加粗**、`行内代码` 与 [链接](https://example.com)。\n\n- 列表项一\n- 列表项二\n\n> 引用行\n\n```rust\nfn main() { println!(\"hi\"); }\n```\n\n";
+    let mut text = String::new();
+    while text.len() < 10 * 1024 {
+        text.push_str(base);
+    }
+
+    let provider = Arc::new(fakes::FakeDocumentContentProvider::new());
+    let doc_id = DocumentId::new();
+    provider.insert(doc_id, &text, 0, Some(FilePath::new("/d/a.md").unwrap()));
+
+    let clock = Arc::new(fakes::FakeClock::new(0));
+    let service = MarkdownAppService::new(
+        Arc::new(PulldownMarkdownParser::new()),
+        Arc::new(SyntectHighlighter::new()),
+        provider.clone(),
+        clock.clone(),
+        DebouncePolicy::new(150),
+        Arc::new(Mutex::new(RenderCache::new(RENDER_CACHE_CAPACITY))),
+    );
+
+    let hq = HighlightQuery {
+        doc_id,
+        range: TextRange::new(ByteOffset::new(0), ByteOffset::new(text.len())),
+        lang: Some("markdown".to_string()),
+    };
+
+    // 3) 首开分发 + 收结果，读后台真实解析耗时。
+    let dispatch = service.highlight(hq).expect("高亮应成功");
+    assert!(
+        dispatch.is_empty(),
+        "预热不改变 P1 分发语义：帧内仍返回空片段"
+    );
+    fakes::drain_highlight(&service);
+    let cold_parse = service
+        .last_highlight_parse_ms()
+        .expect("首开必须真的解析一次");
+
+    println!(
+        "[metrics] P3 冷启动预热：prewarm_highlighting() 耗时 {prewarm_ms:.2}ms ｜ \
+         预热后首开后台解析 {cold_parse:.2}ms \
+         （对照 §3.2.15 冷基线 198.99–204.56ms / 稳态 65.41–67.18ms）"
+    );
+}

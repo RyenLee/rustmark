@@ -47,6 +47,24 @@ pub fn run() -> anyhow::Result<()> {
         )
     })?;
     startup_timing::mark("装配完成");
+
+    // P3：预热 syntect per-language lazy 层，与 eframe 建窗口（实测 ~682ms，
+    // 占冷启动 99.3%）并发跑。此时装配已完成（worker 已 spawn、语法集第①层
+    // 已加载），预热 ②③ 约 0.1–0.3s，几乎必然在窗口就绪前完成。
+    // 独立后台线程：不占 worker 命令队列、不干扰 parse_count/in_flight 统计、
+    // 不碰 core/domain trait；spawn 失败只降级为不预热（无回归，只是没优化到）。
+    match std::thread::Builder::new()
+        .name("rustmark-prewarm".to_string())
+        .spawn(|| {
+            let started = std::time::Instant::now();
+            crate::infrastructure::highlighting::syntect_highlighter::prewarm_highlighting();
+            startup_timing::mark("预热完成");
+            log::debug!("语法高亮预热完成：{:?}", started.elapsed());
+        }) {
+        Ok(_) => {}
+        Err(e) => log::warn!("语法高亮预热线程启动失败，已跳过（不影响功能）：{e}"),
+    }
+
     frame::run(services)?;
     Ok(())
 }

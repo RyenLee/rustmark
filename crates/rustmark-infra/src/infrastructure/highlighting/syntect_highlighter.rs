@@ -201,6 +201,58 @@ impl SyntectHighlighter {
     }
 }
 
+/// 预热样本清单：`(语言标记, 代表性代码)`。
+///
+/// 覆盖编辑区恒定的 `markdown`（`src/presentation/views/editor_view.rs:136-142`
+/// 的 lang 恒为它）、测试语料涉及的 `rust`，以及高频代码围栏语言。样本里
+/// `markdown` **必须带 ```rust 围栏**：syntect 的 Markdown 语法会 embed 子语法，
+/// 解析该样本时顺带预热 Rust 的第②③层，与生产/测试语料一致。
+///
+/// 别名归并（见 [`data::LANGUAGE_ALIASES`]）：`javascript` 覆盖
+/// typescript/ts/tsx（syntect 5.3 无独立 TypeScript，均归 JavaScript），
+/// `bash` 覆盖 shell/sh/zsh/fish（均归 bash），`html` 覆盖 vue（无独立语法，
+/// 归 HTML）。每种 1–3 行代表性代码即可：`parse_line` 的 `find_best_match`
+/// 会遍历当前 context 链上的**全部** pattern 逐个 `search`，故首行解析就会
+/// 编译主 context 链的绝大多数正则（第③层）；配合 `ParseState::new` 触发的
+/// `lazy_contexts` 反序列化（第②层），足以把首开冷成本的主体前移。
+const PREWARM_SAMPLES: &[(&str, &str)] = &[
+    (
+        "markdown",
+        "# 标题 H1\n\n这是一段中文正文，包含 **加粗**、`行内代码` 与 [链接](https://example.com)。\n\n- 列表项一\n- 列表项二\n\n> 引用行\n\n```rust\nfn main() { println!(\"hi\"); }\n```\n\n",
+    ),
+    ("rust", "fn main() { let s = \"hi\"; } // note\n"),
+    ("python", "def f():\n    return 'x'  # note\n"),
+    // 覆盖 typescript/ts/tsx 别名（三者均归到 JavaScript 语法）。
+    ("javascript", "const a = 1;\n"),
+    ("json", "{\"a\": 1}\n"),
+    // 覆盖 shell/sh/zsh/fish 别名（均归到 bash 语法）。
+    ("bash", "echo \"hi\" # note\n"),
+    // 覆盖 vue 别名（无独立语法，归到 HTML）。
+    ("html", "<p class=\"a\">hi</p>\n"),
+    ("css", "a { color: red; }\n"),
+    ("sql", "SELECT 1;\n"),
+    ("yaml", "a: 1\n"),
+];
+
+/// 预热 syntect 的 per-language lazy 层（第②层 `LazyContexts` 反序列化 +
+/// 第③层正则编译），把「进程内首次真正解析」的一次性冷成本前移到启动期。
+///
+/// 复用 [`default_syntax_set`] 的全局 `&'static SyntaxSet`：只填充挂在
+/// `SyntaxReference`/`Regex` 上的 `OnceCell`，**不 clone 任何语法集**
+/// （syntect 的 `Regex::clone` 会清空已编译正则），不改变任何解析结果——
+/// lazy 层是纯记忆化。由 root 启动路径在装配后、建窗口前用后台线程调用，
+/// 与 eframe 建窗口（实测 ~682ms）并发跑。
+///
+/// 走生产同一条 `highlight` 路径：resolve → `ParseState::new`（②）→
+/// `parse_line`（③）→ classify，避免「预热 A 路径但生产走 B 路径」。
+/// 未知语言/解析失败按纯文本降级、尽力而为：预热失败不影响功能，只是没优化到。
+pub fn prewarm_highlighting() {
+    let highlighter = SyntectHighlighter::new(); // OnceLock 命中，~100ns，不重新加载
+    for (lang, sample) in PREWARM_SAMPLES {
+        let _ = highlighter.highlight(sample, Some(lang));
+    }
+}
+
 impl Default for SyntectHighlighter {
     fn default() -> Self {
         Self::new()
@@ -231,5 +283,60 @@ impl SyntaxHighlighter for SyntectHighlighter {
     /// 调用方不必为「创建会话」多付一次全文解析。
     fn start_session(&self) -> Option<Box<dyn HighlightSession>> {
         Some(Box::new(SyntectSession::new()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rustmark_core::domain::markdown::services::SyntaxHighlighter;
+
+    use super::{PREWARM_SAMPLES, SyntectHighlighter, prewarm_highlighting};
+
+    /// P3 最关键回归守卫：预热只填 `OnceCell`，绝不能改变解析结果。
+    ///
+    /// 对 `PREWARM_SAMPLES` 每样本，先记录一次 `highlight` 结果（进程内首调会
+    /// 现场反序列化 lazy 层，即**冷**结果），调 `prewarm_highlighting()`，再记录
+    /// 一遍（**热**结果），断言逐片段完全一致（`Vec<SyntaxSpan>` 的 range + style），
+    /// 并断言 `supports` 没变 false。这同时证明「冷/热解析输出相同」（lazy 是纯
+    /// 记忆化）且「调用 prewarm 不会污染共享的 `&'static SyntaxSet`」。
+    #[test]
+    fn prewarm_does_not_change_highlight_results() {
+        let before: Vec<_> = PREWARM_SAMPLES
+            .iter()
+            .map(|(lang, sample)| {
+                SyntectHighlighter::new()
+                    .highlight(sample, Some(lang))
+                    .expect("预热前解析应成功")
+            })
+            .collect();
+
+        prewarm_highlighting();
+
+        for (i, (lang, sample)) in PREWARM_SAMPLES.iter().enumerate() {
+            let after = SyntectHighlighter::new()
+                .highlight(sample, Some(lang))
+                .expect("预热后解析应成功");
+            assert_eq!(
+                before[i], after,
+                "预热改变了语言「{lang}」的解析结果（逐片段 range+style 必须完全一致）"
+            );
+            assert!(
+                SyntectHighlighter::new().supports(lang),
+                "预热后语言「{lang}」的 supports() 不应变 false"
+            );
+        }
+    }
+
+    /// 覆盖性：预热后清单每个语言都应能被识别（抓语言标记写错 / 别名映射漏）。
+    #[test]
+    fn prewarm_covers_all_listed_languages() {
+        prewarm_highlighting();
+        let highlighter = SyntectHighlighter::new();
+        for (lang, _) in PREWARM_SAMPLES {
+            assert!(
+                highlighter.supports(lang),
+                "预热清单里的语言「{lang}」必须可被识别（标记写错或别名映射漏）"
+            );
+        }
     }
 }
