@@ -1,10 +1,18 @@
 //! 真实系统打印调度：无头 Chromium `--print-to-pdf`、Windows `printto` 兜底、
 //! 非 Windows 的 `lp`（CUPS）。
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
-use super::backend::{CommandProbe, PathProbe, PrintOutcome};
+use super::backend::PrintOutcome;
+// `PathBuf` 与这两个 trait 只被 Windows 分支用到：无头 Chromium 不进 PATH，
+// 只能按绝对路径探测，故要 `PathBuf` + `CommandProbe::path_exists` +
+// 真实文件系统探测器 `PathProbe`。非 Windows 分支只查 `lp` / `lpstat`，
+// 用不到它们——不门控会在 `-D warnings` 下报 unused import。
+#[cfg(target_os = "windows")]
+use super::backend::{CommandProbe, PathProbe};
+#[cfg(target_os = "windows")]
+use std::path::PathBuf;
 
 /// 打印调度端口（V11-04）。
 ///
@@ -41,6 +49,11 @@ impl PrintDispatcher for SystemPrintDispatcher {
         }
         #[cfg(not(target_os = "windows"))]
         {
+            // CUPS 从源 HTML 打印：输出队列与目标文件由 CUPS 自己决定，
+            // 本进程给不出目标路径——这正是本分支回报 `Delegated` 而非 `Wrote` 的原因。
+            // 参数 `pdf` 按端口签名保留，这里显式消费，既免死变量告警，
+            // 也把「为什么不用它」写在它被忽略的地方。
+            let _ = pdf;
             // `lpstat` 只探测、不打印，探测到它说明 CUPS 客户端不完整。
             if super::backend_hint_is_stat_only() {
                 return Err("系统仅安装了 lpstat（无 lp），请用浏览器打印该 HTML".to_string());

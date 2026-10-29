@@ -36,6 +36,7 @@ impl FakeProbe {
     }
 
     /// 假机器上装了一个 Chromium 系浏览器（路径与真机候选一致）。
+    #[cfg(target_os = "windows")]
     fn with_browser(browser: &'static str) -> Self {
         Self {
             available: Vec::new(),
@@ -63,8 +64,13 @@ impl CommandProbe for FakeProbe {
 }
 
 /// 真机上 Edge 的默认安装路径（候选列表里的第一条）。
+// 两个路径常量与 `with_browser` 都只服务于「无头 Chromium」这条 Windows-only
+// 路径（见 `SystemPdfExporter::detect` 的平台分支），非 Windows 上没有引用点，
+// 不门控会在 `-D warnings` 下报死代码。
+#[cfg(target_os = "windows")]
 const EDGE_PATH: &str = r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe";
 /// 真机上 Chrome 的默认安装路径。
+#[cfg(target_os = "windows")]
 const CHROME_PATH: &str = r"C:\Program Files\Google\Chrome\Application\chrome.exe";
 
 /// 记录型打印调度：不碰系统，只记下「被要求打印什么、目标在哪」（V11-04）。
@@ -384,7 +390,13 @@ fn pdf_export_writes_print_html_and_dispatches_to_the_target_path() {
 ///
 /// 回报 0 会让界面把一次成功的直接导出说成「请在对话框里另存为 PDF」，
 /// 用户会跑去找一个并不存在的对话框。
+// 仅 Windows：**只有** Windows 的 `PdfBackend::detect` 会走「无头 Chromium →
+// `PdfBackend::direct`」这条能直接落盘的路径；macOS / Linux 分支只能返回
+// `dialog`（CUPS 从源 HTML 打印，目标由 CUPS 决定），永远拿不到 `direct`，
+// 于是 `export()` 只会报 `IoUnavailable`、本用例必红（run #11/#12 实测）。
+// 给 CI 装 CUPS 也救不了——装了仍只是 `dialog`，`writes_pdf` 依旧为 false。
 #[test]
+#[cfg(target_os = "windows")]
 fn pdf_export_reports_real_size_when_written_directly() {
     let dir = tempfile::tempdir().expect("临时目录");
     let target = dir.path().join("direct.pdf");

@@ -25,6 +25,12 @@ pub struct PdfBackend {
 
 impl PdfBackend {
     /// 构造「可用、且直接落盘 PDF」的结果。
+    ///
+    /// 仅 Windows 存在「直接落盘」的后端——只有无头 Chromium 能把 PDF 静默写到
+    /// 目标路径；macOS / Linux 的 `lp` 一律走 CUPS 队列、必须经打印对话框。
+    /// 因此本构造子在非 Windows 上不可达，随变体一起门控，避免 `-D warnings`
+    /// 下的 dead-code 误报（run #12 的 ubuntu / macos clippy 即红在此）。
+    #[cfg(target_os = "windows")]
     pub(super) const fn direct(command: &'static str) -> Self {
         Self {
             command,
