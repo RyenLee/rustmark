@@ -4,7 +4,7 @@ use egui::{RichText, ScrollArea, Ui};
 
 use crate::presentation::state::sidebar_ui_state::{NameEdit, TreeRow, tree_rows};
 use crate::presentation::theme::builtin::Theme;
-use crate::presentation::view_context::EditorViewContext;
+use crate::presentation::view_context::SidebarViewAccess;
 use crate::presentation::widgets;
 use rustmark_core::shared::path::file_name_of;
 
@@ -18,7 +18,7 @@ const ICON_W: f32 = 16.0;
 const ICON_GAP: f32 = 4.0;
 
 /// 文件树标签。
-pub(super) fn files_tab(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
+pub(super) fn files_tab(vctx: &mut dyn SidebarViewAccess, ui: &mut Ui, theme: &Theme) {
     if !vctx.workspace_entries_state().is_loaded() {
         return;
     }
@@ -117,13 +117,13 @@ impl RowEditing for TreeRow {
 ///    预览区打开——与资源管理器、VS Code 的行为一致，避免「点一下
 ///    就切走当前文档」打断编辑。
 /// 4. **白名单外的格式置灰且打不开**（问题 045）：只有
-///    [`EditorViewContext::can_open_as_text`] 放行的文件可双击打开；图片 /
+///    [`crate::presentation::view_context::CommandPort::can_open_as_text`] 放行的文件可双击打开；图片 /
 ///    二进制等以次要色绘制（一眼可辨「这一项不能用」），双击不派打开
 ///    意图、只把原因报到状态栏。判据与应用层的打开守卫**同源**——
 ///    文件树置灰的东西，打开管线也一定拒绝，反之亦然。
 fn file_row(
     ui: &mut Ui,
-    vctx: &mut dyn EditorViewContext,
+    vctx: &mut dyn SidebarViewAccess,
     theme: &Theme,
     row: &TreeRow,
     selected: &Option<String>,
@@ -168,7 +168,7 @@ fn file_row(
         ui.add(egui::Label::new(RichText::new(&row.name).color(name_color)).truncate());
     });
     // 白名单外的行挂一句悬停说明：置灰只表达了「不能用」，说不清「为什么」。
-    // 文案取自应用层（[`EditorViewContext::unsupported_format_notice`]）——
+    // 文案取自应用层（[`crate::presentation::view_context::CommandPort::unsupported_format_notice`]）——
     // 与双击时报到状态栏的是**同一句**，不会出现两种说法。
     let response = if openable {
         response
@@ -353,7 +353,7 @@ fn paint_row_icon(
 /// 锚点，窗口边缘触发 `constrain` 平移后落点可能落到矩形之外，不豁免会
 /// 出现「一右键就闪一下」。
 fn show_context_menu(
-    vctx: &mut dyn EditorViewContext,
+    vctx: &mut dyn SidebarViewAccess,
     ui: &mut Ui,
     theme: &Theme,
     opened_this_frame: bool,
@@ -425,7 +425,7 @@ struct MenuIntent {
 }
 
 /// 执行右键菜单意图。
-fn run_menu_intent(vctx: &mut dyn EditorViewContext, path: &str, intent: MenuIntent) {
+fn run_menu_intent(vctx: &mut dyn SidebarViewAccess, path: &str, intent: MenuIntent) {
     if let Some(parent) = intent.create_file {
         vctx.sidebar_state().start_create(Some(&parent), false);
     } else if let Some(parent) = intent.create_folder {
@@ -443,7 +443,7 @@ fn run_menu_intent(vctx: &mut dyn EditorViewContext, path: &str, intent: MenuInt
 /// 名字编辑行（新建与重命名共用一套渲染与提交）。
 fn name_editor(
     ui: &mut Ui,
-    vctx: &mut dyn EditorViewContext,
+    vctx: &mut dyn SidebarViewAccess,
     theme: &Theme,
     key: &str,
     label: &str,
@@ -479,7 +479,7 @@ fn name_editor(
 }
 
 /// 提交一次名字编辑（新建或重命名）。
-fn commit_name_edit(vctx: &mut dyn EditorViewContext, label: &str) {
+fn commit_name_edit(vctx: &mut dyn SidebarViewAccess, label: &str) {
     let Some(edit) = vctx.sidebar_state().take_edit() else {
         return;
     };
@@ -512,7 +512,7 @@ fn commit_name_edit(vctx: &mut dyn EditorViewContext, label: &str) {
 }
 
 /// 提交失败时把草稿放回编辑态（让用户改后重试，而不是重新敲一遍）。
-fn restore_draft(vctx: &mut dyn EditorViewContext, edit: NameEdit, label: &str) {
+fn restore_draft(vctx: &mut dyn SidebarViewAccess, edit: NameEdit, label: &str) {
     match edit {
         NameEdit::Create {
             parent,
@@ -529,7 +529,7 @@ fn restore_draft(vctx: &mut dyn EditorViewContext, edit: NameEdit, label: &str) 
 }
 
 /// 删除并给出反馈。
-fn delete_with_feedback(vctx: &mut dyn EditorViewContext, path: &str) {
+fn delete_with_feedback(vctx: &mut dyn SidebarViewAccess, path: &str) {
     match vctx.delete_entry(path) {
         Ok(()) => vctx
             .sidebar_state()
@@ -546,7 +546,7 @@ pub(super) fn display_name(path: &str) -> String {
 /// 执行文件树的点击意图（在渲染结束后统一做，见 `FileIntent`）。
 ///
 /// 返回本帧是否**新打开了**右键菜单（浮层据此豁免同一帧的关闭判定）。
-fn run_file_intent(vctx: &mut dyn EditorViewContext, intent: FileIntent) -> bool {
+fn run_file_intent(vctx: &mut dyn SidebarViewAccess, intent: FileIntent) -> bool {
     let clicked = intent.select.is_some()
         || intent.toggle.is_some()
         || intent.open.is_some()
@@ -570,7 +570,7 @@ fn run_file_intent(vctx: &mut dyn EditorViewContext, intent: FileIntent) -> bool
         vctx.sidebar_state().close_context_menu();
     }
     // 白名单外的格式：不进打开管线，只把原因报到状态栏（问题 045）。
-    // 文案与置灰行的悬停说明同源，见 [`EditorViewContext::report_unsupported_format`]。
+    // 文案与置灰行的悬停说明同源，见 [`crate::presentation::view_context::CommandPort::report_unsupported_format`]。
     if let Some(path) = intent.denied {
         vctx.report_unsupported_format(&path);
     }

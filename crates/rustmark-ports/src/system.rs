@@ -42,40 +42,129 @@ pub trait ExternalOpener: Send + Sync {
     fn open(&self, target: &str) -> std::io::Result<()>;
 }
 
-/// 该链接目标是否可安全打开（拒绝 XSS 向量）。
+/// 外链打开目标的分类结果（纯逻辑，零 IO，可被任意层依赖）。
 ///
-/// 与 `export::html_sanitize::is_safe_url` 的取向一致但面向「点击跳转」：
-/// 绝对协议只放 `http/https/mailto/tel`（拒绝 `javascript:` / `vbscript:` /
-/// `data:` 等非位图 data URI）；相对路径与 `file://` 视为本地文件，允许；
-/// `#锚点`（内部跳转）在调用方单独处理，这里返回 `true` 以免误杀。
-pub fn is_safe_to_open(url: &str) -> bool {
-    let trimmed = url.trim();
-    if trimmed.is_empty() {
-        return false;
+/// 「能不能打开」与「该怎么打开」是两件事：前者是安全判断，后者是平台行为。
+/// 把两者收在一处（本 crate），实现层只做动作分派，避免出现
+/// 「校验在表现层、执行在基础设施、两边口径不一致」的分叉。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OpenTarget {
+    /// 文档内锚点，调用方自行跳转（打开器应视为 no-op）。
+    Anchor,
+    /// http / https / mailto / tel，交系统协议处理器。
+    Remote,
+    /// 本地文本 / 位图，可交系统关联程序打开（不会执行代码）。
+    LocalDocument,
+    /// 本地但不该执行（可执行文件 / 脚本 / HTML / PDF 等）：
+    /// 仅允许「在文件管理器中定位」。
+    RevealOnly,
+    /// 明确不安全（XSS scheme、UNC、协议相对、控制字符、编码绕过、空串）。
+    Reject,
+}
+
+/// 可安全交给关联程序打开的本地扩展名（**不含**可执行 / 脚本 / HTML / PDF）。
+///
+/// 这些格式只能被「读取」，不会被当作程序执行；HTML / PDF 之所以不在列，
+/// 是因为它们的渲染器会执行脚本，与浏览器打开网页同属一个风险面。
+const OPENABLE_EXTENSIONS: &[&str] = &[
+    "md", "markdown", "txt", "png", "jpg", "jpeg", "gif", "webp", "bmp",
+];
+
+/// 识别形如 `scheme:` 的前缀；Windows 盘符 `C:` 不算 scheme。
+fn scheme_of(s: &str) -> Option<&str> {
+    let colon = s.find(':')?;
+    let scheme = &s[..colon];
+    if scheme.is_empty()
+        || !scheme
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '-' || c == '.')
+    {
+        return None;
     }
-    // 内部锚点：交给调用方做标题跳转，本身无害。
-    if trimmed.starts_with('#') {
-        return true;
+    // 单字母：Windows 盘符（`C:\x` / `C:/x` / `c:x`），按本地路径处理。
+    if scheme.len() == 1 {
+        return None;
     }
-    // XSS 向量：这些 scheme 通常**不含** `://`，若只靠下方 `://` 判定会漏过，
-    // 故在 `://` 检查之前显式拒绝。scheme 大小写不敏感（`DATA:` / `JavaScript:`
-    // 等同），按小写前缀判定。即便将来有 `javascript://` 形态也一并挡下。
-    let lower = trimmed.to_ascii_lowercase();
+    Some(scheme)
+}
+
+/// 取本地串的扩展名（`file://` 先剥前缀）。
+fn local_extension(target: &str) -> &str {
+    let path = target.strip_prefix("file://").unwrap_or(target);
+    match path.rsplit_once('.') {
+        Some((_, ext)) => ext,
+        None => "",
+    }
+}
+
+/// 该目标应如何打开（纯函数，单测唯一入口）。
+///
+/// 判定顺序即优先级：空 / 控制字符 → 锚点 → UNC 与协议相对 → XSS scheme →
+/// 协议白名单 → 本地路径。
+pub fn classify_open_target(raw: &str) -> OpenTarget {
+    let t = raw.trim();
+    if t.is_empty() {
+        return OpenTarget::Reject;
+    }
+    // 控制字符（含 NUL）：命令行与文件名都不该出现。
+    if t.chars().any(|c| c.is_control()) {
+        return OpenTarget::Reject;
+    }
+    if t.starts_with('#') {
+        return OpenTarget::Anchor;
+    }
+    // 协议相对 `//host` 与 UNC `\\host`：Windows 下会触发 SMB 访问
+    // （凭据外泄 + 远程内容加载），一律拒绝。
+    if t.starts_with("//") || t.starts_with(r"\\") {
+        return OpenTarget::Reject;
+    }
+    // XSS 向量：显式拦截，防 `://` 分支漏过（`javascript:` 通常不含 `://`）。
+    let lower = t.to_ascii_lowercase();
     if lower.starts_with("javascript:")
         || lower.starts_with("vbscript:")
         || lower.starts_with("data:")
     {
-        return false;
+        return OpenTarget::Reject;
     }
-    // 相对路径（不含协议分隔符）或显式 file://：本地文件，允许。
-    if trimmed.starts_with("file://") || !trimmed.contains("://") {
-        return true;
+
+    match scheme_of(t) {
+        // 绝对协议：仅白名单（大小写不敏感，修掉 `HTTPS://` 被误拒的旧缺陷）。
+        Some(scheme) => match scheme.to_ascii_lowercase().as_str() {
+            "http" | "https" | "mailto" | "tel" => OpenTarget::Remote,
+            "file" => classify_local(t),
+            _ => OpenTarget::Reject,
+        },
+        // 无 scheme：相对 / 绝对本地路径。
+        None => classify_local(t),
     }
-    // 绝对协议白名单（与导出清洗同源，但导出侧还含 `tel:`，这里同样放行）。
-    matches!(
-        trimmed.split("://").next(),
-        Some("http") | Some("https") | Some("mailto") | Some("tel")
-    )
+}
+
+fn classify_local(target: &str) -> OpenTarget {
+    let path = target.strip_prefix("file://").unwrap_or(target);
+    // 本地路径里的百分号 / 查询串 / 锚点：`x%2Eexe` 这类编码可绕过扩展名判定。
+    if path.contains('%') || path.contains('?') || path.contains('#') {
+        return OpenTarget::Reject;
+    }
+    let ext = local_extension(target).to_ascii_lowercase();
+    if OPENABLE_EXTENSIONS.contains(&ext.as_str()) {
+        OpenTarget::LocalDocument
+    } else {
+        // 可执行 / 脚本 / 归档 / HTML / PDF / 无扩展名：只定位，不执行。
+        OpenTarget::RevealOnly
+    }
+}
+
+/// 该链接目标是否可安全打开（拒绝 XSS 向量）。
+///
+/// 这是 [`classify_open_target`] 的薄门面：`true` 只表示「不是明确危险输入」，
+/// 具体动作由实现层按分类决定。因此 `RevealOnly`（本地 exe / html / pdf）
+/// 也返回 `true`——它们不会被**执行**，只会被文件管理器定位。
+///
+/// 与 `export::html_sanitize::is_safe_url` 的取向一致但面向「点击跳转」：
+/// 绝对协议只放 `http/https/mailto/tel`；相对路径与 `file://` 视为本地文件；
+/// `#锚点`（内部跳转）在调用方单独处理，这里返回 `true` 以免误杀。
+pub fn is_safe_to_open(url: &str) -> bool {
+    !matches!(classify_open_target(url), OpenTarget::Reject)
 }
 
 #[cfg(test)]
@@ -118,5 +207,47 @@ mod tests {
     fn rejects_empty_or_whitespace() {
         assert!(!is_safe_to_open(""));
         assert!(!is_safe_to_open("   "));
+    }
+
+    /// 分类是「怎么打开」的唯一事实来源，逐条钉住输入 → 动作的映射。
+    ///
+    /// 这张表同时是 C-1 的回归清单：`&calc.exe` 这类 payload 曾因
+    /// `cmd /C` 二次解析而真正执行，现在必须原样作为 URL 交给系统。
+    #[test]
+    fn classifies_targets() {
+        use super::OpenTarget::{Anchor, LocalDocument, Reject, Remote, RevealOnly};
+        use super::classify_open_target;
+
+        let cases: &[(&str, super::OpenTarget)] = &[
+            // 合法远程地址：查询串里的 `&` 是普通字符，不再有 shell 语义。
+            ("https://a.com&calc.exe", Remote),
+            ("https://a.com?a=1&b=2", Remote),
+            ("HTTPS://example.com", Remote),
+            ("http://example.com", Remote),
+            ("mailto:a@b.com", Remote),
+            ("tel:+123456", Remote),
+            // 本地可执行 / 脚本：只允许在文件管理器中定位，绝不执行。
+            ("C:\\x\\evil.exe", RevealOnly),
+            ("./evil.bat", RevealOnly),
+            ("//host/share", Reject),
+            ("\\\\host\\share", Reject),
+            ("javascript:alert(1)", Reject),
+            ("DATA:text/html,x", Reject),
+            ("x%2Eexe", Reject),
+            ("", Reject),
+            ("   ", Reject),
+            ("a\u{0}b", Reject),
+            ("#section", Anchor),
+            ("./foo.png", LocalDocument),
+            ("relative/path.md", LocalDocument),
+            ("file:///C:/x.png", LocalDocument),
+        ];
+        for (input, want) in cases {
+            assert_eq!(
+                classify_open_target(input),
+                *want,
+                "输入 {input:?} 的分类不符"
+            );
+        }
     }
 }

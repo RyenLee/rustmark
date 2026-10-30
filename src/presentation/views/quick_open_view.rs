@@ -22,7 +22,7 @@ use crate::presentation::state::quick_open_ui_state::{
     MAX_CANDIDATES, QuickOpenItem, candidates_from_workspace, filter_candidates,
 };
 use crate::presentation::theme::builtin::Theme;
-use crate::presentation::view_context::EditorViewContext;
+use crate::presentation::view_context::QuickOpenViewAccess;
 use crate::presentation::widgets;
 
 /// 对话框默认尺寸（对齐原型 `.palette { width: 480px }`）。
@@ -36,7 +36,7 @@ const ROW_H: f32 = 28.0;
 pub const QUICK_OPEN_INPUT_ID: &str = "rustmark.quick_open.search";
 
 /// 绘制快速打开浮层。
-pub fn show(vctx: &mut dyn EditorViewContext, ctx: &Context) {
+pub fn show(vctx: &mut dyn QuickOpenViewAccess, ctx: &Context) {
     let mut open = true;
     egui::Window::new(Overlay::QuickOpen.title())
         .id(egui::Id::unique("rustmark.overlay.quick_open"))
@@ -65,7 +65,7 @@ pub fn show(vctx: &mut dyn EditorViewContext, ctx: &Context) {
 ///
 /// 判据是「**本帧**有按键事件」而非「焦点在搜索框」——
 /// 后者在 egui 里每帧都成立，会导致按住 ↑ 时反复触底。
-fn handle_keys(vctx: &mut dyn EditorViewContext, ctx: &Context) {
+fn handle_keys(vctx: &mut dyn QuickOpenViewAccess, ctx: &Context) {
     if !vctx.dialog_state().is_open(Overlay::QuickOpen) {
         return;
     }
@@ -112,7 +112,7 @@ fn handle_keys(vctx: &mut dyn EditorViewContext, ctx: &Context) {
 /// 收 `&mut dyn` 而非 `&dyn`：查询词取自快速打开状态（可写的那一份），
 /// 而 `&dyn` 上调不动 `&mut self` 的方法。**它本身不写任何状态**——
 /// 可变的只是「读得到哪一份状态」这件事。
-pub fn candidates(vctx: &mut dyn EditorViewContext) -> Vec<QuickOpenItem> {
+pub fn candidates(vctx: &mut dyn QuickOpenViewAccess) -> Vec<QuickOpenItem> {
     let root = vctx
         .workspace_entries_state()
         .root
@@ -131,7 +131,7 @@ pub fn candidates(vctx: &mut dyn EditorViewContext) -> Vec<QuickOpenItem> {
 }
 
 /// 主体。
-fn body(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
+fn body(vctx: &mut dyn QuickOpenViewAccess, ui: &mut Ui) {
     let theme = vctx.theme_state().clone();
     search_box(vctx, ui);
     let list = candidates(vctx);
@@ -151,7 +151,7 @@ fn body(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
 /// 永远不可达的分支（`openable_overlay` 先把 `Ctrl+O` 拦走了）。
 /// 面板内留一个显式按钮，是把「工作区外的文件也能打开」这件事
 /// 交给用户一次点击，而不是让它消失。
-fn footer(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme, empty: bool) {
+fn footer(vctx: &mut dyn QuickOpenViewAccess, ui: &mut Ui, theme: &Theme, empty: bool) {
     ui.horizontal(|ui| {
         if ui.button("浏览本机文件…").clicked() {
             vctx.quick_open_ui_state().open();
@@ -180,7 +180,7 @@ fn footer(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme, empty: b
 /// 手绘那份是多余的：`TextEdit` 自己会按焦点态渲染查询文本与占位提示，
 /// 颜色也已由 `.text_color` / 主题的 `weak_text_color` 给出。
 /// 这里只保留框底与点击聚焦。
-fn search_box(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
+fn search_box(vctx: &mut dyn QuickOpenViewAccess, ui: &mut Ui) {
     let mut query = vctx.quick_open_ui_state().query.clone();
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), SEARCH_H),
@@ -213,7 +213,7 @@ fn search_box(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
 /// 旧实现用 `layout_no_wrap` 画全名，长文件名会直接盖在分组文字上
 /// （与欢迎页最近文件同一缺陷类）。截断只做一个 galley（缺陷类 033：
 /// 多个截断标签会把固定宽容器撑出面板）。
-fn results(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme, list: &[QuickOpenItem]) {
+fn results(vctx: &mut dyn QuickOpenViewAccess, ui: &mut Ui, theme: &Theme, list: &[QuickOpenItem]) {
     if list.is_empty() {
         ui.add_space(theme.metrics.space_xl);
         ui.centered_and_justified(|ui| {
@@ -307,7 +307,7 @@ fn results(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme, list: &
 ///    改一处忘一处就会出现「鼠标点得开、键盘打不开」。
 /// 2. 关闭浮层与打开文件要放在同一处：顺序错了会闪现
 ///    「新文件已载入而浮层还盖在上面」，用户以为没生效而连点。
-fn apply_pick(vctx: &mut dyn EditorViewContext, item: &QuickOpenItem) {
+fn apply_pick(vctx: &mut dyn QuickOpenViewAccess, item: &QuickOpenItem) {
     // 格式白名单外：**不关浮层**、不开文档，只说明原因（问题 045）。
     // 关掉浮层会让这次点击看起来「生效了」——用户以为文件开了，
     // 却发现标签没变。留在浮层上，他还能立刻改选另一个文件。

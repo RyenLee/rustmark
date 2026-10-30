@@ -162,16 +162,11 @@ pub fn file_url(path: &Path) -> String {
 /// - `@page` 的纸张尺寸会被尊重（A4 → 594.96×841.92pt、A5 → 420×594.96pt，实测）。
 #[cfg(target_os = "windows")]
 fn headless_print(browser: &Path, html: &Path, pdf: &Path) -> Result<u64, String> {
-    let output = Command::new(browser)
-        .args([
-            "--headless=new",
-            "--disable-gpu",
-            "--no-first-run",
-            "--no-default-browser-check",
-            "--no-pdf-header-footer",
-        ])
-        .arg(format!("--print-to-pdf={}", pdf.display()))
-        .arg(file_url(html))
+    // 第二道防线（H-1）：落盘前逐条核对脚本数量，清洗漏掉一个就拒绝打印。
+    let source = std::fs::read_to_string(html).map_err(|e| format!("读取打印源失败：{e}"))?;
+    ensure_print_source_is_sanitized(&source)?;
+
+    let output = headless_print_command(browser, html, pdf)
         .output()
         .map_err(|e| format!("调起 {} 失败：{e}", browser.display()))?;
 
@@ -187,6 +182,57 @@ fn headless_print(browser: &Path, html: &Path, pdf: &Path) -> Result<u64, String
         )
     })?;
     Ok(size)
+}
+
+/// 打印源的第二道防线：只允许导出器自己注入的脚本存在（fail-closed）。
+///
+/// # 为什么不是 `--blink-settings=scriptEnabled=false`
+///
+/// 方案初稿曾打算用它做引擎级开关。本机 Edge 154 实测：带上该参数后
+/// `--print-to-pdf` **完全不产出文件**（渲染进程侧报 mojo
+/// `FrameWidgetHost` 拒绝），打印直接失败；改用 `--disable-javascript`
+/// 则实测脚本照旧执行（同一份 html 的 PDF 页数不变）。即：两者都不可用。
+///
+/// 故第二道防线改为**结构校验**：打印源里 `<script` 的条数必须恰好等于
+/// `runtime_resources` 预期注入的条数（不含公式 / 图表的静态文档为 0，
+/// 仅公式或仅图表为 2，两者都有为 3）。一旦清洗漏掉用户脚本，这里立刻
+/// 失败并拒绝打印，而不是带着脚本去渲染。
+///
+/// 公开仅为让单测直接断言（纯函数，零 IO）。
+pub fn ensure_print_source_is_sanitized(html: &str) -> Result<(), String> {
+    let lower = html.to_ascii_lowercase();
+    let has_math = lower.contains("class=\"math");
+    let has_mermaid = lower.contains("language-mermaid");
+    let expected =
+        usize::from(has_math) + usize::from(has_mermaid) + usize::from(has_math || has_mermaid);
+    let actual = lower.matches("<script").count();
+    if actual > expected {
+        return Err(format!(
+            "打印源包含未清洗的脚本（`<script` {actual} 处，预期最多 {expected} 处），已拒绝打印"
+        ));
+    }
+    Ok(())
+}
+
+/// 构造无头打印命令（纯构造，便于单测断言参数而**不真起进程**）。
+///
+/// 参数顺序：`--print-to-pdf=<path>` 在目标 URL 之前；值经单个 `arg` 传入，
+/// 路径含空格 / 中文也不需要引号（不经 shell）。`file_url()` 已对空格与
+/// 非 ASCII 做百分号编码。
+#[cfg(target_os = "windows")]
+pub fn headless_print_command(browser: &Path, html: &Path, pdf: &Path) -> Command {
+    let mut command = Command::new(browser);
+    command.args([
+        "--headless=new",
+        "--disable-gpu",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--no-pdf-header-footer",
+    ]);
+    command
+        .arg(format!("--print-to-pdf={}", pdf.display()))
+        .arg(file_url(html));
+    command
 }
 
 /// 构造调用系统 `printto` 动词的 PowerShell 命令。

@@ -20,7 +20,7 @@ use egui::{Align, Context, Layout, RichText, Ui};
 
 use crate::presentation::state::dialog_ui_state::Overlay;
 use crate::presentation::theme::builtin::Theme;
-use crate::presentation::view_context::EditorViewContext;
+use crate::presentation::view_context::StatsViewAccess;
 use rustmark_core::application::dto::StatsView;
 use rustmark_core::shared::text::thousands;
 
@@ -46,7 +46,7 @@ fn row(ui: &mut Ui, theme: &Theme, label: &str, value: &str, hint: Option<&str>)
 }
 
 /// 绘制文档统计浮层。
-pub fn show(vctx: &mut dyn EditorViewContext, ctx: &Context) {
+pub fn show(vctx: &mut dyn StatsViewAccess, ctx: &Context) {
     let mut open = true;
     egui::Window::new(Overlay::Stats.title())
         .id(egui::Id::unique("rustmark.overlay.stats"))
@@ -64,7 +64,7 @@ pub fn show(vctx: &mut dyn EditorViewContext, ctx: &Context) {
 }
 
 /// 主体。
-fn body(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
+fn body(vctx: &mut dyn StatsViewAccess, ui: &mut Ui) {
     let theme = vctx.theme_state().clone();
     // 没有活动文档时**明说**而不是显示一堆 0：0 字的文件与
     // 「根本没打开文档」在界面上必须可区分。

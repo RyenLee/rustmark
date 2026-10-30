@@ -281,7 +281,7 @@ fn render_split(
     // 滚动同步放在**两侧都画完之后**：`ScrollArea` 的用户滚轮增量是在
     // 它自己的 `show` 内部叠加的，只有画完才能拿到本帧的真实偏移。
     // 算出的目标在下一帧生效（16ms），对连续滚动无感。
-    let now_ms = vctx.markdown_service().now().millis();
+    let now_ms = vctx.now_ms();
     crate::presentation::views::scroll_sync::apply(vctx, now_ms);
 }
 

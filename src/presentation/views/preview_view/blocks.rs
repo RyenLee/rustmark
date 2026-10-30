@@ -35,7 +35,7 @@ enum FlowPart<'a> {
 /// 视觉上等价于 Typora 里「图片前后有文字」的常见观感，且实现可靠。
 #[allow(clippy::too_many_arguments)] // 与 `render_inline_text` 同族：在其九项上下文之上多一组「行内图片」，打包成 struct 会让每个调用方多一次所有权转换
 pub(super) fn draw_text_with_images(
-    vctx: &mut dyn EditorViewContext,
+    vctx: &mut dyn PreviewViewAccess,
     ui: &mut Ui,
     theme: &Theme,
     content: &str,
@@ -152,7 +152,7 @@ fn spans_in_range(spans: &[SpanView], start: usize, end: usize) -> Vec<SpanView>
 /// 这是预览区唯一「点击跳转」的入口——正文段落不给点击，
 /// 否则用户在预览里想选中文本时会被跳转打断。
 pub(super) fn draw_heading(
-    vctx: &mut dyn EditorViewContext,
+    vctx: &mut dyn PreviewViewAccess,
     ui: &mut Ui,
     theme: &Theme,
     block: &BlockView,
@@ -215,7 +215,7 @@ pub(super) fn draw_heading(
 /// 段落：按可用宽度折行；行内样式（粗体 / 行内代码 / 键帽 / 高亮 / 上下标）
 /// 由 [`render_inline_text`] 按片段排版。
 pub(super) fn draw_paragraph(
-    vctx: &mut dyn EditorViewContext,
+    vctx: &mut dyn PreviewViewAccess,
     ui: &mut Ui,
     theme: &Theme,
     block: &BlockView,
@@ -252,7 +252,7 @@ pub(super) fn draw_paragraph(
 /// 与行内样式）都回流在 `content` 里，画在色条右侧的框内；`content` 为空
 /// 的场合（理论上只剩空引用 `>`）只画色条。
 pub(super) fn draw_quote(
-    vctx: &mut dyn EditorViewContext,
+    vctx: &mut dyn PreviewViewAccess,
     ui: &mut Ui,
     theme: &Theme,
     block: &BlockView,

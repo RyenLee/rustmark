@@ -1,7 +1,7 @@
 # 依赖清单与版本锁定
 
 > 关联需求：§5.1、§5.2、§8.1；关联任务：S1-08、S2-01、S5-01~03、S8-02
-> 核实方式：crates.io API 查询，日期 2026-10-06；**2026-10-30 按 7 份 manifest + `Cargo.lock` 逐条复核（V11-67 依赖统一收口），修正了 `toml` / `pulldown-cmark` / `egui`·`eframe` 三处陈旧记录，并补入 `image` / `wgpu` 两行**。**新增依赖须登记体积贡献并经 ADR 追加评审。**
+> 核实方式：crates.io API 查询，日期 2026-10-06；**2026-10-30 按 7 份 manifest + `Cargo.lock` 逐条复核（V11-67 依赖统一收口），修正了 `toml` / `pulldown-cmark` / `egui`·`eframe` 三处陈旧记录，并补入 `image` / `wgpu` 两行、`embed-resource`（exe 图标资源，2026-10-30 随 logo 接入加入）一行**。**新增依赖须登记体积贡献并经 ADR 追加评审。**
 
 ---
 
@@ -27,6 +27,7 @@
 | 图片 | `image` | **0.25**（锁 `0.25.10`） | 0.25.10 | 预览区图片解码（root 视图 + infra 落盘/缩放） | 已计入 eframe 预算 | `default-features = false` + `["png","jpeg","gif","webp","bmp"]`，与 `asset_loader::policy::ALLOWED_MIME` 白名单逐一对应；**不启 `svg`**（SVG 可携带 `<script>`，见 asset_loader 安全说明） |
 | 渲染 | `wgpu` | **30.0.1** | 30.0.1 | 仅补开平台后端 feature（应用代码不直接调用） | 计入 eframe 预算 | `default-features = false` + `["std"]`；后端按平台各开一个（Windows `dx12` / macOS `metal` / 其它 `vulkan`+`gles`），见 §1 注与 §7 |
 | 测试 | `tempfile` | **3** | 3.27 | 仅 dev-dependency（原子保存、仓储测试） | 不进 release | 阶段 05 起使用 |
+| 构建 | `embed-resource` | **3.0.12** | 3.0.12 | 把 `assets/logo/rustmark.rc`（→ `rustmark.ico`）编进 exe 资源段，即资源管理器 / 「固定到任务栏」看到的静态图标 | 不进运行期依赖图 | **仅 Windows 的 build-dependency**（`[target.'cfg(windows)'.build-dependencies]`）。exec 侧代价只有资源段本身：release exe 10.11 → **10.15 MiB**（ICO 17 KB）。**不用 `winres`**：它依赖 `toml 0.5`，会在已收口的 `toml 1.1.8` 上重造重复版本；本 crate 依赖 `cc` / `rustc_version` / `toml 1` / `memchr`（实测 `Cargo.lock`），`toml` 归并到既有 `1.1.8`。缺 `rc.exe` 时只打 `cargo:warning` 并继续构建（`CompilationResult::NotAttempted`），不失败 |
 
 > **eframe 渲染后端（实测）**：`eframe` 的 `default` 后端是 **`glow`（OpenGL）而非 wgpu**。
 > 需求 §5.1 要求 wgpu，故 `Cargo.toml` 中关闭 `default-features` 并显式启用后端特性，
@@ -156,6 +157,7 @@
 |---|---|---|
 | `pulldown-cmark`、`ropey`、`rfd`、`toml`、`ureq`、`rustls-native-certs` | 仅 infra | 单一声明点，无分叉风险 |
 | `eframe`、`anyhow`、`env_logger` | 仅 root | 同上；且 eframe 的 `wgpu_no_default_features` / `x11` / `wayland` 是组合根专属规格 |
+| `embed-resource` | 仅 root 的 `[target.'cfg(windows)'.build-dependencies]` | 单一声明点，且属**构建期**依赖：`cargo tree -e normal,build -i embed-resource` 只显示 `[build-dependencies]`，不进任何运行期依赖图；它编出的 `.res` 以 `cargo:rustc-link-arg-bins` 注入 bin 链接行 |
 | `egui` 的 `optional = true`（render）、`wgpu` 的平台后端 feature | render / root 目标段 | **有意的规格差异**：render 默认 egui-free；wgpu 按平台各开一个后端（体积最小）。差异保留，不在真源里抹平 |
 
 ### 7.3 复核结论（2026-10-30）

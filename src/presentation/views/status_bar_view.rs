@@ -21,7 +21,7 @@ use egui::{Align, CornerRadius, Layout, Rect, Response, Sense, Ui, Vec2};
 
 use crate::presentation::shortcuts::registry::UiAction;
 use crate::presentation::theme::builtin::Theme;
-use crate::presentation::view_context::EditorViewContext;
+use crate::presentation::view_context::StatusBarViewAccess;
 use rustmark_core::application::dto::{GoalProgressView, StatsView};
 use rustmark_core::shared::text::thousands;
 
@@ -38,13 +38,13 @@ const GOAL_BAR: Vec2 = Vec2::new(46.0, 6.0);
 /// 那些入口分散在拖拽、命令面板、快捷键、文件树与最近文件里，漏一处就会
 /// 留下一个过期值——状态栏显示上一个文档的编码比不显示更糟。
 /// 代价只是一次 `HashMap` 查询（应用层旁路表），每帧可忽略。
-fn sync_encoding(vctx: &mut dyn EditorViewContext) {
+fn sync_encoding(vctx: &mut dyn StatusBarViewAccess) {
     // 先取活动文档，再查编码：两次调用之间不留借用。
-    // `document_service()` 是只读借用，若把它拖进下一步的
+    // `document_encoding()` 是只读借用，若把它拖进下一步的
     // `set_status_bar_encoding()`（可变借用），两者会撞车（形态 A）。
     let doc = vctx.active_doc();
     let encoding = match doc {
-        Some(id) => vctx.document_service().encoding_of(id),
+        Some(id) => vctx.document_encoding(id),
         None => None,
     };
     vctx.set_status_bar_encoding(encoding);
@@ -63,22 +63,19 @@ fn sync_encoding(vctx: &mut dyn EditorViewContext) {
 /// 旧写法无条件先取字数、再把算不出来的目标投影丢弃，等于为一条不画的进度条
 /// 白付一次统计。改成先问设置（一次读锁 + 一个整数比较）再决定要不要字数——
 /// 这与「新增每帧查询先问：构造是 O(1) 还是 O(全文)」（问题 043 的纪律）同源。
-fn sync_goal(vctx: &mut dyn EditorViewContext, stats: Option<&StatsView>) {
-    let now_ms = vctx.markdown_service().now().millis();
-    // 块内取完就放：`preferences_service()` 的只读借用不能拖过块尾，
+fn sync_goal(vctx: &mut dyn StatusBarViewAccess, stats: Option<&StatsView>) {
+    let now_ms = vctx.now_ms();
+    // 两条查询都是 `&self` 借用，各自在语句末结束；不能把后一条拖过块尾，
     // 否则后面的 `status_bar_state()`（可变借用）无处安放。
-    let progress = {
-        let prefs = vctx.preferences_service();
-        if prefs.has_writing_goal() {
-            let words = stats.map_or(0, |s| s.words);
-            prefs.goal_progress(words)
-        } else {
-            // 未设目标：与 `goal_progress(0)` 的可见结果**逐字段等价**
-            // （`goal = 0` → `is_set()` 为假 → 状态栏整项不画，
-            // `percent` 为 `None`、`reached` 为假，`words` 在未设目标时无人读），
-            // 但省掉了一次整篇统计。
-            GoalProgressView::default()
-        }
+    let progress = if vctx.has_writing_goal() {
+        let words = stats.map_or(0, |s| s.words);
+        vctx.goal_progress(words)
+    } else {
+        // 未设目标：与 `goal_progress(0)` 的可见结果**逐字段等价**
+        // （`goal = 0` → `is_set()` 为假 → 状态栏整项不画，
+        // `percent` 为 `None`、`reached` 为假，`words` 在未设目标时无人读），
+        // 但省掉了一次整篇统计。
+        GoalProgressView::default()
     };
     let doc = vctx.active_doc().map(|id| id.as_u64());
     vctx.status_bar_state().note_goal(progress, doc, now_ms);
@@ -88,7 +85,7 @@ fn sync_goal(vctx: &mut dyn EditorViewContext, stats: Option<&StatsView>) {
 ///
 /// 绘制前先结算统计防抖、目标进度与消息 TTL（见函数体注释），
 /// 故它不只是「画」，也是状态栏相关瞬态状态的每帧推进点。
-pub fn show(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
+pub fn show(vctx: &mut dyn StatusBarViewAccess, ui: &mut Ui) {
     sync_encoding(vctx);
     // 状态栏统计防抖（建议一 / 问题 039）：每帧只算一次，供「写作目标进度」
     // 与「字数」共用；打字期沿用上一次静止结果，停手满窗口才刷新。
@@ -98,7 +95,7 @@ pub fn show(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
     let height = vctx.theme_state().metrics.statusbar_height;
     // 先把消息取出来：它带到期时间，必须在绘制前结算，
     // 否则一条 3 天前就该消失的错误会一直画着。
-    let now_ms = vctx.markdown_service().now().millis();
+    let now_ms = vctx.now_ms();
     let message = vctx.status_bar_state().take_message(now_ms);
     // 消息 TTL 的到期点交给帧末统一定时（T11）：状态栏是唯一知道
     // 「这条消息还剩多久」的地方。缺了它，用户停手后不会再有帧，
@@ -160,10 +157,10 @@ pub struct StatusBarModel {
 
 /// 由应用状态构造状态栏模型。
 ///
-/// **只读**：它不改动任何状态，故收 `&dyn EditorViewContext`——集成测试
+/// **只读**：它不改动任何状态，故收 `&dyn StatusBarViewAccess`——集成测试
 /// 有 19 处调用点直接断言它的输出，签名若收可变引用，这些调用点就得
 /// 全部改成拿可变借用（为一个纯读断言编造一次独占借用）。
-pub fn build_model(vctx: &dyn EditorViewContext, stats: Option<StatsView>) -> StatusBarModel {
+pub fn build_model(vctx: &dyn StatusBarViewAccess, stats: Option<StatsView>) -> StatusBarModel {
     // 三处行相关文案（光标行列 / 选区行列 / 「N 行」）看似要扫三遍全文，
     // 实际不会：行索引在应用层有缓存（键 = 文档 + 修订版本 + 文本长度），
     // 一帧内文本没变就命中缓存，扫描仍只有一次（问题 053 的结论不变，
@@ -225,7 +222,7 @@ pub fn build_model(vctx: &dyn EditorViewContext, stats: Option<StatsView>) -> St
 /// 状态栏的「一键切换」现在是**深↔浅直接互换**（见 `EditorApp::cycle_theme`）：
 /// 当前显示深色就提示「点一下变浅色」、反之变深色。这是可预期的一元动作，
 /// 不再有三态轮换带来的「浅色点回深色要点两次」困惑（#039）。
-fn theme_label(vctx: &dyn EditorViewContext) -> (String, String) {
+fn theme_label(vctx: &dyn StatusBarViewAccess) -> (String, String) {
     if vctx.theme_state().is_dark() {
         ("深色主题".to_string(), "点击切换为浅色主题".to_string())
     } else {
@@ -234,7 +231,7 @@ fn theme_label(vctx: &dyn EditorViewContext) -> (String, String) {
 }
 
 fn draw(
-    vctx: &mut dyn EditorViewContext,
+    vctx: &mut dyn StatusBarViewAccess,
     ui: &mut Ui,
     message: Option<crate::presentation::state::status_bar_ui_state::StatusMessage>,
     stats: Option<StatsView>,
@@ -243,7 +240,7 @@ fn draw(
     ui.painter()
         .rect_filled(ui.max_rect(), egui::CornerRadius::ZERO, theme.bg_secondary);
     let model = build_model(vctx, stats);
-    let now_ms = vctx.markdown_service().now().millis();
+    let now_ms = vctx.now_ms();
 
     let mut intents: Vec<IntentKind> = Vec::new();
 
@@ -370,7 +367,7 @@ enum IntentKind {
 }
 
 /// 执行一项点击意图。
-fn run_intent(vctx: &mut dyn EditorViewContext, intent: IntentKind, now_ms: u64) {
+fn run_intent(vctx: &mut dyn StatusBarViewAccess, intent: IntentKind, now_ms: u64) {
     match intent {
         IntentKind::Save => match vctx.save_document(false) {
             Ok(()) => vctx.status_bar_state().notice("已保存", now_ms),

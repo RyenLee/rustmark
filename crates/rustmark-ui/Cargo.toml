@@ -1,12 +1,11 @@
 [package]
-# 独立 crate 版本号不随应用发版（publish = false，仅参与本地 workspace 构建）。
 name = "rustmark-ui"
-version = "0.2.0"
-edition = "2024"
-rust-version = "1.99"
-license = "MIT OR Apache-2.0"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
 description = "rustmark 的表现层非视图部分：egui 布局不变式封装（widgets）"
-publish = false
+publish.workspace = true
 
 [dependencies]
 # --- UI 绘制原语（ADR-001：egui 原生）---

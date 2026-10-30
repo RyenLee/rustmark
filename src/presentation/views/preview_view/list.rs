@@ -47,7 +47,7 @@ fn bullet_for(depth: u8) -> &'static str {
 /// 同一个 `items`（见其 `root_list_index`），层级只存在于 `ListItemView::depth`：
 /// 想从 `text` 的前导空格反推是行不通的（pulldown 已把标记与缩进吃掉）。
 pub(super) fn draw_list(
-    vctx: &mut dyn EditorViewContext,
+    vctx: &mut dyn PreviewViewAccess,
     ui: &mut Ui,
     theme: &Theme,
     block: &BlockView,
@@ -79,7 +79,7 @@ pub(super) fn draw_list(
 
 /// 任务列表：复选框可点击，点击后回写源码。
 pub(super) fn draw_task_list(
-    vctx: &mut dyn EditorViewContext,
+    vctx: &mut dyn PreviewViewAccess,
     ui: &mut Ui,
     theme: &Theme,
     block: &BlockView,
@@ -102,7 +102,7 @@ pub(super) fn draw_task_list(
 ///
 /// 走与编辑区完全相同的 `ReplaceRangeCommand`，因此可撤销、会推进文档版本号、
 /// 会触发预览重解析——不会出现「预览勾上了、源码没变」的两处真相漂移。
-fn toggle_task(vctx: &mut dyn EditorViewContext, item: &ListItemView, checked: bool) {
+fn toggle_task(vctx: &mut dyn PreviewViewAccess, item: &ListItemView, checked: bool) {
     // ⚠ 这里必须是 `to_string()` 而不是 `clone()`：`vctx.editor_text()` 给的是
     // `&str`，而 `&str` **自身**实现了 `Clone`（`impl Clone for &T`），方法解析
     // 会先命中它 → `clone()` 得到 `&str` 而非 `String`，于是 `text` 变成对
@@ -140,7 +140,7 @@ pub fn task_marker_offset(text: &str, start: usize, end: usize) -> Option<usize>
 /// 列表项文本：走行内富文本（`- **粗体**` 必须与正文里的粗体一致），
 /// 已勾选的项叠上删除线 + 次级色。
 fn draw_item_text(
-    vctx: &mut dyn EditorViewContext,
+    vctx: &mut dyn PreviewViewAccess,
     ui: &mut Ui,
     theme: &Theme,
     item: &ListItemView,

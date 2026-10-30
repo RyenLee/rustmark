@@ -1,6 +1,13 @@
 [toolchain]
 # 需求文档 §1.2 / CONSTR-01：Rust 2024 Edition / 1.99.0+
-# 本机实测：cargo/rustc 1.99.0，`edition = "2024"` + `rust-version = "1.99"` 已验证可用
-channel = "1.99.0"
+# 本机实测：`edition = "2024"` + `rust-version = "1.99"` 已验证可用
+#
+# 只钉到 minor（`1.99`）：rustup 会自动解析该 minor 的**最新补丁**
+# （实测解析到 1.99.1），补丁升级不必改本文件；跨 minor 仍须人工升级，
+# 并同步 `Cargo.toml` 的 `rust-version`（那是 MSRV 闸门，不决定编译器）。
+# 不用 `channel = "stable"`：那会让构建随本机 / CI 的 rustup 更新漂移，
+# clippy 新 lint 在 `-D warnings` 下可能无故变红，也与
+# `docs/spec/thresholds.baseline.yaml` 的可复现口径冲突。
+channel = "1.99"
 components = ["rustfmt", "clippy"]
 profile = "minimal"

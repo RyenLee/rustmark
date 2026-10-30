@@ -26,7 +26,7 @@ use egui::{Align, Context, Layout, ScrollArea, Ui};
 use crate::presentation::state::command_palette_ui_state::CommandRow;
 use crate::presentation::state::dialog_ui_state::Overlay;
 use crate::presentation::theme::builtin::Theme;
-use crate::presentation::view_context::EditorViewContext;
+use crate::presentation::view_context::CommandPaletteViewAccess;
 use crate::presentation::widgets;
 
 /// 对话框默认尺寸（对齐原型 `.palette { width: 540px }`）。
@@ -40,7 +40,7 @@ const ROW_H: f32 = 34.0;
 pub const COMMAND_PALETTE_INPUT_ID: &str = "rustmark.command_palette.search";
 
 /// 绘制命令面板。
-pub fn show(vctx: &mut dyn EditorViewContext, ctx: &Context) {
+pub fn show(vctx: &mut dyn CommandPaletteViewAccess, ctx: &Context) {
     let mut open = true;
     egui::Window::new(Overlay::CommandPalette.title())
         .id(egui::Id::unique("rustmark.overlay.command_palette"))
@@ -69,7 +69,7 @@ pub fn show(vctx: &mut dyn EditorViewContext, ctx: &Context) {
 ///
 /// 判据是「**本帧**有按键事件」而非「焦点在搜索框」——
 /// 后者在 egui 里每帧都成立，会导致按住 ↑ 时反复触底。
-fn handle_keys(vctx: &mut dyn EditorViewContext, ctx: &Context) {
+fn handle_keys(vctx: &mut dyn CommandPaletteViewAccess, ctx: &Context) {
     if !vctx.dialog_state().is_open(Overlay::CommandPalette) {
         return;
     }
@@ -121,7 +121,7 @@ fn handle_keys(vctx: &mut dyn EditorViewContext, ctx: &Context) {
 /// 纯读，故收 `&dyn`（不可变重借用）：查询词经
 /// `command_palette_state_read()` 这条 `&self` 只读出口拿，动作表经
 /// `dispatcher_state()` 拿——两者都不改状态。
-pub fn rows(vctx: &dyn EditorViewContext) -> Vec<CommandRow> {
+pub fn rows(vctx: &dyn CommandPaletteViewAccess) -> Vec<CommandRow> {
     vctx.dispatcher_state()
         .registry()
         .table()
@@ -135,7 +135,7 @@ pub fn rows(vctx: &dyn EditorViewContext) -> Vec<CommandRow> {
 }
 
 /// 主体。
-fn body(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
+fn body(vctx: &mut dyn CommandPaletteViewAccess, ui: &mut Ui) {
     let theme = vctx.theme_state().clone();
     search_box(vctx, ui);
     let list = rows(&*vctx);
@@ -167,7 +167,7 @@ fn footer(ui: &mut Ui, theme: &Theme, empty: bool) {
 }
 
 /// 搜索框。
-fn search_box(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
+fn search_box(vctx: &mut dyn CommandPaletteViewAccess, ui: &mut Ui) {
     let mut query = vctx.command_palette_ui_state().query.clone();
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), SEARCH_H),
@@ -197,7 +197,12 @@ fn search_box(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
 }
 
 /// 结果列表。返回被点击的行下标（`None` = 未点击）。
-fn results(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme, list: &[CommandRow]) {
+fn results(
+    vctx: &mut dyn CommandPaletteViewAccess,
+    ui: &mut Ui,
+    theme: &Theme,
+    list: &[CommandRow],
+) {
     if list.is_empty() {
         ui.add_space(theme.metrics.space_xl);
         ui.centered_and_justified(|ui| {
@@ -374,7 +379,7 @@ fn draw_meta(ui: &mut Ui, theme: &Theme, row: &CommandRow, rect: egui::Rect) {
 
 /// 执行选中的命令，并关闭面板。
 ///
-/// 走 [`CommandPort::execute`]（trait 路径即 `EditorViewContext` 的
+/// 走 [`CommandPort::execute`]（trait 路径即 `CommandPaletteViewAccess` 的
 /// supertrait）而**不是**直接调动作的具体逻辑：
 /// 面板与菜单共用分发器，才能保证「面板里能干的，菜单里也能干」。
 ///
@@ -388,7 +393,7 @@ fn draw_meta(ui: &mut Ui, theme: &Theme, row: &CommandRow, rect: egui::Rect) {
 /// 私有就没法从集成测试驱动——第一版测试因此只能调
 /// `EditorApp::execute`，**整条 `apply_pick` 路径一次都没跑到**，
 /// 却因为别的原因变红，看起来「验过了」。
-pub fn apply_pick(vctx: &mut dyn EditorViewContext, row: &CommandRow) {
+pub fn apply_pick(vctx: &mut dyn CommandPaletteViewAccess, row: &CommandRow) {
     vctx.command_palette_ui_state().open();
     vctx.dialog_state().close(Overlay::CommandPalette);
     vctx.execute(row.action());

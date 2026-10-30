@@ -18,25 +18,55 @@
 //! trait 方案下视图只拿**一个** `&mut dyn EditorViewContext`：状态访问与命令
 //! 都是它的方法，天然只有一个独占借用，没有拆分借用的矛盾。
 //!
-//! # 形态：5 个能力 trait + 1 个 bundle
+//! # 形态：能力 trait + 17 个按视图窄 trait + 1 个 bundle
 //!
-//! [`EditorViewContext`] 本身**没有自有方法**，它只是把 5 个能力 trait
-//! 捆成一张「视图能看到的全部能力」的网：
+//! 契约分三层，**视图只拿第二层**：
 //!
-//! | 能力 trait | 覆盖什么 | 批 1 方法数 |
-//! |---|---|---|
-//! | [`ThemeAccess`] | 主题 + 快捷键注册表 | 3 |
-//! | [`UiStateAccess`] | UI 状态直取（字段级） | 15 |
-//! | [`DocumentAccess`] | 文档 / 标签 / 只读查询 | 13 |
-//! | [`CommandPort`] | 语义命令（含 `execute`） | 61 |
-//! | [`ServiceQueries`] | 组合根服务查询（只读借用） | 4（批 2 用） |
+//! 1. **能力 trait**（每个成员都有视图在用，按面板 / 职责拆开）：
+//!    - 状态直取：`AppUiAccess` / `EditorUiAccess` / `StatusBarUiAccess` /
+//!      `SidebarUiAccess` / `FindUiAccess` / `ExportUiAccess` / `SettingsUiAccess` /
+//!      `QuickOpenUiAccess` / `CommandPaletteUiAccess` / `DiffUiAccess` /
+//!      `DialogStackAccess` / `SymbolUiAccess` / `ShortcutOverviewUiAccess` /
+//!      `WorkspaceEntriesAccess` / `PreviewUiAccess`；
+//!    - 领域投影与命令：[`ThemeAccess`] / [`DocumentAccess`] / [`CommandPort`]；
+//!    - 只读查询：[`ClockAccess`] / [`MarkdownQueries`] / [`DocumentQueries`] /
+//!      [`PreferencesQueries`] / [`ExternalLinks`]。
+//! 2. **按视图窄 trait**（**没有自有方法**，只是把该视图真正需要的能力拼成
+//!    supertrait 列表）：
+//!
+//!    | 视图 | 窄 trait | 能力面 |
+//!    |---|---|---|
+//!    | 关于浮层 | [`AboutViewAccess`] | 主题 + 浮层栈 + 只读投影 |
+//!    | 命令面板 | [`CommandPaletteViewAccess`] | 主题 + 浮层栈 + 面板状态 + 命令 |
+//!    | 差异浮层 | [`DiffViewAccess`] | 主题 + 浮层栈 + 差异状态 + 只读投影 + 命令 |
+//!    | 编辑区 | [`EditorViewAccess`] | 主题 + 编辑 / 查找 / 应用状态 + 只读投影 + 命令 + 高亮 / 时钟 |
+//!    | 导出浮层 | [`ExportViewAccess`] | 主题 + 浮层栈 + 导出状态 + 命令 |
+//!    | 查找替换 | [`FindReplaceViewAccess`] | 主题 + 浮层栈 + 查找状态 + 命令 |
+//!    | 预览区 | [`PreviewViewAccess`] | 主题 + 预览 / 编辑 / 应用状态 + 只读投影 + 命令 + 渲染 / 时钟 + 外链 |
+//!    | 快速打开 | [`QuickOpenViewAccess`] | 主题 + 浮层栈 + 面板状态 + 工作区条目 + 只读投影 + 命令 |
+//!    | 滚动同步 | [`ScrollSyncAccess`] | 主题 + 编辑 / 预览 / 应用状态 + 只读投影 + 命令 + 滚动映射 |
+//!    | 设置浮层 | [`SettingsViewAccess`] | 主题 + 浮层栈 + 设置 / 编辑状态 + 只读投影 + 命令 |
+//!    | 快捷键一览 | [`ShortcutOverviewViewAccess`] | 主题 + 一览状态 + 浮层栈 + 命令 |
+//!    | 侧栏 | [`SidebarViewAccess`] | 主题 + 侧栏 / 应用 / 编辑状态 + 工作区条目 + 只读投影 + 命令 |
+//!    | 统计浮层 | [`StatsViewAccess`] | 主题 + 浮层栈 + 只读投影 |
+//!    | 状态栏 | [`StatusBarViewAccess`] | 主题 + 状态栏 / 编辑状态 + 只读投影 + 命令 + 时钟 / 编码 / 偏好 |
+//!    | 符号面板 | [`SymbolViewAccess`] | 主题 + 符号状态 + 浮层栈 + 命令 |
+//!    | 工具栏 | [`ToolbarViewAccess`] | 主题 + 应用状态 + 只读投影 + 命令 |
+//!    | 欢迎页 | [`WelcomeViewAccess`] | 主题 + 只读投影 + 命令 |
+//! 3. [`EditorViewContext`] 仍是这些窄 trait 的 bundle，但**只留给路由者**
+//!    （`main_view` 与 `overlays`）：它们负责把同一个 `&mut dyn EditorViewContext`
+//!    分发给各自需要的窄 trait，`tools/arch_check.rs::check_view_narrow_context`
+//!    机械保证其余视图文件里不出现这个名字。
+//!
+//! 窄化的收益是**越权访问在编译期不可达**：预览区拿不到 `sidebar_state()`，
+//! 关于浮层拿不到 `CommandPort`；测试替身也只需实现该视图真正用到的那几个
+//! 子 trait。之所以敢按视图拆签名，是因为 Rust 1.86 起的 **trait object
+//! upcasting**（1.99 已实测）让 `&mut dyn EditorViewContext` 能自动转成任意
+//! 窄 trait，路由者的转发热线因此**零改动**。
 //!
 //! 为什么不摊平成一个大 trait：摊平后 ≈ `EditorApp`（183 方法 + 40 字段）的
 //! 一半（96 / 183），正是「trait 上照抄 `EditorApp` 全部成员」的**假解耦**——接口面没变小，
-//! 只是换了个名字。分组之后，「这个视图能碰到什么」一眼可辨，
-//! 且 Rust 1.86 起的 **trait object upcasting**（1.99 已实测）让
-//! `&mut dyn ThemeAccess` 能自动转成 `&mut dyn EditorViewContext`，
-//! 将来再拆细粒度窄 trait 时**每个视图只改一行签名**。
+//! 只是换了个名字。分组 + 按视图裁剪之后，「这个视图能碰到什么」在签名上一眼可辨。
 //!
 //! # 为什么放在 `rustmark-ui` 而不是 root
 //!
@@ -124,19 +154,21 @@ use crate::presentation::state::symbol_ui_state::SymbolUiState;
 use crate::presentation::state::workspace_entries::WorkspaceEntries;
 use crate::presentation::theme::builtin::Theme;
 use egui::Context;
-use rustmark_core::application::document::service::DocumentAppService;
 use rustmark_core::application::dto::{
-    BlockView, EditorSettingsView, ExportRequestView, ExportResultView, LintIssueView,
-    OutlineItemView, RecentFileView, SettingsView, StatsView, TabSummary, ThemeView,
+    BlockView, EditorSettingsView, ExportRequestView, ExportResultView, GoalProgressView,
+    LintIssueView, OutlineItemView, RecentFileView, RenderedView, SettingsView, SpanView,
+    StatsView, TabSummary, ThemeView,
 };
-use rustmark_core::application::markdown::service::MarkdownAppService;
-use rustmark_core::application::preferences::service::PreferencesAppService;
-use rustmark_core::ports::system::ExternalOpener;
+use rustmark_core::application::markdown::queries::{
+    HighlightQuery, HighlightSnippetQuery, MapScrollQuery, RenderPreviewQuery, ScrollTarget,
+    SpellCheckQuery, SpellSuggestQuery,
+};
 use rustmark_core::shared::encoding::TextEncoding;
 use rustmark_core::shared::ids::DocumentId;
 use rustmark_core::shared::kernel::export_format::PageSize;
 use rustmark_core::shared::kernel::fonts::EditorFontChoice;
 use rustmark_core::shared::result::AppResult;
+use std::sync::Arc;
 
 /// 一次文本编辑的结果：在旧文本的 `[byte_start, byte_end)` 区间替换为 `inserted`。
 ///
@@ -198,14 +230,22 @@ pub trait ThemeAccess {
 }
 
 // ===========================================================================
-// T2 · UiStateAccess —— UI 状态直取
+// T2 · UI 状态直取（按面板拆分的 15 个窄 trait）
 // ===========================================================================
+//
+// 原先是一个 15 方法的 `UiStateAccess`，等于把「所有面板的状态」装进同一张
+// 接口面：关于浮层因此也拿得到 `editor_text_mut()`，状态栏也拿得到
+// `symbol_ui_state()`。按面板拆开后，每个视图只收它真正要画的那个面板的
+// 状态 trait（组合见文件末尾的「按视图窄 trait」）。
 
-/// 表现层 UI 状态的直取（字段级访问，不夹带业务语义）。
-pub trait UiStateAccess {
+/// 应用级 UI 状态直取。
+pub trait AppUiAccess {
     /// 应用级 UI 状态（含快捷键分发器）。
     fn ui_state(&mut self) -> &mut AppUiState;
+}
 
+/// 编辑区状态直取。
+pub trait EditorUiAccess {
     /// 编辑器状态（光标 / 选区 / 滚动 / IME 组字）。
     fn editor_state(&mut self) -> &mut EditorUiState;
 
@@ -217,63 +257,6 @@ pub trait UiStateAccess {
     /// 若只有可变出口，就得为了读一个 bool 把整个上下文可变地借走——
     /// 那等于让签名撒谎。
     fn editor_state_read(&self) -> &EditorUiState;
-
-    /// 状态栏状态（瞬态消息 / 编码 / 写作目标）。
-    fn status_bar_state(&mut self) -> &mut StatusBarUiState;
-
-    /// 状态栏状态的**只读**视图。
-    ///
-    /// 与 [`Self::editor_state_read`] 同一理由：`build_model` 读目标的
-    /// 进度 / 文案 / 提示，不改任何东西。
-    fn status_bar_state_read(&self) -> &StatusBarUiState;
-
-    /// 侧栏状态（文件树展开 / 搜索输入 / 大纲）。
-    fn sidebar_state(&mut self) -> &mut SidebarUiState;
-
-    /// 查找替换状态。
-    fn find_state(&mut self) -> &mut FindReplaceUiState;
-
-    /// 导出浮层状态。
-    fn export_ui_state(&mut self) -> &mut ExportUiState;
-
-    /// 设置浮层状态。
-    fn settings_ui_state(&mut self) -> &mut SettingsUiState;
-
-    /// 快速打开浮层状态。
-    fn quick_open_ui_state(&mut self) -> &mut QuickOpenUiState;
-
-    /// 命令面板状态（可变出口）。
-    fn command_palette_ui_state(&mut self) -> &mut CommandPaletteUiState;
-
-    /// 命令面板状态的**只读**视图。
-    ///
-    /// [`Self::command_palette_ui_state`] 是 `&mut self` 方法，**纯读**的
-    /// 过滤路径（命令面板按查询词过滤动作表）拿不到它；本视图的
-    /// `rows()` 不改任何状态，故给一条 `&self` 只读出口——否则为了
-    /// 读一个词就得把整个上下文可变地借走。
-    ///
-    /// 交出整个状态而不是只交出 `query: &str`：视图侧要的是「把查询词喂给
-    /// 搜索」，将来读第二个字段（如高亮区间）时不必再加一条方法；而
-    /// `&self` 的性质保证它照样改不了任何东西。
-    fn command_palette_state_read(&self) -> &CommandPaletteUiState;
-
-    /// 差异对比浮层状态。
-    fn diff_ui_state(&mut self) -> &mut DiffUiState;
-
-    /// 浮层栈状态（打开 / 关闭 / 栈顶 / 首次打开取焦）。
-    fn dialog_state(&mut self) -> &mut DialogUiState;
-
-    /// 符号面板状态（分组 / 查询 / 选中项）。
-    fn symbol_ui_state(&mut self) -> &mut SymbolUiState;
-
-    /// 快捷键一览的过滤词与分组缓存。
-    ///
-    /// 只读：改过滤词走 [`CommandPort::set_shortcut_overview_query`] 这条命令，
-    /// 不在视图里直接写字段——重置逻辑归命令所有，视图只负责画。
-    fn shortcut_overview_ui_state(&self) -> &ShortcutOverviewUiState;
-
-    /// 工作区文件树的**已装载条目**快照。
-    fn workspace_entries_state(&self) -> &WorkspaceEntries;
 
     /// 编辑区文本副本（只读）。
     ///
@@ -295,10 +278,106 @@ pub trait UiStateAccess {
     /// };  // ← 借用在此结束
     /// ```
     ///
-    /// **块内不得调 `vctx` 的其它方法**（含 `&self` 的 `markdown_service()`）——
+    /// **块内不得调 `vctx` 的其它方法**（含 `&self` 的查询如 `now_ms()`）——
     /// 那会把独占借用拖成第二个借用，直接撞车。需要的数据**块外预取**。
     fn editor_text_mut(&mut self) -> &mut String;
+}
 
+/// 状态栏状态直取。
+pub trait StatusBarUiAccess {
+    /// 状态栏状态（瞬态消息 / 编码 / 写作目标）。
+    fn status_bar_state(&mut self) -> &mut StatusBarUiState;
+
+    /// 状态栏状态的**只读**视图。
+    ///
+    /// 与 [`EditorUiAccess::editor_state_read`] 同一理由：`build_model` 读目标的
+    /// 进度 / 文案 / 提示，不改任何东西。
+    fn status_bar_state_read(&self) -> &StatusBarUiState;
+}
+
+/// 侧栏状态直取。
+pub trait SidebarUiAccess {
+    /// 侧栏状态（文件树展开 / 搜索输入 / 大纲）。
+    fn sidebar_state(&mut self) -> &mut SidebarUiState;
+}
+
+/// 查找替换状态直取。
+pub trait FindUiAccess {
+    /// 查找替换状态。
+    fn find_state(&mut self) -> &mut FindReplaceUiState;
+}
+
+/// 导出浮层状态直取。
+pub trait ExportUiAccess {
+    /// 导出浮层状态。
+    fn export_ui_state(&mut self) -> &mut ExportUiState;
+}
+
+/// 设置浮层状态直取。
+pub trait SettingsUiAccess {
+    /// 设置浮层状态。
+    fn settings_ui_state(&mut self) -> &mut SettingsUiState;
+}
+
+/// 快速打开浮层状态直取。
+pub trait QuickOpenUiAccess {
+    /// 快速打开浮层状态。
+    fn quick_open_ui_state(&mut self) -> &mut QuickOpenUiState;
+}
+
+/// 命令面板状态直取。
+pub trait CommandPaletteUiAccess {
+    /// 命令面板状态（可变出口）。
+    fn command_palette_ui_state(&mut self) -> &mut CommandPaletteUiState;
+
+    /// 命令面板状态的**只读**视图。
+    ///
+    /// [`Self::command_palette_ui_state`] 是 `&mut self` 方法，**纯读**的
+    /// 过滤路径（命令面板按查询词过滤动作表）拿不到它；本视图的
+    /// `rows()` 不改任何状态，故给一条 `&self` 只读出口——否则为了
+    /// 读一个词就得把整个上下文可变地借走。
+    ///
+    /// 交出整个状态而不是只交出 `query: &str`：视图侧要的是「把查询词喂给
+    /// 搜索」，将来读第二个字段（如高亮区间）时不必再加一条方法；而
+    /// `&self` 的性质保证它照样改不了任何东西。
+    fn command_palette_state_read(&self) -> &CommandPaletteUiState;
+}
+
+/// 差异对比浮层状态直取。
+pub trait DiffUiAccess {
+    /// 差异对比浮层状态。
+    fn diff_ui_state(&mut self) -> &mut DiffUiState;
+}
+
+/// 浮层栈状态直取。
+pub trait DialogStackAccess {
+    /// 浮层栈状态（打开 / 关闭 / 栈顶 / 首次打开取焦）。
+    fn dialog_state(&mut self) -> &mut DialogUiState;
+}
+
+/// 符号面板状态直取。
+pub trait SymbolUiAccess {
+    /// 符号面板状态（分组 / 查询 / 选中项）。
+    fn symbol_ui_state(&mut self) -> &mut SymbolUiState;
+}
+
+/// 快捷键一览状态直取。
+pub trait ShortcutOverviewUiAccess {
+    /// 快捷键一览的过滤词与分组缓存。
+    ///
+    /// 只读：改过滤词走 [`CommandPort::set_shortcut_overview_query`] 这条命令，
+    /// 不在视图里直接写字段——重置逻辑归命令所有，视图只负责画。
+    fn shortcut_overview_ui_state(&self) -> &ShortcutOverviewUiState;
+}
+
+/// 工作区文件树快照直取。
+pub trait WorkspaceEntriesAccess {
+    /// 工作区文件树的**已装载条目**快照。
+    fn workspace_entries_state(&self) -> &WorkspaceEntries;
+}
+
+/// 预览区状态直取。
+pub trait PreviewUiAccess {
     /// 预览区状态（块序列 / 块矩形 / 缓存键 / 滚动偏移 / 降级标记）。
     ///
     /// 可变出口：`show` 一帧里要连续做「换文档即重置 → 判缓存键 →
@@ -698,7 +777,7 @@ pub trait CommandPort {
     /// 写入一次预览渲染的块序列（`render_preview` 刚返回时）。
     ///
     /// 与 [`Self::store_preview_render`] 的分工：这里只写 `blocks`
-    /// （`degraded` 由 [`UiStateAccess::preview_state`] 自己的 `set_degraded`
+    /// （`degraded` 由 [`PreviewUiAccess::preview_state`] 自己的 `set_degraded`
     /// 另设）；那次是**每帧**渲染结束后把 blocks / rects / scroll_y 三样一起落定。
     fn set_preview_blocks(&mut self, blocks: Vec<BlockView>);
 
@@ -732,7 +811,7 @@ pub trait CommandPort {
     /// 3. 两者如何组合（远程传 `None`、本地传文档目录）是组合根的装配知识。
     ///
     /// 把三样封进一个 `'static + Send` 的闭包后，视图只拿到「能取字节」这个
-    /// **能力**，拿不到加载器本体——与 [`ServiceQueries`] 交出服务只读借用
+    /// **能力**，拿不到加载器本体——与 [`MarkdownQueries`] 只交语义查询
     /// 是同一条原则（所有权即装配权）。
     ///
     /// 闭包必须能**在线程里跑**：远程图片走后台下载 + 解码（F-3），
@@ -771,60 +850,375 @@ pub trait CommandPort {
 }
 
 // ===========================================================================
-// T5 · ServiceQueries —— 组合根服务查询
+// T5 · 组合根只读查询（5 个窄 trait）
 // ===========================================================================
 
-/// 组合根**服务**的只读查询（`app.services.*` 的唯一出口）。
+/// 时钟查询。
 ///
-/// # 为什么交出服务本身，而不是造 N 个语义包装方法
+/// # 为什么是一条 `now_ms()` 而不是「交出 `MarkdownAppService`」
 ///
-/// 最初的设想是「每个服务配一组语义查询」（`now_ms()` / `highlight_spans()` /
-/// `spell_marks()` …）。实测后发现这层包装**过细**：16 处 `services.` 触点
-/// **全部是只读调用**（`now()` / `map_scroll()` / `highlight()` / `spell_check()` /
-/// `spell_suggestions()` / `encoding_of()` / `has_writing_goal()` /
-/// `goal_progress()` / `open()`），而包装方法要随服务接口一起长、加一个服务
-/// 就多一批样板。
+/// 早期版本让视图拿 `markdown_service()` 再自己调 `now().millis()`。那条
+/// 出口的价值等于「把服务类型名搬进视图」：视图一旦能命名 `MarkdownAppService`，
+/// 就能顺手调它的任何方法（渲染 / 高亮 / 缓存统计 / 后台任务句柄），
+/// 窄接口当场失效。
 ///
-/// 故本 trait **直接交出服务的只读借用**：视图拿得到能力、拿不到所有权，
-/// 于是没法在视图里装配新依赖（所有权即装配权）。
-///
-/// # 边界：`assets` 故意不给
-///
-/// `services.assets` 的类型 `AssetLoader` 住在 **infra**（root 之外的
-/// 另一层），本 crate **不可名**——给不出访问器。它只被
-/// `preview_view/image_cache.rs` 用到，而该文件因三重阻塞（`image` crate 属
-/// root 独有 / `AssetLoader` 在 infra / `document_dir()` 是 `pub(crate)`）
-/// 留 root + 永久豁免，故不需要这条出口。
-///
-/// 保留这个 trait 作为「组合根服务查询」这条能力的**契约位置**：将来它
-/// 长出方法时，`EditorViewContext` 的 supertrait 列表不用改，视图签名也不用改。
-pub trait ServiceQueries {
-    /// Markdown 用例服务（渲染 / 高亮 / 拼写 / 滚动映射 / 时钟）。
-    fn markdown_service(&self) -> &MarkdownAppService;
+/// 现在每项能力都只给**语义查询**：视图拿得到「现在几毫秒」，拿不到服务本身，
+/// 也就没法在视图里装配新依赖（所有权即装配权）。
+pub trait ClockAccess {
+    /// 当前时间戳（毫秒；仅用作消息 TTL / 防抖窗口的基准，不参与领域语义）。
+    fn now_ms(&self) -> u64;
+}
 
-    /// 文档用例服务（内容 / 统计 / 编码）。
-    fn document_service(&self) -> &DocumentAppService;
+/// Markdown 用例的只读查询（渲染 / 高亮 / 拼写 / 滚动映射）。
+pub trait MarkdownQueries {
+    /// 按文档区间做语法高亮。
+    fn highlight(&self, query: HighlightQuery) -> AppResult<Arc<Vec<SpanView>>>;
 
-    /// 偏好用例服务（设置 / 写作目标）。
-    fn preferences_service(&self) -> &PreferencesAppService;
+    /// 对一段独立文本做语法高亮（预览区代码块）。
+    fn highlight_snippet(&self, query: HighlightSnippetQuery) -> AppResult<Vec<SpanView>>;
 
-    /// 外部打开器端口（预览区点外链时开系统默认程序）。
-    fn external_opener(&self) -> &dyn ExternalOpener;
+    /// 拼写检查：返回错词的字节区间。
+    fn spell_check(&self, query: SpellCheckQuery) -> Vec<(usize, usize)>;
+
+    /// 拼写建议（右键错词时的「你可能想输入」）。
+    fn spell_suggestions(&self, query: SpellSuggestQuery) -> Vec<String>;
+
+    /// 编辑区偏移 / 预览区块 ↔ 对侧目标位置的滚动映射。
+    fn map_scroll(&self, query: MapScrollQuery) -> AppResult<ScrollTarget>;
+
+    /// 渲染预览（命中缓存则不重解析）。
+    fn render_preview(&self, query: RenderPreviewQuery) -> AppResult<RenderedView>;
+}
+
+/// 文档用例的只读查询。
+pub trait DocumentQueries {
+    /// 指定文档的**落盘编码**；未打开或尚无编码时为 `None`。
+    fn document_encoding(&self, id: DocumentId) -> Option<TextEncoding>;
+}
+
+/// 偏好用例的只读查询（写作目标）。
+pub trait PreferencesQueries {
+    /// 是否设置过写作目标。
+    ///
+    /// 状态栏**先问它再取字数**：字数是一次整篇统计（O(全文)），
+    /// 未设目标时整项不画，不该为一条不画的进度条白付一次统计（问题 053）。
+    fn has_writing_goal(&self) -> bool;
+
+    /// 写作目标进度（按当前字数）。
+    fn goal_progress(&self, words: usize) -> GoalProgressView;
+}
+
+/// 外部链接的打开能力（预览区点外链时交系统默认程序）。
+///
+/// 收 `&str` 而不是交出 `ExternalOpener`：视图拿得到「开这个 URL」这个动作，
+/// 拿不到端口本体（与 [`MarkdownQueries`] 同一条原则）。
+pub trait ExternalLinks {
+    /// 用系统默认程序打开一个 URL。
+    fn open_external(&self, url: &str) -> std::io::Result<()>;
 }
 
 // ===========================================================================
-// bundle
+// 按视图窄 trait（17 个）
+// ===========================================================================
+//
+// 每个 trait **没有自有方法**，只是把「该视图真正调用到的能力」拼成
+// supertrait 列表；blanket impl 让任何满足这些能力的类型（含 `EditorApp`
+// 与 `dyn EditorViewContext`）自动成为该窄 trait。
+//
+// 判据是「该视图模块（含全部内部 helper 与子模块）真正调用的成员」：
+// 多写一个 supertrait 就等于把越权访问又还回去，少写一个编译不过。
+
+/// 关于浮层：主题显示名 + 浮层栈 + 只读投影。
+pub trait AboutViewAccess: ThemeAccess + DialogStackAccess + DocumentAccess {}
+impl<T: ThemeAccess + DialogStackAccess + DocumentAccess + ?Sized> AboutViewAccess for T {}
+
+/// 命令面板：面板状态 + 动作表 + 执行。
+pub trait CommandPaletteViewAccess:
+    ThemeAccess + DialogStackAccess + CommandPaletteUiAccess + CommandPort
+{
+}
+impl<T: ThemeAccess + DialogStackAccess + CommandPaletteUiAccess + CommandPort + ?Sized>
+    CommandPaletteViewAccess for T
+{
+}
+
+/// 差异对比浮层：差异状态 + 工作区条目 + 只读投影 + 差异命令。
+pub trait DiffViewAccess:
+    ThemeAccess
+    + DialogStackAccess
+    + DiffUiAccess
+    + WorkspaceEntriesAccess
+    + DocumentAccess
+    + CommandPort
+{
+}
+impl<
+    T: ThemeAccess
+        + DialogStackAccess
+        + DiffUiAccess
+        + WorkspaceEntriesAccess
+        + DocumentAccess
+        + CommandPort
+        + ?Sized,
+> DiffViewAccess for T
+{
+}
+
+/// 编辑区：编辑 / 查找 / 应用状态 + 只读投影 + 命令 + 高亮 / 时钟。
+///
+/// 额外收 [`ToolbarViewAccess`]：编辑区顶部要画编辑区工具栏
+/// （`toolbar_view::draw_editor_toolbar`），而该函数收的是工具栏自己的窄 trait。
+/// 这条 supertrait 不扩大任何成员面——它的能力集合与本 trait 的其余部分重合。
+pub trait EditorViewAccess:
+    ThemeAccess
+    + EditorUiAccess
+    + FindUiAccess
+    + AppUiAccess
+    + DocumentAccess
+    + CommandPort
+    + MarkdownQueries
+    + ClockAccess
+    + ToolbarViewAccess
+{
+}
+impl<
+    T: ThemeAccess
+        + EditorUiAccess
+        + FindUiAccess
+        + AppUiAccess
+        + DocumentAccess
+        + CommandPort
+        + MarkdownQueries
+        + ClockAccess
+        + ToolbarViewAccess
+        + ?Sized,
+> EditorViewAccess for T
+{
+}
+
+/// 导出浮层：导出状态 + 导出命令（含原生对话框登记）。
+pub trait ExportViewAccess: ThemeAccess + DialogStackAccess + ExportUiAccess + CommandPort {}
+impl<T: ThemeAccess + DialogStackAccess + ExportUiAccess + CommandPort + ?Sized> ExportViewAccess
+    for T
+{
+}
+
+/// 查找替换面板：查找状态 + 查找命令。
+pub trait FindReplaceViewAccess:
+    ThemeAccess + DialogStackAccess + FindUiAccess + CommandPort
+{
+}
+impl<T: ThemeAccess + DialogStackAccess + FindUiAccess + CommandPort + ?Sized> FindReplaceViewAccess
+    for T
+{
+}
+
+/// 预览区：预览 / 编辑 / 应用状态 + 只读投影 + 命令 + 渲染 / 时钟 + 外链。
+pub trait PreviewViewAccess:
+    ThemeAccess
+    + PreviewUiAccess
+    + EditorUiAccess
+    + AppUiAccess
+    + DocumentAccess
+    + CommandPort
+    + MarkdownQueries
+    + ClockAccess
+    + ExternalLinks
+{
+}
+impl<
+    T: ThemeAccess
+        + PreviewUiAccess
+        + EditorUiAccess
+        + AppUiAccess
+        + DocumentAccess
+        + CommandPort
+        + MarkdownQueries
+        + ClockAccess
+        + ExternalLinks
+        + ?Sized,
+> PreviewViewAccess for T
+{
+}
+
+/// 快速打开浮层：面板状态 + 工作区条目 + 只读投影 + 命令。
+pub trait QuickOpenViewAccess:
+    ThemeAccess
+    + DialogStackAccess
+    + QuickOpenUiAccess
+    + WorkspaceEntriesAccess
+    + DocumentAccess
+    + CommandPort
+{
+}
+impl<
+    T: ThemeAccess
+        + DialogStackAccess
+        + QuickOpenUiAccess
+        + WorkspaceEntriesAccess
+        + DocumentAccess
+        + CommandPort
+        + ?Sized,
+> QuickOpenViewAccess for T
+{
+}
+
+/// 滚动同步：编辑 / 预览 / 应用状态 + 只读投影 + 滚动命令 + 映射查询。
+pub trait ScrollSyncAccess:
+    ThemeAccess
+    + EditorUiAccess
+    + PreviewUiAccess
+    + AppUiAccess
+    + DocumentAccess
+    + CommandPort
+    + MarkdownQueries
+{
+}
+impl<
+    T: ThemeAccess
+        + EditorUiAccess
+        + PreviewUiAccess
+        + AppUiAccess
+        + DocumentAccess
+        + CommandPort
+        + MarkdownQueries
+        + ?Sized,
+> ScrollSyncAccess for T
+{
+}
+
+/// 设置浮层：设置 / 编辑状态 + 只读投影 + 设置命令。
+///
+/// 收 [`EditorUiAccess`] 是因为「编辑器偏好」分区要读 `word_wrap` /
+/// `spell_check` 的当前值来画开关。
+pub trait SettingsViewAccess:
+    ThemeAccess + DialogStackAccess + SettingsUiAccess + EditorUiAccess + DocumentAccess + CommandPort
+{
+}
+impl<
+    T: ThemeAccess
+        + DialogStackAccess
+        + SettingsUiAccess
+        + EditorUiAccess
+        + DocumentAccess
+        + CommandPort
+        + ?Sized,
+> SettingsViewAccess for T
+{
+}
+
+/// 快捷键一览：一览状态 + 只读命令。
+pub trait ShortcutOverviewViewAccess:
+    ThemeAccess + ShortcutOverviewUiAccess + DialogStackAccess + CommandPort
+{
+}
+impl<T: ThemeAccess + ShortcutOverviewUiAccess + DialogStackAccess + CommandPort + ?Sized>
+    ShortcutOverviewViewAccess for T
+{
+}
+
+/// 侧栏：侧栏 / 应用 / 编辑状态 + 工作区条目 + 只读投影 + 命令。
+///
+/// 收 [`EditorUiAccess`] 是因为「搜索」标签要把当前文档全文交给命中高亮
+/// （`editor_text()` 读当前文档副本）。
+pub trait SidebarViewAccess:
+    ThemeAccess
+    + SidebarUiAccess
+    + AppUiAccess
+    + EditorUiAccess
+    + WorkspaceEntriesAccess
+    + DocumentAccess
+    + CommandPort
+{
+}
+impl<
+    T: ThemeAccess
+        + SidebarUiAccess
+        + AppUiAccess
+        + EditorUiAccess
+        + WorkspaceEntriesAccess
+        + DocumentAccess
+        + CommandPort
+        + ?Sized,
+> SidebarViewAccess for T
+{
+}
+
+/// 统计浮层：只读统计 + 主题 + 浮层栈。
+pub trait StatsViewAccess: ThemeAccess + DialogStackAccess + DocumentAccess {}
+impl<T: ThemeAccess + DialogStackAccess + DocumentAccess + ?Sized> StatsViewAccess for T {}
+
+/// 状态栏：状态栏 / 编辑状态 + 只读投影 + 命令 + 时钟 / 编码 / 偏好。
+pub trait StatusBarViewAccess:
+    ThemeAccess
+    + StatusBarUiAccess
+    + EditorUiAccess
+    + DocumentAccess
+    + CommandPort
+    + ClockAccess
+    + DocumentQueries
+    + PreferencesQueries
+{
+}
+impl<
+    T: ThemeAccess
+        + StatusBarUiAccess
+        + EditorUiAccess
+        + DocumentAccess
+        + CommandPort
+        + ClockAccess
+        + DocumentQueries
+        + PreferencesQueries
+        + ?Sized,
+> StatusBarViewAccess for T
+{
+}
+
+/// 符号面板：符号状态 + 浮层栈 + 插入命令。
+pub trait SymbolViewAccess: ThemeAccess + SymbolUiAccess + DialogStackAccess + CommandPort {}
+impl<T: ThemeAccess + SymbolUiAccess + DialogStackAccess + CommandPort + ?Sized> SymbolViewAccess
+    for T
+{
+}
+
+/// 工具栏（全局顶栏 + 编辑区工具栏）：应用状态 + 只读投影 + 命令。
+pub trait ToolbarViewAccess: ThemeAccess + AppUiAccess + DocumentAccess + CommandPort {}
+impl<T: ThemeAccess + AppUiAccess + DocumentAccess + CommandPort + ?Sized> ToolbarViewAccess for T {}
+
+/// 欢迎页：只读投影（最近文件 / 当前文档）+ 打开命令。
+pub trait WelcomeViewAccess: ThemeAccess + DocumentAccess + CommandPort {}
+impl<T: ThemeAccess + DocumentAccess + CommandPort + ?Sized> WelcomeViewAccess for T {}
+
+// ===========================================================================
+// bundle（只给路由者）
 // ===========================================================================
 
-/// 视图可用的窄接口：只暴露「这个视图真正需要」的状态与命令。
+/// 路由者（`main_view` / `overlays`）持有的宽接口：全部窄 trait 的 bundle。
 ///
 /// 实现方是 root 的 `EditorApp`（见 `src/app/frame/view_context.rs`）。
-/// 视图侧一律以 `&mut dyn EditorViewContext` 接收，**不得**再出现
-/// `EditorApp`——由 `tools/arch_check.rs::check_view_decoupling` 机械拦截。
+/// **只有路由者**收它——具体视图一律收自己的窄 trait（子视图签名里出现
+/// `EditorViewContext` 会被 `tools/arch_check.rs::check_view_narrow_context`
+/// 机械拦截），路由者再经 trait object upcasting 把它转成子视图要的那一个。
 ///
-/// 本 trait **没有自有方法**：它是 5 个能力 trait 的 bundle，
+/// 本 trait **没有自有方法**：它只是 17 个窄 trait 的并集，
 /// 拆开是为了让「这个视图能碰到什么」在类型上可辨（见模块文档）。
 pub trait EditorViewContext:
-    ThemeAccess + UiStateAccess + DocumentAccess + CommandPort + ServiceQueries
+    AboutViewAccess
+    + CommandPaletteViewAccess
+    + DiffViewAccess
+    + EditorViewAccess
+    + ExportViewAccess
+    + FindReplaceViewAccess
+    + PreviewViewAccess
+    + QuickOpenViewAccess
+    + ScrollSyncAccess
+    + SettingsViewAccess
+    + ShortcutOverviewViewAccess
+    + SidebarViewAccess
+    + StatsViewAccess
+    + StatusBarViewAccess
+    + SymbolViewAccess
+    + ToolbarViewAccess
+    + WelcomeViewAccess
 {
 }

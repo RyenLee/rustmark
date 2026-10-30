@@ -1371,6 +1371,19 @@ fn check_view_file_sizes(views_root: &Path) -> Vec<Violation> {
 /// 两处各写一遍的情况下，新增 crate 只改一处就会让另一处**少扫一个根**，
 /// 而校验器少扫一个根的表现是**漏报**（违规文件压根没被读），
 /// 比多报危险得多——多报立刻看得见，漏报要等注入用例才现形。
+/// 与 [`scan_project`] 的 `src_roots` 同源，供 `build.rs` 派生
+/// `cargo:rerun-if-changed` 清单——重跑条件与实际扫描根必须一致，否则新增
+/// crate 会重演「少登记一个根、违规被静默跳过」。
+// 仅 build script 调用；check-arch bin 与 arch_violation_fixture 包含同一文件
+// 却不派生重跑清单，故在这两个目标里它是 dead_code，逐处裁决豁免。
+#[allow(dead_code)]
+pub(crate) fn src_root_paths(manifest: &Path) -> Vec<PathBuf> {
+    src_roots(manifest)
+        .into_iter()
+        .map(|(root, _, _)| root)
+        .collect()
+}
+
 fn src_roots(manifest: &Path) -> Vec<(PathBuf, &'static str, Option<Layer>)> {
     vec![
         (manifest.join("src"), "", None),
@@ -1759,8 +1772,10 @@ pub fn check_view_decoupling_with(manifest: &Path, allowlist: &[&str]) -> Vec<Vi
             violations.push(Violation {
                 file: rel,
                 line,
-                detail: "R-03 B1：视图不得直取组合根 `crate::app` —— 改为收 \
-                         `&mut dyn EditorViewContext`（`rustmark_ui::presentation::view_context`）。\
+                detail: "R-03 B1：视图不得直取组合根 `crate::app` —— 改为收该视图自己的窄 trait\
+                         （`rustmark_ui::presentation::view_context` 的 `XxxViewAccess`，\
+                         按视图裁剪能力面）；只有路由者 `main_view` / `overlays` 收 \
+                         `&mut dyn EditorViewContext`。\
                          白名单已退役（批 2 收官），一名都不许有；确需临时保留请先与架构负责人确认"
                     .to_string(),
             });
@@ -1841,11 +1856,85 @@ pub fn check_view_no_composition_root_marker(manifest: &Path) -> Vec<Violation> 
             file: rel,
             line,
             detail: "R-03 B1：视图不得出现组合根 `EditorApp` 记号 —— `EditorApp` 是组合根，\
-                     视图只应通过 `EditorViewContext` 契约\
-                     （`rustmark_ui::presentation::view_context`）访问应用状态：\
-                     形参改收 `&mut dyn EditorViewContext`；只读查询走 `ThemeAccess` / \
-                     `UiStateAccess` / `DocumentAccess` / `ServiceQueries`；\
-                     状态与命令走 `CommandPort`"
+                     视图只应通过**按视图裁剪的窄 trait** 访问应用状态：\
+                     形参改收该视图自己的 `XxxViewAccess`（`main_view` / `overlays` 这两个\
+                     路由者才收 `&mut dyn EditorViewContext`）；\
+                     只读查询走 `ThemeAccess` / 各 `UiAccess` / `DocumentAccess` / \
+                     `MarkdownQueries` / `DocumentQueries` / `PreferencesQueries` / `ClockAccess`；\
+                     状态与命令走 `CommandPort`，外链走 `ExternalLinks`"
+                .to_string(),
+        });
+    }
+
+    violations
+}
+
+/// 只有**路由者**可以收宽上下文 `EditorViewContext`（R-03 B1 按视图窄化守卫）。
+///
+/// # 为什么「不许认识 `EditorApp`」之外还要这一条
+///
+/// 视图改收窄 trait 后，`&mut dyn EditorViewContext` 仍然能被任何视图写成形参：
+/// 它是 17 个窄 trait 的 bundle，成员面与窄化前**完全一致**。一旦某个视图
+/// 图省事写了它，越权访问就从「编译期不可达」退回「全靠评审」，而
+/// `cargo check` / `clippy` / 其余守卫**全绿**——宽窄两种签名都能编译。
+///
+/// 白名单只有两个路由者：`main_view`（主体区分发）与 `overlays`（浮层分发）。
+/// 它们要能把上下文**转交**给各窄视图，必须持有完整 bundle；其余视图只收
+/// 自己的 `XxxViewAccess`。
+///
+/// # 判据为什么是「标识符」而不是「形参类型」
+///
+/// 与 [`check_view_no_composition_root_marker`] 同源：`use` 别名、类型别名、
+/// 泛型约束、返回值里出现这个名字，都说明该视图又认识宽上下文了。
+/// 词法器把注释与字符串天然剥掉，故「这里为什么不再收宽上下文」照样写得进文档。
+///
+/// 白名单按**相对 [`VIEWS_DIR`] 的路径**比对，子目录里的同名文件不会被误放行。
+pub fn check_view_narrow_context(manifest: &Path) -> Vec<Violation> {
+    // 宽上下文类型名（`rustmark_ui::presentation::view_context`）。
+    const WIDE_CONTEXT: &str = "EditorViewContext";
+    // 允许提到宽上下文的**路由者**（相对 [`VIEWS_DIR`]）。
+    const ROUTERS: &[&str] = &["main_view.rs", "overlays.rs"];
+
+    let views_root = manifest.join(VIEWS_DIR);
+    if !views_root.is_dir() {
+        // 合成夹具可能根本没有视图层——不报（与 [`check_view_no_composition_root_marker`] 同）。
+        return Vec::new();
+    }
+
+    let mut files = Vec::new();
+    collect_rs_files(&views_root, &mut files);
+    files.sort();
+
+    let mut violations = Vec::new();
+    for path in &files {
+        let Ok(content) = fs::read_to_string(path) else {
+            continue;
+        };
+        let lexed = Lexer::new(&content).run();
+        let Some(line) = first_ident_line(&lexed, WIDE_CONTEXT) else {
+            continue;
+        };
+        let in_views = path
+            .strip_prefix(&views_root)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        if ROUTERS.contains(&in_views.as_str()) {
+            continue;
+        }
+        let rel = path
+            .strip_prefix(manifest)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        violations.push(Violation {
+            file: rel,
+            line,
+            detail: "R-03 B1：视图不得收宽上下文 `EditorViewContext` —— 按视图裁剪：\
+                     形参改收该视图自己的窄 trait（`rustmark_ui::presentation::view_context` 的\
+                     `XxxViewAccess`，只含它真正用到的能力）；`EditorViewContext` 只留给\
+                     路由者 `main_view` / `overlays`——它一进普通视图，越权访问就从\
+                     「编译期不可达」退回「靠评审发现」"
                 .to_string(),
         });
     }
@@ -2241,6 +2330,9 @@ pub fn scan_project(manifest: &Path) -> Vec<Violation> {
     // 路径守卫看不见「经 `use super::*` 带进来的 `EditorApp`」，
     // 由记号守卫补这个缺口（见其文档：六个隐式子模块从未被路径守卫报过）。
     violations.extend(check_view_no_composition_root_marker(manifest));
+    // 窄化守卫补的是「还能写宽上下文」这个口子：`&mut dyn EditorViewContext`
+    // 与窄 trait 都能编译，只有这条判据能拦住视图回退到宽接口。
+    violations.extend(check_view_narrow_context(manifest));
 
     violations
 }

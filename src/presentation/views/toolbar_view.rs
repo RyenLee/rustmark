@@ -48,7 +48,7 @@ use egui::Ui;
 
 use crate::presentation::icons;
 use crate::presentation::shortcuts::registry::UiAction;
-use crate::presentation::view_context::EditorViewContext;
+use crate::presentation::view_context::ToolbarViewAccess;
 use crate::presentation::widgets;
 
 /// 绘制全局顶栏：应用级菜单栏 + 标签条 + 路径面包屑。
@@ -58,7 +58,7 @@ use crate::presentation::widgets;
 /// 应用级菜单栏占 `topbar_height`、标签条占 `tabstrip_height`、面包屑占 `tabbar_height`。
 /// 三者之和即顶部面板高度，改主题尺寸时只有一条通路
 /// （避免「菜单栏改了，别处没改」的错位）。
-pub fn show(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
+pub fn show(vctx: &mut dyn ToolbarViewAccess, ui: &mut Ui) {
     let metrics = vctx.theme_state().metrics;
     let height = metrics.topbar_height + metrics.tabstrip_height + metrics.tabbar_height;
     egui::Panel::top("rustmark.topbar")
@@ -105,7 +105,7 @@ pub fn show(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
 /// `horizontal_top`：子控件贴顶对齐、占据整条窄带，文字顶缘落在行首，
 /// 底部留 1pt 余量不再越界。这是项目 egui 布局纪律「顶层横向排布必须
 /// `horizontal_top`」在面包屑处的落地。
-fn draw_breadcrumb(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
+fn draw_breadcrumb(vctx: &mut dyn ToolbarViewAccess, ui: &mut Ui) {
     let path = vctx.current_document_path();
     let theme = vctx.theme_state().clone();
     let clip = ui.clip_rect();
@@ -170,11 +170,11 @@ const SIDEBAR_TOGGLE_W: f32 = 18.0;
 ///
 /// 状态复用 `sidebar_visible`（与 Ctrl+\ / 视图菜单同一路径，不引入第二
 /// 份「收起」状态）；动作走 [`UiAction::ToggleSidebar`] 汇入
-/// `EditorViewContext::execute`——三入口（按钮 / 快捷键 / 菜单）行为一致由
+/// `CommandPort::execute`——三入口（按钮 / 快捷键 / 菜单）行为一致由
 /// 既有回归钉住。矩形左界按 `clip_rect` 推（问题 059：环境可用宽不可信，
 /// 左界同理不取 `cursor().left()` 而取面板左内边距，行首两者相等）。
 fn draw_sidebar_toggle(
-    vctx: &mut dyn EditorViewContext,
+    vctx: &mut dyn ToolbarViewAccess,
     ui: &mut Ui,
     clip: egui::Rect,
     inset: f32,

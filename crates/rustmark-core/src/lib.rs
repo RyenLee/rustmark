@@ -1,6 +1,8 @@
 //! # rustmark-core —— rustmark 的核心库（D-3 阶段 4a 拆分产物）
 //!
-//! 装载四层与表现层的非视图子模块，**不含**组合根 `app` 与 `presentation::views`。
+//! 装载领域层与应用层，并以子模块转发 `shared` / `ports` / `actions`；
+//! **不含**表现层（V11-62 起非视图子层已全部迁入 `rustmark-ui` 与
+//! `rustmark-render`），也不含组合根 `app` 与视图 `presentation::views`。
 //! 依赖方向由 cargo 锁死：core 不允许依赖 root（root 通过 re-export 拼接全部
 //! `crate::` 路径，见 `src/lib.rs` 与 `src/presentation.rs`）。
 //!
@@ -14,13 +16,11 @@
 //! - [`domain`]：领域层，零 IO、零 UI 依赖（阶段 03）
 //! - [`application`]：应用层，用例编排与 DTO（阶段 04）
 //! - [`infrastructure`]：基础设施层，外部库适配（阶段 05）
-//! - [`presentation`]：core 侧保留的 doc-only 空壳模块（V11-62 收官，批次 1-5，
-//!   2026-10-25）。历史上承载的非视图子层 `widgets` / `state` / `shortcuts` /
-//!   `theme` / `rich` 已全部迁入独立 crate `rustmark-ui`；root 经
-//!   `src/presentation.rs` 的 `pub use rustmark_ui::presentation::*` 桥接拼回
-//!   `crate::presentation::<子模块>` 原路径，存量视图与集成测试零改动。
-//!   （egui 视图与组合根在 root crate 的 `presentation::views` / `app`；
-//!   icons 向量图标资源在 V11-58 抽去的 `rustmark-icons` crate）
+//!
+//! 表现层不属于本 crate：非视图子模块（`widgets` / `state` / `shortcuts` /
+//! `theme`）在 `rustmark-ui`，`rich` 在 `rustmark-render`，视图与组合根在
+//! root crate。core 侧历史保留的 `presentation` doc-only 空壳已于 2026-10-30
+//! 删除——它零消费者，只会让「presentation 归哪一层」多出一个错误落点。
 
 // V11-65：unwrap 系列与 missing_docs 的 lint 声明已收敛至 root `Cargo.toml`
 // 的 `[workspace.lints]` 单点真源（本 crate 经 `[lints] workspace = true` 继承）。
@@ -31,7 +31,6 @@
 
 pub mod application;
 pub mod domain;
-pub mod presentation;
 
 // TD-04（2026-10-26）：共享内核抽为独立 crate `rustmark-shared`，此处把它的
 // `shared` 模块拼回原位——`crate::shared::…`（core 内 100+ 处）与

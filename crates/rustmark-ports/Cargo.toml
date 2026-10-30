@@ -1,12 +1,11 @@
 [package]
-# 独立 crate 版本号不随应用发版（publish = false，仅参与本地 workspace 构建）。
 name = "rustmark-ports"
-version = "0.2.0"
-edition = "2024"
-rust-version = "1.99"
-license = "MIT OR Apache-2.0"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
 description = "rustmark 的架构端口（契约）：dialog / event / system / image_asset / time（R-10 项 A 从 shared 抽出）"
-publish = false
+publish.workspace = true
 
 [dependencies]
 # 端口内部复用 shared 的纯值类型（error / path / text_format / geometry /

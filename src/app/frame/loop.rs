@@ -188,6 +188,19 @@ impl eframe::App for EditorApp {
     }
 }
 
+/// 窗口 / 任务栏图标。
+///
+/// 与 exe 资源段（`assets/logo/rustmark.rc` → `rustmark.ico`）同源，都由
+/// `assets/logo/build_logo.py` 生成：资源段管资源管理器与「固定到任务栏」，
+/// 这里管窗口标题栏、任务栏按钮与 alt-tab。取 256px——系统从这一份缩放出
+/// 各档尺寸。解码失败回落到 eframe 默认图标而不是 panic：图标是体验项。
+fn window_icon() -> egui::IconData {
+    eframe::icon_data::from_png_bytes(include_bytes!(
+        "../../../assets/logo/png/rustmark-icon-256.png"
+    ))
+    .unwrap_or_default()
+}
+
 /// 以给定 `Services` 启动窗口。
 pub fn run(services: Services) -> eframe::Result {
     let system_dark = false;
@@ -195,7 +208,8 @@ pub fn run(services: Services) -> eframe::Result {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1280.0, 800.0])
             .with_min_inner_size([960.0, 600.0])
-            .with_title("rustmark"),
+            .with_title("rustmark")
+            .with_icon(window_icon()),
         ..Default::default()
     };
     eframe::run_native(

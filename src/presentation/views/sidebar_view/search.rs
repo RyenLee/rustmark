@@ -7,14 +7,14 @@ use crate::presentation::state::sidebar_ui_state::{
     SEARCH_SCOPES, SEARCH_TOGGLES, SearchGroup, SearchScope, WorkspaceSearch,
 };
 use crate::presentation::theme::builtin::Theme;
-use crate::presentation::view_context::EditorViewContext;
+use crate::presentation::view_context::SidebarViewAccess;
 use crate::presentation::widgets;
 
 use super::files::display_name;
 use super::*;
 
 /// 搜索标签。
-pub(super) fn search_tab(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
+pub(super) fn search_tab(vctx: &mut dyn SidebarViewAccess, ui: &mut Ui, theme: &Theme) {
     let mut query = vctx.sidebar_state().search_query.clone();
     let response = ui.add(
         egui::TextEdit::singleline(&mut query)
@@ -112,7 +112,7 @@ pub(super) fn search_tab(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &
 /// 文字与底色完全相同 → 「看不到按钮的文案」。
 /// 故选中文案用正文色（ mapper 同时把 `fg_stroke` 映射为正文色，
 /// 两条路都保证对比度），未选中才用次要色。
-fn scope_row(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
+fn scope_row(vctx: &mut dyn SidebarViewAccess, ui: &mut Ui, theme: &Theme) {
     ui.horizontal(|ui| {
         for scope in SEARCH_SCOPES {
             let on = vctx.sidebar_state().search_scope == scope;
@@ -144,7 +144,7 @@ fn scope_row(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
 /// 右侧计数与列表必须来自同一次检索，否则同一帧要跑两遍全量搜索。
 /// 检索失败时计数显示 0，错误详情由 [`search_tab`] 统一呈现。
 fn toggle_row(
-    vctx: &mut dyn EditorViewContext,
+    vctx: &mut dyn SidebarViewAccess,
     ui: &mut Ui,
     theme: &Theme,
 ) -> Result<WorkspaceSearch, rustmark_core::shared::error::AppError> {
@@ -324,7 +324,7 @@ fn snippet_job(ui: &Ui, theme: &Theme, snippet: &str, highlight: (usize, usize))
 }
 
 /// 跳到某文件某行（先切文件，再按行号定位）。
-fn jump_to_hit(vctx: &mut dyn EditorViewContext, path: &str, line: usize) {
+fn jump_to_hit(vctx: &mut dyn SidebarViewAccess, path: &str, line: usize) {
     let already_open = vctx.current_document_path().eq_ignore_ascii_case(path);
     if !already_open && let Err(e) = vctx.open_workspace_file(path) {
         vctx.sidebar_state()

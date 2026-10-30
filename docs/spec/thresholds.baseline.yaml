@@ -35,17 +35,17 @@ modules:
     title: 构建工具链与 CI 门禁
     thresholds:
       toolchain_channel:
-        value: "1.99.0"
+        value: "1.99"
         unit: "toolchain version"
-        source: "rust-toolchain.toml:4"
-        anchor: "channel = \"1.99.0\""
-        purpose: "全仓 Rust 工具链唯一真源，CI 不再另写版本号。文件缺失或版本低于此值即编译失败；升级需改这一处。"
-        recommended: "1.99.0（随 MSRV 单点升级）"
+        source: "rust-toolchain.toml:11"
+        anchor: "channel = \"1.99\""
+        purpose: "全仓 Rust 工具链唯一真源，CI 不再另写版本号。只钉 minor：rustup 自动解析该 minor 的最新补丁（当前 1.99.1），补丁升级不必改文件；跨 minor 升级须人工确认并同步 rust_msrv。"
+        recommended: "1.99（随 MSRV 单点升级）"
         configurable: "配置文件 rust-toolchain.toml"
       rust_msrv:
         value: 1.99
         unit: "Rust version"
-        source: "Cargo.toml:100"
+        source: "Cargo.toml:137"
         anchor: "rust-version = \"1.99\""
         purpose: "包级最低 Rust 版本声明，cargo 解析依赖时据此拒绝过低版本。与 toolchain_channel 须同步。"
         recommended: "1.99（与工具链同步）"
@@ -1015,7 +1015,7 @@ modules:
       env_skip_arch_check:
         value: "任意值"
         unit: "switch"
-        source: "build.rs:53"
+        source: "build.rs:60"
         anchor: "std::env::var(\"SKIP_ARCH_CHECK\")"
         purpose: "设置后跳过构建期架构边界校验（逃生口）；CI 不得设置，否则分层违规不再拦截构建。"
         recommended: "仅本地排障临时使用"

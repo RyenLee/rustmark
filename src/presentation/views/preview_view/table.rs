@@ -36,7 +36,7 @@ use super::*;
 /// * 关：`available` 取 `INFINITY`，列宽退回**自然宽**，超出视口的部分交给
 ///   预览区的横向滚动条——与关闭换行时的代码块同一行为，而不是被压进面板。
 pub(super) fn draw_table(
-    vctx: &mut dyn EditorViewContext,
+    vctx: &mut dyn PreviewViewAccess,
     ui: &mut Ui,
     theme: &Theme,
     table: &TableView,
@@ -232,7 +232,7 @@ struct ColumnLayout<'a> {
 /// 纵向留白改由这里的 `pad_y` 提供。
 #[allow(clippy::too_many_arguments)] // 与 `render_inline_text` 同族：表格行渲染需要完整上下文，且单元格链接跳转要 `internal_targets`
 fn table_row(
-    vctx: &mut dyn EditorViewContext,
+    vctx: &mut dyn PreviewViewAccess,
     ui: &mut Ui,
     theme: &Theme,
     cells: &[String],

@@ -3,7 +3,7 @@
 use egui::{Align, Layout, RichText, ScrollArea, Ui};
 
 use crate::presentation::theme::builtin::Theme;
-use crate::presentation::view_context::EditorViewContext;
+use crate::presentation::view_context::SidebarViewAccess;
 use crate::presentation::widgets;
 
 use super::*;
@@ -12,7 +12,7 @@ use super::*;
 ///
 /// 与大纲同源（见文件头表格）：`lint_document` 是 O(行数) 的线性扫描，
 /// 每帧现算即可，不缓存。
-pub(super) fn lint_tab(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
+pub(super) fn lint_tab(vctx: &mut dyn SidebarViewAccess, ui: &mut Ui, theme: &Theme) {
     let rules = vctx.settings().editor.lint;
     if !rules_enabled(&rules) {
         ui.weak("所有检查规则均已关闭；可在「设置 → 编辑器」里开启。");

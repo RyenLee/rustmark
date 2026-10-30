@@ -64,9 +64,9 @@ cat > "$app/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-# 图标可选：仓库提供 assets/icon.icns 时才写入（缺省用系统默认图标）。
-if [ -f assets/icon.icns ]; then
-    cp assets/icon.icns "$app/Contents/Resources/AppIcon.icns"
+# 图标：与 .ico / 窗口图标同源（`assets/logo/build_logo.py` 生成）。
+if [ -f assets/logo/rustmark.icns ]; then
+    cp assets/logo/rustmark.icns "$app/Contents/Resources/AppIcon.icns"
     /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string AppIcon" "$app/Contents/Info.plist"
 fi
 

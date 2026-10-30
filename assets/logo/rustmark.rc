@@ -1,0 +1,4 @@
+// Windows 资源脚本：把多尺寸 ICO 挂成 exe 的主图标（资源 ID 取最小序号 1，
+// 系统会优先用它）。ICO 本身由 `build_logo.py` 生成，与 `.icns` / PNG 同源。
+// 由 `build.rs` 经 `embed-resource` 编译并链接进所有 [[bin]] 目标。
+IDI_ICON1 ICON "assets/logo/rustmark.ico"

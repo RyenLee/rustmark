@@ -5,9 +5,16 @@
 //! `crates/rustmark-actions/src/`（V11-57，整根判 Free）、
 //! `crates/rustmark-icons/src/`（V11-58，`lib.rs` 自然判 Free）、
 //! `crates/rustmark-ui/src/`（V11-62，`presentation/` 前缀判子层）、
+//! `crates/rustmark-render/src/`（R-04 升 crate，整根判 Free）、
 //! `crates/rustmark-shared/src/`（TD-04，`shared/` 前缀判共享内核）、
-//! `crates/rustmark-infra/src/`（V11-64，`infrastructure/` 前缀判基础设施层）
+//! `crates/rustmark-infra/src/`（V11-64，`infrastructure/` 前缀判基础设施层）、
+//! `crates/rustmark-ports/src/`（R-10 项 A，整根判 Ports）、
+//! `crates/rustmark-assembly/src/`（R-10 项 B，整根判 App）
 //! 与 `tests/` 的 `use` 语句，违反分层依赖即 `panic!` 使构建失败。
+//!
+//! 重跑条件（`cargo:rerun-if-changed`）由 `arch_check::src_root_paths`
+//! **派生**，与扫描根同源：早先两份清单分开维护，render / ports / assembly
+//! 三个根漏登记，只改它们时本地构建不重跑校验，违规要等测试或 CI 才暴露。
 //!
 //! `tests/` 自 R-02 起纳入扫描：测试是**消费者**不是层，可以引用任何层的
 //! 公开 API（`rustmark::…`），但禁止以 `crate::<层名>::…` 的库内部视角书写
@@ -34,27 +41,48 @@ mod arch_check {
     include!("tools/arch_check.rs");
 }
 
+/// 把 `assets/logo/rustmark.ico` 编进 exe 资源段（仅 Windows 目标）。
+///
+/// 失败不 `panic`：图标是体验项，不该让构建失败。`NotAttempted`（机器上没有
+/// `rc.exe`）与 `Failed` 都只打印 `cargo:warning`，构建照常继续——但会显式
+/// 说出「这一环没生效」，而不是静默降级成默认图标。
+#[cfg(windows)]
+fn embed_icon() {
+    println!("cargo:rerun-if-changed=assets/logo/rustmark.rc");
+    println!("cargo:rerun-if-changed=assets/logo/rustmark.ico");
+    match embed_resource::compile("assets/logo/rustmark.rc", embed_resource::NONE) {
+        embed_resource::CompilationResult::Ok => {}
+        other => {
+            println!("cargo:warning=窗口图标未嵌入（{other:?}），exe 将沿用系统默认图标");
+        }
+    }
+}
+
 fn main() {
-    println!("cargo:rerun-if-changed=src");
-    println!("cargo:rerun-if-changed=crates/rustmark-core/src");
-    // V11-57：actions 契约 crate 也进扫描（scan_project 第三根），
-    // 改它的文件要重跑构建期校验。
-    println!("cargo:rerun-if-changed=crates/rustmark-actions/src");
-    // V11-58：icons 资源 crate 进扫描（scan_project 第四根）。
-    println!("cargo:rerun-if-changed=crates/rustmark-icons/src");
-    // V11-62 批次 1：ui 表现层 crate 进扫描（scan_project 第五根）。
-    println!("cargo:rerun-if-changed=crates/rustmark-ui/src");
-    // TD-04（2026-10-26）：shared 共享内核 crate 进扫描（scan_project 第六根）。
-    println!("cargo:rerun-if-changed=crates/rustmark-shared/src");
-    // V11-64（2026-10-26）：infra 基础设施 crate 进扫描（scan_project 第七根）。
-    println!("cargo:rerun-if-changed=crates/rustmark-infra/src");
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+
+    // Windows exe 的静态图标（资源管理器 / 固定到任务栏看到的那一张）。
+    // 运行期 `with_icon` 只管窗口与 alt-tab，二者缺任一环都会露出系统默认图标。
+    #[cfg(windows)]
+    embed_icon();
+
+    // 重跑清单与扫描根同源：新增或搬迁 crate 只需改 `src_roots` 一处。
+    // 两处各列一遍曾让 render / ports / assembly 漏登记，只改它们时
+    // 本地构建沿用旧校验结论（违规被静默跳过）。
+    for root in arch_check::src_root_paths(&manifest) {
+        let rel = root
+            .strip_prefix(&manifest)
+            .unwrap_or(root.as_path())
+            .to_string_lossy()
+            .replace('\\', "/");
+        println!("cargo:rerun-if-changed={rel}");
+    }
     println!("cargo:rerun-if-changed=tests");
 
     if std::env::var("SKIP_ARCH_CHECK").is_ok() {
         return;
     }
 
-    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let violations = arch_check::scan_project(&manifest);
 
     if !violations.is_empty() {

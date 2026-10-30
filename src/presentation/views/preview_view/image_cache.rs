@@ -15,7 +15,7 @@ use std::collections::HashSet;
 
 use egui::Ui;
 
-use crate::presentation::view_context::EditorViewContext;
+use crate::presentation::view_context::PreviewViewAccess;
 use rustmark_core::shared::lru::LruMap;
 
 /// 一张图片的加载结果。
@@ -307,7 +307,7 @@ fn drain_remote_results(ctx: &egui::Context) -> bool {
 /// `super::image_cache::image_entry` 取用（TD-02 拆分自 facade）。
 ///
 /// 三种来源（本地路径 / 远程 URL / data URI）的**字节取用**由
-/// [`EditorViewContext::preview_image_fetcher`] 统一交给组合根
+/// [`crate::presentation::view_context::CommandPort::preview_image_fetcher`] 统一交给组合根
 /// （`AssetLoader` 住 infra、文档目录是组合根的 `pub(crate)`，本层都名不到）；
 /// 本函数只负责「解码 → 纹理」与失败降级。
 ///
@@ -318,7 +318,7 @@ fn drain_remote_results(ctx: &egui::Context) -> bool {
 /// 通道回执 → UI 线程建纹理」：绘制路径只发一个「加载中」占位，
 /// 完成后由后台线程 `request_repaint` 唤醒下一帧换上真图。
 /// 取字节的闭包是 `'static + Send` 的，正好能整个搬进后台线程。
-pub(super) fn image_entry(ui: &Ui, vctx: &dyn EditorViewContext, url: &str) -> ImageEntry {
+pub(super) fn image_entry(ui: &Ui, vctx: &dyn PreviewViewAccess, url: &str) -> ImageEntry {
     // 回执先入账：后台线程在本帧之前完成的加载，此刻就能当缓存命中返回。
     drain_remote_results(ui.ctx());
     // 远程图片开关（PRIV-01）**在缓存查找之前**判：关闭后这张图在本会话里

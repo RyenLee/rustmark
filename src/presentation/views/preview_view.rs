@@ -90,7 +90,7 @@ use egui::{Align, CornerRadius, Layout, RichText, ScrollArea, Stroke, Ui};
 
 use crate::presentation::state::scroll_sync_state::{BlockRect, Side};
 use crate::presentation::theme::builtin::Theme;
-use crate::presentation::view_context::EditorViewContext;
+use crate::presentation::view_context::PreviewViewAccess;
 use rustmark_core::application::dto::BlockView;
 use rustmark_core::application::markdown::queries::RenderPreviewQuery;
 
@@ -141,7 +141,7 @@ pub const TABLE_MIN_COL_W: f32 = 64.0;
 // ============================================================================
 
 /// 绘制预览区。
-pub fn show(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
+pub fn show(vctx: &mut dyn PreviewViewAccess, ui: &mut Ui) {
     let theme = vctx.theme_state().clone();
     ui.painter()
         .rect_filled(ui.max_rect(), CornerRadius::ZERO, theme.bg_primary);
@@ -178,19 +178,17 @@ pub fn show(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
         version,
         &theme,
     );
-    let now_ms = vctx.markdown_service().now().millis();
+    let now_ms = vctx.now_ms();
     // 两条判据都只要一个 `bool`，走只读出口——别为它拿 `&mut`，
     // 那会把后面同帧的 `document_revision` / `editor_state_read` 一并堵死。
     let first = vctx.preview_state_read().last_key.is_none();
     let want = vctx.preview_state_read().should_render(key, now_ms, false);
 
     if first || want {
-        // **形态 B**：`markdown_service()` 是 `&self` 借用，若把它写进 `match`
+        // **形态 B**：`render_preview()` 是 `&self` 借用，若把它写进 `match`
         // 判据，借用会覆盖整个 match 块，块内 `set_preview_blocks` 的可变借用
         // 直接撞车。故先落到一个 owned 结果上，借用随语句结束。
-        let rendered = vctx
-            .markdown_service()
-            .render_preview(RenderPreviewQuery { doc_id, version });
+        let rendered = vctx.render_preview(RenderPreviewQuery { doc_id, version });
         match rendered {
             Ok(view) => {
                 vctx.set_preview_blocks(view.blocks);
@@ -387,7 +385,7 @@ fn pane_header(ui: &mut Ui, theme: &Theme) {
 
 /// 按块类型分发渲染器。
 fn draw_block(
-    vctx: &mut dyn EditorViewContext,
+    vctx: &mut dyn PreviewViewAccess,
     ui: &mut Ui,
     theme: &Theme,
     block: &BlockView,

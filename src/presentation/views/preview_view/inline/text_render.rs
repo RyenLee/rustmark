@@ -8,7 +8,7 @@ use egui::{CursorIcon, Galley, Pos2, Rect, Response, Sense, Ui};
 
 use crate::presentation::theme::builtin::Theme;
 use crate::presentation::theme::mapper::{SpanHit, SpanPolicy, build_job};
-use crate::presentation::view_context::EditorViewContext;
+use crate::presentation::view_context::PreviewViewAccess;
 use rustmark_core::application::dto::SpanView;
 use rustmark_core::ports::system;
 
@@ -37,7 +37,7 @@ use super::text_format::{Typography, done_overlay, span_format};
 #[allow(clippy::too_many_arguments)] // 预览内联渲染的完整上下文（UI/主题/文本/片段/排版/交互/宽度/跳转表）本就九项；打包成 struct 会让每个调用方多一次所有权转换，且掩盖「漏传即错」
 pub(crate) fn render_inline_text(
     ui: &mut Ui,
-    vctx: &mut dyn EditorViewContext,
+    vctx: &mut dyn PreviewViewAccess,
     theme: &Theme,
     content: &str,
     spans: &[SpanView],
@@ -163,7 +163,7 @@ fn span_rects(galley: &Galley, hits: &[SpanHit]) -> Vec<(usize, Rect)> {
 /// 外链改走 opener 端口后，「点击 link 会调 open、不安全地址不调」要在集成测试里断言）。
 #[doc(hidden)]
 pub fn handle_span_click(
-    vctx: &mut dyn EditorViewContext,
+    vctx: &mut dyn PreviewViewAccess,
     sv: &SpanView,
     content: &str,
     internal_targets: &[(String, u64)],
@@ -183,7 +183,7 @@ pub fn handle_span_click(
             if system::is_safe_to_open(url) {
                 // 打开失败不打扰用户：链接打不开时预览区照常显示，
                 // 弹窗反而挡住阅读（与旧实现 `let _ =` 的取舍一致）。
-                let _ = vctx.external_opener().open(url);
+                let _ = vctx.open_external(url);
             }
         }
         "footnote_ref" => {

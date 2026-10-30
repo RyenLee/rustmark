@@ -1,12 +1,11 @@
 [package]
-# 独立 crate 版本号不随应用发版（publish = false，仅参与本地 workspace 构建）。
 name = "rustmark-assembly"
-version = "0.2.0"
-edition = "2024"
-rust-version = "1.99"
-license = "MIT OR Apache-2.0"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
 description = "rustmark 的组合根装配下沉（M2，R-10 项 B 补全）：production_bundle / Services / ConfigPaths / assemble_with_*（2026-10-29 从 root 抽出）"
-publish = false
+publish.workspace = true
 
 [dependencies]
 # --- 本地 crate（六边形脊柱：compose / ImplBundle / AppServices / ComposeConfig）---

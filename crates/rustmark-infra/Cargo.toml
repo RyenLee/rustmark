@@ -1,12 +1,11 @@
 [package]
-# 独立 crate 版本号不随应用发版（publish = false，仅参与本地 workspace 构建）。
 name = "rustmark-infra"
-version = "0.2.0"
-edition = "2024"
-rust-version = "1.99"
-license = "MIT OR Apache-2.0"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
 description = "rustmark 的基础设施层：外部库适配与 IO 实现（端口在 core）"
-publish = false
+publish.workspace = true
 
 [dependencies]
 # --- 本地 crate（端口与领域类型在 core，实现在此）---

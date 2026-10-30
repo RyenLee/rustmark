@@ -8,12 +8,12 @@
 use egui::{Align, Layout, Ui};
 
 use crate::presentation::theme::builtin::Theme;
-use crate::presentation::view_context::EditorViewContext;
+use crate::presentation::view_context::SettingsViewAccess;
 
 use super::*;
 
 /// 「快捷键」分区：改键 + 冲突提示。
-pub(super) fn shortcuts(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
+pub(super) fn shortcuts(vctx: &mut dyn SettingsViewAccess, ui: &mut Ui, theme: &Theme) {
     // 先取快照再进闭包：闭包里要 `&mut vctx`，而 `entries` 借用了 `vctx` 的返回值。
     let entries: Vec<(String, String, String)> = vctx
         .settings()

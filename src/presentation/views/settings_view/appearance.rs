@@ -3,13 +3,13 @@
 use egui::Ui;
 
 use crate::presentation::theme::builtin::{Theme, theme_kind_label};
-use crate::presentation::view_context::EditorViewContext;
+use crate::presentation::view_context::SettingsViewAccess;
 use rustmark_core::application::dto::ThemeView;
 
 use super::*;
 
 /// 「外观」分区：主题 / 字号 / 行高 / 字体族。
-pub(super) fn appearance(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
+pub(super) fn appearance(vctx: &mut dyn SettingsViewAccess, ui: &mut Ui, theme: &Theme) {
     let view = vctx.settings().theme;
     field(ui, theme, "主题", |ui| {
         ui.horizontal_wrapped(|ui| {
@@ -130,7 +130,7 @@ pub(super) fn appearance(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &
 /// 语法色收进折叠区：18 行颜色一次铺开会把「字号 / 行高 / 字体族」挤出视野，
 /// 而语法色多数人只调一两个。折叠标题里写清「未改动的跟随主题」，
 /// 免去用户对「这一项到底是不是我在控制」的疑惑。
-fn custom_palette_editor(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
+fn custom_palette_editor(vctx: &mut dyn SettingsViewAccess, ui: &mut Ui, theme: &Theme) {
     let mut palette = vctx.settings().theme.custom.clone().unwrap_or_default();
     let mut changed = false;
     changed |= color_row(ui, "主背景", &mut palette.bg_primary);

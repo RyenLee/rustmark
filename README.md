@@ -147,7 +147,7 @@ wgpu 通过系统图形栈渲染，无窗口管理器外的额外依赖。
 ## 6. 从源码构建
 
 ```bash
-# 工具链：Rust 1.99.0（rust-toolchain.toml 已固定）
+# 工具链：Rust 1.99（rust-toolchain.toml 钉 minor，补丁号由 rustup 自动跟随）
 cargo build --release --bin rustmark   # 产物 target/release/rustmark*
 
 # 全量验证链（贡献者必过）——`--workspace` 必带：workspace 化（D-3 阶段 4a）后

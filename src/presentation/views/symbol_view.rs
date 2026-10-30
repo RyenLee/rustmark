@@ -22,7 +22,7 @@ use egui::{Context, Layout, RichText, ScrollArea, Ui};
 use crate::presentation::state::dialog_ui_state::Overlay;
 use crate::presentation::state::symbol_ui_state::{SymbolGroup, SymbolItem};
 use crate::presentation::theme::builtin::Theme;
-use crate::presentation::view_context::EditorViewContext;
+use crate::presentation::view_context::SymbolViewAccess;
 
 /// 对话框默认尺寸（对齐原型 `BaseModal :width="520" :height="430"`）。
 const WIDTH: f32 = 520.0;
@@ -35,7 +35,7 @@ const CELL: f32 = 34.0;
 pub const SYMBOL_INPUT_ID: &str = "rustmark.symbol.search";
 
 /// 绘制符号面板。
-pub fn show(vctx: &mut dyn EditorViewContext, ctx: &Context) {
+pub fn show(vctx: &mut dyn SymbolViewAccess, ctx: &Context) {
     let mut open = true;
     egui::Window::new(Overlay::Symbol.title())
         .id(egui::Id::unique("rustmark.overlay.symbol"))
@@ -60,7 +60,7 @@ pub fn show(vctx: &mut dyn EditorViewContext, ctx: &Context) {
 }
 
 /// 处理面板内的 ↑↓ / Enter / Esc。
-fn handle_keys(vctx: &mut dyn EditorViewContext, ctx: &Context) {
+fn handle_keys(vctx: &mut dyn SymbolViewAccess, ctx: &Context) {
     if !vctx.dialog_state().is_open(Overlay::Symbol) {
         return;
     }
@@ -105,7 +105,7 @@ fn handle_keys(vctx: &mut dyn EditorViewContext, ctx: &Context) {
 }
 
 /// 主体。
-fn body(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
+fn body(vctx: &mut dyn SymbolViewAccess, ui: &mut Ui) {
     let theme = vctx.theme_state().clone();
     tabs(vctx, ui, &theme);
     ui.add_space(theme.metrics.space_xs);
@@ -119,7 +119,7 @@ fn body(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
 }
 
 /// 分组标签。
-fn tabs(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
+fn tabs(vctx: &mut dyn SymbolViewAccess, ui: &mut Ui, theme: &Theme) {
     ui.horizontal_wrapped(|ui| {
         for group in SymbolGroup::ALL {
             let selected = vctx.symbol_ui_state().group == *group;
@@ -136,7 +136,7 @@ fn tabs(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
 }
 
 /// 搜索框。
-fn search_box(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
+fn search_box(vctx: &mut dyn SymbolViewAccess, ui: &mut Ui) {
     ui.horizontal(|ui| {
         ui.label(RichText::new("搜索").size(12.0));
         let mut query = vctx.symbol_ui_state().query.clone();
@@ -155,7 +155,7 @@ fn search_box(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
 }
 
 /// 符号网格。
-fn grid(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme, visible: &[SymbolItem]) {
+fn grid(vctx: &mut dyn SymbolViewAccess, ui: &mut Ui, theme: &Theme, visible: &[SymbolItem]) {
     if visible.is_empty() {
         ui.add_space(theme.metrics.space_xl);
         ui.centered_and_justified(|ui| {
@@ -235,7 +235,7 @@ fn cell(ui: &mut Ui, theme: &Theme, item: &SymbolItem, selected: bool) -> bool {
 }
 
 /// 页脚：预览与关闭。
-fn footer(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme, visible: &[SymbolItem]) {
+fn footer(vctx: &mut dyn SymbolViewAccess, ui: &mut Ui, theme: &Theme, visible: &[SymbolItem]) {
     ui.horizontal(|ui| {
         let selected = vctx.symbol_ui_state().selected;
         match visible.get(selected) {
@@ -261,7 +261,7 @@ fn footer(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme, visible:
 /// 关闭面板而非保持打开：连续插入多个符号的场景很罕见，
 /// 而保持打开会让用户「以为插入没生效」（浮层还盖着编辑区）。
 /// 需要多个时重新按 `Ctrl+Shift+E` 即可。
-fn apply_insert(vctx: &mut dyn EditorViewContext, item: SymbolItem) {
+fn apply_insert(vctx: &mut dyn SymbolViewAccess, item: SymbolItem) {
     // 插入失败**不关**面板：内容没进去就消失界面，
     // 用户会以为是程序崩溃了。错误已由 `insert_at_cursor` 报到状态栏。
     if vctx.insert_at_cursor(item.text).is_ok() {

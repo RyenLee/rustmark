@@ -5,7 +5,9 @@
 //! `theme`（主题，批次 4）。`rich`（富文本自绘排版）已于 R-04 升为独立 crate
 //! `rustmark-render`（见 `rustmark_render`），此处仅经 `pub mod rich` 作 re-export
 //! shim 拼回原路径（`crates/rustmark-ui/src/presentation.rs` 内联声明）。
-//! 至此 core 的 `presentation` 子模块已全部迁入本 crate（core 仅留 doc-only 空壳）。
+//! 至此 core 的 `presentation` 子模块已全部迁入本 crate；core 侧那个
+//! doc-only 空壳（零消费者）已于 2026-10-30 删除，`presentation` 只存在于
+//! 本 crate 与 root 的视图/组合根。
 //!
 //! 保留 `presentation/` 路径前缀是有意设计——见 `crate` 级文档：
 //! `layer_of` 按根内相对路径判层，前缀让本 crate 的文件落在与 core 旧路径

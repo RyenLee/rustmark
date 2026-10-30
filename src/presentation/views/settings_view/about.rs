@@ -3,12 +3,12 @@
 use egui::Ui;
 
 use crate::presentation::theme::builtin::Theme;
-use crate::presentation::view_context::EditorViewContext;
+use crate::presentation::view_context::SettingsViewAccess;
 
 use super::*;
 
 /// 「关于」分区。
-pub(super) fn about(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
+pub(super) fn about(vctx: &mut dyn SettingsViewAccess, ui: &mut Ui, theme: &Theme) {
     ui.heading("Rust Markdown Editor");
     ui.label(format!("版本 {VERSION}"));
     ui.colored_label(

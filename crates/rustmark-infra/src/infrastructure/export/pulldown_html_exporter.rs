@@ -236,14 +236,15 @@ window.addEventListener('DOMContentLoaded', function () {
 
 /// 组装**打印就绪**的 HTML 文档（供 S5-10 系统打印管线消费）。
 ///
-/// 与 [`build_document`] 的唯一区别是**不做白名单清洗**：
-/// 产物写到本地临时文件、交给打印引擎，不会在浏览器里打开，
-/// 故没有脚本注入面。这一点必须在注释里写明，否则后人会
-/// 「为了安全」给这里也加上清洗——而清洗会连本导出器生成的
-/// `<style>` 一起剥掉，打印出来就是无样式的裸文档。
+/// 与 [`build_document`] 的相同点：正文都必须是**已清洗**的片段。
+/// 不同点只在样式：`extra_style` 是打印专用追加位（把用户选的纸张尺寸
+/// 写成 `@page`）。
 ///
-/// `extra_style` 是**打印专用**样式的追加位（目前用于把用户选的纸张尺寸
-/// 写成 `@page`）。导出 HTML 的读者是浏览器、纸张由浏览器决定，故那边不传。
+/// 调用方 [`super::system_pdf_exporter::SystemPdfExporter::build_print_html`]
+/// 已在拼装前对正文 + TOC 调用 `sanitize_html`——打印产物最终由无头
+/// Chromium 以 `file:///` 渲染成 PDF，那是一个真实的浏览器引擎，脚本会真实
+/// 执行，故**不能**跳过清洗。骨架（`<meta>` / `<style>`）仍留在清洗边界之外，
+/// 否则打印样式与字符集声明会被 `DROP_TAGS` 一并剥掉。
 pub(crate) fn build_printable_document(title: &str, body: &str, extra_style: &str) -> String {
     wrap_document(title, body, extra_style)
 }

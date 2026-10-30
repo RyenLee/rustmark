@@ -3,13 +3,13 @@
 use egui::{RichText, Ui};
 
 use crate::presentation::theme::builtin::Theme;
-use crate::presentation::view_context::EditorViewContext;
+use crate::presentation::view_context::SettingsViewAccess;
 use rustmark_core::application::dto::EditorSettingsView;
 
 use super::*;
 
 /// 「编辑器」分区：缩进 / 自动换行 / 自动保存间隔。
-pub(super) fn editor(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
+pub(super) fn editor(vctx: &mut dyn SettingsViewAccess, ui: &mut Ui, theme: &Theme) {
     let view = vctx.settings().editor;
     field(ui, theme, "Tab 缩进", |ui| {
         ui.horizontal(|ui| {
@@ -125,7 +125,7 @@ pub(super) fn editor(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Them
 }
 
 /// 「语法检查」分区。
-pub(super) fn spellcheck(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
+pub(super) fn spellcheck(vctx: &mut dyn SettingsViewAccess, ui: &mut Ui, theme: &Theme) {
     // 读会话值（启动时由领域播种、改动经 `set_spell_check` 双写），
     // 与状态栏显示及编辑区实际生效值一致。
     let mut on = vctx.editor_state().spell_check;
@@ -152,7 +152,7 @@ pub(super) fn spellcheck(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &
 ///
 /// 两者对用户是**同一件事**：「帮我看正文有没有毛病」。分到两个标签会让
 /// 用户来回找；而侧栏的「检查」标签正是这两类结果共同的去处。
-fn lint_rules(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
+fn lint_rules(vctx: &mut dyn SettingsViewAccess, ui: &mut Ui, theme: &Theme) {
     ui.label(RichText::new("格式检查（Markdown）").color(theme.text_primary));
     let lint = vctx.settings().editor.lint;
     let toggles: [(&str, bool); 4] = [

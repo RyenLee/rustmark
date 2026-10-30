@@ -81,10 +81,10 @@ Categories=Utility;TextEditor;
 Terminal=false
 DESKTOP
 
-# 图标可选：仓库提供 assets/icon.png 时才安装（缺省时 AppImage 无图标也能启动）。
-if [ -f assets/icon.png ]; then
+# 图标：与 .ico / .icns / 窗口图标同源（`assets/logo/build_logo.py` 生成）。
+if [ -f assets/logo/png/rustmark-icon-256.png ]; then
     mkdir -p "$appdir/usr/share/icons/hicolor/256x256/apps"
-    cp assets/icon.png "$appdir/usr/share/icons/hicolor/256x256/apps/rustmark.png"
+    cp assets/logo/png/rustmark-icon-256.png "$appdir/usr/share/icons/hicolor/256x256/apps/rustmark.png"
 fi
 cat > "$appdir/rustmark.desktop" <<DESKTOP
 [Desktop Entry]

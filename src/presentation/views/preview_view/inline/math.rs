@@ -10,7 +10,7 @@ use egui::{Color32, FontId, Galley, Pos2, Rect, Ui, Vec2};
 
 use crate::presentation::rich::render::{self, HAlign};
 use crate::presentation::theme::builtin::Theme;
-use crate::presentation::view_context::EditorViewContext;
+use crate::presentation::view_context::PreviewViewAccess;
 use crate::presentation::views::math::{self, MathLayout, Measure};
 use rustmark_core::application::dto::{RangeView, SpanView};
 use rustmark_core::shared::geometry::clamp_to_char_boundaries;
@@ -141,7 +141,7 @@ fn row_baseline_offset(row: &PlacedRow) -> f32 {
 #[allow(clippy::too_many_arguments)] // 与 `render_inline_text` 同构（转发用），参数一一对应
 pub(crate) fn render_with_math(
     ui: &mut Ui,
-    _vctx: &mut dyn EditorViewContext,
+    _vctx: &mut dyn PreviewViewAccess,
     theme: &Theme,
     content: &str,
     spans: &[SpanView],

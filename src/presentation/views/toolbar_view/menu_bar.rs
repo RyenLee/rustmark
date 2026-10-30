@@ -3,7 +3,7 @@
 use egui::{Align, Layout, Ui};
 
 use crate::presentation::shortcuts::registry::{MenuGroup, UiAction};
-use crate::presentation::view_context::EditorViewContext;
+use crate::presentation::view_context::ToolbarViewAccess;
 
 /// 菜单项文案与其右侧快捷键之间的**最小**空隙（点）。
 ///
@@ -33,7 +33,7 @@ const MENU_ROW_H: f32 = 20.0;
 /// 且顶栏与编辑区工具栏两处都如此）。先把行的可用高度给足（垂直预算本就
 /// 规定菜单栏占 `Metrics::topbar_height`），所有按钮在同一高度内居中，
 /// 自然等高同排。
-pub(super) fn draw_app_menu_bar(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
+pub(super) fn draw_app_menu_bar(vctx: &mut dyn ToolbarViewAccess, ui: &mut Ui) {
     let m = vctx.theme_state().metrics;
     let mut pending: Option<UiAction> = None;
     ui.allocate_ui(egui::vec2(ui.available_width(), m.topbar_height), |ui| {
@@ -100,7 +100,7 @@ pub(super) fn draw_app_menu_bar(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
 ///
 /// `pub` 是为了让几何用例能直接调用它，断言「算出来的行宽确实容得下
 /// 该组最宽的一项」（见 `tests/presentation/top_menu_test.rs`）。
-pub fn menu_row_width(ui: &Ui, vctx: &dyn EditorViewContext, actions: &[UiAction]) -> f32 {
+pub fn menu_row_width(ui: &Ui, vctx: &dyn ToolbarViewAccess, actions: &[UiAction]) -> f32 {
     let font = egui::FontId::proportional(vctx.theme_state().metrics.ui_font_size);
     let registry = vctx.dispatcher_state().registry();
     // 亮色/暗色都无所谓：这里只用 `Galley` 的尺寸，颜色不参与度量。
@@ -144,7 +144,7 @@ pub fn menu_row_width(ui: &Ui, vctx: &dyn EditorViewContext, actions: &[UiAction
 /// 宽度是算出来的，因此不依赖任何布局施舍。
 pub(super) fn menu_item(
     ui: &mut Ui,
-    vctx: &dyn EditorViewContext,
+    vctx: &dyn ToolbarViewAccess,
     action: UiAction,
     row_w: f32,
 ) -> egui::Response {

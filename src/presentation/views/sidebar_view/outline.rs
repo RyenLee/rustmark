@@ -3,13 +3,13 @@
 use egui::{Align, Layout, RichText, ScrollArea, Ui};
 
 use crate::presentation::theme::builtin::Theme;
-use crate::presentation::view_context::EditorViewContext;
+use crate::presentation::view_context::SidebarViewAccess;
 use crate::presentation::widgets;
 
 use super::*;
 
 /// 大纲标签。
-pub(super) fn outline_tab(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
+pub(super) fn outline_tab(vctx: &mut dyn SidebarViewAccess, ui: &mut Ui, theme: &Theme) {
     level_filter(vctx, ui);
     // 提示放在列表**上方**：下面的滚动区 `auto_shrink([false, false])`
     // 会吃掉全部剩余高，若放在它后面，提示会被推出面板底缘、永远
@@ -85,7 +85,7 @@ pub(super) fn outline_tab(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: 
 }
 
 /// 大纲层级过滤条。
-fn level_filter(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
+fn level_filter(vctx: &mut dyn SidebarViewAccess, ui: &mut Ui) {
     ui.horizontal(|ui| {
         ui.weak("层级");
         for level in 1..=6u8 {

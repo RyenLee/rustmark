@@ -1,15 +1,14 @@
 [package]
 name = "rustmark-core"
-# 独立 crate 版本号不随应用发版（publish = false，仅参与本地 workspace 构建）。
-version = "0.2.0"
-edition = "2024"
-rust-version = "1.99"
-license = "MIT OR Apache-2.0"
-publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
 
 [dependencies]
 # 依赖切分原则（D-3 阶段 4a，V11-64 后重述）：core 只剩**纯六边形脊柱**——
-# domain / application 与 presentation 的 doc-only 空壳。基础设施实现
+# domain / application 两层。基础设施实现
 # （syntect / ureq / rfd / image / ropey / pulldown-cmark）自 2026-10-26 起
 # 住在 `rustmark-infra`，复用 domain/application 的消费者不必再被它们拖进
 # 编译图；egui 自 V11-63 起也不在 core（端口化）。

@@ -749,6 +749,142 @@ fn view_files_must_not_mention_the_composition_root_type() {
     );
 }
 
+/// 宽上下文 `EditorViewContext` 只许**路由者**收（按视图窄化守卫）。
+///
+/// # 这条守卫堵的是「窄化可以悄悄回退」这个口子
+///
+/// 视图改收窄 trait 之后，`&mut dyn EditorViewContext` 仍是合法 Rust：
+/// 它是 17 个窄 trait 的 bundle，成员面与窄化前一致。任何一个视图图省事
+/// 写回宽上下文，越权访问就从「编译期不可达」退回「靠评审发现」，
+/// 而 **编译、clippy、其余守卫全绿**——只有本判据能拦住。
+///
+/// 三组用例对应三件事：① 普通视图提到即报；② 两个路由者放行；
+/// ③ 子目录里**同名**的文件不算路由者（白名单按相对 views 根的路径比对）。
+#[test]
+fn view_files_must_not_take_the_wide_context_unless_they_route() {
+    let dir = tempfile::tempdir().unwrap();
+    let manifest = dir.path();
+
+    // —— ① 注入必报：普通视图收宽上下文（形参）——
+    let view = "src/presentation/views/stats_view.rs";
+    write_fixture(
+        manifest,
+        view,
+        "//! x\npub fn show(vctx: &mut dyn EditorViewContext) {\n    let _ = vctx;\n}\n",
+    );
+    let violations = arch_check::check_view_narrow_context(manifest);
+    assert_eq!(
+        violations.len(),
+        1,
+        "普通视图收宽上下文应报 1 条，实际：{:?}",
+        described(&violations)
+    );
+    assert_eq!(
+        violations[0].file, view,
+        "违规应定位到该视图文件：{:?}",
+        violations[0]
+    );
+    assert_eq!(
+        violations[0].line, 2,
+        "行号应指到首个记号所在行（形参那行），实际：{:?}",
+        violations[0]
+    );
+    assert!(
+        violations[0].detail.contains("窄 trait"),
+        "提示应给出正确改法（改收该视图自己的窄 trait）：{:?}",
+        violations[0].detail
+    );
+
+    // —— ② 路由者放行：`main_view` / `overlays` 要能转交上下文 ——
+    std::fs::remove_file(manifest.join(view)).unwrap();
+    write_fixture(
+        manifest,
+        "src/presentation/views/main_view.rs",
+        "//! x\npub fn show(vctx: &mut dyn EditorViewContext) {\n    let _ = vctx;\n}\n",
+    );
+    write_fixture(
+        manifest,
+        "src/presentation/views/overlays.rs",
+        "//! x\npub fn draw(vctx: &mut dyn EditorViewContext) {\n    let _ = vctx;\n}\n",
+    );
+    let violations = arch_check::check_view_narrow_context(manifest);
+    assert!(
+        violations.is_empty(),
+        "两个路由者收宽上下文是设计允许的，实际：{:?}",
+        described(&violations)
+    );
+
+    // —— ③ 子目录里的同名文件**不是**路由者 ——
+    //    白名单按相对 views 根的路径比对，`preview_view/main_view.rs` 这类
+    //    同名文件若被放行，子模块就能绕过整条规则。
+    write_fixture(
+        manifest,
+        "src/presentation/views/preview_view/main_view.rs",
+        "//! x\npub fn show(vctx: &mut dyn EditorViewContext) {\n    let _ = vctx;\n}\n",
+    );
+    let violations = arch_check::check_view_narrow_context(manifest);
+    assert_eq!(
+        violations.len(),
+        1,
+        "子目录里的同名文件不算路由者，实际：{:?}",
+        described(&violations)
+    );
+    assert_eq!(
+        violations[0].file, "src/presentation/views/preview_view/main_view.rs",
+        "违规应定位到子目录里的那个文件：{:?}",
+        violations[0]
+    );
+
+    // —— ④ 注入不报：注释与字符串里的同名标识符 ——
+    //    文档里讨论「为什么不再收宽上下文」是健康的（真实工程多处如此），
+    //    词法器必须剥掉注释与字符串。
+    std::fs::remove_file(manifest.join("src/presentation/views/preview_view/main_view.rs"))
+        .unwrap();
+    write_fixture(
+        manifest,
+        "src/presentation/views/stats_view.rs",
+        "//! 本视图收自己的窄 trait，不再收 EditorViewContext。\n\
+         // 行注释里的 EditorViewContext 不算违规。\n\
+         pub fn show(vctx: &mut dyn StatsViewAccess) {\n\
+         \x20   let _ = \"EditorViewContext\";\n\
+         \x20   let _ = vctx;\n\
+         }\n",
+    );
+    let violations = arch_check::check_view_narrow_context(manifest);
+    assert!(
+        violations.is_empty(),
+        "注释与字符串里的同名标识符不该被判违规，实际：{:?}",
+        described(&violations)
+    );
+}
+
+/// `scan_project` 必须挂上窄化守卫。
+///
+/// 「函数写好了但没接进扫描」是本项目踩过的坑（守卫本身不产生编译错误）。
+#[test]
+fn the_narrow_context_guard_is_wired_into_scan_project() {
+    let dir = tempfile::tempdir().unwrap();
+    let manifest = dir.path();
+    // `scan_project` 需要若干真实层根才不早退，故铺最小的 src + 登记表。
+    write_fixture(manifest, "src/lib.rs", "//! x\n");
+    write_registry(manifest, &[]);
+    write_fixture(
+        manifest,
+        "src/presentation/views/stats_view.rs",
+        "//! x\npub fn show(vctx: &mut dyn EditorViewContext) {\n    let _ = vctx;\n}\n",
+    );
+
+    let violations = arch_check::scan_project(manifest);
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.file == "src/presentation/views/stats_view.rs"
+                && v.detail.contains("宽上下文")),
+        "窄化守卫必须接进 scan_project，实际：{:?}",
+        described(&violations)
+    );
+}
+
 /// `scan_project` 必须**同时**挂上路径守卫与记号守卫。
 ///
 /// 「函数写好了但没接进扫描」是本项目踩过的坑（守卫本身不产生编译错误）。

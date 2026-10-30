@@ -486,7 +486,8 @@ diff <(grep -v '^#' docs/spec/workspace-topology.expected.txt) \
 ## 7. 模块文件树（需求文档 §7.1，禁 `mod.rs`）
 
 D-3 阶段 4a（2026-10-23）起为 workspace 多 crate：**core 只装六边形脊柱
-（domain / application）与非视图子模块的 doc-only 空壳，infrastructure 住
+（domain / application；表现层已于 V11-62 全部迁出，doc-only 空壳于 2026-10-30
+删除），infrastructure 住
 `rustmark-infra`（V11-64）、shared 住 `rustmark-shared`（TD-04），
 shell（root）只留组合根、视图与 re-export 拼接点**；
 `core → shell` 的反向依赖被 cargo 锁死，`rustmark_core::X` 与 `crate::X`
@@ -506,7 +507,7 @@ src/                                    # shell（root crate `rustmark`）
 ├─ presentation.rs                      # 拼接点：pub mod views（唯一留 shell 的 presentation 子层）
 │                                       #   + pub use rustmark_ui::presentation::{rich, shortcuts, state, theme, widgets}（V11-62 批次 1-5 收官）
 │                                       #   + pub use rustmark_icons as icons（V11-58）
-│                                       #   （core 的 presentation 已全迁 ui，退化为 doc-only 空壳）
+│                                       #   （core 的 presentation 已全迁 ui，空壳于 2026-10-30 删除）
 ├─ presentation/views/                  # 视图（唯一留在 shell 的 presentation 子层）
 └─ bin/check-arch.rs                    # 工具二进制
 
@@ -515,7 +516,6 @@ crates/rustmark-core/src/               # core（crate `rustmark-core`）—— 
 ├─ domain/{document,markdown,workspace,preferences,export}/
 │    └─ 各含 {aggregate.rs,value_objects.rs,events.rs,services.rs,repository.rs,errors.rs}
 ├─ application/{document,markdown,workspace,preferences,export}/ + dto/
-├─ presentation.rs                      # doc-only 空壳（`pub mod presentation;` 保留公开路径）
 └─ （shared 于 TD-04 抽去 `crates/rustmark-shared`；infrastructure 于 V11-64
      抽去 `crates/rustmark-infra`；两者的公开路径均经上面 lib.rs 的 re-export 不变）
 
@@ -697,7 +697,7 @@ rustmark（root：组合根 + views + bin）
 | crate | 角色 | 实测规模（2026-10-26，`src/` 口径） | 外部依赖面 |
 |---|---|---|---|
 | `rustmark`（root） | 组合根 + 视图层 + 工具 bin | 92 文件 / 22,113 行（2026-10-27 实测） | eframe / egui / image / rfd / anyhow / env_logger / log / wgpu(build) + 4 个本地 crate（core / infra / icons / ui） |
-| `rustmark-core` | 六边形脊柱：domain / application（表现层非视图子模块已于 V11-62 全抽去 `rustmark-ui`，infrastructure 于 V11-64 全抽去 `rustmark-infra`；`presentation` 退化为 doc-only 空壳）；**零 egui 依赖**（V11-63） | **105 文件 / 15,565 行**（2026-10-28 实测；R-06 三步后的口径：步 1 新增 `application/workspace/service/search/scan.rs` 483 行、同目录 `search.rs` 626 → 346；步 2 拆 `application/document/service/stats.rs` 为 facade 114 + `stats/{classify,links,accumulator,equivalence}.rs` 118+138+193+285，原 639；步 3 拆 `application/document/find.rs` 为 facade 359 + `find/matching.rs` 370，原 535） | **4 个**直接外部依赖（serde / thiserror / log / ahash）+ 3 个本地（actions / shared / ports） |
+| `rustmark-core` | 六边形脊柱：domain / application（表现层非视图子模块已于 V11-62 全抽去 `rustmark-ui`，infrastructure 于 V11-64 全抽去 `rustmark-infra`；doc-only 的 `presentation` 空壳于 2026-10-30 删除，本 crate 不再有 presentation 路径）；**零 egui 依赖**（V11-63） | **105 文件 / 15,565 行**（2026-10-28 实测；R-06 三步后的口径：步 1 新增 `application/workspace/service/search/scan.rs` 483 行、同目录 `search.rs` 626 → 346；步 2 拆 `application/document/service/stats.rs` 为 facade 114 + `stats/{classify,links,accumulator,equivalence}.rs` 118+138+193+285，原 639；步 3 拆 `application/document/find.rs` 为 facade 359 + `find/matching.rs` 370，原 535） | **4 个**直接外部依赖（serde / thiserror / log / ahash）+ 3 个本地（actions / shared / ports） |
 | `rustmark-infra` | 基础设施层：外部库适配与 IO（解析 / 高亮 / 文本缓冲 / 对话框 / 远程图片 / 图片解码 / 导出 / 字体装配）。**端口与领域类型仍住 core**（V11-64） | 65 文件 / 11,062 行（2026-10-28 实测） | **11 个**直接外部依赖（pulldown-cmark / syntect / image / ropey / rfd / serde / toml / thiserror / ureq / rustls-native-certs / log）+ 2 个本地（core / ports） |
 | `rustmark-actions` | 动作词汇表契约（V11-57） | 4 文件 / 687 行 | **零依赖** |
 | `rustmark-shared` | 共享内核：纯值 / 唯一真源（TD-04；端口已按 R-10 项 A 迁出为 `rustmark-ports`） | 18 文件 / 2,715 行（2026-10-28 实测） | ahash + serde + thiserror（**零本地**） |
@@ -794,12 +794,15 @@ V11-62 全落地，阶段 3 的 `rustmark-infra` 行已由 V11-64 提前兑现�
    `rustmark-ui` 行；`check-arch` 的 `check_ui_submodule_sync` 拿三处真源
    （ui 侧 `pub mod` ↔ root 逐项 re-export ↔ 本节 §10.1）对账，缺一即报。
    「views 留 root」的已知约束见上一条硬约束 2（ADR-013 决策 3），不靠人记。
-5. **视图窄接口（R-03 B1，2026-10-27 收官）**：`src/presentation/views/**` 下的
-   视图**不得**直取组合根 `crate::app`——一律收 `&mut dyn EditorViewContext`
-   （trait 定义在 `rustmark-ui::presentation::view_context`，**133** 个方法分五个
-   能力面：`ThemeAccess` / `UiStateAccess` / `DocumentAccess` / `CommandPort` /
-   `ServiceQueries`；实现在 root 的 `src/app/frame/view_context.rs`）。
-   **两道守卫同时生效，缺一不可**：
+5. **视图窄接口（R-03 B1，2026-10-27 收官；2026-10-30 按视图窄化）**：
+   `src/presentation/views/**` 下的视图**不得**直取组合根 `crate::app`——一律收
+   **该视图自己的窄 trait**（`XxxViewAccess`，17 个，按面板裁剪能力面；
+   trait 定义在 `rustmark-ui::presentation::view_context`，能力面仍分
+   `ThemeAccess` / 各 `*UiAccess` / `DocumentAccess` / `CommandPort` /
+   `MarkdownQueries` 等窄查询；实现在 root 的 `src/app/frame/view_context.rs`）。
+   **宽上下文只留给路由者**：`main_view` / `overlays` 收 `&mut dyn EditorViewContext`
+   （17 个窄 trait 拼成的 bundle，靠 trait object upcasting 零成本转交给各视图）。
+   **三道守卫同时生效，缺一不可**：
    - `check_view_decoupling`（**路径**判据）：`views/**` 出现 `crate::app` 即报。
      路径枚举**只经 `parse_use_tree` 展开**——`use crate::{app::frame::EditorApp};`
      这种花括号形态能绕过「`crate` `::` `app` 相邻三连」的字面匹配，实测让
@@ -811,6 +814,11 @@ V11-62 全落地，阶段 3 的 `rustmark-infra` 行已由 V11-64 提前兑现�
      却能声明 `app: &mut EditorApp`（`preview_view/{blocks,code,list,media,table,toc}.rs`
      六个文件正是如此，它们从未进过白名单、也从未被报过一次）。两条判据都走
      词法器，故视图文档里讨论「为什么不再用 `EditorApp`」的 20 处注释不触发。
+   - `check_view_narrow_context`（**宽上下文**判据）：`views/**` 出现
+     `EditorViewContext` **标识符**即报，白名单只有路由者 `main_view.rs` /
+     `overlays.rs`。补的是窄化自己的回退口子——宽窄两种签名都能编译，某个视图
+     写回宽上下文，越权访问就从「编译期不可达」悄悄退回「靠评审发现」，
+     `cargo check` / `clippy` / 另两条判据全绿，只有这条拦得住。
    **白名单已退役**：`PENDING_DECOUPLED_VIEWS`（最初 32 条、「只减不增」的迁移
    进度表）在批 2 收官时清零，常量整个删除，`check_view_decoupling` 直接传
    `&[]`。不保留空表——空表读起来像「暂时没人管」，传 `&[]` 表达的是

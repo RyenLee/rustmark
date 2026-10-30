@@ -40,7 +40,7 @@ pub use recent::display_name;
 
 use egui::{ScrollArea, Ui};
 
-use crate::presentation::view_context::EditorViewContext;
+use crate::presentation::view_context::WelcomeViewAccess;
 
 /// 品牌区标题。
 const LOGO: &str = "Rust Markdown Editor";
@@ -85,7 +85,7 @@ const HINT_ITEM_GAP: f32 = 16.0;
 use recent::shorten_left;
 
 /// 绘制欢迎页。
-pub fn show(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
+pub fn show(vctx: &mut dyn WelcomeViewAccess, ui: &mut Ui) {
     let theme = vctx.theme_state().clone();
     ui.painter()
         .rect_filled(ui.max_rect(), egui::CornerRadius::ZERO, theme.bg_primary);

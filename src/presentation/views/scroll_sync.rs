@@ -32,7 +32,7 @@
 
 use crate::presentation::state::scroll_sync_state::{BlockRect, PaneGeometry, Side};
 use crate::presentation::theme::mapper;
-use crate::presentation::view_context::EditorViewContext;
+use crate::presentation::view_context::ScrollSyncAccess;
 use rustmark_core::application::markdown::queries::{MapScrollQuery, ScrollSource, ScrollTarget};
 
 /// 目标点与视口顶部之间留出的余量（点）。
@@ -243,7 +243,7 @@ pub fn line_of_offset(starts: &[usize], offset: usize) -> usize {
 /// 放在两侧之后是因为：同步要读两侧**本帧真实**的偏移，
 /// 而 `ScrollArea` 的偏移只有在它的 `show` 结束后才确定
 /// （用户滚轮的增量是在 `show` 内部才叠加的）。
-pub fn apply(vctx: &mut dyn EditorViewContext, now_ms: u64) {
+pub fn apply(vctx: &mut dyn ScrollSyncAccess, now_ms: u64) {
     // 无论是否同步都要观测：`last` 一旦停更，下次开启同步时
     // 累积的位移会被当成一次巨大的用户手势，预览会猛跳一下。
     //
@@ -292,7 +292,7 @@ pub fn apply(vctx: &mut dyn EditorViewContext, now_ms: u64) {
 }
 
 /// 编辑区 → 预览区。
-fn drive_preview(vctx: &mut dyn EditorViewContext) -> bool {
+fn drive_preview(vctx: &mut dyn ScrollSyncAccess) -> bool {
     let Some(doc_id) = vctx.active_doc() else {
         return false;
     };
@@ -304,7 +304,7 @@ fn drive_preview(vctx: &mut dyn EditorViewContext) -> bool {
     let line = line_at_y(&tops, vctx.editor_state_read().scroll_y);
     let offset = starts.get(line).copied().unwrap_or(0);
 
-    let mapped = vctx.markdown_service().map_scroll(MapScrollQuery {
+    let mapped = vctx.map_scroll(MapScrollQuery {
         doc_id,
         source: ScrollSource::Editor { offset },
     });
@@ -330,7 +330,7 @@ fn drive_preview(vctx: &mut dyn EditorViewContext) -> bool {
 /// 预览区 → 编辑区。
 ///
 /// `block_id` 为 `Some` 时来自**点击**（标题），为 `None` 时取视口顶部命中的块。
-fn drive_editor(vctx: &mut dyn EditorViewContext, block_id: Option<u64>) -> bool {
+fn drive_editor(vctx: &mut dyn ScrollSyncAccess, block_id: Option<u64>) -> bool {
     let Some(doc_id) = vctx.active_doc() else {
         return false;
     };
@@ -350,7 +350,7 @@ fn drive_editor(vctx: &mut dyn EditorViewContext, block_id: Option<u64>) -> bool
         }
     };
 
-    let mapped = vctx.markdown_service().map_scroll(MapScrollQuery {
+    let mapped = vctx.map_scroll(MapScrollQuery {
         doc_id,
         source: ScrollSource::Preview { block_id: id },
     });

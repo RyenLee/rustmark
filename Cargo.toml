@@ -127,14 +127,25 @@ panic = "warn"
 [workspace.lints.rust]
 missing_docs = "warn"
 
-[package]
-name = "rustmark"
+# V11-65/67 的「单点真源」原则延伸到包元数据：版本、edition、rust-version、
+# license 与 publish 在此声明一次，root 与 9 个成员统一继承。早先 10 个 manifest
+# 逐字重复，升级工具链或版本时要改 10 处，漏改一处即静默分叉。
+# publish = false：仅参与本地 workspace 构建，不发布到 crates.io。
+[workspace.package]
 version = "0.2.0"
 edition = "2024"
 rust-version = "1.99"
 license = "MIT OR Apache-2.0"
-description = "原生轻量级 Markdown 编辑器（Rust 2024 + egui + wgpu）"
 publish = false
+
+[package]
+name = "rustmark"
+description = "原生轻量级 Markdown 编辑器（Rust 2024 + egui + wgpu）"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
 
 # 关闭测试目标自动发现：全部测试目标已在文件末尾显式 `[[test]]` 声明。
 # 原因：无 `mod.rs` 布局下共享工具是 `tests/support.rs`（与 `tests/support/`
@@ -200,7 +211,8 @@ eframe = { version = "0.37.0", default-features = false, features = [
 ] }
 
 # --- 本地 crate（D-3 阶段 4a：核心库）---
-# domain / application 与 presentation 的 doc-only 空壳在 core；shared 在
+# domain / application 在 core（presentation 已于 V11-62 全部迁出，core 不再
+# 保留 doc-only 空壳）；shared 在
 # TD-04 抽出的 rustmark-shared（core 经 re-export 拼回 `crate::shared`）；
 # infrastructure 在 V11-64 抽出的 rustmark-infra（root 经 re-export 拼回
 # `crate::infrastructure`）；state / theme / shortcuts / widgets 在
@@ -302,6 +314,12 @@ wgpu = { workspace = true, features = ["metal"] }
 
 [target.'cfg(not(any(target_os = "windows", target_os = "macos")))'.dependencies]
 wgpu = { workspace = true, features = ["vulkan", "gles"] }
+
+# exe 内嵌图标（写进 PE 资源段）。与运行期 `ViewportBuilder::with_icon` 是两条
+# 独立链路：缺资源段时，资源管理器里与「固定到任务栏」的静态图标仍是空白。
+# 只有 `build.rs` 一个声明点，按准入判据留在原地，不进 `[workspace.dependencies]`。
+[target.'cfg(windows)'.build-dependencies]
+embed-resource = "3"
 
 [dev-dependencies]
 tempfile = { workspace = true }

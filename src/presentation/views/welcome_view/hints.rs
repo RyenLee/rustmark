@@ -3,7 +3,7 @@
 use egui::{RichText, Ui, Vec2};
 
 use crate::presentation::theme::builtin::Theme;
-use crate::presentation::view_context::EditorViewContext;
+use crate::presentation::view_context::WelcomeViewAccess;
 
 use super::actions::shortcut_hints;
 use super::*;
@@ -13,7 +13,7 @@ use super::*;
 /// 与 `actions::primary_actions` 同理：先量出整行宽度再补左侧余量。
 /// 间距也一并改成「只在项与项之间加」，否则末尾那一份间距会让整行
 /// 视觉重心偏左——居中会「看起来差一点」。
-pub(super) fn hints(ui: &mut Ui, theme: &Theme, vctx: &dyn EditorViewContext) {
+pub(super) fn hints(ui: &mut Ui, theme: &Theme, vctx: &dyn WelcomeViewAccess) {
     let items = shortcut_hints(vctx);
     let row_w: f32 = items
         .iter()

@@ -32,7 +32,7 @@ use crate::presentation::shortcuts::registry::UiAction;
 use crate::presentation::state::dialog_ui_state::Overlay;
 use crate::presentation::state::settings_ui_state::SettingsTab;
 use crate::presentation::theme::builtin::Theme;
-use crate::presentation::view_context::EditorViewContext;
+use crate::presentation::view_context::SettingsViewAccess;
 use rustmark_core::shared::theme::ThemeKind;
 
 /// 对话框默认尺寸（对齐原型 `BaseModal :width="620" :height="420"`）。
@@ -96,7 +96,7 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const FONT_INPUT_ID: &str = "rustmark.settings.font";
 
 /// 绘制设置对话框。
-pub fn show(vctx: &mut dyn EditorViewContext, ctx: &Context) {
+pub fn show(vctx: &mut dyn SettingsViewAccess, ctx: &Context) {
     let mut open = true;
     egui::Window::new(Overlay::Settings.title())
         .id(egui::Id::unique("rustmark.overlay.settings"))
@@ -150,7 +150,7 @@ pub fn show(vctx: &mut dyn EditorViewContext, ctx: &Context) {
 /// 注意 egui 自带的 `Separator::default().vertical()` 同样取 available height，
 /// 换它没用；`ui.separator()` 之后的两个分隔线在**竖直**布局里是水平线
 /// （高度恒为 `spacing`），不参与该反馈，故保留。
-fn body(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
+fn body(vctx: &mut dyn SettingsViewAccess, ui: &mut Ui) {
     let theme = vctx.theme_state().clone();
     let mut bar_x = 0.0_f32;
     let row = ui.horizontal_top(|ui| {
@@ -175,7 +175,7 @@ fn body(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
 }
 
 /// 左侧导航栏。
-fn nav(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
+fn nav(vctx: &mut dyn SettingsViewAccess, ui: &mut Ui, theme: &Theme) {
     ui.vertical(|ui| {
         ui.set_min_width(NAV_WIDTH);
         for tab in SettingsTab::ALL {
@@ -197,7 +197,7 @@ fn nav(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
 }
 
 /// 右侧内容区（按当前标签分发）。
-fn content(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
+fn content(vctx: &mut dyn SettingsViewAccess, ui: &mut Ui, theme: &Theme) {
     ui.vertical(|ui| {
         ui.set_min_width(WIDTH - NAV_WIDTH - 40.0);
         ui.horizontal_wrapped(|ui| {
@@ -226,7 +226,7 @@ fn content(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
 }
 
 /// 页脚：恢复本组默认 / 恢复默认快捷键 / 取消 / 保存。
-fn footer(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
+fn footer(vctx: &mut dyn SettingsViewAccess, ui: &mut Ui) {
     ui.horizontal(|ui| {
         // 「恢复默认快捷键」在**父级页面**（对话框页脚），不在快捷键分区的
         // 滚动列表里（问题 038）：它是分区级动作，而 60 个条目的列表要滑到

@@ -5,7 +5,7 @@ use egui::{Ui, Vec2};
 use crate::presentation::shortcuts::registry::UiAction;
 use crate::presentation::state::pending_dialog::PendingDialog;
 use crate::presentation::theme::builtin::Theme;
-use crate::presentation::view_context::EditorViewContext;
+use crate::presentation::view_context::WelcomeViewAccess;
 
 use super::*;
 
@@ -60,7 +60,7 @@ pub struct ShortcutHint {
 ///
 /// 刻意现取而不是硬编码：用户改过键位后，欢迎页还显示旧的
 /// `Ctrl+N` 会让用户以为改键没生效——而他恰恰是刚改过的人。
-pub fn shortcut_hints(vctx: &dyn EditorViewContext) -> Vec<ShortcutHint> {
+pub fn shortcut_hints(vctx: &dyn WelcomeViewAccess) -> Vec<ShortcutHint> {
     let actions = [
         (UiAction::NewDocument, "新建"),
         (UiAction::OpenDocument, "打开"),
@@ -168,7 +168,7 @@ fn action_button(ui: &mut Ui, theme: &Theme, action: PrimaryAction) -> bool {
 }
 
 /// 执行主操作。
-pub(super) fn run_action(vctx: &mut dyn EditorViewContext, action: PrimaryAction) {
+pub(super) fn run_action(vctx: &mut dyn WelcomeViewAccess, action: PrimaryAction) {
     match action {
         PrimaryAction::NewFile => {
             if let Err(e) = vctx.new_document() {

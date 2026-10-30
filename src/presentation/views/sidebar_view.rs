@@ -50,7 +50,7 @@ use egui::{Align, Context, Layout, Ui};
 
 use crate::presentation::state::app_ui_state::SidebarTab;
 use crate::presentation::theme::builtin::Theme;
-use crate::presentation::view_context::EditorViewContext;
+use crate::presentation::view_context::SidebarViewAccess;
 
 /// 每行高度（对齐原型 `.row { height: 24px }`）。
 const ROW_HEIGHT: f32 = 24.0;
@@ -80,7 +80,7 @@ const ACTIVITY_BAR_W: f32 = 48.0;
 /// 传入的是**生效宽**（已按窗口做动态夹紧），不是 `AppUiState` 里
 /// 的用户值：窄窗口下两者不相等，面板必须按生效宽排，否则会超出
 /// 「侧栏 ≤ 主体区 60%」的约束。
-pub fn show(vctx: &mut dyn EditorViewContext, ui: &mut Ui, width: f32) {
+pub fn show(vctx: &mut dyn SidebarViewAccess, ui: &mut Ui, width: f32) {
     let ctx = ui.ctx().clone();
     egui::Panel::left("rustmark.sidebar")
         .exact_size(width)
@@ -88,7 +88,7 @@ pub fn show(vctx: &mut dyn EditorViewContext, ui: &mut Ui, width: f32) {
         .show(ui, |ui| draw(vctx, ui, &ctx));
 }
 
-fn draw(vctx: &mut dyn EditorViewContext, ui: &mut Ui, ctx: &Context) {
+fn draw(vctx: &mut dyn SidebarViewAccess, ui: &mut Ui, ctx: &Context) {
     let theme = vctx.theme_state().clone();
     ui.painter()
         .rect_filled(ui.max_rect(), egui::CornerRadius::ZERO, theme.bg_secondary);
@@ -129,7 +129,7 @@ fn draw(vctx: &mut dyn EditorViewContext, ui: &mut Ui, ctx: &Context) {
 /// 复用 `selectable_label` 的「选中即高亮」语言，与标签栏、大纲层级条同源；
 /// 两组之间用一条细分隔线取代「四个标签平铺在同一行」——作用域不同的面板
 /// 不该排在一起让人误以为是同级能力（V11-28）。
-fn activity_bar(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
+fn activity_bar(vctx: &mut dyn SidebarViewAccess, ui: &mut Ui, theme: &Theme) {
     // 比内容面板更深的底色，把导航列从面板里视觉上分出来。
     ui.painter()
         .rect_filled(ui.max_rect(), egui::CornerRadius::ZERO, theme.bg_primary);
@@ -148,7 +148,7 @@ fn activity_bar(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
 
 /// 活动栏里的一个条目：选中高亮 + 悬停提示作用域。
 fn activity_entry(
-    vctx: &mut dyn EditorViewContext,
+    vctx: &mut dyn SidebarViewAccess,
     ui: &mut Ui,
     tab: SidebarTab,
     scope_hint: &str,
@@ -165,7 +165,7 @@ fn activity_entry(
 }
 
 /// 右侧内容面板：顶部作用域声明标题 + 当前标签内容 + 底部提示。
-fn content_panel(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
+fn content_panel(vctx: &mut dyn SidebarViewAccess, ui: &mut Ui, theme: &Theme) {
     let current = vctx.ui_state().sidebar_tab;
     ui.vertical(|ui| {
         content_header(vctx, ui, theme, current);
@@ -194,7 +194,7 @@ fn content_panel(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
 ///
 /// 「搜索」的精确范围由 `search` 标签内的切换行声明，这里只给面板名，
 /// 避免与作用域切换行上的「当前文档 / 打开的文档」重复出现、干扰点击。
-fn content_header(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme, tab: SidebarTab) {
+fn content_header(vctx: &mut dyn SidebarViewAccess, ui: &mut Ui, theme: &Theme, tab: SidebarTab) {
     let m = theme.metrics;
     let scope: Option<String> = match tab {
         SidebarTab::Files => Some("工作区".into()),
@@ -233,7 +233,7 @@ fn content_header(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme, 
 }
 
 /// 底部提示行。
-fn messages(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
+fn messages(vctx: &mut dyn SidebarViewAccess, ui: &mut Ui, theme: &Theme) {
     if let Some(error) = vctx.sidebar_state().error.clone() {
         ui.colored_label(theme.error, format!("⚠ {error}"));
     }

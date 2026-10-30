@@ -1,14 +1,16 @@
-//! [`EditorViewContext`] 的组合根实现（R-03 B1）。
+//! [`EditorViewContext`] 的组合根实现（R-03 B1；2026-10-30 按视图窄化）。
 //!
 //! # 这个文件是「视图 ↔ 应用」的唯一缝
 //!
 //! trait 定义在 `rustmark-ui`（视图契约独立于组合根），实现在这里
-//! （只有组合根同时看得见 UI 状态与用例服务）。视图因此**只认 trait、
-//! 不认 `EditorApp`**，而 B1 的迁移可以按视图逐个推进：已迁移的收
-//! `&mut dyn EditorViewContext`，未迁移的仍收 `&mut EditorApp`——因为
-//! `EditorApp` 实现了该 trait，`&mut EditorApp` 会在调用点自动强制转换为
-//! `&mut dyn EditorViewContext`，两者能在同一次渲染里共存
-//! （`overlays::show` 正是这种混合态）。
+//! （只有组合根同时看得见 UI 状态与用例服务）。视图因此**只认窄 trait、
+//! 不认 `EditorApp`**：每个视图收自己的那一份（`AboutViewAccess` /
+//! `EditorViewAccess` / `StatusBarViewAccess` …），只有路由者
+//! （`main_view` / `overlays`）收 bundle `&mut dyn EditorViewContext`。
+//!
+//! 本文件因此实现**能力 trait**（状态直取 / 只读投影 / 命令 / 五组只读查询），
+//! 而 17 个按视图窄 trait 由 `rustmark-ui` 侧的 blanket impl 自动得到：
+//! `impl<T: 能力集合 + ?Sized> XViewAccess for T {}`，故这里不逐个手写。
 //!
 //! # 为什么每个方法都写 `EditorApp::x(self, …)` 而不是 `self.x(…)`
 //!
@@ -58,23 +60,29 @@ use crate::presentation::state::symbol_ui_state::SymbolUiState;
 use crate::presentation::state::workspace_entries::WorkspaceEntries;
 use crate::presentation::theme::builtin::Theme;
 use crate::presentation::view_context::{
-    CommandPort, DocumentAccess, EditorViewContext, ImageFetcher, ServiceQueries, TextEdit,
-    ThemeAccess, UiStateAccess,
+    AppUiAccess, ClockAccess, CommandPaletteUiAccess, CommandPort, DialogStackAccess, DiffUiAccess,
+    DocumentAccess, DocumentQueries, EditorUiAccess, EditorViewContext, ExportUiAccess,
+    ExternalLinks, FindUiAccess, ImageFetcher, MarkdownQueries, PreferencesQueries,
+    PreviewUiAccess, QuickOpenUiAccess, SettingsUiAccess, ShortcutOverviewUiAccess,
+    SidebarUiAccess, StatusBarUiAccess, SymbolUiAccess, TextEdit, ThemeAccess,
+    WorkspaceEntriesAccess,
 };
 use egui::Context;
-use rustmark_core::application::document::service::DocumentAppService;
 use rustmark_core::application::dto::{
-    BlockView, EditorSettingsView, ExportRequestView, ExportResultView, LintIssueView,
-    OutlineItemView, RecentFileView, SettingsView, StatsView, TabSummary, ThemeView,
+    BlockView, EditorSettingsView, ExportRequestView, ExportResultView, GoalProgressView,
+    LintIssueView, OutlineItemView, RecentFileView, RenderedView, SettingsView, SpanView,
+    StatsView, TabSummary, ThemeView,
 };
-use rustmark_core::application::markdown::service::MarkdownAppService;
-use rustmark_core::application::preferences::service::PreferencesAppService;
-use rustmark_core::ports::system::ExternalOpener;
+use rustmark_core::application::markdown::queries::{
+    HighlightQuery, HighlightSnippetQuery, MapScrollQuery, RenderPreviewQuery, ScrollTarget,
+    SpellCheckQuery, SpellSuggestQuery,
+};
 use rustmark_core::shared::encoding::TextEncoding;
 use rustmark_core::shared::ids::DocumentId;
 use rustmark_core::shared::kernel::export_format::PageSize;
 use rustmark_core::shared::kernel::fonts::EditorFontChoice;
 use rustmark_core::shared::result::AppResult;
+use std::sync::Arc;
 
 // ===========================================================================
 // T1 · ThemeAccess
@@ -95,76 +103,25 @@ impl ThemeAccess for EditorApp {
 }
 
 // ===========================================================================
-// T2 · UiStateAccess
+// T2 · UI 状态直取（15 个按面板窄 trait）
 // ===========================================================================
+//
+// 每个 impl 只取一个字段；拆成 15 个块是为了让「谁给哪个视图什么样状态」
+// 在实现侧也一一对应（契约侧同构，见 `rustmark_ui` 的模块文档）。
 
-impl UiStateAccess for EditorApp {
+impl AppUiAccess for EditorApp {
     fn ui_state(&mut self) -> &mut AppUiState {
         &mut self.ui
     }
+}
 
+impl EditorUiAccess for EditorApp {
     fn editor_state(&mut self) -> &mut EditorUiState {
         &mut self.editor
     }
 
     fn editor_state_read(&self) -> &EditorUiState {
         &self.editor
-    }
-
-    fn status_bar_state(&mut self) -> &mut StatusBarUiState {
-        &mut self.status_bar
-    }
-
-    fn status_bar_state_read(&self) -> &StatusBarUiState {
-        &self.status_bar
-    }
-
-    fn sidebar_state(&mut self) -> &mut SidebarUiState {
-        &mut self.sidebar
-    }
-
-    fn find_state(&mut self) -> &mut FindReplaceUiState {
-        &mut self.find
-    }
-
-    fn export_ui_state(&mut self) -> &mut ExportUiState {
-        &mut self.export_ui
-    }
-
-    fn settings_ui_state(&mut self) -> &mut SettingsUiState {
-        &mut self.settings_ui
-    }
-
-    fn quick_open_ui_state(&mut self) -> &mut QuickOpenUiState {
-        &mut self.quick_open_ui
-    }
-
-    fn command_palette_ui_state(&mut self) -> &mut CommandPaletteUiState {
-        &mut self.command_palette_ui
-    }
-
-    fn command_palette_state_read(&self) -> &CommandPaletteUiState {
-        &self.command_palette_ui
-    }
-
-    fn diff_ui_state(&mut self) -> &mut DiffUiState {
-        &mut self.diff_ui
-    }
-
-    fn dialog_state(&mut self) -> &mut DialogUiState {
-        &mut self.dialog
-    }
-
-    fn symbol_ui_state(&mut self) -> &mut SymbolUiState {
-        &mut self.symbol_ui
-    }
-
-    fn shortcut_overview_ui_state(&self) -> &ShortcutOverviewUiState {
-        &self.shortcut_overview_ui
-    }
-
-    fn workspace_entries_state(&self) -> &WorkspaceEntries {
-        &self.workspace_entries
     }
 
     fn editor_text(&self) -> &str {
@@ -174,7 +131,89 @@ impl UiStateAccess for EditorApp {
     fn editor_text_mut(&mut self) -> &mut String {
         &mut self.editor_text
     }
+}
 
+impl StatusBarUiAccess for EditorApp {
+    fn status_bar_state(&mut self) -> &mut StatusBarUiState {
+        &mut self.status_bar
+    }
+
+    fn status_bar_state_read(&self) -> &StatusBarUiState {
+        &self.status_bar
+    }
+}
+
+impl SidebarUiAccess for EditorApp {
+    fn sidebar_state(&mut self) -> &mut SidebarUiState {
+        &mut self.sidebar
+    }
+}
+
+impl FindUiAccess for EditorApp {
+    fn find_state(&mut self) -> &mut FindReplaceUiState {
+        &mut self.find
+    }
+}
+
+impl ExportUiAccess for EditorApp {
+    fn export_ui_state(&mut self) -> &mut ExportUiState {
+        &mut self.export_ui
+    }
+}
+
+impl SettingsUiAccess for EditorApp {
+    fn settings_ui_state(&mut self) -> &mut SettingsUiState {
+        &mut self.settings_ui
+    }
+}
+
+impl QuickOpenUiAccess for EditorApp {
+    fn quick_open_ui_state(&mut self) -> &mut QuickOpenUiState {
+        &mut self.quick_open_ui
+    }
+}
+
+impl CommandPaletteUiAccess for EditorApp {
+    fn command_palette_ui_state(&mut self) -> &mut CommandPaletteUiState {
+        &mut self.command_palette_ui
+    }
+
+    fn command_palette_state_read(&self) -> &CommandPaletteUiState {
+        &self.command_palette_ui
+    }
+}
+
+impl DiffUiAccess for EditorApp {
+    fn diff_ui_state(&mut self) -> &mut DiffUiState {
+        &mut self.diff_ui
+    }
+}
+
+impl DialogStackAccess for EditorApp {
+    fn dialog_state(&mut self) -> &mut DialogUiState {
+        &mut self.dialog
+    }
+}
+
+impl SymbolUiAccess for EditorApp {
+    fn symbol_ui_state(&mut self) -> &mut SymbolUiState {
+        &mut self.symbol_ui
+    }
+}
+
+impl ShortcutOverviewUiAccess for EditorApp {
+    fn shortcut_overview_ui_state(&self) -> &ShortcutOverviewUiState {
+        &self.shortcut_overview_ui
+    }
+}
+
+impl WorkspaceEntriesAccess for EditorApp {
+    fn workspace_entries_state(&self) -> &WorkspaceEntries {
+        &self.workspace_entries
+    }
+}
+
+impl PreviewUiAccess for EditorApp {
     fn preview_state(&mut self) -> &mut PreviewUiState {
         &mut self.preview
     }
@@ -683,26 +722,66 @@ impl CommandPort for EditorApp {
 }
 
 // ===========================================================================
-// T5 · ServiceQueries
+// T5 · 组合根只读查询（5 个窄 trait）
 // ===========================================================================
+//
+// 这里**不再交出服务本身**：每个 impl 只转发一条语义查询，视图拿不到
+// `MarkdownAppService` / `DocumentAppService` / `PreferencesAppService` /
+// `ExternalOpener` 这些类型名，也就没法顺带调服务的其它方法。
 
-impl ServiceQueries for EditorApp {
-    fn markdown_service(&self) -> &MarkdownAppService {
-        // `services.markdown` 是 `Arc<MarkdownAppService>`，返回处的
-        // 解引用强制转换（deref coercion）把它落成 `&MarkdownAppService`。
-        &self.services.markdown
+impl ClockAccess for EditorApp {
+    fn now_ms(&self) -> u64 {
+        // 「组合根服务」直接取时间戳：`Timestamp::millis()` 返回 `u64`。
+        // `EditorApp` 上没有同名 inherent 方法，故走 `self.services.` 全路径即可。
+        self.services.markdown.now().millis()
+    }
+}
+
+impl MarkdownQueries for EditorApp {
+    fn highlight(&self, query: HighlightQuery) -> AppResult<Arc<Vec<SpanView>>> {
+        self.services.markdown.highlight(query)
     }
 
-    fn document_service(&self) -> &DocumentAppService {
-        &self.services.documents
+    fn highlight_snippet(&self, query: HighlightSnippetQuery) -> AppResult<Vec<SpanView>> {
+        self.services.markdown.highlight_snippet(query)
     }
 
-    fn preferences_service(&self) -> &PreferencesAppService {
-        &self.services.preferences
+    fn spell_check(&self, query: SpellCheckQuery) -> Vec<(usize, usize)> {
+        self.services.markdown.spell_check(query)
     }
 
-    fn external_opener(&self) -> &dyn ExternalOpener {
-        self.services.opener.as_ref()
+    fn spell_suggestions(&self, query: SpellSuggestQuery) -> Vec<String> {
+        self.services.markdown.spell_suggestions(query)
+    }
+
+    fn map_scroll(&self, query: MapScrollQuery) -> AppResult<ScrollTarget> {
+        self.services.markdown.map_scroll(query)
+    }
+
+    fn render_preview(&self, query: RenderPreviewQuery) -> AppResult<RenderedView> {
+        self.services.markdown.render_preview(query)
+    }
+}
+
+impl DocumentQueries for EditorApp {
+    fn document_encoding(&self, id: DocumentId) -> Option<TextEncoding> {
+        self.services.documents.encoding_of(id)
+    }
+}
+
+impl PreferencesQueries for EditorApp {
+    fn has_writing_goal(&self) -> bool {
+        self.services.preferences.has_writing_goal()
+    }
+
+    fn goal_progress(&self, words: usize) -> GoalProgressView {
+        self.services.preferences.goal_progress(words)
+    }
+}
+
+impl ExternalLinks for EditorApp {
+    fn open_external(&self, url: &str) -> std::io::Result<()> {
+        self.services.opener.open(url)
     }
 }
 

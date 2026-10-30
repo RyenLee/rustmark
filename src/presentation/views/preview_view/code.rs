@@ -13,7 +13,7 @@ use super::*;
 /// 横向滚动条（问题 2）；关 → 保持一行不折，由预览区底部横向滚动条查看
 /// （与编辑区行为一致，长代码行折断会破坏缩进可读性）。
 pub(super) fn draw_code_block(
-    vctx: &mut dyn EditorViewContext,
+    vctx: &mut dyn PreviewViewAccess,
     ui: &mut Ui,
     theme: &Theme,
     block: &BlockView,
@@ -45,7 +45,6 @@ pub(super) fn draw_code_block(
 
             // 语法高亮走与编辑区同一个高亮器，保证两处配色一致。
             let spans = vctx
-                .markdown_service()
                 .highlight_snippet(HighlightSnippetQuery {
                     text: block.content.clone(),
                     lang: block.lang.clone(),

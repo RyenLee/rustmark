@@ -5,7 +5,7 @@ use egui::{Align, CornerRadius, Layout, RichText, Ui};
 use crate::presentation::icons;
 use crate::presentation::shortcuts::registry::UiAction;
 use crate::presentation::theme::builtin::{Metrics, Theme};
-use crate::presentation::view_context::EditorViewContext;
+use crate::presentation::view_context::ToolbarViewAccess;
 
 use super::menu_bar::{menu_item, menu_row_width};
 
@@ -182,7 +182,7 @@ fn group_divider(ui: &mut Ui, theme: &Theme, h: f32) {
 ///
 /// 工具栏位于**编辑区顶部**（上下布局：工具栏在上、文本在下），作用域与编辑区
 /// 内容一致，见 `editor_view::show`。
-pub fn draw_editor_toolbar(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
+pub fn draw_editor_toolbar(vctx: &mut dyn ToolbarViewAccess, ui: &mut Ui) {
     // 主题先取出来（`vctx` 在闭包里还要可变借用，不能同时持有 `&Theme`）。
     let theme = vctx.theme_state().clone();
     let h = control_height(&theme.metrics);
@@ -306,7 +306,7 @@ fn draw_flat_actions(ui: &mut Ui, theme: &Theme, actions: &[UiAction], h: f32) -
 /// `visuals.widgets.{inactive,hovered,active}`——主题映射已把三者统一
 /// （见本文件头「视觉规范」一节），因此不是把颜色抄两遍。
 fn draw_group_dropdown(
-    vctx: &mut dyn EditorViewContext,
+    vctx: &mut dyn ToolbarViewAccess,
     ui: &mut Ui,
     theme: &Theme,
     title: &str,

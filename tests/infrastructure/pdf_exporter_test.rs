@@ -479,6 +479,154 @@ fn print_html_carries_the_chosen_page_size() {
     assert!(!letter.contains("size:A4"), "换了纸张就不该还留着 A4 规则");
 }
 
+// ---------------------------------------------------------------------------
+// H-1：打印路径必须复用 HTML 白名单清洗
+// ---------------------------------------------------------------------------
+
+/// 打印用 HTML 会由无头 Chromium 以 `file:///` 渲染成 PDF——那是真实浏览器
+/// 引擎，用户注入的 `<script>` 与事件属性会执行。故打印正文必须先过
+/// `sanitize_html`（与 HTML 导出同一道门）。
+#[test]
+fn print_html_drops_scripts_and_event_handlers() {
+    let job = pdf_job("sanitize.pdf");
+    let html = SystemPdfExporter::build_print_html(
+        "正文\n\n<script>alert(1)</script>\n\n<img src=x onerror=alert(2)>\n",
+        &job,
+    );
+
+    assert!(!html.contains("<script"), "用户脚本必须被丢弃：{html}");
+    assert!(!html.contains("onerror"), "事件属性必须被剥除：{html}");
+    assert!(
+        !html.to_ascii_lowercase().contains("javascript:"),
+        "javascript: URL 必须被剥除：{html}"
+    );
+    assert!(html.contains("正文"), "正文必须保留：{html}");
+}
+
+/// 链接里的 `javascript:` 协议同样不得进入打印产物。
+#[test]
+fn print_html_drops_javascript_urls() {
+    let job = pdf_job("jsurl.pdf");
+    let html = SystemPdfExporter::build_print_html("[x](javascript:alert(1))", &job);
+
+    assert!(
+        !html.to_ascii_lowercase().contains("javascript:"),
+        "javascript: 链接必须被剥除：{html}"
+    );
+}
+
+/// 清洗不能误伤公式 / 图表 / 图片，也不能误伤导出器自己注入的 CDN 资源。
+#[test]
+fn print_html_keeps_math_mermaid_and_images_but_drops_user_scripts() {
+    let job = pdf_job("keep.pdf");
+    let content = "公式 $x^2$\n\n```mermaid\ngraph TD;\n  A-->B;\n```\n\n\
+                   ![图](./a.png)\n\n<script>alert(1)</script>\n";
+    let html = SystemPdfExporter::build_print_html(content, &job);
+
+    assert!(html.contains("class=\"math"), "公式 span 必须保留：{html}");
+    assert!(
+        html.contains("language-mermaid"),
+        "mermaid 代码块必须保留：{html}"
+    );
+    assert!(html.contains("katex.min.js"), "公式资源仍应注入：{html}");
+    assert!(
+        html.contains("<img src=\"./a.png\""),
+        "图片必须保留（`./` 相对路径在清洗白名单内）：{html}"
+    );
+    // 导出器自己的 CDN <script> 允许存在，但用户注入的必须消失。
+    assert!(
+        !html.contains("<script>alert"),
+        "用户 script 必须消失：{html}"
+    );
+    assert!(!html.contains("onerror"), "事件属性必须消失：{html}");
+}
+
+/// 无头打印命令的参数形状：PDF 输出参数在前、源 URL 在后。
+///
+/// 这里刻意断言**不含** `--blink-settings=scriptEnabled=false`：该参数在本机
+/// Edge 154 实测会让 `--print-to-pdf` 完全不产出文件（打印整体失败），
+/// 因此第二道防线改在 `ensure_print_source_is_sanitized`（见下一个用例）。
+#[cfg(target_os = "windows")]
+#[test]
+fn headless_print_command_args_carry_pdf_output_and_source() {
+    use std::path::Path;
+
+    let dir = tempfile::tempdir().expect("临时目录");
+    let html = dir.path().join("a.print.html");
+    std::fs::write(&html, "<html><body>纯文本</body></html>").expect("应能写入");
+    let pdf = dir.path().join("a.pdf");
+
+    let command = rustmark::infrastructure::export::system_pdf_exporter::headless_print_command(
+        Path::new("msedge.exe"),
+        &html,
+        &pdf,
+    );
+    let args: Vec<String> = command
+        .get_args()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+
+    let print_at = args
+        .iter()
+        .position(|a| a.starts_with("--print-to-pdf="))
+        .expect("缺少 PDF 输出参数");
+    let url_at = args
+        .iter()
+        .position(|a| a.starts_with("file:///"))
+        .expect("缺少打印源 URL");
+    assert!(
+        print_at < url_at,
+        "PDF 输出参数必须排在源 URL 之前：{args:?}"
+    );
+    assert!(
+        !args.iter().any(|a| a.contains("scriptEnabled=false")),
+        "不得使用实测会让打印失败的 blink 开关：{args:?}"
+    );
+}
+
+/// 第二道防线：打印源里只允许导出器自己注入的脚本存在。
+///
+/// 静态文档应为 0 条；含公式 / 图表时恰好是注入的 CDN + 渲染脚本条数。
+/// 多出来的任何 `<script` 都说明清洗漏了，必须拒绝打印（fail-closed）。
+#[cfg(target_os = "windows")]
+#[test]
+fn print_source_guard_rejects_uncleaned_scripts() {
+    use rustmark::infrastructure::export::system_pdf_exporter::ensure_print_source_is_sanitized;
+
+    // 静态文档：没有任何脚本。
+    assert!(
+        ensure_print_source_is_sanitized("<html><body><p>纯文本</p></body></html>").is_ok(),
+        "静态文档不应被拒"
+    );
+
+    // 静态文档混入用户脚本：必须拒绝。
+    let error = ensure_print_source_is_sanitized(
+        "<html><body><p>纯文本</p><script>alert(1)</script></body></html>",
+    )
+    .expect_err("用户脚本必须被拦下");
+    assert!(error.contains("未清洗"), "错误文案应指出来源：{error}");
+
+    // 含公式：KaTeX 脚本 + 内联渲染脚本 = 2 条，属于预期。
+    assert!(
+        ensure_print_source_is_sanitized(
+            "<html><body><span class=\"math math-inline\">x</span>\
+             <script defer src=\"katex.min.js\"></script><script defer>render()</script>\
+             </body></html>"
+        )
+        .is_ok(),
+        "公式文档的注入脚本不应被拒"
+    );
+
+    // 公式文档里再多一条用户脚本：超出预期，拒绝。
+    let error = ensure_print_source_is_sanitized(
+        "<html><body><span class=\"math math-inline\">x</span>\
+         <script defer src=\"katex.min.js\"></script><script defer>render()</script>\
+         <script>alert(1)</script></body></html>",
+    )
+    .expect_err("多出的脚本必须被拦下");
+    assert!(error.contains("未清洗"), "错误文案应指出来源：{error}");
+}
+
 /// Windows 兜底命令：**路径只能走环境变量**，绝不能作为尾随参数。
 ///
 /// 这条钉的是用户实际遇到的那个报错。`powershell -Command <脚本> <参数…>`

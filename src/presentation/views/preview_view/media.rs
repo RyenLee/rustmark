@@ -20,6 +20,7 @@
 use egui::{Align, Layout};
 
 use rustmark_core::application::dto::ImageSpecView;
+use rustmark_core::ports::system;
 
 use super::*;
 
@@ -128,7 +129,7 @@ fn first_number(s: &str) -> Option<f32> {
 /// 纹理实际尺寸 → 面板宽度上限」的优先级计算（问题 3）；对齐按
 /// `#pic_center` / `#pic_left` / `#pic_right` 选择，未写标记时左对齐。
 pub(super) fn draw_image(
-    vctx: &mut dyn EditorViewContext,
+    vctx: &mut dyn PreviewViewAccess,
     ui: &mut Ui,
     theme: &Theme,
     block: &BlockView,
@@ -158,7 +159,7 @@ pub(super) fn draw_image(
 /// 参数来源有两个：源码私有扩展（`=30x30` / `#pic_center`）与 URL 查询参数
 /// （OSS 处理串），前者优先（见 [`effective_size_param`]）。
 pub(super) fn draw_image_spec(
-    vctx: &mut dyn EditorViewContext,
+    vctx: &mut dyn PreviewViewAccess,
     ui: &mut Ui,
     theme: &Theme,
     spec: &ImageSpecView,
@@ -264,9 +265,11 @@ pub(super) fn draw_image_spec(
                                 )
                                 .clicked()
                         {
-                            // 同 inline.rs 的行内链接：走 opener 端口而非
-                            // 直调 shared 的自由函数（R-03 把进程调用移出 shared）。
-                            let _ = vctx.external_opener().open(&url);
+                            // 纵深防御：与行内链接同一条安全门，避免此处成为
+                            // 「绕过 is_safe_to_open 的第二条路径」。
+                            if system::is_safe_to_open(&url) {
+                                let _ = vctx.open_external(&url);
+                            }
                         }
                     },
                 );

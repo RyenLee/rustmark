@@ -21,7 +21,7 @@ use egui::{Context, RichText, Ui};
 
 use crate::presentation::state::dialog_ui_state::Overlay;
 use crate::presentation::theme::builtin::Theme;
-use crate::presentation::view_context::EditorViewContext;
+use crate::presentation::view_context::AboutViewAccess;
 
 /// 对话框默认尺寸（对齐原型 `BaseModal :width="380" :height="220"`）。
 const WIDTH: f32 = 380.0;
@@ -46,7 +46,7 @@ pub struct AboutItem {
 /// 返回 `Vec` 而不是在视图里散着写，是为了能被测试逐项核对：
 /// 「已打开文档数」这类**随状态变化**的条目最容易在某次重构里
 /// 被悄悄改成固定值，而那不会引发任何编译错误。
-pub fn items(vctx: &dyn EditorViewContext) -> Vec<AboutItem> {
+pub fn items(vctx: &dyn AboutViewAccess) -> Vec<AboutItem> {
     vec![
         AboutItem {
             label: "版本",
@@ -83,7 +83,7 @@ pub fn items(vctx: &dyn EditorViewContext) -> Vec<AboutItem> {
 }
 
 /// 绘制关于浮层。
-pub fn show(vctx: &mut dyn EditorViewContext, ctx: &Context) {
+pub fn show(vctx: &mut dyn AboutViewAccess, ctx: &Context) {
     let mut open = true;
     egui::Window::new(Overlay::About.title())
         .id(egui::Id::unique("rustmark.overlay.about"))
@@ -99,7 +99,7 @@ pub fn show(vctx: &mut dyn EditorViewContext, ctx: &Context) {
 }
 
 /// 主体。
-fn body(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
+fn body(vctx: &mut dyn AboutViewAccess, ui: &mut Ui) {
     let theme = vctx.theme_state().clone();
     brand(ui, &theme);
     ui.add_space(theme.metrics.space_sm);

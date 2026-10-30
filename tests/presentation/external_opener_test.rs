@@ -143,6 +143,13 @@ fn an_unsafe_link_never_reaches_the_opener() {
         "JavaScript://evil.com",
         "vbscript:msgbox",
         "data:text/html,<script>",
+        // UNC 与协议相对：Windows 下会解析成 SMB 网络路径（凭据外泄）。
+        "//host/share",
+        "\\\\host\\share",
+        // 百分号编码的扩展名：`x%2Eexe` 解码后是可执行文件，扩展名判定可被绕过。
+        "x%2Eexe",
+        // 控制字符：污染命令行 / 文件名。
+        "https://a.com\u{0}calc.exe",
     ] {
         assert!(
             !is_safe_to_open(evil),

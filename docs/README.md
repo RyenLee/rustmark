@@ -30,7 +30,7 @@
 |---|---|
 | 新接手的开发者 | 本页 → [`plans/PROGRESS.md`](./plans/PROGRESS.md)（做到哪了）→ [`guides/debug-guide.md`](./guides/debug-guide.md)（跑起来 + 排障）→ [`spec/architecture-constraints.md`](./spec/architecture-constraints.md)（不许做什么） |
 | 领任务开工 | [`plans/v1.1-backlog.md`](./plans/v1.1-backlog.md)（**唯一任务入口**）→ 对应阶段文档 → `.agent/conventions.md` |
-| 要改架构 / 加 crate | [`spec/architecture-constraints.md`](./spec/architecture-constraints.md) §10（crate 地图与归属四问）→ [`remediation/`](./remediation/README.md)（为什么是现在这个样子）→ [`spec/current_dependency_graph.html`](./spec/current_dependency_graph.html) |
+| 要改架构 / 加 crate | [`spec/architecture-constraints.md`](./spec/architecture-constraints.md) §10（crate 地图与归属四问）→ [`remediation/`](./remediation/README.md)（为什么是现在这个样子）→ [`spec/current_dependency_graph.html`](./spec/current_dependency_graph.html) → [`diagrams/project-relationship-map.md`](./diagrams/project-relationship-map.md)（文件 / 模块级关联图） |
 | 用户 / 报缺陷 | [`guides/troubleshooting.md`](./guides/troubleshooting.md)（配置目录 / 草稿恢复 / 崩溃报告） |
 | 准备发布 | [`guides/release.md`](./guides/release.md) → [`reports/release-compliance-gap-report.md`](./reports/release-compliance-gap-report.md)（还剩什么没闭环）→ [`guides/testing.md`](./guides/testing.md) |
 | 关心体积 / 性能数字 | [`spec/metrics.md`](./spec/metrics.md)（**唯一数字来源**）→ [`guides/dependencies.md`](./guides/dependencies.md) |

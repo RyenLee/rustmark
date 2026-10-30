@@ -21,7 +21,7 @@ use crate::presentation::state::shortcut_overview_ui_state::{
     ShortcutOverviewUiState, ShortcutSection,
 };
 use crate::presentation::theme::builtin::Theme;
-use crate::presentation::view_context::EditorViewContext;
+use crate::presentation::view_context::ShortcutOverviewViewAccess;
 
 /// 对话框默认尺寸（对齐原型 `BaseModal :width="440" :height="520"`）。
 const WIDTH: f32 = 460.0;
@@ -31,7 +31,7 @@ const HEIGHT: f32 = 520.0;
 pub const FILTER_INPUT_ID: &str = "rustmark.shortcut_overview.filter";
 
 /// 绘制快捷键一览浮层。
-pub fn show(vctx: &mut dyn EditorViewContext, ctx: &Context) {
+pub fn show(vctx: &mut dyn ShortcutOverviewViewAccess, ctx: &Context) {
     let mut open = true;
     egui::Window::new(Overlay::ShortcutOverview.title())
         .id(egui::Id::unique("rustmark.overlay.shortcut_overview"))
@@ -59,7 +59,7 @@ pub fn show(vctx: &mut dyn EditorViewContext, ctx: &Context) {
 }
 
 /// 主体。
-fn body(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
+fn body(vctx: &mut dyn ShortcutOverviewViewAccess, ui: &mut Ui) {
     let theme = vctx.theme_state().clone();
     filter_row(vctx, ui);
     ui.add_space(theme.metrics.space_sm);
@@ -70,7 +70,7 @@ fn body(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
 }
 
 /// 过滤框。
-fn filter_row(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
+fn filter_row(vctx: &mut dyn ShortcutOverviewViewAccess, ui: &mut Ui) {
     ui.horizontal(|ui| {
         ui.label(RichText::new("筛选").size(12.0));
         let mut query = vctx.shortcut_overview_ui_state().query.clone();
@@ -89,7 +89,7 @@ fn filter_row(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
 }
 
 /// 从**生效**注册表收集分组。
-pub fn collect(vctx: &dyn EditorViewContext) -> Vec<ShortcutSection> {
+pub fn collect(vctx: &dyn ShortcutOverviewViewAccess) -> Vec<ShortcutSection> {
     let table = vctx.dispatcher_state().registry().table();
     let groups: Vec<(MenuGroup, Vec<_>)> = MenuGroup::ALL
         .iter()
@@ -151,7 +151,7 @@ fn kbd(ui: &mut Ui, theme: &Theme, text: &str) {
 
 /// 页脚：统计与关闭。
 fn footer(
-    vctx: &mut dyn EditorViewContext,
+    vctx: &mut dyn ShortcutOverviewViewAccess,
     ui: &mut Ui,
     theme: &Theme,
     sections: &[ShortcutSection],

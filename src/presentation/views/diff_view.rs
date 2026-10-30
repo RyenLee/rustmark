@@ -20,7 +20,7 @@ use egui::{Align, Context, Layout, RichText, ScrollArea, Ui, Vec2};
 use crate::presentation::state::dialog_ui_state::Overlay;
 use crate::presentation::state::diff_ui_state::{CharSeg, CharSegKind, DisplayRow};
 use crate::presentation::theme::builtin::Theme;
-use crate::presentation::view_context::EditorViewContext;
+use crate::presentation::view_context::DiffViewAccess;
 use rustmark_core::shared::path::file_name_of;
 
 /// 对话框默认尺寸（对齐原型 `BaseModal :width="760" :height="560"`）。
@@ -34,7 +34,7 @@ const GUTTER: f32 = 46.0;
 const SIGN_W: f32 = 16.0;
 
 /// 绘制差异对比浮层。
-pub fn show(vctx: &mut dyn EditorViewContext, ctx: &Context) {
+pub fn show(vctx: &mut dyn DiffViewAccess, ctx: &Context) {
     let mut open = true;
     egui::Window::new(Overlay::Diff.title())
         .id(egui::Id::unique("rustmark.overlay.diff"))
@@ -50,7 +50,7 @@ pub fn show(vctx: &mut dyn EditorViewContext, ctx: &Context) {
 }
 
 /// 主体。
-fn body(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
+fn body(vctx: &mut dyn DiffViewAccess, ui: &mut Ui) {
     let theme = vctx.theme_state().clone();
     header(vctx, ui, &theme);
     ui.separator();
@@ -132,7 +132,7 @@ fn body(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
 }
 
 /// 头部：两侧文件名。
-fn header(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
+fn header(vctx: &mut dyn DiffViewAccess, ui: &mut Ui, theme: &Theme) {
     ui.horizontal(|ui| {
         ui.label(RichText::new("当前").size(11.0).color(theme.text_secondary));
         ui.label(
@@ -151,7 +151,7 @@ fn header(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
 }
 
 /// 对照文件选择器。
-fn picker(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
+fn picker(vctx: &mut dyn DiffViewAccess, ui: &mut Ui, theme: &Theme) {
     ui.label(RichText::new("选择一个工作区里的文件与当前文档对比：").size(12.0));
     let files: Vec<(String, bool)> = vctx
         .workspace_entries_state()

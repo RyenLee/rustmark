@@ -48,11 +48,12 @@ use rustmark_core::domain::export::services::{Exporter, TocBuilder};
 use rustmark_core::domain::export::value_objects::TocEntry;
 use rustmark_core::shared::export_format::{ExportFormat, PageSize};
 
+use super::html_sanitize::sanitize_html;
 use super::pulldown_html_exporter::{collect_toc, render_fragment, render_toc};
 pub use backend::{CommandProbe, PathProbe, PdfBackend, PrintOutcome};
-#[cfg(target_os = "windows")]
-pub use dispatch::shell_print_command;
 pub use dispatch::{PrintDispatcher, SystemPrintDispatcher, file_url};
+#[cfg(target_os = "windows")]
+pub use dispatch::{ensure_print_source_is_sanitized, headless_print_command, shell_print_command};
 
 #[cfg(target_os = "windows")]
 use dispatch::{chromium_candidates, pick_browser};
@@ -149,10 +150,18 @@ impl SystemPdfExporter {
 
     /// 生成打印就绪的 HTML（含内联样式，供打印使用）。
     ///
-    /// 与 [`super::pulldown_html_exporter`] 的区别：这里**不做白名单清洗**，
-    /// 因为产物是给打印引擎消费的本地临时文件，不会在浏览器里打开；
-    /// 但 Markdown 中的原始 HTML 仍会被 pulldown 原样透传，故这里
-    /// 复用 `render_fragment` 的既有行为，不额外扩大攻击面。
+    /// # 为什么这里**必须**清洗
+    ///
+    /// 产物会被无头 Chromium 以 `file:///` 打开并渲染成 PDF——那是一个真实的
+    /// 浏览器引擎，文档里的 `<script>` 与事件属性会执行（H-1：此处此前把
+    /// 「交给打印引擎」误当成「不在浏览器里打开」，因而漏掉了清洗）。
+    /// 这与 HTML 导出（`PulldownHtmlExporter::build_document`）面对的是同一类
+    /// 不可信输入，故复用同一套白名单清洗。
+    ///
+    /// 清洗边界严格取在**正文 + TOC 片段**上：`wrap_document` 生成的
+    /// `<meta charset>` / `<style>` 骨架是可信常量，而清洗器按设计会丢弃
+    /// `style` / `meta`（二者在 `DROP_TAGS` 中），一并送进清洗会把打印样式
+    /// 与字符集声明剥掉，打印出来是无样式的裸文档。
     ///
     /// 公开仅为让单测能直接断言中间产物（同 `PulldownHtmlExporter::build_document`），
     /// 不是给其它模块调的。
@@ -166,6 +175,8 @@ impl SystemPdfExporter {
         } else {
             body
         };
+        // 不可信来源（pulldown 原样透传的内嵌 HTML + TOC）先过白名单清洗。
+        let safe_body = sanitize_html(&with_toc);
         // 纸张尺寸写成 `@page`。界面一直承诺「纸张会写入导出件的 `@page` 规则」，
         // 但这条规则此前**根本不存在**（打印样式表里没有任何 `@page`），
         // 于是用户选的纸张从来没生效过。无头内核会按它排版（A4 实测 595×842pt）。
@@ -176,7 +187,7 @@ impl SystemPdfExporter {
                 PageSize::Letter => "letter",
             }
         );
-        super::pulldown_html_exporter::build_printable_document(&title, &with_toc, &page_style)
+        super::pulldown_html_exporter::build_printable_document(&title, &safe_body, &page_style)
     }
 }
 

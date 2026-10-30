@@ -49,13 +49,13 @@ use egui::{FontId, ScrollArea, TextEdit, Ui};
 use crate::presentation::state::editor_ui_state::editor_id;
 use crate::presentation::state::scroll_sync_state::Side;
 use crate::presentation::theme::mapper;
-use crate::presentation::view_context::EditorViewContext;
+use crate::presentation::view_context::EditorViewAccess;
 use crate::presentation::views::editor_ops;
 use rustmark_core::application::markdown::queries::{HighlightQuery, SpellCheckQuery};
 use rustmark_core::shared::geometry::{ByteOffset, TextRange};
 
 /// 绘制编辑区。
-pub fn show(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
+pub fn show(vctx: &mut dyn EditorViewAccess, ui: &mut Ui) {
     let ctx = ui.ctx().clone();
     // 1) 把上一帧领域编辑留下的「清撤销栈 / 重设光标」落到 egui 内部状态
     //    （必须在 `TextEdit::show` 之前，否则本帧光标不会更新）。
@@ -134,7 +134,6 @@ pub fn show(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
     let text_len = vctx.editor_text().len();
     let spans = match doc_id {
         Some(id) => vctx
-            .markdown_service()
             .highlight(HighlightQuery {
                 doc_id: id,
                 range: TextRange::new(ByteOffset::new(0), ByteOffset::new(text_len)),
@@ -149,7 +148,6 @@ pub fn show(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
         let enabled = vctx.editor_state().spell_check;
         match doc_id {
             Some(id) => vctx
-                .markdown_service()
                 .spell_check(SpellCheckQuery {
                     doc_id: id,
                     enabled,
@@ -310,7 +308,7 @@ pub fn show(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
                 // egui 0.37 的 `TextEditOutput` **不带生命周期参数**（`galley: Arc<Galley>`），
                 // 借用在 `.show(ui)` 返回后**立即结束**——故把独占借用关进
                 // **显式块**，块内不得调上下文的其它方法（含 `&self` 的
-                // `markdown_service()`）：需要的数据一律块外预取。
+                // `now_ms()`）：需要的数据一律块外预取。
                 let editor = {
                     let buf = vctx.editor_text_mut();
                     TextEdit::multiline(buf as &mut dyn egui::TextBuffer)
@@ -437,7 +435,7 @@ pub fn show(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
                         // 程序性位移——否则滚动同步会把它当成用户手势，一帧一次地把
                         // 预览区拉到映射位置（编辑区平滑滚、预览区逐帧跳），
                         // 两栏同时在动即用户看到的「界面闪烁」。
-                        let now_ms = vctx.markdown_service().now().millis();
+                        let now_ms = vctx.now_ms();
                         vctx.ui_state()
                             .sync
                             .note_programmatic_scroll(Side::Editor, now_ms);

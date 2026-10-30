@@ -8,7 +8,7 @@
 
 use egui::{RichText, Ui};
 
-use crate::presentation::view_context::EditorViewContext;
+use crate::presentation::view_context::ToolbarViewAccess;
 use crate::presentation::widgets;
 
 /// 标签条：渲染所有打开的文档，可点击切换、关闭、并显示脏标记。
@@ -38,7 +38,7 @@ use crate::presentation::widgets;
 /// 5. **本函数是滚动 offset 的唯一写者**（问题 041）：滚动区动画关死
 ///    （`.animated(false)`），滚入与箭头都走「show 之后统一写回」，
 ///    两者互不覆盖。
-pub(super) fn draw_tab_strip(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
+pub(super) fn draw_tab_strip(vctx: &mut dyn ToolbarViewAccess, ui: &mut Ui) {
     let docs = vctx.open_document_list();
     let theme = vctx.theme_state().clone();
     // 顶栏预算是**硬约束**（`TopBottomPanel::exact_height(100)`，而 egui 的

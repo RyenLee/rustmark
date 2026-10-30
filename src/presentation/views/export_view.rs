@@ -36,7 +36,7 @@ use crate::presentation::state::export_ui_state::{
 };
 use crate::presentation::state::pending_dialog::PendingDialog;
 use crate::presentation::theme::builtin::Theme;
-use crate::presentation::view_context::EditorViewContext;
+use crate::presentation::view_context::ExportViewAccess;
 use rustmark_core::application::dto::ExportRequestView;
 use rustmark_core::shared::export_format::{ExportFormat, PageSize};
 
@@ -59,7 +59,7 @@ pub const OUTPUT_DIR_INPUT_ID: &str = "rustmark.export.dir";
 pub const FILE_STEM_INPUT_ID: &str = "rustmark.export.stem";
 
 /// 绘制导出对话框。
-pub fn show(vctx: &mut dyn EditorViewContext, ctx: &Context) {
+pub fn show(vctx: &mut dyn ExportViewAccess, ctx: &Context) {
     let mut open = true;
     egui::Window::new(Overlay::Export.title())
         .id(egui::Id::unique("rustmark.overlay.export"))
@@ -103,7 +103,7 @@ pub fn show(vctx: &mut dyn EditorViewContext, ctx: &Context) {
 }
 
 /// 主体。
-fn body(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
+fn body(vctx: &mut dyn ExportViewAccess, ui: &mut Ui) {
     let theme = vctx.theme_state().clone();
     format_row(vctx, ui, &theme);
     ui.add_space(theme.metrics.space_sm);
@@ -133,7 +133,7 @@ pub(crate) fn selected_format_label_color(theme: &Theme) -> Color32 {
 }
 
 /// 格式单选组。
-fn format_row(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
+fn format_row(vctx: &mut dyn ExportViewAccess, ui: &mut Ui, theme: &Theme) {
     ui.horizontal_wrapped(|ui| {
         ui.label("格式");
         for format in ExportFormat::ALL {
@@ -158,7 +158,7 @@ fn format_row(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
 }
 
 /// 输出目录与文件名。
-fn path_rows(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
+fn path_rows(vctx: &mut dyn ExportViewAccess, ui: &mut Ui, theme: &Theme) {
     ui.horizontal(|ui| {
         ui.label("输出路径");
         // D-3 阶段 3：clone → 就地编辑 → 变化才值写回（同帧完成，闭包外的
@@ -233,7 +233,7 @@ fn markdown_note(ui: &mut Ui, theme: &Theme) {
 }
 
 /// 通用格式选项（HTML / 图片）。
-fn common_options(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
+fn common_options(vctx: &mut dyn ExportViewAccess, ui: &mut Ui, theme: &Theme) {
     let format = vctx.export_ui_state().format;
     if format == ExportFormat::Image {
         // 图片走截图路径：内容、目录、分页对它都没有意义。
@@ -293,7 +293,7 @@ fn image_note(ui: &mut Ui, theme: &Theme, long_image: bool) {
 }
 
 /// PDF 专属选项（纸张 / 分页 / 目录）。
-fn pdf_options(vctx: &mut dyn EditorViewContext, ui: &mut Ui, _theme: &Theme) {
+fn pdf_options(vctx: &mut dyn ExportViewAccess, ui: &mut Ui, _theme: &Theme) {
     ui.horizontal_wrapped(|ui| {
         ui.label("纸张");
         for size in PageSize::ALL {
@@ -332,7 +332,7 @@ fn pdf_options(vctx: &mut dyn EditorViewContext, ui: &mut Ui, _theme: &Theme) {
 }
 
 /// 错误 / 成功提示。
-fn messages(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
+fn messages(vctx: &mut dyn ExportViewAccess, ui: &mut Ui, theme: &Theme) {
     let error = vctx.export_ui_state().error.clone();
     if let Some(error) = error {
         ui.colored_label(theme.error, format!("⚠ {error}"));
@@ -352,7 +352,7 @@ fn messages(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
 }
 
 /// 页脚：取消 / 导出。
-fn footer(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
+fn footer(vctx: &mut dyn ExportViewAccess, ui: &mut Ui, theme: &Theme) {
     ui.horizontal(|ui| {
         let extension = vctx.export_ui_state().format.extension();
         ui.weak(format!("扩展名必须是 .{extension}"));
@@ -379,7 +379,7 @@ fn footer(vctx: &mut dyn EditorViewContext, ui: &mut Ui, theme: &Theme) {
 ///
 /// 编排全在 [`EditorApp::export_current_document`]（应用层两段式），
 /// 这里只把 UI 状态翻译成 DTO 并把结果翻译成提示文案。
-fn run_export(vctx: &mut dyn EditorViewContext, pixels_per_point: f32) {
+fn run_export(vctx: &mut dyn ExportViewAccess, pixels_per_point: f32) {
     vctx.export_ui_state().begin();
     let path = vctx.export_ui_state().resolved_path.clone();
 

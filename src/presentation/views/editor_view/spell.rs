@@ -4,7 +4,7 @@ use egui::Context;
 
 use crate::presentation::state::editor_ui_state::SpellSuggestMenu;
 use crate::presentation::theme::builtin::Theme;
-use crate::presentation::view_context::EditorViewContext;
+use crate::presentation::view_context::EditorViewAccess;
 use crate::presentation::views::editor_ops;
 use rustmark_core::application::markdown::queries::{SpellCheckQuery, SpellSuggestQuery};
 use rustmark_core::shared::text::word_bounds_at;
@@ -37,7 +37,7 @@ const SPELL_SUGGEST_LIMIT: usize = 5;
 /// 用本帧的 `galley` 而不是「按行号推算」，是因为自动换行时一个逻辑行
 /// 折成多行，行号推算必然错位——那正是行号栏踩过的坑。
 pub fn spell_menu_for(
-    vctx: &dyn EditorViewContext,
+    vctx: &dyn EditorViewAccess,
     galley: &egui::Galley,
     galley_pos: egui::Pos2,
     pointer: egui::Pos2,
@@ -45,7 +45,7 @@ pub fn spell_menu_for(
     let relative = pointer - galley_pos;
     let char_index = galley.cursor_from_pos(relative).index;
     // 文本只读借用：整个函数里所有上下文访问都是 `&self`，
-    // 故这层共享借用与后续的 `markdown_service()` 互不排斥。
+    // 故这层共享借用与后续的只读查询（`spell_check()`）互不排斥。
     let text = vctx.editor_text();
     let byte = editor_ops::char_to_byte(text, char_index.0);
     let (start, end) = word_bounds_at(text, byte)?;
@@ -58,13 +58,12 @@ pub fn spell_menu_for(
     let flagged = vctx
         .active_doc()
         .map(|doc_id| {
-            vctx.markdown_service()
-                .spell_check(SpellCheckQuery {
-                    doc_id,
-                    enabled: vctx.editor_state_read().spell_check,
-                })
-                .into_iter()
-                .any(|(s, e)| s == start && e == end)
+            vctx.spell_check(SpellCheckQuery {
+                doc_id,
+                enabled: vctx.editor_state_read().spell_check,
+            })
+            .into_iter()
+            .any(|(s, e)| s == start && e == end)
         })
         .unwrap_or(false);
     if !flagged {
@@ -72,13 +71,11 @@ pub fn spell_menu_for(
     }
     let word = text.get(start..end)?.to_string();
     let doc_id = vctx.active_doc()?;
-    let suggestions = vctx
-        .markdown_service()
-        .spell_suggestions(SpellSuggestQuery {
-            doc_id,
-            offset: start,
-            limit: SPELL_SUGGEST_LIMIT,
-        });
+    let suggestions = vctx.spell_suggestions(SpellSuggestQuery {
+        doc_id,
+        offset: start,
+        limit: SPELL_SUGGEST_LIMIT,
+    });
     // 没有候选就不弹：一个只有标题的空菜单只会让人以为坏了。
     if suggestions.is_empty() {
         return None;
@@ -100,7 +97,7 @@ pub fn spell_menu_for(
 /// 可拖动、会被 `Esc` 当浮层关掉），语义不对；`Area` 恰恰是「钉在屏幕某点
 /// 的即时模式浮层」，且不需要进 `Overlay` 栈——它不是对话框，
 /// 不该抢「关闭浮层」那条快捷键。
-pub(super) fn draw_spell_menu(vctx: &mut dyn EditorViewContext, ctx: &Context, theme: &Theme) {
+pub(super) fn draw_spell_menu(vctx: &mut dyn EditorViewAccess, ctx: &Context, theme: &Theme) {
     // 菜单内容先克隆出来：`editor_state()` 是可变借用，若把它的结果挂在
     // `let ... else` 的判据上，那层借用会**覆盖整个块**（形态 B），
     // 与块内的 `close_spell_menu()` 撞车。故分两步：先取出来，再判。
