@@ -1337,10 +1337,7 @@ fn check_view_file_sizes(views_root: &Path) -> Vec<Violation> {
             .unwrap_or(path)
             .to_string_lossy()
             .replace('\\', "/");
-        let is_tests_file = path
-            .file_name()
-            .map(|n| n == "tests.rs")
-            .unwrap_or(false);
+        let is_tests_file = path.file_name().map(|n| n == "tests.rs").unwrap_or(false);
         let in_tests_dir = rel.split('/').any(|seg| seg == "tests");
         if is_tests_file || in_tests_dir {
             continue;
@@ -1418,7 +1415,10 @@ fn src_roots(manifest: &Path) -> Vec<(PathBuf, &'static str, Option<Layer>)> {
             Some(Layer::Ports),
         ),
         (
-            manifest.join("crates").join("rustmark-assembly").join("src"),
+            manifest
+                .join("crates")
+                .join("rustmark-assembly")
+                .join("src"),
             "crates/rustmark-assembly/src/",
             Some(Layer::App),
         ),
@@ -1506,24 +1506,24 @@ pub fn check_rich_egui_isolation_with(manifest: &Path, allowlist: &[&str]) -> Ve
                 if allowlist.iter().any(|a| rel.ends_with(a)) {
                     continue;
                 }
-            let Ok(content) = fs::read_to_string(path) else {
-                continue;
-            };
-            let lexed = Lexer::new(&content).run();
-            let Some(line) = first_egui_ref_line(&lexed) else {
-                continue;
-            };
-            violations.push(Violation {
-                file: format!("{display_prefix}{rel}"),
-                line,
-                detail: format!(
-                    "R-04：`{rel}` 引用了 egui —— `rustmark-render` 是 egui-free 的渲染层，\
+                let Ok(content) = fs::read_to_string(path) else {
+                    continue;
+                };
+                let lexed = Lexer::new(&content).run();
+                let Some(line) = first_egui_ref_line(&lexed) else {
+                    continue;
+                };
+                violations.push(Violation {
+                    file: format!("{display_prefix}{rel}"),
+                    line,
+                    detail: format!(
+                        "R-04：`{rel}` 引用了 egui —— `rustmark-render` 是 egui-free 的渲染层，\
                      几何一律走 `render::Pt` / `render::Rgb8` / `render::geom::Rect`，\
                      绘制命令由 `render::apply_egui` 发出；唯一允许 `use egui` 的是后端 \
                      `{RICH_EGUI_BACKEND}`（`RenderBackend` 实现与 `apply_egui`）"
-                ),
-            });
-        }
+                    ),
+                });
+            }
         }
     }
     violations
@@ -1633,9 +1633,7 @@ pub fn check_ui_submodule_sync(manifest: &Path) -> Vec<Violation> {
     // 合成夹具常常只建模其中一两处（如 `ui_root_presentation_prefix_keeps_sublayer_judgement`
     // 只写 `crates/rustmark-ui/src/presentation.rs` 验证前缀判层），
     // 不能因「另外两处不存在」就报「失配」——与 §4.5 登记制只挂真实工程同思路。
-    if !manifest.join(ROOT_PRESENTATION_RS).is_file()
-        || !manifest.join(CONSTRAINTS_DOC).is_file()
-    {
+    if !manifest.join(ROOT_PRESENTATION_RS).is_file() || !manifest.join(CONSTRAINTS_DOC).is_file() {
         return Vec::new();
     }
 
@@ -2451,7 +2449,8 @@ fn check_file(rel: &str, layer: Layer, lexed: &Lexed, registry: &Registry) -> Ve
     let mut used_allow = vec![false; lexed.allows.len()];
     let forbidden = forbidden_for(layer);
     if !forbidden.is_empty() {
-        let candidates = collect_candidates(tokens, &module_path_of(rel), &forbidden, allowed_for(layer));
+        let candidates =
+            collect_candidates(tokens, &module_path_of(rel), &forbidden, allowed_for(layer));
         for cand in &candidates {
             let hit = lexed
                 .allows
@@ -2698,15 +2697,7 @@ fn collect_candidates(
                 .unwrap_or(t.line);
             for (path, line) in paths {
                 push_path_candidates(
-                    &mut out,
-                    &path,
-                    line,
-                    t.line,
-                    stmt_end,
-                    "use",
-                    module,
-                    forbidden,
-                    allowed,
+                    &mut out, &path, line, t.line, stmt_end, "use", module, forbidden, allowed,
                 );
             }
             i = if end > i { end } else { i + 1 };
@@ -2801,7 +2792,9 @@ fn push_path_candidates(
     allowed: &[&'static str],
 ) {
     if !is_relative_path(path) {
-        push_candidates(out, path, line, win_start, win_end, source, forbidden, allowed);
+        push_candidates(
+            out, path, line, win_start, win_end, source, forbidden, allowed,
+        );
         return;
     }
     // 同一行同一条禁令只报一次：多个假定深度可能都落在同一条例令上，
@@ -2919,12 +2912,30 @@ mod view_size_tests {
         write_file(&views, "preview_view/tests/inner.rs", 601);
         let v = check_view_file_sizes(&views);
         let flagged: Vec<&str> = v.iter().map(|x| x.file.as_str()).collect();
-        assert!(flagged.iter().any(|f| f.ends_with("big.rs")), "big.rs 应被标记: {flagged:?}");
-        assert!(flagged.iter().any(|f| f.ends_with("foo/sub.rs")), "foo/sub.rs 应被标记: {flagged:?}");
-        assert!(!flagged.iter().any(|f| f.ends_with("small.rs")), "small.rs 不应被标记");
-        assert!(!flagged.iter().any(|f| f.ends_with("tests.rs")), "tests.rs 应豁免");
-        assert!(!flagged.iter().any(|f| f.contains("tests/inner")), "tests/ 应豁免");
-        assert!(!flagged.iter().any(|f| f.contains("preview_view/tests")), "嵌套 tests.rs/tests/ 应豁免");
+        assert!(
+            flagged.iter().any(|f| f.ends_with("big.rs")),
+            "big.rs 应被标记: {flagged:?}"
+        );
+        assert!(
+            flagged.iter().any(|f| f.ends_with("foo/sub.rs")),
+            "foo/sub.rs 应被标记: {flagged:?}"
+        );
+        assert!(
+            !flagged.iter().any(|f| f.ends_with("small.rs")),
+            "small.rs 不应被标记"
+        );
+        assert!(
+            !flagged.iter().any(|f| f.ends_with("tests.rs")),
+            "tests.rs 应豁免"
+        );
+        assert!(
+            !flagged.iter().any(|f| f.contains("tests/inner")),
+            "tests/ 应豁免"
+        );
+        assert!(
+            !flagged.iter().any(|f| f.contains("preview_view/tests")),
+            "嵌套 tests.rs/tests/ 应豁免"
+        );
         let _ = fs::remove_dir_all(&base);
     }
 }
