@@ -37,17 +37,19 @@ rustmark-shared = { path = "../rustmark-shared" }
 rustmark-ports = { path = "../rustmark-ports" }
 
 # --- 配置与序列化（DTO / 偏好值对象的 serde）---
-serde = { version = "1", features = ["derive"] }
+# V11-67：版本与 feature（`derive`）继承 root [workspace.dependencies]。
+serde = { workspace = true }
 
 # --- 错误处理（领域/应用层错误用 thiserror；anyhow 只允许在组合根入口）---
-thiserror = "2"
+thiserror = { workspace = true }
 
 # --- 日志（应用层毒锁恢复等越界告警）---
 # V11-65：版本继承 root [workspace.dependencies]。
 log = { workspace = true }
 
 # --- 缓存哈希器（跨文件搜索 span 缓存；no-rng 免 getrandom）---
-ahash = { version = "0.8", default-features = false, features = ["std", "no-rng"] }
+# V11-67：`default-features = false` + `["std","no-rng"]` 继承 root 真源。
+ahash = { workspace = true }
 
 # V11-65：lint 经 [workspace.lints] 单点继承（原为 src/lib.rs 顶部的 attribute）。
 [lints]

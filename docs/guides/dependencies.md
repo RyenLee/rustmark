@@ -1,7 +1,7 @@
 # 依赖清单与版本锁定
 
 > 关联需求：§5.1、§5.2、§8.1；关联任务：S1-08、S2-01、S5-01~03、S8-02
-> 核实方式：crates.io API 查询，日期 2026-10-06。**新增依赖须登记体积贡献并经 ADR 追加评审。**
+> 核实方式：crates.io API 查询，日期 2026-10-06；**2026-10-30 按 7 份 manifest + `Cargo.lock` 逐条复核（V11-67 依赖统一收口），修正了 `toml` / `pulldown-cmark` / `egui`·`eframe` 三处陈旧记录，并补入 `image` / `wgpu` 两行**。**新增依赖须登记体积贡献并经 ADR 追加评审。**
 
 ---
 
@@ -11,12 +11,12 @@
 |---|---|---|---|---|---|---|
 | UI | `egui` | **0.37.0** | 0.37.0 | 立即模式 GUI | 3–4 MB（含 eframe） | 2026-10-16 由 0.33.3 升级（评估报告见 `archive/stage-reports/egui-0.37-upgrade.md`）；REL-03 起 **`default_fonts` 与 `monochrome_emoji_fonts` 均关闭**：5 个内嵌字体（1,417,504 B）改为随发行包分发，运行期由 `infrastructure::fonts` 装配回比例 / 等宽基础族（见 metrics §2.7） |
 | UI | `eframe` | **0.37.0** | 0.37.0 | 应用框架与窗口 | 同上 | 随 egui 联动；渲染后端特性 `wgpu` → **`wgpu_no_default_features`**（见下方注） |
-| 解析 | `pulldown-cmark` | **0.13**（`0.13.4`） | 0.13.4 | Markdown 解析 | ≤ 0.5 MB | `default-features = false` + `["html","simd"]`；**GFM 为运行期 Options，非 feature** |
-| 高亮 | `syntect` | **5.3.0** | 5.3.0 | 代码语法高亮 | ≤ 1.5 MB | `default-fancy`（纯 Rust，无 onig）；语法集方案见 ADR-002 §2.1 |
+| 解析 | `pulldown-cmark` | **0.13**（锁 `0.13.5`） | 0.13.5 | Markdown 解析 | ≤ 0.5 MB | `default-features = false` + `["html"]`（仅 HTML 导出需要 `push_html`）；**不带 `simd`**（此前本行误记，manifest 从未声明）、不带 `getopts`；**GFM 为运行期 Options，非 feature** |
+| 高亮 | `syntect` | **5.3.0** | 5.3.0 | 代码语法高亮 | ≤ 1.5 MB | `default-features = false` + `["parsing","default-syntaxes","dump-load","regex-fancy"]`；`regex-fancy` 走 fancy-regex（纯 Rust，不链 onig），`dump-load` 连带 `dump-create`/`flate2`/`bincode`（实测 `cargo tree -e features -i syntect`）；语法集方案见 ADR-002 §2.1 |
 | 文本缓冲 | `ropey` | **1.6.1** | 1.6.1（2.0.0-beta 存在） | Rope 文本结构 | ≤ 0.2 MB | 不用 beta |
 | 对话框 | `rfd` | **0.17.2** | 0.17.2 | 原生文件/目录对话框 | 计入 0.5 MB | 三平台原生实现 |
 | 序列化 | `serde` | **1** | 1.x | DTO / 配置序列化 | 计入 0.5 MB | 仅启用 `derive` |
-| 配置 | `toml` | **0.9.6** | 1.1.6 | 配置文件读写 | 计入 0.5 MB | 需求 §5.1 指定 0.9.6；若 0.9 线维护问题再评估升级 |
+| 配置 | `toml` | **1.1.8**（锁 `1.1.8+spec-1.1.0`） | 1.1.8 | 配置文件读写 | 计入 0.5 MB | manifest 实际声明 `1.1.8`（此前本行写的 0.9.6 已过期）；开默认特性 → 实启用 `default`（`display`/`parse`/`serde`/`std`），`to_string_pretty` 依赖 `display`，见 §6.2 |
 | 错误 | `thiserror` | **2** | 2.0.21 | 领域/应用层错误枚举 | 极小 | 领域层专用 |
 | 错误 | `anyhow` | **1** | 1.x | 仅 `app.rs` / `main.rs` | 极小 | **禁止进入领域层**（`CONSTR-10`） |
 | 网络 | `ureq` | **3.5.0**（`default-features=false` + `["rustls-no-provider","_ring"]`） | 3.5.0 | 远程图片下载（http/https，缺陷 025） | 见 metrics §2.7 | rustls 纯 Rust TLS、无系统依赖；取代 S5-11 的手写 `TcpStream` 下载（该方案 https 全部失败）。REL-03 起不启 `rustls-webpki-roots`（省 ~400 KB 裸 DER），根证书改由下一行的 `rustls-native-certs` 运行期读取 |
@@ -24,6 +24,8 @@
 | 日志 | `log` | **0.4** | 0.4.x | 基础设施层越界告警 | 极小 | 未列入需求 §5.1，为 S5-01「不 panic、用 `log::warn!`」所必需，在此登记；后端见下一行 |
 | 日志 | `env_logger` | **0.11**（`default-features=false` + `["humantime"]`） | 0.11.x | `log` 的 stderr 后端（F-2 前无后端，12 个告警调用点全部静默丢弃） | 极小 | **不启 `regex`**：依赖树此前无 `regex`（仅 fancy-regex → regex-automata），模块级过滤不依赖正则；不启 `termcolor`：着色交给终端。默认级别 warn，`RUST_LOG` 可调 |
 | 缓存 | `ahash` | **0.8**（`default-features=false` + `["std","no-rng"]`） | 0.8.12 | 预览 / 高亮 / 拼写缓存 Map 的哈希器 | 极小 | 缓存键均为内部 `DocumentId`(u64)，关 `runtime-rng` 以免引入 `getrandom`；与 eframe / egui 对 ahash 的用法一致（§6） |
+| 图片 | `image` | **0.25**（锁 `0.25.10`） | 0.25.10 | 预览区图片解码（root 视图 + infra 落盘/缩放） | 已计入 eframe 预算 | `default-features = false` + `["png","jpeg","gif","webp","bmp"]`，与 `asset_loader::policy::ALLOWED_MIME` 白名单逐一对应；**不启 `svg`**（SVG 可携带 `<script>`，见 asset_loader 安全说明） |
+| 渲染 | `wgpu` | **30.0.1** | 30.0.1 | 仅补开平台后端 feature（应用代码不直接调用） | 计入 eframe 预算 | `default-features = false` + `["std"]`；后端按平台各开一个（Windows `dx12` / macOS `metal` / 其它 `vulkan`+`gles`），见 §1 注与 §7 |
 | 测试 | `tempfile` | **3** | 3.27 | 仅 dev-dependency（原子保存、仓储测试） | 不进 release | 阶段 05 起使用 |
 
 > **eframe 渲染后端（实测）**：`eframe` 的 `default` 后端是 **`glow`（OpenGL）而非 wgpu**。
@@ -88,8 +90,8 @@
 
 | 项 | 说明 |
 |---|---|
-| egui / eframe 锁 0.33.3 | 需求 §5.1 指定；最新 0.36.2 存在跨版本 API 变更。升级须单独立项、回归阶段 06 全部视图 |
-| toml 锁 0.9.6 | 需求 §5.1 指定；最新为 1.1.6，升级需评估配置格式兼容性 |
+| egui / eframe 锁 0.37.0 | 需求 §5.1 最初指定 0.33.3，**2026-10-16 已升级到 0.37.0**（评估报告 `archive/stage-reports/egui-0.37-upgrade.md`）；本行此前仍写 0.33.3，2026-10-30 按 manifest 修正。再升级须单独立项、回归阶段 06 全部视图 |
+| toml 锁 1.1.8 | manifest 实际声明 `1.1.8`（锁文件 `1.1.8+spec-1.1.0`）；本行此前记 0.9.6 已过期。再升级需评估配置格式兼容性（`Cargo.toml` 之外的落盘格式见 §6.2） |
 | 其余 | 按需求文档 §5.1 锁定；补丁级更新允许，次版本升级需登记 |
 
 ## 6. 依赖复查（2026-10-14，S8-02 之后首次全量复核）
@@ -123,3 +125,41 @@
 > 备注：`getrandom 0.3.4` 在 `Cargo.lock` 中可能残留一条**陈旧条目**（cargo 未即时回收），
 > 但 `cargo tree` 已确认它不在构建图中、不进产物，下次 cargo 自然重写锁文件时会被回收。
 > 本次未跑 `cargo update`（全量重解析会冒改版本的风险），仅动 `Cargo.toml` 的 feature 范围。
+
+## 7. workspace 依赖单点真源（V11-65 / V11-67）
+
+> **准入判据**：同一第三方依赖有 **≥2 个声明点**才进根 `[workspace.dependencies]`——
+> 只有重复声明才有分叉风险。成员侧写 `{ workspace = true }` 继承版本与 feature，
+> 需要时在其上追加 crate 专属 feature 或 `optional = true`。
+> 单一声明点的依赖留在使用处：那个声明点本身就是真源，迁入只多一层间接。
+>
+> 判据的机械兜底：`tests/workspace_topology_test.rs` 钉住各 crate 的依赖面，
+> CI 的 `cargo tree` 拓扑 diff 钉住依赖边与锁文件版本（`docs/spec/workspace-topology.expected.txt`）。
+
+### 7.1 已收口（根真源，成员继承）
+
+| 依赖 | 真源规格（根 `[workspace.dependencies]`） | 继承方 |
+|---|---|---|
+| `egui` | `0.37.0`，`default-features = false` | root / icons / ui（render 另加 `optional = true`） |
+| `image` | `0.25`，`default-features = false` + `png`/`jpeg`/`gif`/`webp`/`bmp` | root / infra |
+| `syntect` | `5.3.0`，`default-features = false` + `parsing`/`default-syntaxes`/`dump-load`/`regex-fancy` | infra / root(dev) |
+| `log` | `0.4` | root / core / infra |
+| `tempfile` | `3` | root(dev) / infra(dev) |
+| `serde` | `1` + `derive` | core / infra / ports / shared |
+| `thiserror` | `2` | core / infra / ports / shared |
+| `ahash` | `0.8`，`default-features = false` + `std`/`no-rng` | core / ports / shared |
+| `wgpu` | `30.0.1`，`default-features = false` + `std` | root 的三个 `[target.*]` 段各追加后端 feature |
+
+### 7.2 例外（刻意不入真源）
+
+| 依赖 | 声明点 | 理由 |
+|---|---|---|
+| `pulldown-cmark`、`ropey`、`rfd`、`toml`、`ureq`、`rustls-native-certs` | 仅 infra | 单一声明点，无分叉风险 |
+| `eframe`、`anyhow`、`env_logger` | 仅 root | 同上；且 eframe 的 `wgpu_no_default_features` / `x11` / `wayland` 是组合根专属规格 |
+| `egui` 的 `optional = true`（render）、`wgpu` 的平台后端 feature | render / root 目标段 | **有意的规格差异**：render 默认 egui-free；wgpu 按平台各开一个后端（体积最小）。差异保留，不在真源里抹平 |
+
+### 7.3 复核结论（2026-10-30）
+
+- **无版本或 feature 分叉**：收口前 `serde`（4 处）、`thiserror`（4 处）、`ahash`（3 处）逐字相同，属"同规格重复"而非漂移；`wgpu` 三个目标段版本也一致。收口后的 `cargo tree --workspace --depth 1 --no-dedupe` 与拓扑基线**逐行一致**，`Cargo.lock` 无变化。
+- **`cargo tree -d` 的重复版本全部来自上游**：`bit-set` 0.8/0.10、`bit-vec` 0.8/0.9、`getrandom` 0.2/0.4、`hashbrown` 0.16/0.17、`miniz_oxide` 0.8/0.9、`rustc-hash` 1.1/2.1、`syn` 2/3、`windows-sys` 0.52/0.61——分别由 `wgpu 30` / `syntect 5.3` / `egui 0.37` 的传递依赖约束决定，本项目无直接声明可调，故不动。
+- **锁文件陈旧条目**：`thiserror 1.0.69` 仍在 `Cargo.lock` 里，但 `cargo tree -i thiserror@1.0.69` 输出 `nothing to print`——不在构建图中，不进产物，待下次 cargo 重写锁文件时回收（与上方 `getrandom 0.3.4` 备注同性质）。本次未跑 `cargo update`。

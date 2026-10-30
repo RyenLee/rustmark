@@ -14,9 +14,9 @@ publish = false
 # - serde：导出格式与主题种类的 `serde` 派生（配置落盘与 DTO 共用）；
 # - thiserror：`AppError` / `FilePathError` 的错误派生；
 # - ahash：`lru` 缓存的哈希器（no-rng 免 getrandom，见 root [workspace.dependencies]）。
-serde = { version = "1", features = ["derive"] }
-thiserror = "2"
-ahash = { version = "0.8", default-features = false, features = ["std", "no-rng"] }
+serde = { workspace = true }
+thiserror = { workspace = true }
+ahash = { workspace = true }
 
 # V11-65：lint 经 [workspace.lints] 单点继承。
 [lints]

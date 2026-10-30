@@ -33,11 +33,13 @@ ropey = "1.6.1"
 rfd = "0.17.2"
 
 # --- 配置与序列化（preferences / recent_files 落盘）---
-serde = { version = "1", features = ["derive"] }
+# V11-67：serde / thiserror 的版本与 feature 继承 root [workspace.dependencies]；
+# toml 仅本 crate 使用（单一声明点即真源），留在使用处。
+serde = { workspace = true }
 toml = "1.1.8"
 
 # --- 错误处理（asset_loader 的限额错误等）---
-thiserror = "2"
+thiserror = { workspace = true }
 
 # --- 远程图片下载（缺陷 025：https 图片此前因「未内置 TLS」全部失败）---
 # 纯 Rust TLS（rustls + ring）；REL-03 体积缓解：不启 rustls-webpki-roots，

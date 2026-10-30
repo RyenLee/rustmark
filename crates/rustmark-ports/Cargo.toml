@@ -13,13 +13,14 @@ publish = false
 # ids / result 等）：ports 单向依赖 shared，不得反向（否则成环）。
 rustmark-shared = { path = "../rustmark-shared" }
 
-# 纯数据结构所需（与 shared 同规格）：
+# 纯数据结构所需（与 shared 同规格；V11-67 起版本/feature 继承 root
+# [workspace.dependencies]，本处只声明「用不用」）：
 # - serde：端口里带数据载荷的枚举 / 结构（Timestamp / DomainEvent / FileFilter）派生；
 # - thiserror：端口错误派生；
 # - ahash：与 shared 保持一致的 no-rng 哈希器（部分端口结构参与缓存键）。
-serde = { version = "1", features = ["derive"] }
-thiserror = "2"
-ahash = { version = "0.8", default-features = false, features = ["std", "no-rng"] }
+serde = { workspace = true }
+thiserror = { workspace = true }
+ahash = { workspace = true }
 
 # V11-65：lint 经 [workspace.lints] 单点继承。
 [lints]

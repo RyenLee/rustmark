@@ -46,10 +46,23 @@ resolver = "3"
 # （egui / image / syntect / log / tempfile），新增一条依赖要写两遍、改一处漏一处
 # 即静默分叉——收敛到本表，成员侧 `{ workspace = true }` 继承。
 # 各依赖的选型理由注释保留在使用处（版本进真源，理由留上下文）。
+#
+# V11-67（依赖统一收口）：本表的准入判据 = **同一依赖有 ≥2 个声明点**（分叉风险
+# 才需要单点真源）。据此本轮再纳入 serde / thiserror / ahash（core / infra /
+# ports / shared 各自逐字重复）与 wgpu（root 三个 per-OS 目标段各抄一遍版本号）。
+# 两个例外（刻意不入本表，理由在此登记，避免下一轮反复讨论）：
+# 1. **单一声明点的外部依赖**：pulldown-cmark / ropey / rfd / toml / ureq /
+#    rustls-native-certs（仅 infra 使用）、eframe / anyhow / env_logger（仅 root
+#    使用）。只有一个声明点时，那个声明点本身就是真源，迁入本表只多一层间接，
+#    没有任何防漂移收益。
+# 2. **crate 专属 feature**：egui 的 `optional = true`（render）、wgpu 的平台后端
+#    feature（root 三个目标段）——规格差异是有意的，成员侧在 `workspace = true`
+#    之上追加 feature，而不是把差异抹平。
 [workspace.dependencies]
 # --- UI 绘制原语（ADR-001：egui 原生）---
 # core 只画 egui（TextFormat / LayoutJob / Galley 等），不接触渲染后端；
-# eframe 与 wgpu 属组合根，留在 root、不入本表。
+# eframe 属组合根，留在 root、不入本表（单一声明点）；wgpu 的**版本**在表内、
+# 平台后端 feature 在 root 的三个目标段（见下文）。
 egui = { version = "0.37.0", default-features = false }
 
 # --- 图片解码（S6-05 预览区显示图片）---
@@ -80,6 +93,27 @@ log = "0.4"
 
 # --- 测试临时目录（两侧 dev-dependencies 同规格）---
 tempfile = "3"
+
+# --- 配置与序列化（V11-67：core / infra / ports / shared 四处逐字重复）---
+# 仅启用 `derive`：DTO / 偏好值对象 / 端口载荷全用派生，不用自定义 (De)Serializer。
+serde = { version = "1", features = ["derive"] }
+
+# --- 错误处理（V11-67：core / infra / ports / shared 四处重复）---
+# 域 / 应用 / 端口错误枚举一律 thiserror；anyhow 只允许在组合根入口（CONSTR-10）。
+thiserror = "2"
+
+# --- 缓存哈希器（V11-67：core / ports / shared 三处重复）---
+# 键全是内部 `DocumentId`(u64)，非攻击者可控，故关 `runtime-rng`（免 getrandom）、
+# 关 default 只留 `std`；种子由 ASLR + 实例计数器派生（ahash 文档「最弱但可用」档）。
+ahash = { version = "0.8", default-features = false, features = [
+    "std",
+    "no-rng",
+] }
+
+# --- wgpu 后端基座（V11-67：原先三个 per-OS 目标段各抄一遍 30.0.1）---
+# 只钉版本与平台无关的 `std`；**后端 feature（dx12 / metal / vulkan+gles）留在
+# root 的三个 `[target.*]` 段**——按平台各开一个（体积增量最小，理由见下）。
+wgpu = { version = "30.0.1", default-features = false, features = ["std"] }
 
 # V11-65：lint 单点真源（原为 root 与 core 两个 lib.rs 各一份 attribute，
 # 规范 §四-15 / DOC-03 要求「两处必须保持一致」——手动同步本身就是债）。
@@ -261,17 +295,13 @@ env_logger = { version = "0.11", default-features = false, features = ["humantim
 # `wgpu` 是本已在依赖树内的 crate（经 eframe 引入），此处只是补一份直接声明
 # 以便打开 feature；应用代码不直接调用它，唯一引用是 tests/startup_smoke.rs 的守卫断言。
 [target.'cfg(target_os = "windows")'.dependencies]
-wgpu = { version = "30.0.1", default-features = false, features = ["std", "dx12"] }
+wgpu = { workspace = true, features = ["dx12"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-wgpu = { version = "30.0.1", default-features = false, features = ["std", "metal"] }
+wgpu = { workspace = true, features = ["metal"] }
 
 [target.'cfg(not(any(target_os = "windows", target_os = "macos")))'.dependencies]
-wgpu = { version = "30.0.1", default-features = false, features = [
-    "std",
-    "vulkan",
-    "gles",
-] }
+wgpu = { workspace = true, features = ["vulkan", "gles"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }
