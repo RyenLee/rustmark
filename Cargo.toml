@@ -17,6 +17,7 @@
 [workspace]
 members = [
     "crates/rustmark-actions",
+    "crates/rustmark-assembly",
     "crates/rustmark-core",
     "crates/rustmark-icons",
     "crates/rustmark-infra",
@@ -30,6 +31,7 @@ members = [
 default-members = [
     ".",
     "crates/rustmark-actions",
+    "crates/rustmark-assembly",
     "crates/rustmark-core",
     "crates/rustmark-icons",
     "crates/rustmark-infra",
@@ -174,6 +176,13 @@ eframe = { version = "0.37.0", default-features = false, features = [
 # 直接依赖**它——UiAction 经 core 的 registry re-export 访问（root→actions
 # 直连会让「词汇表只服务 core 契约」的边界多出一条边）。
 rustmark-core = { path = "crates/rustmark-core" }
+
+# --- 本地 crate（M2，R-10 项 B 补全：组合根装配下沉，2026-10-29）---
+# 原 root `src/app/bootstrap.rs` 的装配实现（production_bundle / Services /
+# ConfigPaths / assemble_with_*）整体平移至此；root 仅留 re-export 门面
+# （`pub use rustmark_assembly::bootstrap::*`）拼回 `rustmark::app::bootstrap::*`
+# 原路径，tests/ 与 frame/ 零改动。assembly 依赖面恰为 core + infra + ports。
+rustmark-assembly = { path = "crates/rustmark-assembly" }
 
 # --- 本地 crate（V11-64：基础设施层，2026-10-26 抽出）---
 # 外部库适配与 IO（syntect / ureq / rfd / image / ropey / pulldown-cmark）。

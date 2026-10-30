@@ -87,11 +87,13 @@
   V11-10 / V11-11（证书预算 / 痛点驱动）——见 backlog §3。
 - **架构改造已收官**：V11-54 / V11-54a（全库评估 + 21 条改造项）2026-10-21 完成；
   V11-56~67 波次中 V11-56/57/58/59/62/63/64/65/66/67 已落地，V11-60 关闭、V11-61 降级为记录。
-  **workspace 现为 9 crate**：`rustmark`（组合根 + views）/ `rustmark-core`（六边形脊柱，零 egui）/
+  **workspace 现为 10 crate**：`rustmark`（组合根 + views）/ `rustmark-core`（六边形脊柱，零 egui）/
   `rustmark-infra`（V11-64，`7b9b6ba`）/ `rustmark-shared`（TD-04，`2da434e`）/ `rustmark-ui`（V11-62）/
   `rustmark-render`（R-04 升 crate，`22e8a86`：`presentation::rich` 搬出，默认 egui-free、egui 后端经 feature 门控）/
   `rustmark-ports`（R-10 项 A，`0f20bc8`：5 个架构端口契约搬出 `shared/kernel`，实现仍在 infra）/
-  `rustmark-icons` / `rustmark-actions`，本地依赖边 **12 条**、无环（`docs/spec/workspace-topology.expected.txt`）。
+  `rustmark-assembly`（M2，R-10 项 B 补全，`2026-10-29`：组合根装配下沉，原 `src/app/bootstrap.rs` 的
+  `production_bundle`/`Services`/`ConfigPaths`/`assemble_with_*` 平移至此，root 仅留 re-export 门面）/
+  `rustmark-icons` / `rustmark-actions`，本地依赖边 **16 条**、无环（`docs/spec/workspace-topology.expected.txt`）。
   两个新 crate 的直接收益是**依赖面收窄**：core 从 12 个外部依赖降为 4 个（serde/thiserror/log/ahash），
   复用 domain/application 的消费者不再被 syntect/ureq/rfd/image/pulldown 拖进编译图。
 - **R-03 B1 视图窄接口解耦（批 1，2026-10-27 起）**：视图签名由 `&mut EditorApp`

@@ -1,0 +1,24 @@
+[package]
+# 独立 crate 版本号不随应用发版（publish = false，仅参与本地 workspace 构建）。
+name = "rustmark-assembly"
+version = "0.2.0"
+edition = "2024"
+rust-version = "1.99"
+license = "MIT OR Apache-2.0"
+description = "rustmark 的组合根装配下沉（M2，R-10 项 B 补全）：production_bundle / Services / ConfigPaths / assemble_with_*（2026-10-29 从 root 抽出）"
+publish = false
+
+[dependencies]
+# --- 本地 crate（六边形脊柱：compose / ImplBundle / AppServices / ComposeConfig）---
+rustmark-core = { path = "../rustmark-core" }
+
+# --- 本地 crate（13 个 impl 类型住此：RfdDialogAdapter 等）---
+rustmark-infra = { path = "../rustmark-infra" }
+
+# --- 本地 crate（R-10 项 A：架构端口契约；SystemClock 实现住此 time.rs）---
+# 与 infra 同范式直连取端口契约，而非仅经 `rustmark_core::ports` 间接取。
+rustmark-ports = { path = "../rustmark-ports" }
+
+# V11-65：lint 经 [workspace.lints] 单点继承。
+[lints]
+workspace = true

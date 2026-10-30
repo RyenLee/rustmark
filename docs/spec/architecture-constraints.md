@@ -676,7 +676,7 @@ crate 入口白名单里，`layer_of` 自然判 Free（依赖面 = egui，由
 
 ### 10.1 crate 地图
 
-**当前拓扑**（2026-10-28 实测，`cargo tree --workspace --depth 1`；本地依赖边共 12 条）：
+**当前拓扑**（2026-10-29 实测，`cargo tree --workspace --depth 1`；本地依赖边共 16 条）：
 
 ```
 rustmark（root：组合根 + views + bin）
@@ -686,9 +686,12 @@ rustmark（root：组合根 + views + bin）
 ├──► rustmark-infra  ──► rustmark-core
 │                     └► rustmark-ports
 ├──► rustmark-icons
+├──► rustmark-assembly ──► rustmark-core
+│                        ├► rustmark-infra ──► rustmark-core / rustmark-ports
+│                        └► rustmark-ports
 └──► rustmark-ui     ──► rustmark-core
     └──► rustmark-render（默认 egui-free；egui 仅 `feature="egui"` 门控）
-                        （12 条本地边，无环；actions 是唯一零依赖叶）
+                        （16 条本地边，无环；actions 是唯一零依赖叶）
 ```
 
 | crate | 角色 | 实测规模（2026-10-26，`src/` 口径） | 外部依赖面 |
@@ -702,6 +705,7 @@ rustmark（root：组合根 + views + bin）
 | `rustmark-icons` | 16×16 图标规格 + Painter 渲染器（V11-58） | 1 文件 / 630 行 | egui |
 | `rustmark-ui` | 表现层非视图部分：widgets（批次 1）/ state（批次 2）/ shortcuts（批次 3）/ theme（批次 4）/ view_context（R-03 B1：视图窄接口 `EditorViewContext`）；`presentation::rich` 为兼容 shim（R-04 升 crate 为 `rustmark-render`，经 `pub use rustmark_render::*` 拼回原路径，消费方零改动） | 48 文件 / 12,265 行（2026-10-28 实测，rich 升 crate 后；`src/` 口径不含 tests） | egui + rustmark-core + rustmark-render |
 | `rustmark-render` | 富内容渲染引擎：数学排版 / Mermaid 自绘（`rustmark-ui::presentation::rich` 物理搬出，R-04 升 crate，2026-10-28）；默认 egui-free，唯一 egui 后端 `render/egui.rs` 走 `feature="egui"` 双门控（`#[cfg(feature = "egui")]`），依赖面仅 egui（optional）；对 `rustmark-core` 零依赖 | 27 文件 / 5,579 行（2026-10-28 实测；`src/` 口径不含 tests） | egui（optional，仅 `feature="egui"`） |
+| `rustmark-assembly` | 组合根装配下沉（M2，R-10 项 B 补全，2026-10-29）：原 root `src/app/bootstrap.rs` 的 `production_bundle`（全仓唯一点名 13 个 infra impl 处）/ `Services`（14 字段）/ `ConfigPaths` / 5 个 `assemble_with_*` / 私有 `assemble_with_bundle` 整体平移至此；root 仅留 `pub use rustmark_assembly::bootstrap::*` 门面拼回 `rustmark::app::bootstrap::*` 原路径，消费方零改动；装配逻辑 egui-free（依赖面 core + infra + ports，三者对 egui / eframe / wgpu 命中均为 0） | 2 文件 / 351 行（2026-10-29 实测；`src/` 口径：lib.rs + bootstrap.rs） | rustmark-core + rustmark-infra + rustmark-ports（**零外部 IO**） |
 
 规模口径：`find <源码根> -name '*.rs' -exec cat {} + | wc -l`（**不用 `xargs wc -l`**——超 ~100 文件会分批而 `tail -1` 只抓末批小计），只含 `src/`、
 不含 `tests/`，命令随文可复跑。core 与评审快照（46,375 行 / 238 文件）的差额 =

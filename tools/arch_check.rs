@@ -1417,6 +1417,11 @@ fn src_roots(manifest: &Path) -> Vec<(PathBuf, &'static str, Option<Layer>)> {
             "crates/rustmark-ports/src/",
             Some(Layer::Ports),
         ),
+        (
+            manifest.join("crates").join("rustmark-assembly").join("src"),
+            "crates/rustmark-assembly/src/",
+            Some(Layer::App),
+        ),
     ]
 }
 

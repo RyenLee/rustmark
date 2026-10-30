@@ -2409,6 +2409,7 @@ dependencies = [
  "env_logger",
  "image",
  "log",
+ "rustmark-assembly",
  "rustmark-core",
  "rustmark-icons",
  "rustmark-infra",
@@ -2421,6 +2422,15 @@ dependencies = [
 [[package]]
 name = "rustmark-actions"
 version = "0.2.0"
+
+[[package]]
+name = "rustmark-assembly"
+version = "0.2.0"
+dependencies = [
+ "rustmark-core",
+ "rustmark-infra",
+ "rustmark-ports",
+]
 
 [[package]]
 name = "rustmark-core"

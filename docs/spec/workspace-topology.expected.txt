@@ -87,6 +87,32 @@
 #   rustmark-infra  → rustmark-core                                       （1 条）
 #   rustmark-ui     → {rustmark-core, rustmark-render}                     （2 条）
 # `rustmark-render` 自身无本地依赖边（egui 为 optional 外部依赖，默认不引入）。
+#
+# 基线更新：2026-10-28，R-10 项 A 把 5 个架构端口契约（dialog / event / system /
+# image_asset / time）从 shared 抽出为独立 `rustmark-ports`（core 经
+# `pub use rustmark_ports as ports;` 拼回）。拓扑 = 本地依赖边 **9 → 12 条**
+# （无环）：新增 `core → ports`、`infra → ports`、`ports → shared` 三条边
+# （root 不直连 ports，端口经 `rustmark_core::ports` 间接取）。依赖面断言见
+# tests/workspace_topology_test.rs 的 ports / core / infra 三处。当前边表：
+#   root → {rustmark-core, rustmark-infra, rustmark-icons, rustmark-ui}       （4 条）
+#   rustmark-core   → {rustmark-actions, rustmark-shared, rustmark-ports}     （3 条）
+#   rustmark-infra  → {rustmark-core, rustmark-ports}                        （2 条）
+#   rustmark-ui     → {rustmark-core, rustmark-render}                       （2 条）
+#   rustmark-ports  → rustmark-shared                                       （1 条）
+#
+# 基线更新：2026-10-29，M2（R-10 项 B 补全）把组合根装配面（`production_bundle` /
+# `Services` / `ConfigPaths` / `assemble_with_*`）从 root `src/app/bootstrap.rs`
+# 平移为独立 `rustmark-assembly`。拓扑 = 本地依赖边 **12 → 16 条**（无环）：新增
+# `root → assembly` 与 `assembly → {core, infra, ports}` 共 4 条边（依赖面断言见
+# tests/workspace_topology_test.rs 的 assembly_crate_depends_on_core_infra_ports）。
+# assembly 不反向依赖 root，故与 root → assembly 不成环。当前边表（2026-10-29）：
+#   root → {rustmark-core, rustmark-infra, rustmark-icons, rustmark-ui, rustmark-assembly}  （5 条）
+#   rustmark-assembly → {rustmark-core, rustmark-infra, rustmark-ports}                    （3 条）
+#   rustmark-core   → {rustmark-actions, rustmark-shared, rustmark-ports}                   （3 条）
+#   rustmark-infra  → {rustmark-core, rustmark-ports}                                       （2 条）
+#   rustmark-ui     → {rustmark-core, rustmark-render}                                      （2 条）
+#   rustmark-ports  → rustmark-shared                                                      （1 条）
+# 合计 16 条，无环。
 rustmark v0.2.0
 ├── anyhow v1.0.104
 ├── eframe v0.37.0
@@ -94,6 +120,7 @@ rustmark v0.2.0
 ├── env_logger v0.11.11
 ├── image v0.25.10
 ├── log v0.4.34
+├── rustmark-assembly v0.2.0
 ├── rustmark-core v0.2.0
 ├── rustmark-icons v0.2.0
 ├── rustmark-infra v0.2.0
@@ -106,6 +133,12 @@ rustmark v0.2.0
 └── tempfile v3.27.0
 
 rustmark-actions v0.2.0
+
+rustmark-assembly v0.2.0
+├── rustmark-core v0.2.0
+├── rustmark-infra v0.2.0
+│   [dev-dependencies]
+└── rustmark-ports v0.2.0
 
 rustmark-core v0.2.0
 ├── ahash v0.8.12

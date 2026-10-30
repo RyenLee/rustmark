@@ -47,8 +47,8 @@
 | [`architecture-constraints.md`](./spec/architecture-constraints.md) | **架构规则唯一真源**：分层 / 依赖矩阵 / 各层禁令 / `shared` 准入三问 + 登记表 / §10 crate 地图与模块归属四问 | `cargo run --bin check-arch`（按区段标记解析「豁免登记表」「`shared` 准入表」，未登记即违规） |
 | [`metrics.md`](./spec/metrics.md) | **七项硬指标唯一数字来源**（体积 / 启动 / 内存 / 帧耗时 / 解析 / 高亮 / 搜索） | 人工 + CI 注释口径；`size_gate.sh` 默认值与 §2.8 同源 |
 | [`thresholds.baseline.yaml`](./spec/thresholds.baseline.yaml) | 121 条阈值的取值 / 单位 / 源码行号基线（运行时**不加载**） | `python3 tools/check_thresholds.py`（CI `Threshold baseline` 步骤） |
-| [`workspace-topology.expected.txt`](./spec/workspace-topology.expected.txt) | 12 条本地依赖边的期望快照（含手写注释头） | CI 拓扑 diff + `scripts/gen_dep_graph.sh` 回写 |
-| [`current_dependency_graph.html`](./spec/current_dependency_graph.html) | **9 crate / 12 条本地依赖边**的实测依赖图（SVG，分层布局 + 每 crate 规模） | 人工维护；`gen_dep_graph.sh` 只写 `target/` 下的机器图，**不覆盖本文** |
+| [`workspace-topology.expected.txt`](./spec/workspace-topology.expected.txt) | 16 条本地依赖边的期望快照（含手写注释头） | CI 拓扑 diff + `scripts/gen_dep_graph.sh` 回写 |
+| [`current_dependency_graph.html`](./spec/current_dependency_graph.html) | **10 crate / 16 条本地依赖边**的实测依赖图（SVG，分层布局 + 每 crate 规模） | 人工维护；`gen_dep_graph.sh` 只写 `target/` 下的机器图，**不覆盖本文** |
 
 > 原 `target_dependency_graph.html`（2026-10-27 目标态）已归档：
 > [`archive/architecture-reviews/target-dependency-graph-2026-10-27.html`](./archive/architecture-reviews/target-dependency-graph-2026-10-27.html)。

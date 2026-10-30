@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 620" width="100%" role="img" aria-labelledby="g-title g-desc">
   <title id="g-title">rustmark workspace 依赖图（2026-10-28 实测）</title>
-  <desc id="g-desc">9 个 crate、12 条本地依赖边、编译期无环。root 仅依赖 core/icons/infra/ui 四个 crate；端口契约独立为 rustmark-ports，由 core 与 infra 共同依赖；富内容渲染独立为 rustmark-render，由 ui 依赖。R-01~R-11 整改目标已达成，无遗留违规边。</desc>
+  <desc id="g-desc">10 个 crate、16 条本地依赖边、编译期无环。root 仅依赖 core/icons/infra/ui/assembly 五个 crate；组合根装配下沉为 rustmark-assembly（依赖 core/infra/ports）；端口契约独立为 rustmark-ports，由 core 与 infra 共同依赖；富内容渲染独立为 rustmark-render，由 ui 依赖。R-01~R-11 整改目标已达成，无遗留违规边。</desc>
 
   <style>
     .bg   { fill: #FFFFFF; }
@@ -23,7 +23,7 @@
   </defs>
 
   <text class="hd" x="30" y="32">workspace 依赖图 · 实测现状</text>
-  <text class="ts" x="30" y="52">9 crate · 12 条本地依赖边 · 编译期无环 · R-01~R-11 整改目标已达成（无遗留违规边）</text>
+  <text class="ts" x="30" y="52">10 crate · 16 条本地依赖边 · 编译期无环 · R-01~R-11 整改目标已达成（无遗留违规边）</text>
 
   <!-- ============ 节点 ============ -->
 
@@ -33,6 +33,14 @@
     <text class="th" x="300" y="90" text-anchor="middle">rustmark (root)</text>
     <text class="ts" x="300" y="107" text-anchor="middle">组合根 + views</text>
     <text class="ts" x="300" y="122" text-anchor="middle">92 files · 22,935 L</text>
+  </g>
+
+  <!-- rustmark-assembly（M2，2026-10-29：组合根装配下沉） -->
+  <g>
+    <rect class="box" x="590" y="70" width="150" height="64" rx="10"/>
+    <text class="th" x="665" y="90" text-anchor="middle">rustmark-assembly</text>
+    <text class="ts" x="665" y="107" text-anchor="middle">组合根装配下沉</text>
+    <text class="ts" x="665" y="122" text-anchor="middle">2 files · 351 L</text>
   </g>
 
   <!-- R2 -->
@@ -89,7 +97,7 @@
     <text class="ts" x="300" y="512" text-anchor="middle">18 files · 2,715 L</text>
   </g>
 
-  <!-- ============ 边（12 条） ============ -->
+  <!-- ============ 边（16 条） ============ -->
   <!-- 1 root → ui -->
   <line class="edge" x1="262" y1="134" x2="135" y2="198" marker-end="url(#arrow)"/>
   <!-- 2 root → core -->
@@ -115,11 +123,20 @@
   <!-- 12 core → shared（绕开 actions 走左侧走廊） -->
   <path class="edge" d="M250,264 L200,300 L200,492 L223,492" marker-end="url(#arrow)"/>
 
+  <!-- 13 root → assembly（M2，2026-10-29：组合根装配下沉） -->
+  <line class="edge" x1="375" y1="102" x2="590" y2="102" marker-end="url(#arrow)"/>
+  <!-- 14 assembly → infra -->
+  <line class="edge" x1="590" y1="134" x2="497" y2="198" marker-end="url(#arrow)"/>
+  <!-- 15 assembly → core -->
+  <line class="edge" x1="665" y1="134" x2="302" y2="198" marker-end="url(#arrow)"/>
+  <!-- 16 assembly → ports（沿右侧留白绕开 icons / infra） -->
+  <path class="edge" d="M740,134 L748,134 L748,330 L572,330" marker-end="url(#arrow)"/>
+
   <!-- ============ 图例与脚注 ============ -->
   <line class="edge" x1="30" y1="562" x2="60" y2="562" marker-end="url(#arrow)"/>
   <text class="cap" x="68" y="566">编译期依赖（Cargo.toml 显式声明，方向 = 依赖方 → 被依赖方）</text>
-  <text class="cap" x="470" y="566">合计 369 files · 73,198 L</text>
+  <text class="cap" x="470" y="566">合计 371 files · 73,549 L</text>
 
   <text class="foot" x="30" y="584">注：原 target 图预测的「shared 拆 kernel/support 两 crate」与「views 迁 ui」均经决议不做（ADR-013 决策 3），</text>
-  <text class="foot" x="30" y="600">该图已归档；端口契约改以独立 crate 承载，故两张图合并为单图。快照日期 2026-10-28。</text>
+  <text class="foot" x="30" y="600">该图已归档；端口契约改以独立 crate 承载，故两张图合并为单图。快照日期 2026-10-29。</text>
 </svg>

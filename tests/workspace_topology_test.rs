@@ -445,6 +445,54 @@ fn infra_crate_depends_on_core_only() {
     );
 }
 
+/// `rustmark-assembly` 的 workspace 依赖面必须恰为 **rustmark-core + rustmark-infra +
+/// rustmark-ports**（M2，R-10 项 B 补全，2026-10-29）。
+///
+/// 它是组合根下沉：点名 13 个 infra impl（含 `SystemClock` 住在 ports），故必须能看见
+/// core（compose / ImplBundle / AppServices）+ infra（impl 类型）+ ports（SystemClock）。
+/// 多一条即层级倒置或成环，少一条则 impl 不可见。
+#[test]
+fn assembly_crate_depends_on_core_infra_ports() {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("crates")
+        .join("rustmark-assembly")
+        .join("Cargo.toml");
+    let text = std::fs::read_to_string(&path).expect("assembly crate 的 Cargo.toml 应可读");
+
+    let mut workspace_deps = BTreeSet::new();
+    let mut section = String::new();
+    for raw in text.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if line.starts_with('[') {
+            section = line.to_string();
+            continue;
+        }
+        // normal / dev / build / target-specific 一律算（与 infra 断言同口径）。
+        if !section.contains("dependencies") {
+            continue;
+        }
+        if let Some((name, _)) = line.split_once('=') {
+            let name = name.trim();
+            if name.starts_with("rustmark") {
+                workspace_deps.insert(name.to_string());
+            }
+        }
+    }
+
+    let expected: BTreeSet<String> = ["rustmark-core", "rustmark-infra", "rustmark-ports"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    assert_eq!(
+        workspace_deps, expected,
+        "rustmark-assembly 的 workspace 依赖面必须恰为 rustmark-core + rustmark-infra + \
+         rustmark-ports（M2）；多一条即层级倒置或成环，少一条则 impl 不可见"
+    );
+}
+
 /// `rustmark-core` 的 workspace 依赖面必须恰为 **rustmark-shared +
 /// rustmark-actions + rustmark-ports**（R-10 项 A，2026-10-28）。
 ///
