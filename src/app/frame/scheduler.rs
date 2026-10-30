@@ -557,7 +557,11 @@ mod tests {
     /// 漏调 `begin` 的症状是**静默**的（时钟停在旧值 → 全部剩余时长算错，
     /// 定时功能不触发），常规断言看不出来；只有把成对契约做成 debug 断言，
     /// 测试与 debug 构建才会当场红。
+    ///
+    /// ⚠ 只在 debug 构建运行：panic 来自 `debug_assert!`（第 264 行），
+    /// release 下被编译器优化掉，不会 panic。
     #[test]
+    #[cfg(debug_assertions)]
     #[should_panic(expected = "begin")]
     fn flush_without_begin_panics_in_debug() {
         let mut sched = FrameScheduler::default();
@@ -570,7 +574,11 @@ mod tests {
     /// 不复位的话，断言只守得住第一帧——「第二帧起漏调 `begin`」恰恰是
     /// 最常见的形态（重构时把帧首那行挪走），反而静默通过。本用例跑完
     /// 一对 begin/flush 再直接 flush，模拟下一帧漏调，必须报出来。
+    ///
+    /// ⚠ 只在 debug 构建运行：同 `flush_without_begin_panics_in_debug`，
+    /// panic 来自 `debug_assert!`，release 下不会触发。
     #[test]
+    #[cfg(debug_assertions)]
     #[should_panic(expected = "begin")]
     fn a_missed_begin_on_the_next_frame_is_also_caught() {
         let mut sched = FrameScheduler::default();
@@ -686,15 +694,22 @@ mod tests {
 
     /// 输出开关只关日志，不关会计。
     ///
-    /// 本测试套件就跑在 debug 构建里（`observability_enabled()` 恒为 false），
-    /// 断言仍然成立——这条钉住「别把整个 `note_frame_cost` 一起 cfg 掉」：
+    /// 这条钉住「别把整个 `note_frame_cost` 一起 cfg 掉」：
     /// 一旦那样做，debug 下的统计与归因全空，测试会先红。
+    ///
+    /// debug / release 构建 observability 状态相反（见
+    /// [`observability_enabled`]），但**会计逻辑在两边都必须跑**——
+    /// 本断言按构建分支，两边各自验证自己应有的开关状态，再共同验证
+    /// `note_frame_cost` 的产出行为不受开关影响。
     #[test]
     fn output_gate_does_not_affect_accounting() {
+        #[cfg(debug_assertions)]
         assert!(
             !observability_enabled(),
-            "单测跑在 debug 构建，观测输出开关应为关闭"
+            "debug 构建观测输出开关应为关闭（只关日志，不关会计）"
         );
+        #[cfg(not(debug_assertions))]
+        assert!(observability_enabled(), "release 构建观测输出开关应为开启");
         let mut sched = FrameScheduler::default();
         assert!(
             sched.note_frame_cost(Duration::from_millis(25)).is_some(),
