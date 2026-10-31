@@ -79,6 +79,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # runner 默认不装任何 CJK 字体，`a_cjk_font_is_available_on_this_platform`
+      # 会因此判死（run 41208877623 的 ubuntu job 红在这里）。该用例的语义是
+      # 「桌面环境应能渲染中文」——headless runner 也补装，而不是把断言改成跳过。
+      # ubuntu-latest 自带的 noto 包路径命中 candidate_paths() 的第一项。
+      - name: Install CJK fonts
+        if: runner.os == 'Linux'
+        shell: bash
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends fonts-noto-cjk
+
       # 工具链唯一真源 = 仓库根 `rust-toolchain.toml`（channel / components / profile）。
       #
       # 不用 `dtolnay/rust-toolchain`：它的 `toolchain` 是 **required** 输入，而 Actions
@@ -297,6 +306,12 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+
+      # 覆盖率 job 也跑 `rustmark-infra` 的 lib 单测（`--workspace`），
+      # 同样需要 CJK 字体；理由见 check job 的同名步骤。
+      - name: Install CJK fonts
+        shell: bash
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends fonts-noto-cjk
 
       # 同上：工具链由 rust-toolchain.toml 驱动；本 job 额外需要 llvm-tools-preview。
       - name: Install Rust (+ llvm-tools-preview)

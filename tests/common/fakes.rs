@@ -797,11 +797,13 @@ impl SpellChecker for FakeSpellChecker {
 ///
 /// 有帧循环的用例（`EditorApp`）不需要它：帧循环每帧都会轮询结果。
 ///
-/// 超时 2s：debug 构建下 syntect 解析 10KB 约数百毫秒，留足余量；
+/// 超时 30s：这是**死锁守卫**，不是性能门禁。10KB 全文解析在
+/// `llvm-cov` 插桩的 debug 构建下可达数秒（run 41208877623 的 coverage job
+/// 实测 2s 内未完成），原先的 2s 会把「只是慢」误报成「线程死了」。
 /// 真的超时说明后台线程没把结果送回来（线程已死 / 通道断了），必须报出来
 /// 而不是让用例随后以「片段为空」这种误导性理由失败。
 pub fn drain_highlight(service: &rustmark::application::markdown::service::MarkdownAppService) {
-    for _ in 0..2_000 {
+    for _ in 0..30_000 {
         let _ = service.poll_highlight_results();
         if service.highlight_pending() == 0 {
             return;

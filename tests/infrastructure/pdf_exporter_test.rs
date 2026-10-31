@@ -258,11 +258,18 @@ fn unix_prefers_lp_over_lpstat() {
 
     // 只有 lpstat（CUPS 客户端不完整）时仍算「有后端」，
     // 但真正打印时会给出更具体的提示，由 `dispatch_print` 负责。
-    let stat_only = SystemPdfExporter::detect(&FakeProbe::with(&["lpstat"]));
-    assert!(
-        stat_only.available,
-        "lpstat 存在说明 CUPS 至少装了一半，探测层不应直接判死"
-    );
+    //
+    // 这条语义只在 Linux 成立：`detect` 的 macOS 分支只认 `lp`（CUPS 自带），
+    // macOS 上 lpstat 单独存在本就判为不可用（run 41208877623 的 macos job
+    // 红在这里）。
+    #[cfg(target_os = "linux")]
+    {
+        let stat_only = SystemPdfExporter::detect(&FakeProbe::with(&["lpstat"]));
+        assert!(
+            stat_only.available,
+            "lpstat 存在说明 CUPS 至少装了一半，探测层不应直接判死"
+        );
+    }
 }
 
 #[test]
