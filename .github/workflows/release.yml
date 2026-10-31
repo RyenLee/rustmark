@@ -6,8 +6,11 @@ name: Release
 # 版本号遵循语义化版本；tag 名与 Cargo.toml 的 version 不一致会 fail——
 # 防止「tag 打错版本」产出一批命名错误的产物）。
 #
-# 签名（S9-05）：默认**不签名**。macOS 侧若仓库 secrets 配置了
-# MACOS_CERTIFICATE / MACOS_CERTIFICATE_PWD，脚本自动切换正式签名；
+# 签名与公证（S9-05）：默认**不签名**。macOS 侧若 secrets 配置了
+# MACOS_CERTIFICATE / MACOS_CERTIFICATE_PWD / MACOS_CERT_IDENTITY，则导入证书并
+# 做 Developer ID 签名；若再配置 MACOS_NOTARY_APPLE_ID /
+# MACOS_NOTARY_APPLE_PASSWORD / MACOS_NOTARY_TEAM_ID，则对 .app 与 .dmg
+# 执行 notarytool 公证 + stapler 装订，并在签名后 spctl 校验。
 # Windows 暂无签名步骤（SmartScreen 提示必须在 Release Notes 说明）。
 # 私钥严禁入仓：只经 secrets 注入，`.gitignore` 已排除证书文件。
 #
@@ -64,6 +67,37 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      # macOS 正式签名/公证的前置：把 p12 证书导入临时钥匙串。
+      # 未配置 MACOS_CERTIFICATE 时整步跳过，打包仍走 ad-hoc 签名。
+      - name: Import macOS signing certificate
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${MACOS_CERTIFICATE:-}" ]; then
+            echo "未配置 MACOS_CERTIFICATE，跳过证书导入（打包将使用 ad-hoc 签名）"
+            exit 0
+          fi
+          KEYCHAIN="$RUNNER_TEMP/rustmark-signing.keychain-db"
+          KEYCHAIN_PWD="$(uuidgen)"
+          CERT="$RUNNER_TEMP/rustmark-cert.p12"
+          # base64 编码的 secrets 在 macOS/Linux 上解码参数不一致，统一用 python3。
+          printf '%s' "$MACOS_CERTIFICATE" |
+            python3 -c 'import base64,sys; sys.stdout.buffer.write(base64.b64decode(sys.stdin.read()))' > "$CERT"
+          security create-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN"
+          security import "$CERT" -k "$KEYCHAIN" -P "$MACOS_CERTIFICATE_PWD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PWD" "$KEYCHAIN" > /dev/null
+          # 临时钥匙串追加到搜索列表（保留原有条目，供证书链校验）。
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          rm -f "$CERT"
+          echo "签名证书已导入临时钥匙串"
+
       # tag 版本与 Cargo.toml 一致性守卫：防「tag 打错版本」整批产物报废。
       - name: Verify tag matches Cargo.toml version
         shell: bash
@@ -87,6 +121,40 @@ jobs:
         env:
           # macOS 正式签名（可选）：secret 配置了才生效，否则脚本走 ad-hoc。
           CERT_IDENTITY: ${{ secrets.MACOS_CERT_IDENTITY }}
+          # macOS 公证（可选）：三个 secret 同时存在才启用；缺一即打包失败。
+          NOTARY_APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
+          NOTARY_APPLE_PASSWORD: ${{ secrets.MACOS_NOTARY_APPLE_PASSWORD }}
+          NOTARY_TEAM_ID: ${{ secrets.MACOS_NOTARY_TEAM_ID }}
+
+      # 签名与公证在 package-macos.sh 内完成；此步骤在其后独立复核：
+      # bundle 完整、字体布局正确、公证票根已装订且 Gatekeeper 放行。
+      # 未配置公证凭据时不跑 spctl/stapler——ad-hoc 或未公证的证书签名
+      # 同样会被 Gatekeeper 拒绝，作为门禁只会造成假红。
+      - name: Verify macOS signature, layout & notarization
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          NOTARY_APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
+        run: |
+          set -euo pipefail
+          codesign --verify --deep --strict --verbose=2 dist/Rustmark.app
+          if [ ! -d dist/Rustmark.app/Contents/Resources/fonts ]; then
+            echo "::error::内置字体必须在 Contents/Resources/fonts"
+            exit 1
+          fi
+          if [ -e dist/Rustmark.app/Contents/MacOS/fonts ]; then
+            echo "::error::字体不得位于 Contents/MacOS/fonts（codesign 会当成代码）"
+            exit 1
+          fi
+          if [ -n "${NOTARY_APPLE_ID:-}" ]; then
+            xcrun stapler validate dist/Rustmark.app
+            xcrun stapler validate dist/rustmark-v*-macos.dmg
+            spctl --assess --type execute --verbose=2 dist/Rustmark.app
+            echo "公证、装订与 Gatekeeper 校验通过"
+          else
+            echo "未配置公证凭据：跳过 stapler/spctl 校验（签名未公证）"
+          fi
+          echo "macOS bundle 签名与字体布局校验通过"
 
       # 产物清单进 Job Summary：哪一档缺了直接看到，不必逐个点开 Artifacts。
       - name: Inventory

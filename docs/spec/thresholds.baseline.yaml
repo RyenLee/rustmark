@@ -109,7 +109,7 @@ modules:
       package_size_limit_macos:
         value: 11534336
         unit: "bytes"
-        source: "scripts/package-macos.sh:109"
+        source: "scripts/package-macos.sh:203"
         anchor: "packageLimitBytes=11534336"
         purpose: "macOS .app.zip / .dmg 单产物红线（安装包口径，11 MiB）；越线 exit 1。"
         recommended: "11534336（与 CI 同源）"
@@ -165,7 +165,7 @@ modules:
       ci_timeout_release_build:
         value: 45
         unit: "minutes"
-        source: ".github/workflows/release.yml:48"
+        source: ".github/workflows/release.yml:51"
         anchor: "timeout-minutes: 45"
         purpose: "release 打包矩阵单平台超时上限；超时即该平台产物缺失。"
         recommended: "30-60"
@@ -173,7 +173,7 @@ modules:
       ci_timeout_release_publish:
         value: 15
         unit: "minutes"
-        source: ".github/workflows/release.yml:122"
+        source: ".github/workflows/release.yml:190"
         anchor: "timeout-minutes: 15"
         purpose: "release 汇总与 gh release create 的超时上限；超时即 tag 已推但 Release 未生成。"
         recommended: "10-20"

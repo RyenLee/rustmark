@@ -132,7 +132,7 @@ missing_docs = "warn"
 # 逐字重复，升级工具链或版本时要改 10 处，漏改一处即静默分叉。
 # publish = false：仅参与本地 workspace 构建，不发布到 crates.io。
 [workspace.package]
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 rust-version = "1.99"
 license = "MIT OR Apache-2.0"

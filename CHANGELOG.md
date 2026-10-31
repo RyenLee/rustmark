@@ -6,6 +6,21 @@ Release Notes 依此自动归组。
 
 ## [未发布]
 
+## [0.2.1] · 2026-10-31
+
+### 本次发布概要
+
+- **macOS 发布修复**：内置字体改按标准 bundle 布局打进 `Contents/Resources/fonts`
+  （不再放 `Contents/MacOS/fonts`），修复 codesign 把 `.ttf` 当代码容器后报
+  `code object is not signed at all` 导致的发布失败；运行时字体查找优先
+  `Contents/Resources/fonts`，并保留 exe 旁 `fonts/` 兜底以兼容旧包与开发环境。
+- **签名与公证**：签名不再依赖已弃用的 `--deep`，先签嵌套代码再签外层 bundle，
+  保留 hardened runtime / timestamp / ad-hoc 分支；release workflow 支持导入
+  Developer ID 证书，并在配置公证凭据时对 `.app`（经临时 zip）与 `.dmg` 执行
+  `notarytool` 公证 + `stapler` 装订，最后以 `codesign --verify --deep --strict`、
+  `stapler validate`、`spctl --assess` 复核。
+- **无用户可见功能变更**：本版为发布链路修复，编辑器行为与 `0.2.0` 一致。
+
 ## [0.2.0] · 2026-10-22
 
 ### 本次发布概要

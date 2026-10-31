@@ -113,80 +113,82 @@
 #   rustmark-ui     → {rustmark-core, rustmark-render}                                      （2 条）
 #   rustmark-ports  → rustmark-shared                                                      （1 条）
 # 合计 16 条，无环。
-rustmark v0.2.0
-├── anyhow v1.0.104
-├── eframe v0.37.0
-├── egui v0.37.0
-├── env_logger v0.11.11
-├── image v0.25.10
-├── log v0.4.34
-├── rustmark-assembly v0.2.0
-├── rustmark-core v0.2.0
-├── rustmark-icons v0.2.0
-├── rustmark-infra v0.2.0
-│   [dev-dependencies]
-├── rustmark-ui v0.2.0
-└── wgpu v30.0.1
-    [build-dependencies]
-[dev-dependencies]
-├── syntect v5.3.0
-└── tempfile v3.27.0
+rustmark v0.2.1
+[2m├──[0m anyhow v1.0.104
+[2m├──[0m eframe v0.37.0
+[2m├──[0m egui v0.37.0
+[2m├──[0m env_logger v0.11.11
+[2m├──[0m image v0.25.10
+[2m├──[0m log v0.4.34
+[2m├──[0m rustmark-assembly v0.2.1
+[2m├──[0m rustmark-core v0.2.1
+[2m├──[0m rustmark-icons v0.2.1
+[2m├──[0m rustmark-infra v0.2.1
+[2m│[0m   [96m[1m[dev-dependencies][39m[22m
+[2m├──[0m rustmark-ui v0.2.1
+[2m└──[0m wgpu v30.0.1
+[2m [0m   [94m[1m[build-dependencies][39m[22m
+[94m[1m[build-dependencies][39m[22m
+[1m[34m└──[0m embed-resource v3.0.12
+[96m[1m[dev-dependencies][39m[22m
+[1m[36m├──[0m syntect v5.3.0
+[1m[36m└──[0m tempfile v3.27.0
 
-rustmark-actions v0.2.0
+rustmark-actions v0.2.1
 
-rustmark-assembly v0.2.0
-├── rustmark-core v0.2.0
-├── rustmark-infra v0.2.0
-│   [dev-dependencies]
-└── rustmark-ports v0.2.0
+rustmark-assembly v0.2.1
+[2m├──[0m rustmark-core v0.2.1
+[2m├──[0m rustmark-infra v0.2.1
+[2m│[0m   [96m[1m[dev-dependencies][39m[22m
+[2m└──[0m rustmark-ports v0.2.1
 
-rustmark-core v0.2.0
-├── ahash v0.8.12
-│   [build-dependencies]
-├── log v0.4.34
-├── rustmark-actions v0.2.0
-├── rustmark-ports v0.2.0
-├── rustmark-shared v0.2.0
-├── serde v1.0.229
-└── thiserror v2.0.21
+rustmark-core v0.2.1
+[2m├──[0m ahash v0.8.12
+[2m│[0m   [94m[1m[build-dependencies][39m[22m
+[2m├──[0m log v0.4.34
+[2m├──[0m rustmark-actions v0.2.1
+[2m├──[0m rustmark-ports v0.2.1
+[2m├──[0m rustmark-shared v0.2.1
+[2m├──[0m serde v1.0.229
+[2m└──[0m thiserror v2.0.21
 
-rustmark-icons v0.2.0
-└── egui v0.37.0
+rustmark-icons v0.2.1
+[2m└──[0m egui v0.37.0
 
-rustmark-infra v0.2.0
-├── image v0.25.10
-├── log v0.4.34
-├── pulldown-cmark v0.13.5
-├── rfd v0.17.2
-├── ropey v1.6.1
-├── rustls-native-certs v0.8.5
-├── rustmark-core v0.2.0
-├── rustmark-ports v0.2.0
-├── serde v1.0.229
-├── syntect v5.3.0
-├── thiserror v2.0.21
-├── toml v1.1.8+spec-1.1.0
-└── ureq v3.5.0
-[dev-dependencies]
-└── tempfile v3.27.0
+rustmark-infra v0.2.1
+[2m├──[0m image v0.25.10
+[2m├──[0m log v0.4.34
+[2m├──[0m pulldown-cmark v0.13.5
+[2m├──[0m rfd v0.17.2
+[2m├──[0m ropey v1.6.1
+[2m├──[0m rustls-native-certs v0.8.5
+[2m├──[0m rustmark-core v0.2.1
+[2m├──[0m rustmark-ports v0.2.1
+[2m├──[0m serde v1.0.229
+[2m├──[0m syntect v5.3.0
+[2m├──[0m thiserror v2.0.21
+[2m├──[0m toml v1.1.8+spec-1.1.0
+[2m└──[0m ureq v3.5.0
+[96m[1m[dev-dependencies][39m[22m
+[1m[36m└──[0m tempfile v3.27.0
 
-rustmark-ports v0.2.0
-├── ahash v0.8.12
-│   [build-dependencies]
-├── rustmark-shared v0.2.0
-├── serde v1.0.229
-└── thiserror v2.0.21
+rustmark-ports v0.2.1
+[2m├──[0m ahash v0.8.12
+[2m│[0m   [94m[1m[build-dependencies][39m[22m
+[2m├──[0m rustmark-shared v0.2.1
+[2m├──[0m serde v1.0.229
+[2m└──[0m thiserror v2.0.21
 
-rustmark-render v0.2.0
-└── egui v0.37.0
+rustmark-render v0.2.1
+[2m└──[0m egui v0.37.0
 
-rustmark-shared v0.2.0
-├── ahash v0.8.12
-│   [build-dependencies]
-├── serde v1.0.229
-└── thiserror v2.0.21
+rustmark-shared v0.2.1
+[2m├──[0m ahash v0.8.12
+[2m│[0m   [94m[1m[build-dependencies][39m[22m
+[2m├──[0m serde v1.0.229
+[2m└──[0m thiserror v2.0.21
 
-rustmark-ui v0.2.0
-├── egui v0.37.0
-├── rustmark-core v0.2.0
-└── rustmark-render v0.2.0
+rustmark-ui v0.2.1
+[2m├──[0m egui v0.37.0
+[2m├──[0m rustmark-core v0.2.1
+[2m└──[0m rustmark-render v0.2.1

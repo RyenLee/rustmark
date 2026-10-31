@@ -277,6 +277,33 @@ fn discover_font_sources_only_returns_existing_files() {
     }
 }
 
+/// macOS bundle 布局：字体根必须解析到 `Contents/Resources/fonts`。
+///
+/// 字体若留在 `Contents/MacOS/fonts`，`codesign` 会把它当代码容器递归检查，
+/// 对未签名的 `.ttf` 报 `code object is not signed at all` 并让发布失败。
+#[test]
+fn bundle_font_dir_is_resources_not_macos() {
+    let exe = std::path::Path::new("/tmp/Rustmark.app/Contents/MacOS/rustmark");
+    assert_eq!(
+        discovery::bundle_resource_font_dir(exe),
+        Some(std::path::PathBuf::from(
+            "/tmp/Rustmark.app/Contents/Resources/fonts"
+        )),
+        "bundle 内字体应解析到 Contents/Resources/fonts"
+    );
+    // 非 bundle 布局（Linux / Windows 便携包）：不产生资源路径，
+    // 继续沿用 exe 旁 `fonts/`，行为与改动前一致。
+    assert_eq!(
+        discovery::bundle_resource_font_dir(std::path::Path::new("/tmp/rustmark")),
+        None
+    );
+    // 仅有 MacOS 目录名不够，必须完整的 Contents/MacOS 结构。
+    assert_eq!(
+        discovery::bundle_resource_font_dir(std::path::Path::new("/tmp/X/Contents/other/rustmark")),
+        None
+    );
+}
+
 /// 兜底链顺序：西文 → 数学兜底 → CJK。
 ///
 /// 数学兜底若排到 CJK 之后，中文字体自带的数学字形（雅黑有 ≤ ≥ ≠ 之类）

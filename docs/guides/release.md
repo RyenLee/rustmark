@@ -91,7 +91,7 @@ python tools/release_dryrun.py --tag v9.9.9   # 红路径：故意用错 tag，�
 
 - [ ] 三平台 job 全绿，产物可在 Actions 页下载
 - [ ] Windows：干净虚拟机解压 zip，双击启动正常，关闭后删除 `%APPDATA%\rustmark\` 无残留
-- [ ] macOS：`codesign --verify --strict Rustmark.app` 通过；未公证场景右键打开正常
+- [ ] macOS：`codesign --verify --deep --strict --verbose=2 Rustmark.app` 通过，且字体在 `Contents/Resources/fonts`；未公证场景右键打开正常
 - [ ] Linux：Ubuntu 20.04 / 24.04 各启动一次 AppImage
 - [ ] `sha256sum -c SHA256SUMS` 全部 OK
 - [ ] Release Notes 的阶段归组正确（抽查 3 条 commit）
@@ -118,18 +118,24 @@ git tag -d v1.0.0
   比撤回更混乱。修复后递增 patch 号发 v1.0.1。
 - 若坏版本已被下载：在 Issue/README 置顶公告，给出 SHA256SUMS 供比对。
 
-## 6. 签名状态（S9-05，当前：未签名）
+## 6. 签名与公证状态（S9-05，默认 ad-hoc / 可选正式签名 + 公证）
 
 | 平台 | 状态 | 用户看到的提示 | 维护者动作 |
 |---|---|---|---|
 | Windows | 未签名 | SmartScreen「已保护你的电脑」 | Release Notes 与 README 注明绕过方式 |
-| macOS | ad-hoc（CI 有 secret 时正式签名，仍不公证） | Gatekeeper「无法打开」 | 右键 → 打开；README 注明 |
+| macOS | ad-hoc；配置证书 → Developer ID 签名；再配置公证凭据 → notarize + staple | 未公证时 Gatekeeper「无法打开」 | 右键 → 打开；README 注明 |
 | Linux | 无签名概念 | AppImage 首次运行 `chmod +x` | 说明依赖（Vulkan/GL） |
 
 签名证书评估：$200–400/年（需求 §11.2），列为可选。开启步骤：
-CI secrets 注入 `MACOS_CERT_IDENTITY` + 证书（p12 转 base64），
-macOS job 的脚本分支自动切换；Windows 需另购 EV 证书并补 signtool 步骤。
-**证书只进 secrets，绝不入仓**（`.gitignore` 已排除 `*.p12`、`*.pfx`、`*.cer`）。
+CI secrets 注入 `MACOS_CERT_IDENTITY` + `MACOS_CERTIFICATE`（p12 转 base64）
++ `MACOS_CERTIFICATE_PWD`，workflow 把证书导入临时钥匙串并做正式签名；
+再配置 `MACOS_NOTARY_APPLE_ID` / `MACOS_NOTARY_APPLE_PASSWORD`（App 专用密码）/
+`MACOS_NOTARY_TEAM_ID` 后，`scripts/package-macos.sh` 对 .app（经临时 zip）与
+.dmg 分别执行 `notarytool submit` 公证和 `stapler staple` 装订，release.yml
+在签名后执行 `stapler validate` + `spctl --assess` 复验。三个公证 secret
+缺一即打包失败（fail-closed），不会静默跳过。Windows 需另购 EV 证书并补
+signtool 步骤。
+**证书与公证凭据只进 secrets，绝不入仓**（`.gitignore` 已排除 `*.p12`、`*.pfx`、`*.cer`）。
 
 > **发布页口径（`SEC-03`，机械固化）**：上表的「用户看到的提示 / 绕过方式」不是
 > 只写在本文档里——`tools/gen_release_notes.py` 把「未签名 / 绕过方式 / 校验和」

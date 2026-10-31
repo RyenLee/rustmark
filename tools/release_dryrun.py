@@ -362,6 +362,55 @@ def check_sbom(rep: Report, tag: str) -> None:
         rep.ok("SBOM", f"CycloneDX {bom['specVersion']}，{len(components)} 个组件，两次生成逐字节一致")
 
 
+def check_macos_bundle_layout(rep: Report) -> None:
+    """macOS .app 布局与签名校验的**静态**断言（Windows 本地也能跑）。
+
+    字体是资源，必须打进 `Contents/Resources/fonts`。放进 `Contents/MacOS/fonts`
+    会被 codesign 当作代码容器递归检查，对未签名的 .ttf 报
+    `code object is not signed at all` 并使发布失败（2026-10-31 实际故障）。
+    同时要求签名后执行 `codesign --verify --deep --strict`，且 release.yml 在
+    macOS job 中独立复验 bundle。
+    """
+    script = ROOT / "scripts" / "package-macos.sh"
+    if not script.is_file():
+        rep.bad("macOS 字体布局", "scripts/package-macos.sh 缺失")
+        return
+    text = script.read_text(encoding="utf-8")
+
+    bad_copy = re.search(r"cp\s+assets/fonts/\*\s+\"\$app/Contents/MacOS/fonts/\"", text)
+    good_copy = re.search(r"cp\s+assets/fonts/\*\s+\"\$app/Contents/Resources/fonts/\"", text)
+    if bad_copy:
+        rep.bad("macOS 字体布局", "字体被复制进 Contents/MacOS/fonts（codesign 会拒绝签名）")
+        return
+    if not good_copy:
+        rep.bad("macOS 字体布局", "未找到把 assets/fonts/ 复制到 Contents/Resources/fonts/ 的步骤")
+        return
+    if "codesign --verify --deep --strict --verbose=2" not in text:
+        rep.bad("macOS 签名校验", "打包脚本缺少签名后的 codesign --verify --deep --strict 校验")
+        return
+    if "xcrun notarytool submit" not in text or "xcrun stapler staple" not in text:
+        rep.bad("macOS 公证/装订", "package-macos.sh 缺少 notarytool submit 或 stapler staple 步骤")
+        return
+
+    yml = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    required_ci = [
+        "codesign --verify --deep --strict --verbose=2 dist/Rustmark.app",
+        "xcrun stapler validate",
+        "spctl --assess",
+        "MACOS_NOTARY_APPLE_ID",
+        "MACOS_NOTARY_APPLE_PASSWORD",
+        "MACOS_NOTARY_TEAM_ID",
+    ]
+    missing = [item for item in required_ci if item not in yml]
+    if missing:
+        rep.bad("macOS 签名校验（CI）", f"release.yml 缺少 {missing}")
+        return
+    rep.ok(
+        "macOS 字体布局与签名/公证校验",
+        "字体位于 Contents/Resources/fonts，签名后 --deep --strict 校验，公证后 stapler/spctl 复验",
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="rustmark 离线预发布演练（S9-06）")
     parser.add_argument("--tag", default=None, help="待发布 tag，默认取 Cargo.toml 版本加 v 前缀")
@@ -385,6 +434,7 @@ def main() -> int:
     check_sbom(rep, tag)
     check_no_secrets(rep)
     check_rollback_docs(rep)
+    check_macos_bundle_layout(rep)
     print("-" * 60)
     print(rep.summary())
     return 1 if rep.failures else 0

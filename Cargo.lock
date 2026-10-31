@@ -2415,7 +2415,7 @@ dependencies = [
 
 [[package]]
 name = "rustmark"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "eframe",
@@ -2436,11 +2436,11 @@ dependencies = [
 
 [[package]]
 name = "rustmark-actions"
-version = "0.2.0"
+version = "0.2.1"
 
 [[package]]
 name = "rustmark-assembly"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "rustmark-core",
  "rustmark-infra",
@@ -2449,7 +2449,7 @@ dependencies = [
 
 [[package]]
 name = "rustmark-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "ahash",
  "log",
@@ -2462,14 +2462,14 @@ dependencies = [
 
 [[package]]
 name = "rustmark-icons"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "egui",
 ]
 
 [[package]]
 name = "rustmark-infra"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "image",
  "log",
@@ -2489,7 +2489,7 @@ dependencies = [
 
 [[package]]
 name = "rustmark-ports"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "ahash",
  "rustmark-shared",
@@ -2499,14 +2499,14 @@ dependencies = [
 
 [[package]]
 name = "rustmark-render"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "egui",
 ]
 
 [[package]]
 name = "rustmark-shared"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "ahash",
  "serde",
@@ -2515,7 +2515,7 @@ dependencies = [
 
 [[package]]
 name = "rustmark-ui"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "egui",
  "rustmark-core",

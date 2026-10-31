@@ -4,7 +4,7 @@ Rust 2024 + egui（wgpu 后端）的桌面 Markdown 编辑器：单文件产物�
 GBK/GB18030 无损读写、分屏实时预览。
 
 - 许可：MIT OR Apache-2.0（双许可，见 `LICENSE-MIT` / `LICENSE-APACHE`）
-- 当前版本：v0.2.0（见 `CHANGELOG.md`）
+- 当前版本：v0.2.1（见 `CHANGELOG.md`）
 - 平台：Windows / macOS / Linux
 
 ---

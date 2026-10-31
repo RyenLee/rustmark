@@ -7,7 +7,7 @@
 //!
 //! 背景与体积红线约定见 `fonts.rs` 模块文档。
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::port::PortFontData;
 use rustmark_core::shared::fonts::{DEFAULT_EDITOR_FONT_KEY, EditorFontChoice};
@@ -40,10 +40,46 @@ impl FontSource {
     }
 }
 
+/// macOS 标准 bundle 布局下可执行文件对应的资源字体目录
+/// （`.../Contents/Resources/fonts`）。
+///
+/// 仅当 `exe` 位于 `.../Contents/MacOS/<可执行文件>` 时命中，其余路径返回
+/// `None`（Linux 便携包 / Windows 解压包不受影响）。字体是**资源**，必须放在
+/// `Contents/Resources`：放进 `Contents/MacOS` 会被 `codesign` 当作代码容器
+/// 递归检查，对未签名的 `.ttf` 直接报 `code object is not signed at all`。
+///
+/// 不按 `cfg(target_os)` 编译：用合成路径即可在任何平台单测布局判定。
+pub(crate) fn bundle_resource_font_dir(exe: &Path) -> Option<PathBuf> {
+    let macos_dir = exe.parent()?;
+    if macos_dir.file_name()?.to_str()? != "MacOS" {
+        return None;
+    }
+    let contents = macos_dir.parent()?;
+    if contents.file_name()?.to_str()? != "Contents" {
+        return None;
+    }
+    Some(contents.join("Resources").join("fonts"))
+}
+
+/// 安装态的字体根候选，按优先级排序：
+/// 1. macOS bundle 的 `Contents/Resources/fonts`（标准布局）；
+/// 2. 可执行文件旁的 `fonts/`（Linux / Windows 便携包；同时作为旧版 macOS
+///    包把字体放进 `Contents/MacOS/fonts` 的兼容兜底）。
+fn installed_font_dirs(exe: &Path) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    if let Some(resources) = bundle_resource_font_dir(exe) {
+        dirs.push(resources);
+    }
+    if let Some(dir) = exe.parent() {
+        dirs.push(dir.join("fonts"));
+    }
+    dirs
+}
+
 /// 定位一个内置字体文件，返回可读的路径；找不到返回 `None`。
 ///
 /// 按顺序查找（先到先得）：
-/// 1. 可执行文件旁的 `fonts/`（安装态：随发行包分发的字体）；
+/// 1. 安装态字体目录（macOS `Contents/Resources/fonts` 优先，其次 exe 旁 `fonts/`）；
 /// 2. 当前工作目录的 `fonts/`（开发态：`cargo run` 的工作目录即项目根）；
 /// 3. 编译期清单目录下的 `assets/fonts/`（开发 / 测试态：源码树）。
 ///
@@ -52,10 +88,8 @@ impl FontSource {
 /// `cjk_source.is_none()` 记一条警告）。
 pub(crate) fn builtin_font_path(file: &str) -> Option<PathBuf> {
     let mut dirs: Vec<PathBuf> = Vec::new();
-    if let Ok(exe) = std::env::current_exe()
-        && let Some(dir) = exe.parent()
-    {
-        dirs.push(dir.join("fonts"));
+    if let Ok(exe) = std::env::current_exe() {
+        dirs.extend(installed_font_dirs(&exe));
     }
     if let Ok(cwd) = std::env::current_dir() {
         dirs.push(cwd.join("fonts"));
@@ -125,16 +159,16 @@ pub(crate) fn builtin_editor_fonts() -> Vec<FontSource> {
         .collect()
 }
 
-/// 默认的项目字体根目录（安装态 exe 旁 `fonts/` + 开发态 cwd `fonts/`）。
+/// 默认的项目字体根目录（安装态字体目录 + 开发态 cwd `fonts/`）。
 ///
 /// 真实文件系统的薄适配：[`discover_font_sources`] 接受注入的根目录列表，
 /// 此处给出生产环境的默认根，使发现逻辑可在无真实资产时单测。
+/// 安装态优先 `Contents/Resources/fonts`（macOS 标准布局），再退到 exe 旁
+/// `fonts/`（Linux / Windows 便携包与旧版 macOS 包）。
 pub fn default_roots() -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = Vec::new();
-    if let Ok(exe) = std::env::current_exe()
-        && let Some(dir) = exe.parent()
-    {
-        dirs.push(dir.join("fonts"));
+    if let Ok(exe) = std::env::current_exe() {
+        dirs.extend(installed_font_dirs(&exe));
     }
     if let Ok(cwd) = std::env::current_dir() {
         dirs.push(cwd.join("fonts"));
