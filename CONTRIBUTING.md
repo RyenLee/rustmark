@@ -1,7 +1,7 @@
 # 贡献指南
 
 > 适用：`rustmark` 全部代码、测试与文档。
-> 执行模型：任务单元制（见 `.agent/README.md`）——一次一个单元，每单元可编译、可测试、可提交。
+> 执行模型：任务单元制（见 `docs/plans/PROGRESS.md`）——一次一个单元，每单元可编译、可测试、可提交。
 
 ## 0. 行为准则与披露渠道
 
@@ -70,7 +70,7 @@ fix(editor): 撤销栈按文档隔离，修复跨文件污染 [S3-08]
 
 - 每任务单元**一个 commit**，便于回滚；
 - 类型前缀：`feat` / `fix` / `refactor` / `test` / `docs` / `chore` / `perf`；
-- 末尾方括号内必须是 `.agent/tasks/` 中存在的任务编号。
+- 末尾方括号内为任务单元编号（如 `S3-08`），对应 `docs/plans/PROGRESS.md` 与 `docs/stages/` 中的阶段任务；外部贡献者可改为引用对应 Issue 编号。
 
 ### 2.1 贡献者授权（DCO）
 
@@ -113,7 +113,7 @@ fix(editor): 撤销栈按文档隔离，修复跨文件污染 [S3-08]
 - 所有公开 API 必须有 `///` 文档注释，含边界语义（命中边界返回什么）；
 - 涉及时间的行为（防抖、撤销合并窗口）注入 `Policy` / `Clock`，不得直接读系统时间。
 
-详见 `.agent/conventions.md`。
+完整规则见 `docs/spec/architecture-constraints.md`（架构约束唯一真源）与 `REQUIREMENTS.md` 的 `CONSTR-*` 工程约束条目。
 
 ## 5. 依赖变更
 

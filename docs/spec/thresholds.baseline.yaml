@@ -783,7 +783,7 @@ modules:
       window_min_width:
         value: 960
         unit: "pt"
-        source: "src/app/frame/loop.rs:197"
+        source: "src/app/frame/loop.rs:210"
         anchor: "with_min_inner_size([960.0, 600.0])"
         purpose: "主窗口最小宽度；小于该值布局无法保证编辑区可用（侧栏动态上界的下限由此兜底）。"
         recommended: "800-1024"
@@ -791,7 +791,7 @@ modules:
       window_min_height:
         value: 600
         unit: "pt"
-        source: "src/app/frame/loop.rs:197"
+        source: "src/app/frame/loop.rs:210"
         anchor: "with_min_inner_size([960.0, 600.0])"
         purpose: "主窗口最小高度；低于该值顶栏 + 状态栏 + 正文无法同时容纳。"
         recommended: "540-720"
@@ -1015,7 +1015,7 @@ modules:
       env_skip_arch_check:
         value: "任意值"
         unit: "switch"
-        source: "build.rs:60"
+        source: "build.rs:82"
         anchor: "std::env::var(\"SKIP_ARCH_CHECK\")"
         purpose: "设置后跳过构建期架构边界校验（逃生口）；CI 不得设置，否则分层违规不再拦截构建。"
         recommended: "仅本地排障临时使用"

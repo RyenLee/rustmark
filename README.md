@@ -4,7 +4,7 @@ Rust 2024 + egui（wgpu 后端）的桌面 Markdown 编辑器：单文件产物�
 GBK/GB18030 无损读写、分屏实时预览。
 
 - 许可：MIT OR Apache-2.0（双许可，见 `LICENSE-MIT` / `LICENSE-APACHE`）
-- 当前版本：v0.2.1（见 `CHANGELOG.md`）
+- 当前版本：v0.2.2（见 `CHANGELOG.md`）
 - 平台：Windows / macOS / Linux
 
 ---
@@ -40,8 +40,8 @@ GBK/GB18030 无损读写、分屏实时预览。
 | 命令面板 / 符号插入 / 文档统计 / 文件对比 | 增补 | ✅ 已实现 |
 | Markdown 格式检查（lint） | P2 | ✅ 已实现（4 规则 + 开关 + 侧栏「检查」标签跳转） |
 
-> 状态核对基准：`REQUIREMENTS.md` §3
-> `.agent/tasks/`（各任务单元验收输出）。
+> 状态核对基准：`REQUIREMENTS.md` §3、
+> [docs/plans/PROGRESS.md](docs/plans/PROGRESS.md)（各阶段验收摘要）。
 
 ## 2. 安装与卸载
 
@@ -178,7 +178,7 @@ python tools/release_dryrun.py            # 离线发布演练：版本守卫 / 
 
 - 开发计划与阶段进度：[docs/plans/PROGRESS.md](docs/plans/PROGRESS.md)（原 README 索引）
 - 下一阶段（v1.1）任务规划：[docs/plans/v1.1-backlog.md](docs/plans/v1.1-backlog.md)
-- 编码规范：`.agent/conventions.md`；架构与分层：`docs/adr/`
+- 编码规范：[CONTRIBUTING.md](CONTRIBUTING.md) §4；架构与分层：[docs/spec/architecture-constraints.md](docs/spec/architecture-constraints.md) 与 `docs/adr/`
 - 架构决策记录（ADR-001~013 索引与摘要）：[docs/README.md](docs/README.md)
 - 测试体系与覆盖率门禁：[docs/guides/testing.md](docs/guides/testing.md)
 - 配置与主题格式参考（`preferences.toml` 全字段）：[docs/guides/config-reference.md](docs/guides/config-reference.md)
@@ -213,7 +213,7 @@ python tools/release_dryrun.py            # 离线发布演练：版本守卫 / 
 协议全文：[LICENSE-MIT](LICENSE-MIT) · [LICENSE-APACHE](LICENSE-APACHE)
 
 - 第三方组件摘要：[NOTICE](NOTICE)
-- 第三方许可完整清单（含 186 个依赖的许可分布与 `self_cell` 的 GPL 选项处置）：
+- 第三方许可完整清单（含 186 个依赖的许可分布与 `self_cell` 的 GPL 选项处置；发布 SBOM 按组件口径为 395，两者口径差异见该文件 §2）：
   [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md)
 - 随包字体许可：`assets/fonts/Fonts-LICENSE.txt`，以及同目录下的许可全文
   `OFL-1.1.txt`（JetBrains Mono / Fira Code / IBM Plex Mono / Noto Sans SC / NotoEmoji）、

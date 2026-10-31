@@ -50,7 +50,7 @@
 > 详见 §6）。**2026-10-22（REL-03，废止此前口径）**：`default_fonts` 与
 > `monochrome_emoji_fonts` **均改为关闭**——这两个特性此前把 Ubuntu-Light / Hack /
 > NotoEmoji / emoji-icon-font / egui-icons 五个字体（1,417,504 B）以 `include_bytes!`
-> 编进 exe，是 10 MB 未压缩红线（NFR-PERF-01）下最大的一块可省体积。现改为随发行包
+> 编进 exe，是 11 MiB（11,534,336 B）未压缩红线（NFR-PERF-01，2026-10-25 由 10 MiB 上调）下最大的一块可省体积。现改为随发行包
 > 以 `fonts/` 目录分发（许可证见 `assets/fonts/Fonts-LICENSE.txt`），运行期由
 > `infrastructure::fonts::font_definitions` 装回比例 / 等宽基础族，族顺序与
 > tweak 缩放逐项对齐原先的内嵌实现，**界面观感不变**；`egui-icons.ttf`（3.4 KB）

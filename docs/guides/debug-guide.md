@@ -72,7 +72,7 @@ RUSTMARK_STARTUP_TIMING=1 cargo run --bin rustmark
 | 只编译测试不跑 | `cargo test --no-run` | 改测试代码时确认编译通过，省掉执行时间 |
 | 单独构建校验器 | `cargo build --bin check-arch` | 也可以 `cargo run --bin check-arch` 直接跑（§4 门禁） |
 | 逐 crate 体积归因 | `cargo bloat --release --bin rustmark --crates 15` | CI 构建摘要同款；需先 `cargo install cargo-bloat --locked` |
-| Windows 便携打包 | `scripts/package-windows.ps1 [-Version 1.0.0]` | 内部先 `cargo build --release`，产物 `dist/rustmark-v<版本>-windows-x64.zip` + 同名 `.sha256`，末尾执行 10MB 红线门禁（见下方注意 3） |
+| Windows 便携打包 | `scripts/package-windows.ps1 [-Version 1.0.0]` | 内部先 `cargo build --release`，产物 `dist/rustmark-v<版本>-windows-x64.zip` + 同名 `.sha256`，末尾执行 11 MiB 红线门禁（见下方注意 3） |
 
 **构建前必须知道的三件事**：
 
@@ -82,10 +82,10 @@ RUSTMARK_STARTUP_TIMING=1 cargo run --bin rustmark
    **仅供本地临时排查，CI 不得设置**。
 2. **本 crate 没有任何 `[features]` 开关**：构建不需要传 `--features`；wgpu 后端按 `target_os`
    自动三选一（Windows→dx12 / macOS→metal / Linux→vulkan+gles），交叉编译时自动切换，无需手工指定。
-3. **当前 release 已超打包红线**：`target/x86_64-pc-windows-msvc/release/rustmark.exe` 实测
-   11,463,680 字节（10.93 MiB）> `package-windows.ps1` 内置的 10 MB 门禁——**现在直接跑打包脚本
-   会在体积检查处 throw**。缓解方案待 v1.1 评审（见 `docs/spec/metrics.md` §2.4）；方案落地前只是想
-   验证打包流程，可本地临时调大脚本里的 `$limitBytes`（**勿提交该改动**）。
+3. **打包红线为 11 MiB（11,534,336 B）**：`package-windows.ps1` 末尾执行体积门禁，越线即 throw。
+   红线于 2026-10-25 由 10 MiB 上调（V11-62 迁移 +2,560 B 耗尽旧余量，经维护者决策）；现行产物
+   约 10.5 MB，距红线约 1.0 MiB 余量（实时数字见 `docs/spec/metrics.md` §2）。
+   若只想验证打包流程，可本地临时调大脚本里的 `$packageLimitBytes`（**勿提交该改动**）。
 
 > 工具链由 `rust-toolchain.toml` 钉到 **1.99**（minor 级，补丁号由 rustup 跟随最新；含 rustfmt / clippy 组件，`profile = "minimal"`），
 > 首次构建时 rustup 自动安装，无需手工 `rustup install`。
@@ -435,6 +435,6 @@ cargo test --test presentation top_menu
 _文档生成日期：2026-10-10；§6 方法论章节增补于 2026-10-14（源自问题记录 001–027 与 metrics 各节实测）。
 本地启动与构建信息于 2026-10-14 二次校准，对齐工程实际：产物路径（全局 `build.target` 三重目录）、
 日志机制（env_logger 已注册、默认 warn、`RUST_LOG` 调级别，2026-10-24 修订，见 §2.4）、启动埋点 `RUSTMARK_STARTUP_TIMING`（§1.1）、
-构建命令总表（§1.2：debug/release/check/打包/cargo bloat 与 build.rs 门禁、10MB 红线现状）、
+构建命令总表（§1.2：debug/release/check/打包/cargo bloat 与 build.rs 门禁、11 MiB 红线现状）、
 门禁命令 `--all-features` 与 `-- -D warnings` 位置（§4）、测试目标总览（§3）。
 命令基于仓库当前 `Cargo.toml`（`default-run = "rustmark"` 已生效）。_

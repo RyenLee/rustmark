@@ -20,6 +20,7 @@
 审计基线（2026-10-22 实测，`cargo-deny 0.20.2`，口径：`deny.toml` 的 4 个目标三元组 × `all-features`）：
 
 - 依赖图 crate 数：**186**（`cargo deny list` 去重计数；含各平台专属包）
+- 口径说明：此处 **186** 是「许可条目口径」的 crate 数；发布时 `tools/sbom.py` 生成的 CycloneDX SBOM 按组件口径统计为 **395**（同一 crate 的多目标/feature 实例会分别计入）。两数不同属正常，引用时勿混用。
 - `cargo deny check licenses`：**通过（licenses ok）**
 - 许可分布（一个 crate 多许可时按许可分别计数）：
 

@@ -46,7 +46,7 @@ push tag 即触发 `.github/workflows/release.yml`：
 
 1. **守卫**：tag 版本 vs `Cargo.toml` 一致性检查；
 2. **三平台并行打包**：Windows zip / macOS .app+.dmg / Linux AppImage+tar.gz
-   （脚本见 `scripts/package-*`，内部含体积 ≤10MB 门禁与 ad-hoc 签名）；
+   （脚本见 `scripts/package-*`，内部含体积 ≤11 MiB 门禁与 ad-hoc 签名）；
    CI 侧对 **release 二进制**的体积判定另有 `scripts/size_gate.sh`——
    从 workflow 里抽出来的目的就是「CI 与本地同一份规则」，
    可 `SIZE_LIMIT_BYTES=5242880 bash scripts/size_gate.sh` 验证门禁真会红；

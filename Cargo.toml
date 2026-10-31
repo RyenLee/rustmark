@@ -132,7 +132,7 @@ missing_docs = "warn"
 # 逐字重复，升级工具链或版本时要改 10 处，漏改一处即静默分叉。
 # publish = false：仅参与本地 workspace 构建，不发布到 crates.io。
 [workspace.package]
-version = "0.2.1"
+version = "0.2.2"
 edition = "2024"
 rust-version = "1.99"
 license = "MIT OR Apache-2.0"
@@ -195,7 +195,7 @@ workspace = true
 # REL-03 体积缓解（docs/spec/metrics.md §2.4 方案①）：**两个字体 feature 都不启用**。
 # `default_fonts` + `monochrome_emoji_fonts` 会把 epaint_default_fonts 的 5 个字体
 # （Ubuntu-Light / Hack / NotoEmoji / emoji-icon-font / egui-icons，合计 1,417,504 B）
-# 以 `include_bytes!` 编进 exe——这是 10 MB 未压缩红线（NFR-PERF-01）下
+# 以 `include_bytes!` 编进 exe——这是 11 MiB（11,534,336 B）未压缩红线（NFR-PERF-01，2026-10-25 由 10 MiB 上调）下
 # 最大的一块可省体积，实测占越线缺口的 98.5%。
 # 五个字体文件改为随发行包分发（assets/fonts → 打包后的 fonts/，
 # 许可证见该目录 Fonts-LICENSE.txt：UFL / MIT / OFL / MIT），运行期由

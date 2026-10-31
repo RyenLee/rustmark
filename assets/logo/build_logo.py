@@ -2,8 +2,9 @@
 # -*- coding: utf-8 -*-
 """rustmark Logo 投产构建器——几何唯一真源，同时驱动 SVG 与 PNG 产出。
 
-设计来源：定稿概念「收敛A」（问题记录 056 之前的设计轮次存档于
-`rustmark-logo.miora` / `rustmark-logo_assets/`）。本脚本把 AI 概念稿的几何
+设计来源：定稿概念「收敛A」。AI 概念稿的中间产（`rustmark-logo.miora` 与
+`rustmark-logo_assets/` 12 张图，共 8.66 MB）已于 2026-10-31 移出发布仓，
+可在 git 历史中追溯。本脚本把 AI 概念稿的几何
 实测提炼为可投产的矢量规格：
 
   容器    2:1 横圆角矩形（概念稿实测 350×175 @1536px），墨黑 #1A1A1A

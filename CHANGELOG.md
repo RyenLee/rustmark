@@ -6,6 +6,16 @@ Release Notes 依此自动归组。
 
 ## [未发布]
 
+## [0.2.2] · 2026-10-31
+
+### 本次发布概要
+
+- **侧栏搜索新增「清空」按钮**：一键清空搜索词并关闭全部搜索选项，与只关选项的
+  「重置」区分；搜索范围、当前文档等无关状态保持不变。
+- **macOS 打包脚本修复**：`scripts/package-macos.sh` 中变量后紧跟全角标点的 4 处位置
+  改为 `${var}` 花括号语法，兼容 macOS 自带 bash 3.2。`v0.2.1` 在签名、dmg 生成后
+  因此失败，按发布规范不重打，本版用于完成 macOS 发布链路验证。
+
 ## [0.2.1] · 2026-10-31
 
 ### 本次发布概要
@@ -44,7 +54,7 @@ Release Notes 依此自动归组。
 
 ### 2026-10-22 · 体积合规 REL-03（11.37 MiB → 9.98 MiB，回到红线内）
 
-> 依「保持 10 MB 未压缩红线」的裁定执行 `docs/metrics.md` §2.4 方案 1 与等效方案 3，两步均零功能代价。
+> 依「保持 10 MB 未压缩红线」的裁定执行 `docs/spec/metrics.md` §2.4 方案 1 与等效方案 3，两步均零功能代价。
 
 - **字体外置**：关闭 `egui` / `eframe` 的 `default_fonts` 与 `monochrome_emoji_fonts`。
   Ubuntu-Light / Hack / NotoEmoji / emoji-icon-font 四个字体（1,417,504 B）改为随发行包
@@ -59,7 +69,7 @@ Release Notes 依此自动归组。
   同配置重建字节数一致。Windows 便携包复打为 7.14 MB（含 4 个新字体与许可全文）。
 - **测试适配**：无头测试上下文不再有内嵌字体，新增 `tests/support::ctx_with_app_fonts()`；
   `presentation::widgets::text` 的左缘阈值由 1pt 放宽到 2pt 并注明「合成豆腐块侧边距」。
-- **文档口径同步**：`docs/metrics.md`（§1 / §2.4 / §2.6 + 新增 §2.7）、`docs/dependencies.md`、
+- **文档口径同步**：`docs/spec/metrics.md`（§1 / §2.4 / §2.6 + 新增 §2.7）、`docs/dependencies.md`、
   `THIRD-PARTY-LICENSES.md`（186 crate、43 项复核表）、`deny.toml`（移除已退出依赖图的三项许可）、
   `docs/manual-qa-*.md`、`.github/workflows/ci.yml`、`docs/release-compliance-gap-report.md`。
 
@@ -238,7 +248,7 @@ Release Notes 依此自动归组。
   契约（自绘只读视图 / 视口虚拟化），成本远超收益，本期不做。
   ★ 其第②点「自绘 vs 修订口径」议题（T5）**已于 10-19 由排版层「原地补丁」先行闭环**
   （排版层 4.57 → 0.241ms，1MB p50 17.62 → 14.35ms）。同步 README 已知限制第 9 条、
-  `docs/metrics.md` §1、`REQUIREMENTS.md` NFR-PERF-04/07。
+  `docs/spec/metrics.md` §1、`REQUIREMENTS.md` NFR-PERF-04/07。
 - **V11-55（破环）**：`file_filter()` + `FILTER_NAME` 从 `text_format.rs` 迁入 `dialog.rs`，
   shared 内部依赖图由「唯一环 `text_format ↔ dialog`」变为**全单向无环**。
   对拍用例锚定源头（`BUILTIN_TEXT_EXTENSIONS`）而非与 `file_filter` 结果比对——
@@ -336,7 +346,7 @@ Release Notes 依此自动归组。
 ### 2026-10-16 ~ 10-17 · egui 0.37 升级 + 文件格式白名单 + 编辑区每帧成本 + 编辑区几何 + 击键帧埋点 + 1MB 根因归因 + 应用层 O(全文) 开销 + diff 字节层化 + 排版层去重复分配 + 零散每帧成本收敛 + 状态栏字数统计防抖 + compute_stats 六遍遍历合并
 
 > 原始问题记录：`docs/logs/问题记录1.txt` 044~055；逐项任务记录：`docs/v1.1-backlog.md` V11-36~42；
-> 迁移全量清单；性能数字见 `docs/metrics.md` §3.2.0 / §3.2.2 / §3.2.3 / §3.2.4 / §3.2.5 / §3.2.6 / §3.2.7 / §3.2.8 / §3.2.9 / §3.2.10；
+> 迁移全量清单；性能数字见 `docs/spec/metrics.md` §3.2.0 / §3.2.2 / §3.2.3 / §3.2.4 / §3.2.5 / §3.2.6 / §3.2.7 / §3.2.8 / §3.2.9 / §3.2.10；
 > 1MB 击键帧归因报告（含三轮测量 + §14.3.1 建议二落地 + §14.3.2 建议四结论）。
 
 - **egui / eframe 0.33.3 → 0.37.0（用户诉求：TextEdit 大文本卡顿）**：连带 `wgpu` 27.0.1 → 30.0.1，文本栈换代（`ab_glyph` → `harfrust` + `skrifa` + `vello_cpu`）。20 条 API 变更逐处迁移（`App` trait 拆 `ui` / `logic`、`Panel` 统一 + `exact_size`、`Context::run` → `run_ui`、`FullOutput` 的 `TexturesDelta` 需清空……）；两处 IME 行为变更最费时（0.37 的 `Commit("")` 不再等价于折叠选区、事件不再稳定排序到最前）；`LayoutJob::debug_sanity_check` 抓出既有的「预填 `text` 又 `append`」缺陷；emoji 字体拆到 `monochrome_emoji_fonts` feature 否则符号面板全豆腐块。回归：`tests/support` 新增 `run_ui` / `settle`，性能三项实测改善（1MB 冷首帧 47.9 → 19.23ms）。问题记录 044。
@@ -380,7 +390,7 @@ Release Notes 依此自动归组。
 - **V11-23 甘特图重写**：对齐 mermaid.js——真实日期（零依赖 Hinnant 算法）转天序号、标题居中、任务名条内白字、四态配色、底部日期轴 + 自动刻度 + 竖向网格。
 - **V11-24 检查标签黑框**：lint 行水平裸 label 不换行溢出，egui SidePanel 按内容 rect 保留布局把编辑区推右、溢出区露出清屏黑；修复为 truncate（搜索分组头 / 命中片段同类隐患一并修）。
 - **V11-25 https 图片下载**：引入 `ureq` + `rustls` 取代手写 `TcpStream`，https 图床图片直接渲染（原方案 https 硬编码拒绝）。
-- **V11-26 依赖复查**：eframe 移除未使用的 `accesskit` 特性、`ahash` 收窄去 `getrandom`——release 11.04 → 10.93 MiB（−110 KiB），跨平台锁文件 −60 包；仍超 `NFR-PERF-01` 红线 0.93 MiB（待评审，见 `docs/metrics.md` §2.4）。
+- **V11-26 依赖复查**：eframe 移除未使用的 `accesskit` 特性、`ahash` 收窄去 `getrandom`——release 11.04 → 10.93 MiB（−110 KiB），跨平台锁文件 −60 包；仍超 `NFR-PERF-01` 红线 0.93 MiB（待评审，见 `docs/spec/metrics.md` §2.4）。
 - **V11-14 / V11-15 收尾**：2026-10-10 登记的 7 条红（4 工具栏期望滞后 + 2 golden + 1 PDF 环境）全部修复，复测 `cargo test --all-targets` **1623 passed / 0 failed**。
 
 ### 2026-10-10 · v1.1 P2 四项（V11-06 ~ V11-09）
@@ -478,6 +488,8 @@ Release Notes 依此自动归组。
 - release 产物 ≤10MB 红线门禁（CI 强制）与性能冒烟基准。
 - 架构分层（DDD 四层）由 `check-arch` 在 build.rs 构建期强制。
 
-[未发布]: https://example.invalid/rustmark/compare/v0.2.0...HEAD
+[未发布]: https://example.invalid/rustmark/compare/v0.2.2...HEAD
+[0.2.2]: https://example.invalid/rustmark/releases/tag/v0.2.2
+[0.2.1]: https://example.invalid/rustmark/releases/tag/v0.2.1
 [0.2.0]: https://example.invalid/rustmark/releases/tag/v0.2.0
 [0.1.0]: https://example.invalid/rustmark/releases/tag/v0.1.0
