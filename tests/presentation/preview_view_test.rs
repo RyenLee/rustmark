@@ -1734,7 +1734,6 @@ fn the_first_table_overflow_does_not_infect_later_tables() {
         .filter(|(r, _)| r.right() > 1150.0)
         .map(|(r, t)| (t.clone(), r.right(), *r))
         .collect();
-    eprintln!("[dump] texts right>1150: {overflow:?}");
     let overflow2: Vec<(String, f32)> = overflow
         .iter()
         .filter(|(_, r, _)| *r > 1281.0)

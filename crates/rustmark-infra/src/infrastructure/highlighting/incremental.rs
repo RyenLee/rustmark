@@ -6,6 +6,12 @@
 //! 状态 `Eq` 收敛即截断」这条链路，能否在**不改 syntect、不动领域接口**
 //! 的前提下，把「改一行重解全文」的成本降到 1/N，且结果与全量**逐片段相同**。
 //!
+//! # 现状（2026-10-31）
+//!
+//! **已接入生产路径**：`SyntectHighlighter::start_session` 返回本会话，
+//! `application::markdown::service::highlight_worker` 按文档持有并复用，
+//! 连续编辑只重解变更行。下文保留预研阶段的设计理由（历史背景）。
+//!
 //! # 为什么先 PoC 而不是直接改接口
 //!
 //! `ParseState` 是 syntect 的类型。若把它放进 domain 的
@@ -90,7 +96,7 @@ struct Checkpoint {
     stack: ScopeStack,
 }
 
-/// 一次高亮的路径与工作量统计（PoC 观测用；接线时可下沉为 metrics）。
+/// 一次高亮的路径与工作量统计（测试与收益基准观测用；如需对外暴露可下沉为 metrics）。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct IncrementalStats {
     /// 是否走了增量路径。
@@ -101,23 +107,6 @@ pub(crate) struct IncrementalStats {
     pub(crate) total_lines: usize,
     /// 收敛点（新文本字节偏移）；`None` 表示解析到文末或走了全量。
     pub(crate) converged_at: Option<usize>,
-}
-
-impl IncrementalStats {
-    /// 复用的行数（未重新解析的行）。
-    #[allow(dead_code)]
-    pub(crate) fn reused_lines(&self) -> usize {
-        self.total_lines.saturating_sub(self.parsed_lines)
-    }
-
-    /// 重新解析的行占比（0.0 ~ 1.0）。
-    #[allow(dead_code)]
-    pub(crate) fn parsed_ratio(&self) -> f64 {
-        if self.total_lines == 0 {
-            return 0.0;
-        }
-        self.parsed_lines as f64 / self.total_lines as f64
-    }
 }
 
 /// 有状态的增量高亮会话：持有上次的文本、检查点与片段。
@@ -309,12 +298,6 @@ impl SyntectSession {
         self.spans = spans.clone();
 
         Ok((spans, stats))
-    }
-
-    /// 上一次高亮的片段（便于调用方零拷贝取用）。
-    #[allow(dead_code)]
-    pub(crate) fn last_spans(&self) -> &[SyntaxSpan] {
-        &self.spans
     }
 
     /// 能否复用上一次的状态。

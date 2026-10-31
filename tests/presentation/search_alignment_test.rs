@@ -139,15 +139,6 @@ fn search_group_header_filename_and_count_share_one_baseline() {
     let (_dir, mut app) = app_with_needle();
     let texts = sidebar_texts(&mut app);
     let headers = group_headers(&texts);
-    if headers.is_empty() {
-        eprintln!(
-            "DEBUG texts(y,xL,xR): {:?}",
-            texts
-                .iter()
-                .map(|(t, r)| (t.as_str(), r.min.y as i32, r.min.x as i32, r.max.x as i32))
-                .collect::<Vec<_>>()
-        );
-    }
     assert!(
         !headers.is_empty(),
         "搜索面板应渲染出至少一个分组头（文件名 + 命中数），实际文本：{:?}",
