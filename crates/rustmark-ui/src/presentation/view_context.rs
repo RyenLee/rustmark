@@ -603,13 +603,10 @@ pub trait CommandPort {
 
     // ---------- 编辑开关 ----------
 
-    /// 设置自动换行。
     fn set_word_wrap(&mut self, on: bool);
 
-    /// 设置拼写检查开关。
     fn set_spell_check(&mut self, on: bool);
 
-    /// 设置行号栏显示。
     fn set_line_numbers(&mut self, on: bool);
 
     /// 设置是否加载文档里的远程图片（PRIV-01）。
@@ -636,22 +633,16 @@ pub trait CommandPort {
 
     // ---------- 导出 ----------
 
-    /// 设置「长图导出」。
     fn set_export_long_image(&mut self, long: bool);
 
-    /// 设置「导出含目录」。
     fn set_export_include_toc(&mut self, on: bool);
 
-    /// 设置「导出内嵌图片」。
     fn set_export_embed_images(&mut self, embed: bool);
 
-    /// 设置导出纸张尺寸。
     fn set_export_page_size(&mut self, size: PageSize);
 
-    /// 设置导出分页。
     fn set_export_paginate(&mut self, paginate: bool);
 
-    /// 设置 PDF 是否含目录。
     fn set_pdf_include_toc(&mut self, toc: bool);
 
     /// 开始视口截图导出。

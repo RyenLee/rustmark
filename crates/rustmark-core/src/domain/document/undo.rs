@@ -98,7 +98,6 @@ pub struct Snapshot {
 }
 
 impl Snapshot {
-    /// 构造快照。
     pub fn new(content: impl Into<String>, selection: Option<TextRange>, at: Timestamp) -> Self {
         Self {
             content: content.into(),

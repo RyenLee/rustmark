@@ -212,7 +212,6 @@ pub struct Edit {
 }
 
 impl Edit {
-    /// 构造替换编辑。
     pub fn new(range: TextRange, replacement: impl Into<String>) -> Self {
         Self {
             range,
@@ -228,7 +227,6 @@ impl Edit {
         }
     }
 
-    /// 构造删除编辑。
     pub(crate) fn deletion(range: TextRange) -> Self {
         Self {
             range,

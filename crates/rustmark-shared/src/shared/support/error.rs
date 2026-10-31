@@ -70,21 +70,18 @@ pub enum AppError {
 }
 
 impl AppError {
-    /// 构造一个 I/O 错误。
     pub fn io(message: impl Into<String>) -> Self {
         Self::Io {
             message: message.into(),
         }
     }
 
-    /// 构造一个领域错误。
     pub fn domain(message: impl Into<String>) -> Self {
         Self::Domain {
             message: message.into(),
         }
     }
 
-    /// 构造一个配置错误。
     pub fn config(message: impl Into<String>) -> Self {
         Self::Config {
             message: message.into(),

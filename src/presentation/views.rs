@@ -1,4 +1,3 @@
-//! presentation::views 模块声明。
 
 pub mod about_view;
 pub mod command_palette_view;

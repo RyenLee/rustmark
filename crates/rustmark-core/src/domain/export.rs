@@ -1,4 +1,3 @@
-//! domain::export 上下文模块声明。
 //!
 //! 支撑域（需求文档 §6.1）：HTML / PDF / 图片导出。
 //! 聚合根为 [`aggregate::ExportJob`]。

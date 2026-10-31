@@ -1,4 +1,3 @@
-//! application::workspace 用例模块声明。
 
 pub mod commands;
 pub mod queries;

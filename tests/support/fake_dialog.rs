@@ -106,55 +106,46 @@ struct State {
 }
 
 impl FakeDialog {
-    /// 构造一个「全部取消」的替身。
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// 构造一个「打开文件返回该路径」的替身。
     pub fn opening(path: &str) -> Self {
         let fake = Self::new();
         fake.lock().open_file = Some(Reply::path(path));
         fake
     }
 
-    /// 构造一个「另存为返回该路径」的替身。
     pub fn saving(path: &str) -> Self {
         let fake = Self::new();
         fake.lock().save_file = Some(Reply::path(path));
         fake
     }
 
-    /// 构造一个「选择文件夹返回该路径」的替身。
     pub fn picking(path: &str) -> Self {
         let fake = Self::new();
         fake.lock().pick_folder = Some(Reply::path(path));
         fake
     }
 
-    /// 构造一个「选择图片返回该路径」的替身（R-04b）。
     pub fn picking_image(path: &str) -> Self {
         let fake = Self::new();
         fake.lock().pick_image = Some(Reply::path(path));
         fake
     }
 
-    /// 设置「打开文件」的回应。
     pub fn set_open_file(&self, reply: Reply) {
         self.lock().open_file = Some(reply);
     }
 
-    /// 设置「另存为」的回应。
     pub fn set_save_file(&self, reply: Reply) {
         self.lock().save_file = Some(reply);
     }
 
-    /// 设置「选择文件夹」的回应。
     pub fn set_pick_folder(&self, reply: Reply) {
         self.lock().pick_folder = Some(reply);
     }
 
-    /// 设置「选择图片」的回应（R-04b）。
     pub fn set_pick_image(&self, reply: Reply) {
         self.lock().pick_image = Some(reply);
     }

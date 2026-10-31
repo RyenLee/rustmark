@@ -1,4 +1,3 @@
-//! domain::markdown 上下文模块声明。
 //!
 //! 核心域（需求文档 §6.1）：解析、高亮、预览。聚合根为 [`aggregate::RenderedDocument`]。
 //!

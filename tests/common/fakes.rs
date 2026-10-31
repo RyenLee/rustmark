@@ -79,7 +79,6 @@ pub struct InMemoryDocumentRepository {
 }
 
 impl InMemoryDocumentRepository {
-    /// 构造空仓储。
     pub fn new() -> Self {
         Self {
             files: Mutex::new(HashMap::new()),
@@ -143,7 +142,6 @@ pub struct FailingDocumentRepository {
 }
 
 impl FailingDocumentRepository {
-    /// 构造空仓储。
     pub fn new() -> Self {
         Self {
             files: Mutex::new(HashMap::new()),
@@ -202,7 +200,6 @@ pub struct InMemoryWorkspaceRepository {
 }
 
 impl InMemoryWorkspaceRepository {
-    /// 构造空仓储。
     pub fn new() -> Self {
         Self {
             entries: Mutex::new(Vec::new()),
@@ -531,7 +528,6 @@ pub struct InMemoryEventBus {
 }
 
 impl InMemoryEventBus {
-    /// 构造空总线。
     pub fn new() -> Self {
         Self {
             handlers: Mutex::new(Vec::new()),
@@ -589,7 +585,6 @@ pub struct FakeDocumentContentProvider {
 }
 
 impl FakeDocumentContentProvider {
-    /// 构造空提供者。
     pub fn new() -> Self {
         Self {
             docs: Mutex::new(HashMap::new()),

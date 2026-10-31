@@ -1,4 +1,3 @@
-//! presentation::state 模块声明。
 
 pub mod app_ui_state;
 pub mod command_palette_ui_state;

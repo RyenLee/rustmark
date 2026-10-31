@@ -36,7 +36,6 @@ pub struct InProcessEventBus {
 }
 
 impl InProcessEventBus {
-    /// 构造空总线。
     pub fn new() -> Self {
         Self::default()
     }
