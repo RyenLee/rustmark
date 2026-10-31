@@ -178,7 +178,22 @@ fn toggle_row(
             {
                 vctx.reset_search_options();
             }
-            // 放在开关处理之后：本帧点了开关 / 重置，数字当帧就是新的。
+            // 清空：查询词 + 全部选项一起回到默认，与「重置」明确区分
+            // （重置只关选项、保留查询词）。没有可清空内容时置灰。
+            //
+            // 放在搜索之前：点击当帧输入已被清空，`search_workspace` 直接
+            // 短路返回空结果，右侧计数与下方列表同帧回到未筛选状态。
+            // `search_scope` 不在清空范围内——它是范围决定，不是选项。
+            let clearable = !vctx.sidebar_state().search_query.is_empty()
+                || !vctx.sidebar_state().search_options.is_plain();
+            if ui
+                .add_enabled(clearable, egui::Button::new("清空").small())
+                .on_hover_text("清空搜索词，并关闭全部搜索选项")
+                .clicked()
+            {
+                vctx.clear_search();
+            }
+            // 放在开关处理之后：本帧点了开关 / 重置 / 清空，数字当帧就是新的。
             let result = vctx.search_workspace();
             ui.weak(format!(
                 "{} 条结果",

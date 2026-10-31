@@ -72,4 +72,14 @@ impl EditorApp {
     pub fn reset_search_options(&mut self) {
         self.sidebar.search_options.reset();
     }
+
+    /// 清空全局搜索（搜索标签的「清空」按钮）：查询词与全部选项一起回到默认。
+    ///
+    /// 与 [`Self::reset_search_options`] 区分：重置只关选项、保留查询词；
+    /// 清空把这一轮搜索整个撤掉。查询为空后 `should_search` 为假，
+    /// 结果列表与计数当帧回到未筛选状态（见
+    /// [`SidebarUiState::clear_search`](crate::presentation::state::sidebar_ui_state::SidebarUiState::clear_search)）。
+    pub fn clear_search(&mut self) {
+        self.sidebar.clear_search();
+    }
 }

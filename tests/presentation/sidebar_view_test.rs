@@ -872,6 +872,61 @@ fn clicking_the_search_reset_button_clears_every_option() {
     );
 }
 
+/// 搜索标签的「清空」按钮必须同时清掉查询词与全部选项。
+///
+/// 与「重置」区分：重置只关选项（上一条用例钉住），清空连输入框一起清。
+/// 同样走**真实 UI 点击**——只测状态方法的话，「视图漏接线」照样测不出来。
+/// 范围是独立决定，清空不得顺带把它重置掉。
+#[test]
+fn clicking_the_search_clear_button_empties_query_and_options() {
+    let ws = workspace();
+    let root = ws.path().to_path_buf();
+    let (_cfg, mut app) = app_with_workspace(&root);
+    app.ui.sidebar_tab = SidebarTab::Search;
+    app.ui.sidebar_visible = true;
+    // 默认范围「当前文档」在没有活动文档时只渲染空状态，开关行根本不出现。
+    app.sidebar.search_scope = SearchScope::OpenDocuments;
+    app.sidebar.search_query = "needle".to_string();
+    app.sidebar.search_options = SearchOptions {
+        case_sensitive: true,
+        whole_word: true,
+        regex: false,
+    };
+
+    let ctx = egui::Context::default();
+    let mut shapes = Vec::new();
+    for _ in 0..2 {
+        let out = crate::support::run_ui(&ctx, frame_input(), |ui| {
+            rustmark::presentation::theme::mapper::apply(ui.ctx(), &app.ui.theme);
+            main_view::show(&mut app, ui);
+        });
+        shapes = out.shapes;
+    }
+    let clear = text_center(&shapes, "清空").expect("开关行应渲染出「清空」按钮");
+
+    click_at(&ctx, &mut app, clear);
+
+    assert!(
+        app.sidebar.search_query.is_empty(),
+        "点「清空」应清空输入框文本"
+    );
+    assert!(
+        app.sidebar.search_options.is_plain(),
+        "点「清空」应关闭全部搜索选项"
+    );
+    assert_eq!(
+        app.sidebar.search_scope,
+        SearchScope::OpenDocuments,
+        "范围是独立决定，清空不得顺带重置它"
+    );
+    assert!(
+        app.search_workspace()
+            .expect("空查询应返回空结果而非错误")
+            .is_empty(),
+        "清空后结果状态应回到未筛选"
+    );
+}
+
 /// 空查询不发起搜索（否则每帧全盘扫描）。
 #[test]
 fn empty_query_does_not_trigger_a_search() {

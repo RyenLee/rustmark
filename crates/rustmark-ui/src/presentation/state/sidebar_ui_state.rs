@@ -139,6 +139,21 @@ impl SidebarUiState {
         !self.search_query.trim().is_empty()
     }
 
+    /// 清空全局搜索：查询词与全部选项开关一起回到默认。
+    ///
+    /// 与只关选项的「重置」（[`SearchOptions::reset`]）**不是同一个动作**：
+    /// 重置刻意保留用户已输入的查询词，清空则把这一轮搜索整个撤掉——
+    /// 输入为空后 [`Self::should_search`] 为假，结果列表与计数当帧回到
+    /// 未筛选状态。
+    ///
+    /// **不**动 `search_scope`：范围是「这一轮搜谁」的独立决定，不在选项行，
+    /// 清掉查询后它也不再影响任何结果（空查询本就短路返回空）。保留它，
+    /// 下一次搜索不必重新选一遍范围。
+    pub fn clear_search(&mut self) {
+        self.search_query.clear();
+        self.search_options.reset();
+    }
+
     // ---------- 右键菜单与重命名 ----------
 
     /// 打开某条目的右键菜单（`at` 是右键落点，菜单作为悬浮层钉在那里）。
@@ -442,6 +457,38 @@ mod tests {
             assert!(!toggle.hint().is_empty());
         }
         assert_eq!(SEARCH_TOGGLES[0].badge(), "Aa");
+    }
+
+    /// 「清空」= 查询词 + 全部选项；「重置」只关选项——两者必须可区分。
+    ///
+    /// 同时钉住「结果状态回到未筛选」：查询为空后 `should_search` 为假，
+    /// 计数与结果列表都不会再出内容。范围是独立决定，不随清空重置。
+    #[test]
+    fn clear_search_empties_the_query_and_every_option() {
+        let mut state = SidebarUiState::new();
+        state.search_query = "needle".into();
+        state.search_scope = SearchScope::OpenDocuments;
+        state.search_options = SearchOptions {
+            case_sensitive: true,
+            whole_word: true,
+            regex: true,
+        };
+        assert_eq!(state.search_options.active_count(), 3, "夹具前提：三项全开");
+
+        state.clear_search();
+
+        assert!(state.search_query.is_empty(), "输入框应清空");
+        assert!(state.search_options.is_plain(), "全部筛选选项应关闭");
+        assert_eq!(state.search_options.active_count(), 0, "筛选集合应为空");
+        assert!(
+            !state.should_search(),
+            "空查询不应再发起搜索，结果状态应回到未筛选"
+        );
+        assert_eq!(
+            state.search_scope,
+            SearchScope::OpenDocuments,
+            "范围是独立决定，清空只作用于查询与选项"
+        );
     }
 
     /// 开右键菜单会结束重命名与新建（同一块视觉空间不能同时开着两种编辑）。

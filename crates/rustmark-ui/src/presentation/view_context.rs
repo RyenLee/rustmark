@@ -592,6 +592,9 @@ pub trait CommandPort {
     /// 复位全部搜索选项开关。
     fn reset_search_options(&mut self);
 
+    /// 清空搜索：查询词与全部搜索选项一起回到默认（范围保留）。
+    fn clear_search(&mut self);
+
     /// 执行一次工作区搜索，返回分组结果。
     fn search_workspace(&self) -> AppResult<WorkspaceSearch>;
 

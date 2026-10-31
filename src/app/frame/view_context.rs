@@ -454,6 +454,10 @@ impl CommandPort for EditorApp {
         EditorApp::reset_search_options(self);
     }
 
+    fn clear_search(&mut self) {
+        EditorApp::clear_search(self);
+    }
+
     fn search_workspace(&self) -> AppResult<WorkspaceSearch> {
         EditorApp::search_workspace(self)
     }
