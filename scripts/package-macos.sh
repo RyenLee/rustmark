@@ -115,7 +115,7 @@ fi
 # 签名后必检：`--deep` 此处只用于**验证**（不参与签名），确认整套 bundle 完整。
 codesign --verify --deep --strict --verbose=2 "$app"
 if [ -n "$identity" ]; then
-    echo "（已用证书签名：$identity）"
+    echo "（已用证书签名：${identity}）"
 else
     # ad-hoc：本机可正常启动；分发场景仍会被 Gatekeeper 拦（未公证），
     # 绕过方式必须写入 README 与 Release Notes。
@@ -158,7 +158,7 @@ notarize() {
     printf 'notarytool：%s\n' "$(tr -d '\n' < "$out")"
     rm -f "$out"
     if [ "$status" != "Accepted" ]; then
-        echo "公证未通过（$label）：status=$status id=$ticket" >&2
+        echo "公证未通过（${label}）：status=$status id=$ticket" >&2
         if [ -n "$ticket" ]; then
             xcrun notarytool log "$ticket" \
                 --apple-id "$NOTARY_APPLE_ID" \
@@ -167,7 +167,7 @@ notarize() {
         fi
         return 1
     fi
-    echo "公证通过：$label（id=$ticket）"
+    echo "公证通过：${label}（id=${ticket}）"
 }
 
 if [ "$notarize_enabled" -eq 1 ]; then
@@ -203,7 +203,8 @@ fi
 packageLimitBytes=11534336
 for f in "$appzip" "$dmg"; do
     size=$(wc -c < "$f" | tr -d ' ')
-    echo "产物：$f（$size 字节）"
+    # 变量后紧跟全角标点须用 ${}：macOS bash 3.2 会把多字节字符并入变量名。
+    echo "产物：${f}（${size} 字节）"
     if [ "$size" -gt "$packageLimitBytes" ]; then
         echo "体积超红线：$size > $packageLimitBytes 字节（11 MiB）" >&2
         exit 1
