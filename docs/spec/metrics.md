@@ -21,7 +21,7 @@
 
 > 以下非性能阈值，而是**架构演化的观测仪表**。数值由对应机械守卫或散文清单兜底，
 > 此处集中登记以便随版本复测、识别耦合税增长趋势（评估见
-> `docs/archive/architecture-reviews/rustmark-evaluation-2026-10-25.md` E-07 / E-27）。
+> E-07 / E-27）。
 
 | 观测项 | 评估登记值 | 真源 / 守门方式 | 风险信号 |
 |---|---|---|---|
@@ -295,7 +295,7 @@ macOS（`.dmg`）与 Linux（`.AppImage`）产物体积**本机无法构建**（
 > **2026-10-25 更新**：V11-62 批次 2（state 6,682 行迁入 `rustmark-ui`）致 +2,560 B，
 > 旧 10 MiB 红线余量（512 B）耗尽越线；经维护者决策，NFR 红线由 10 MiB 上调至
 > **11 MiB**，预警线由 8 MiB 上调至 **10.5 MiB**（保留约 512 KiB 可行动窗口），
-> 详见 `scripts/size_gate.sh` 与 `docs/archive/architecture-reviews/core-refactor-tasklist-2026-10-24.md` TD-01。
+> 详见 `scripts/size_gate.sh` 与TD-01。
 >
 > **术语约定（2026-10-27 起）**：本表判定「体积没变」一律写 **「字节数相同」**，
 > 不写「字节数相同」。原因：同一 revision 反复重建**文件大小 100% 稳定**
@@ -419,7 +419,7 @@ pulldown-cmark 均不参与链接）与完整应用对比：
    已上报需求方，裁定结果为 **ADR-006：阈值改为按平台各自口径，Windows ≤ 150 MB
    （判定口径改为 Private Working Set）**，实测 125.3 MB ✅ 达标
    （见 `docs/adr/ADR-006-memory-threshold-revision.md` 与
-   `docs/archive/stage-reports/optimization-log.md` OPT-007）。
+  OPT-007）。
 4. 判定口径改为 Private Working Set 的实测依据：完整应用的 WorkingSet 甚至
    **略低于**空窗口探针（189.2 vs 210.1 MB，另一次 189.4 vs 186.8 MB）——
    说明 WorkingSet 受 OS 换页与共享页影响，噪声可达 ±20 MB，
@@ -451,7 +451,7 @@ pulldown-cmark 均不参与链接）与完整应用对比：
 #### 3.2.0 egui 0.33.3 → 0.37.0 升级后复测（2026-10-16）
 
 命令：`cargo test --release --test presentation -- --nocapture measure_`（3/3 通过）。
-评估报告：[`archive/stage-reports/egui-0.37-upgrade.md`](../archive/stage-reports/egui-0.37-upgrade.md)。
+（升级评估报告随归档区移除，历史见 git 记录）。
 
 | 指标 | 升级后（2026-10-16） | 升级前（下方历史值） | 判定 |
 |---|---|---|---|
@@ -490,7 +490,7 @@ pulldown-cmark 均不参与链接）与完整应用对比：
 （打字期 ≈ 0.00 ms，不上色），`clock` 推进过窗口后再做一次 syntect 全文高亮
 （~59 ms，每 150 ms 至多一次）。代价是连续打字时语法色暂时消失（FR-03 观感降级），
 停手即恢复。② 增量高亮（扩领域接口）与 ③ 接受现状均未采用。详见
-`docs/archive/stage-reports/optimization-log.md` OPT-011。
+OPT-011。
 
 > **2026-10-19 复议并落地：② 已实施。** 领域侧只新增
 > `HighlightSession::advance(text, lang)`，`ParseState` 完全留在 infrastructure，
@@ -576,11 +576,11 @@ cargo test --release --test presentation -- --nocapture textedit_frame
    这 3ms 全部来自 egui 对 58,514 行 `Galley` 的逐行处理与栅格化。
    `docs/logs/T.txt` 的**方案一（视口虚拟化）**正是针对这一项，但 0.37 的
    `TextEdit` **不提供**该能力（无 `show_viewport` / `visible_range`），要它只能自绘
-   编辑器——不在本期范围。逐条审计见 `docs/archive/stage-reports/textedit-lag-audit.md`。
+   编辑器——不在本期范围。逐条审计。
 
    > ⚠ **2026-10-16 问题 049 限定**：本条测的是**空闲帧**（3.16ms），其归因仍成立；
    > 但由此推出的「1MB 要达标只能自绘编辑器」**不成立**——击键帧的大头不在这 3ms 里，
-   > 见 §3.2.4 与 `docs/archive/stage-reports/textedit-cost-attribution.md`。
+   > 见 §3.2.4。
 
 **守卫**：`tests/presentation/textedit_frame_perf_test.rs` 对三档空闲帧 p50 断言
 （release 8 / 8 / 24 ms，debug ×8），只钉「数量级退化」（例如有人再把全文快照拖回帧路径），
@@ -630,8 +630,7 @@ diff / 排版 → 重绘，而非直接改 `editor_text`），每帧显式推进
 
    > ⚠ **2026-10-16 问题 049 改写**：本条的原始表述为「文本一变就要重建 58,514 行的
    > `Galley`，42.00ms 与空闲帧 3.25ms 的差（约 39ms）来自这里……只能自绘编辑器」。
-   > 证伪依据与本条的关系见 §3.2.4 结论 1；完整报告见
-   > `docs/archive/stage-reports/textedit-cost-attribution.md`。
+   > 证伪依据与本条的关系见 §3.2.4 结论 1；完整报告见 git 历史归档（原始评估报告随归档区移除）。
 4. **1MB 的 `misses` 同样不增**（> 500KB 走降级路径，压根不进高亮器），
    所以第 2 条的计数断言在三档上一致成立——它钉的是「打字期不得解析」，
    与档位是否降级无关。
@@ -695,8 +694,7 @@ cargo test --release --test presentation -- --nocapture profile_1mb_typing_frame
 **守卫**：`tests/presentation/textedit_cost_attribution_test.rs::profile_1mb_typing_frame_cost_attribution`
 按**计数**断言「每帧重建行数 ≤ 4」（实测恒为 1），钉住「逐行增量不得退化成整篇重排」——
 与耗时无关、不受机器快慢影响。数字一律 release；debug 下帧数按 `frames_for()` 缩放，
-只承担守卫职责。完整报告（含三轮复现表与局限声明）见
-`docs/archive/stage-reports/textedit-cost-attribution.md`。
+只承担守卫职责。完整报告（含三轮复现表与局限声明）见 git 历史归档（原始评估报告随归档区移除）。
 
 #### 3.2.5 应用层每帧 `O(全文)` 开销（问题 049 续，第二轮）
 
@@ -1209,7 +1207,7 @@ cargo test --release --test presentation bench_layout_phases -- --ignored --noca
 
 **症状**：切到侧栏「搜索」标签（查询非空）后整窗冻结；输入框逐字卡顿。
 
-**根因**（按代价排序，完整报告见 [`search-tab-performance-report.md`](../archive/incident-reports/search-tab-performance-report.md)）：
+**根因**（按代价排序）：
 
 1. **「当前文档」范围也读全盘**——`gather_candidates` 对 `only_document` 也传
    `include_disk = true`，先把整个工作区逐文件 `fs::read` + 解码，再 `retain`
@@ -1458,7 +1456,7 @@ rust，以及 8 种高频围栏 python / javascript / json / bash / html / css /
 
 1. 数字只写进本文件，禁止散落在代码注释或 PR 描述；
 2. 每次填写须同时记录：命令、采样次数、环境（OS / 工具链版本 / commit）；
-3. 阶段 08 的每条优化在 `docs/archive/stage-reports/optimization-log.md` 记录「手段 / 前值 / 后值 / 代价 / 结论」，含放弃项；
+3. 阶段 08 的每条优化均记录「手段 / 前值 / 后值 / 代价 / 结论」，含放弃项；
 4. 三平台内存口径不可横向比较，门禁按「各平台各自阈值」判定。
 
 ## 7. 接入成本基线（V11-66，2026-10-24）
@@ -1511,7 +1509,7 @@ rust，以及 8 种高频围栏 python / javascript / json / bash / html / css /
 
 ### 7.4 与评审报告数字的差异（诚实记录）
 
-评审报告（`docs/archive/architecture-reviews/core-structure-review-2026-10-24.md`）记 root views 70 /
+评审报告记 root views 70 /
 presentation/state 30 / theme 19（12mo）；本脚本同窗口实测 **69 / 31 / 20**
 （Δ −1 / +1 / +1，落在 V11-66 验收容差 ±1 内）。已尝试复现评审口径的变体：
 含 merge 计数、pathspec 计数、排除 4a 拆分 commit、含 tests 目录——均不能

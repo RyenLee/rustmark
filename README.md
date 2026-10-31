@@ -40,7 +40,7 @@ GBK/GB18030 无损读写、分屏实时预览。
 | 命令面板 / 符号插入 / 文档统计 / 文件对比 | 增补 | ✅ 已实现 |
 | Markdown 格式检查（lint） | P2 | ✅ 已实现（4 规则 + 开关 + 侧栏「检查」标签跳转） |
 
-> 状态核对基准：`REQUIREMENTS.md` §3、`docs/archive/stage-reports/p1p2-implementation-log.md`、
+> 状态核对基准：`REQUIREMENTS.md` §3
 > `.agent/tasks/`（各任务单元验收输出）。
 
 ## 2. 安装与卸载

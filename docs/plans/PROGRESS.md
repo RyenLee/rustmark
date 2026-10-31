@@ -41,8 +41,8 @@
 
 **主线之外的增补工作（均已完成并有实施记录）**
 
-- **P1/P2 未交付功能补救**（`docs/archive/stage-reports/p1p2-remediation-plan.md` 总览表 5/5 ✅，逐步记录见 `docs/archive/stage-reports/p1p2-implementation-log.md`）：拖拽打开、自定义主题（8 核心语义色）、数学公式/Mermaid（结构化卡片 + 导出资源注入）、拼写检查（3779 词 + 近邻门槛 + 波浪线）、图片导出（视口截图 + **整篇长图**，10-09 补齐）。
-- **中文文本与图标显示修复**（`docs/archive/stage-reports/font-encoding-fix-plan.md` §六，2026-10-08 完成）：CJK 字体注入（本机命中 msyh.ttc）、9 个无字形符号替换、GBK/UTF-16 解码（内嵌映射表 47 KB，零新依赖）、导出 HTML 中文字体族。
+- **P1/P2 未交付功能补救**：拖拽打开、自定义主题（8 核心语义色）、数学公式/Mermaid（结构化卡片 + 导出资源注入）、拼写检查（3779 词 + 近邻门槛 + 波浪线）、图片导出（视口截图 + **整篇长图**，10-09 补齐）。
+- **中文文本与图标显示修复**（§六，2026-10-08 完成）：CJK 字体注入（本机命中 msyh.ttc）、9 个无字形符号替换、GBK/UTF-16 解码（内嵌映射表 47 KB，零新依赖）、导出 HTML 中文字体族。
 - **P2 遗留缺陷五项修复**（2026-10-09）：拖拽目录误开、GB18030 四字节解码、保存写回原编码、长图导出、导出 HTML 注入 KaTeX/Mermaid 资源。
 - **v1.1 P1 四项收官**（2026-10-09，按「先排除阶段 9 任务」口径的执行顺序 V11-12 → V11-03 → V11-04 → V11-05）：
   - **V11-12 规范 15 机械门禁**：`lib.rs` 开启 `clippy::unwrap_used`/`expect_used`/`panic` 门禁 + 测试豁免，14 处非测试 `unwrap`/`expect` 全部重写为非 panic 形态（锁损坏 `PoisonError::into_inner`、选项 `?`/`and_then`/`let…else`），零 `#[allow]` 残留，红路径演练通过。
@@ -200,7 +200,7 @@
 - **可观测性（D-5，2026-10-26，`1c58052`）**：`FrameScheduler` 兼作帧耗时观测点——超 16ms 的帧打一条
   `warn`（状态更新 / 绘制 / 未归因三段归因 + 本帧到期任务，120 帧限流；**仅 release 构建输出**），
   `RUST_LOG=…=debug`
-  时每 600 帧给平均 / 最大 / 超预算占比。`docs/archive/architecture-reviews/architecture-review-2026-10-23.md` 的 12 项问题
+  时每 600 帧给平均 / 最大 / 超预算占比。的 12 项问题
   至此**全部收口**（9 项闭合、2 项记录为不修、1 项持续纪律）。
 - **合规差额报告 P1 收尾（2026-10-26，`ee8acfb`）**：`PRIV-01` 远程图片开关（设置页 +
   关闭后零外联 + 状态栏常驻提示 + 跨重启持久化）与 `PRIV-02` 导出 CDN 披露（对话框常驻
@@ -230,9 +230,9 @@
 > 逐阶段的完整落地记录（测试数、验证链输出、暴露并修复的缺陷）见 `docs/01`~`docs/09` 各阶段文档
 > 与 `.agent/tasks/01..09-*.md` 的状态段，此处只留索引级摘要。
 
-- **阶段 01 产出已落地**：`REQUIREMENTS.md`、ADR-001~005、`.agent/` 全套、`docs/archive/stage-reports/prototype-contract.md`（A 契约 29 条 + B 免疫清单 17 项）、`docs/spec/metrics.md`、`docs/guides/dependencies.md`、`deny.toml`、`rust-toolchain.toml`（固定 1.99.0）。
+- **阶段 01 产出已落地**：`REQUIREMENTS.md`、ADR-001~005、`.agent/` 全套`docs/spec/metrics.md`、`docs/guides/dependencies.md`、`deny.toml`、`rust-toolchain.toml`（固定 1.99.0）。
 - **阶段 02~05**：工程骨架与分层边界（`check-arch` 双通道）、5 个限界上下文（领域层零 unwrap 编译期强制）、5 个 AppService + 事件订阅链、基础设施适配器（ropey / pulldown / syntect / fs 仓储 / 导出器）——各阶段出口检查全过。
-- **阶段 06~07**：egui 视图与快捷键单一数据源；三平台手工回归清单产出；P1/P2 五项补救（拖拽打开 / 自定义主题 / 公式与 Mermaid 结构化卡片 / 拼写检查 / 图片导出，均零依赖）——实施记录已归档至 `docs/archive/stage-reports/`。
+- **阶段 06~07**：egui 视图与快捷键单一数据源；三平台手工回归清单产出；P1/P2 五项补救（拖拽打开 / 自定义主题 / 公式与 Mermaid 结构化卡片 / 拼写检查 / 图片导出，均零依赖）——实施记录已归档至。
 - **阶段 08~09**：体积 / 启动 / 内存达标（Windows 10.93 MiB 超限见 metrics §2.4；冷启动 704 ms；空闲内存 125.3 MB）；覆盖率门禁生效（整体 85.27% / 领域 91.69%）；离线发布演练 13/13 入 CI。
 
 ---

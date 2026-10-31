@@ -81,7 +81,7 @@ syntect = { version = "5.3.0", default-features = false, features = ["default-fa
 - 领域层 `BlockKind` 预留 `Raw` 扩展位（S3-09），确保后续可增量加入而不改架构；
 - 渲染时对公式/图表语法降级为「等宽原文块」并给出提示，不报错。
 
-**修订结论**：**依赖层面的延后决定维持不变**——不引入 wasm / node / JS 运行时，体积预算不被击穿。但**功能层面已交付零依赖版本**（2026-10-08，见 `docs/archive/stage-reports/p1p2-implementation-log.md` 第3 项）：
+**修订结论**：**依赖层面的延后决定维持不变**——不引入 wasm / node / JS 运行时，体积预算不被击穿。但**功能层面已交付零依赖版本**：
 
 - 解析器开启 `ENABLE_MATH`（零成本，本就在 pulldown 内），行内 `$...$` 补回分隔符并入段落文本，整段 `$$...$$` 升级为独立 `BlockKind::Math { display }`；
 - ` ```mermaid ` 围栏（大小写不敏感）落到 `BlockKind::Diagram`，不再当普通代码块；

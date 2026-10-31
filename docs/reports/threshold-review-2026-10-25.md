@@ -203,7 +203,7 @@ CI `SIZE_WARN_BYTES=8388608`（8 MiB）比产物低 2 MiB，预警永久点亮�
 ### 11.2 与评审建议的偏差
 
 - **搜索上限**：A-17 原型契约为 50/300，本次按评审上调到 100/1000，属于**有意偏差**；已在
-  `docs/archive/stage-reports/prototype-contract.md` 的 A-17 行与对齐测试中登记，不静默违反。
+ 的 A-17 行与对齐测试中登记，不静默违反。
 - **文件树 truncated 标志**：本次只提高上限（并保留既有 `log::warn`）；把标志透出到 DTO 需要改
   `WorkspaceRepository` 契约，代价大于收益，留作后续项。
 - **字形缓存**：`IMAGE_CACHE_CAPACITY=64` 保留为条目兜底，主约束改为 128 MiB 字节预算，

@@ -336,8 +336,8 @@ Release Notes 依此自动归组。
 ### 2026-10-16 ~ 10-17 · egui 0.37 升级 + 文件格式白名单 + 编辑区每帧成本 + 编辑区几何 + 击键帧埋点 + 1MB 根因归因 + 应用层 O(全文) 开销 + diff 字节层化 + 排版层去重复分配 + 零散每帧成本收敛 + 状态栏字数统计防抖 + compute_stats 六遍遍历合并
 
 > 原始问题记录：`docs/logs/问题记录1.txt` 044~055；逐项任务记录：`docs/v1.1-backlog.md` V11-36~42；
-> 迁移全量清单见 `docs/archive/stage-reports/egui-0.37-upgrade.md`；性能数字见 `docs/metrics.md` §3.2.0 / §3.2.2 / §3.2.3 / §3.2.4 / §3.2.5 / §3.2.6 / §3.2.7 / §3.2.8 / §3.2.9 / §3.2.10；
-> 1MB 击键帧归因报告见 `docs/archive/stage-reports/textedit-cost-attribution.md`（含三轮测量 + §14.3.1 建议二落地 + §14.3.2 建议四结论）。
+> 迁移全量清单；性能数字见 `docs/metrics.md` §3.2.0 / §3.2.2 / §3.2.3 / §3.2.4 / §3.2.5 / §3.2.6 / §3.2.7 / §3.2.8 / §3.2.9 / §3.2.10；
+> 1MB 击键帧归因报告（含三轮测量 + §14.3.1 建议二落地 + §14.3.2 建议四结论）。
 
 - **egui / eframe 0.33.3 → 0.37.0（用户诉求：TextEdit 大文本卡顿）**：连带 `wgpu` 27.0.1 → 30.0.1，文本栈换代（`ab_glyph` → `harfrust` + `skrifa` + `vello_cpu`）。20 条 API 变更逐处迁移（`App` trait 拆 `ui` / `logic`、`Panel` 统一 + `exact_size`、`Context::run` → `run_ui`、`FullOutput` 的 `TexturesDelta` 需清空……）；两处 IME 行为变更最费时（0.37 的 `Commit("")` 不再等价于折叠选区、事件不再稳定排序到最前）；`LayoutJob::debug_sanity_check` 抓出既有的「预填 `text` 又 `append`」缺陷；emoji 字体拆到 `monochrome_emoji_fonts` feature 否则符号面板全豆腐块。回归：`tests/support` 新增 `run_ui` / `settle`，性能三项实测改善（1MB 冷首帧 47.9 → 19.23ms）。问题记录 044。
 - **文件打开格式白名单（用户诉求：图片/二进制不得当文本打开）**：新建 `shared::text_format` 作唯一出处（内置 `.md` / `.markdown` / `.mdown` / `.mkd` / `.txt` / `.text` / `.csv`，大小写不敏感，前导点与无扩展名不算扩展名）。此前「哪些文件能当文本打开」散在三处各写一份且已漂移（拖放放行 `.csv`、原生对话框选不中）。`FilePath::extension`、原生对话框过滤器、四条打开入口（文件树置灰与双击拦截、拖放分类、快速打开拦截）全部同源；编码仍由基础设施层探测（白名单决定能不能开、编码探测决定按什么读）。问题记录 045。

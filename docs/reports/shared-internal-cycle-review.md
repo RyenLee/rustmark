@@ -14,7 +14,7 @@
 | 来源 | ① V11-54 评估报告 P1「`shared` 内进程调用」的**残留半案**（进程调用部分已由 R-03 闭环，内部环部分遗留）；② R-21 第 2/3 项搁置（方案前提被实测证伪） |
 | 优先级建议 | **P2**（无用户可见影响；纯结构债；有低成本解） |
 | 建议工期 | **≤0.5 人日**（方案 A 约 20 行改动 + 1 条对拍测试；守卫项另计） |
-| 关联档案 | `docs/archive/architecture-reviews/architecture-review.md`（V11-54 评估）、`docs/archive/architecture-reviews/architecture-refactor-plan.md` R-03 / R-21、`docs/spec/architecture-constraints.md` §3 |
+| 关联档案 |`docs/spec/architecture-constraints.md` §3 |
 
 ---
 
