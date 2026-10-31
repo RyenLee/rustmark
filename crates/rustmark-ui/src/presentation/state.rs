@@ -1,4 +1,3 @@
-
 pub mod app_ui_state;
 pub mod command_palette_ui_state;
 pub mod dialog_ui_state;

@@ -1,4 +1,3 @@
-
 pub mod about_view;
 pub mod command_palette_view;
 pub mod diff_view;
