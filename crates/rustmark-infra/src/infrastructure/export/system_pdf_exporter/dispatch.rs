@@ -199,6 +199,12 @@ fn headless_print(browser: &Path, html: &Path, pdf: &Path) -> Result<u64, String
 /// 失败并拒绝打印，而不是带着脚本去渲染。
 ///
 /// 公开仅为让单测直接断言（纯函数，零 IO）。
+///
+/// 平台门控与调用点一致：唯一调用者是 Windows 的 `headless_print`，
+/// 对应单测也只在 Windows 编译。不加门控时，非 Windows 构建里
+/// `dispatch` 是私有模块、这个 `pub fn` 无人可达 → `-D warnings` 下
+/// 直接报 dead_code（CI 的 macos / ubuntu job 就红在这里）。
+#[cfg(target_os = "windows")]
 pub fn ensure_print_source_is_sanitized(html: &str) -> Result<(), String> {
     let lower = html.to_ascii_lowercase();
     let has_math = lower.contains("class=\"math");
