@@ -10,11 +10,19 @@
 # **版本号保留**——体积红线余量仅 512 B，依赖升级可能直接吃掉它，
 # Cargo.lock 漂移同样是拓扑事件。
 #
+# 归一化规则（机器无关，续）：删除**无缩进的** `[build-dependencies]` 标题行
+# 与 `└── embed-resource v…` 行。embed-resource 在 root Cargo.toml 里声明于
+# `[target.'cfg(windows)'.build-dependencies]`，`cargo tree` 只在 Windows 输出
+# 这两行，macos / ubuntu 没有（否则三平台必有一方红：macos job 实测 `16,17d15`）。
+# 带缩进的 `│   [build-dependencies]` / `    [build-dependencies]` 标记三平台一致，
+# 保留不动。CI 用的是同一条过滤，改此处就要同步 ci.yml 的 Workspace topology assertion。
+#
 # `--no-dedupe` 必须带：默认去重模式下 workspace 第二个成员（rustmark-core）
 # 的直接依赖会被 `(*)` 折叠隐藏，core 新增依赖边将逃过本断言（2026-10-24 实测）。
 #
 # 更新方式：本地跑
-#   cargo tree --workspace --depth 1 --no-dedupe | sed -E 's| \([^)]*\)||g'
+#   cargo tree --workspace --depth 1 --no-dedupe | sed -E 's| \([^)]*\)||g' \
+#     | grep -v -E '^\[build-dependencies\]$|embed-resource v'
 # 核对 diff 确为预期变更后，把输出写回本文件（保留本注释头），随变更 commit
 # 一并提交。CI 步骤见 .github/workflows/ci.yml「Workspace topology assertion」。
 #
@@ -128,8 +136,6 @@ rustmark v0.2.2
 ├── rustmark-ui v0.2.2
 └── wgpu v30.0.1
     [build-dependencies]
-[build-dependencies]
-└── embed-resource v3.0.12
 [dev-dependencies]
 ├── syntect v5.3.0
 └── tempfile v3.27.0

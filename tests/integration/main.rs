@@ -488,6 +488,13 @@ fn measure_10kb_parse_time() {
         markdown.len()
     );
     // 宽松上限：防止数量级退化（目标 5ms 见 docs/spec/metrics.md）。
+    //
+    // 与下面 NFR 断言同样只在 release 判定（V11-13）：debug 解析吞吐约为
+    // release 的 1/8，且 CI 的 windows-latest 核少、套件内性能用例还并行抢核，
+    // 实测 p95 87.93ms 会稳定越过 50ms（同运行 p50 也有 45.65ms）。
+    // 绝对耗时门禁由 perf job（release / Linux / `--test-threads=1`）承担，
+    // debug 仅打印指标。
+    #[cfg(not(debug_assertions))]
     assert!(
         p95 <= 50.0,
         "10KB 解析 p95 {p95:.2}ms 疑似退化（目标 ≤5ms）"
@@ -603,6 +610,11 @@ fn measure_twenty_language_highlight_time() {
 
     assert!(zero_spans.is_empty(), "以下语言零片段：{zero_spans:?}");
     // 热路径才是交互相关的那一个：单语言应远低于一帧预算（16ms）。
+    //
+    // 只在 release 判定（V11-13，同本文件 `measure_editor_frame_highlight_cost`）：
+    // syntect 在 debug 下慢约一个量级，CI windows-latest 实测 1625µs/语言；
+    // 跨平台且并行争抢下的绝对数字不可比，门禁交给 perf job（release / 单线程）。
+    #[cfg(not(debug_assertions))]
     assert!(
         warm_per_lang <= 1000,
         "热路径单语言 {warm_per_lang}µs，超出 1ms（帧预算 16ms）"

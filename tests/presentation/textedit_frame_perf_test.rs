@@ -200,13 +200,17 @@ fn warm_editor(app: &mut EditorApp, clock: &TestClock) -> (egui::Context, f64) {
 /// 真正重排的行数**恒为 1**（不是 58k 行），成本构成为「空闲帧 + 排版层 +
 /// `diff_replace` + 应用层文本变更链」，其中占 58% 的应用层净开销与自绘无关。
 /// 见 `docs/spec/metrics.md` §3.2.4。
+///
+/// # 只在 release 判定，返回值即 release 阈值
+///
+/// 本文件其余阈值按档位给 debug ×8（见 [`idle_frame_limit_ms`]），其前提是
+/// 「同一台机器上 debug ≈ 8× release」。CI 的 windows-latest（4 vCPU）不满足该前提：
+/// debug 1MB 击键帧 p95 实测 561ms，而同一次运行的 1MB 空闲帧 p50 就有 285ms
+/// （release 基线 4.32ms）——机器慢与并行抢核叠加后，再乘多少倍都只是猜余量。
+/// 故与 `large_file_test.rs` 同口径：耗时判定只在 release 生效，
+/// 由 perf job（Linux / `--test-threads=1`）承担，debug 仅打印指标。
 fn typing_frame_limit_ms(bytes: usize) -> f64 {
-    let release = if bytes >= 1024 * 1024 { 64.0 } else { 16.0 };
-    if cfg!(debug_assertions) {
-        release * 8.0
-    } else {
-        release
-    }
+    if bytes >= 1024 * 1024 { 64.0 } else { 16.0 }
 }
 
 fn pct(mut samples: Vec<f64>, q: f64) -> f64 {
@@ -476,11 +480,18 @@ fn measure_textedit_typing_frame_at_three_sizes() {
         );
 
         let limit = typing_frame_limit_ms(bytes);
-        assert!(
-            p95 <= limit,
-            "编辑区击键帧 {label} p95 {p95:.2}ms 越过守卫阈值 {limit:.0}ms —— \
-             疑似高亮防抖失效，或有新的 O(全文) 工作进了击键路径"
-        );
+        if cfg!(debug_assertions) {
+            // debug 只观测：CI 的 windows-latest 核少，本次又与套件内其它性能用例
+            // 并行抢核（同运行空闲帧 p50 已达 285ms）。耗时门禁在 release 生效，
+            // 见 [`typing_frame_limit_ms`] 的说明；防抖仍由上面的 misses 计数钉住。
+            println!("[gate] 编辑区击键帧 {label}：debug 不判耗时（release 阈值 {limit:.0}ms）");
+        } else {
+            assert!(
+                p95 <= limit,
+                "编辑区击键帧 {label} p95 {p95:.2}ms 越过守卫阈值 {limit:.0}ms —— \
+                 疑似高亮防抖失效，或有新的 O(全文) 工作进了击键路径"
+            );
+        }
     }
 }
 

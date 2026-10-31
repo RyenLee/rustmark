@@ -471,8 +471,15 @@ bash scripts/size_gate.sh             # 先 build --release 再测量
 
 ```bash
 diff <(grep -v '^#' docs/spec/workspace-topology.expected.txt) \
-     <(cargo tree --workspace --depth 1 --no-dedupe | sed -E 's| \([^)]*\)||g')
+     <(cargo tree --workspace --depth 1 --no-dedupe | sed -E 's| \([^)]*\)||g' \
+        | grep -v -E '^\[build-dependencies\]$|embed-resource v')
 ```
+
+末行 `grep -v` 是平台归一化：root 的 `embed-resource` 声明在
+`[target.'cfg(windows)'.build-dependencies]`，`cargo tree` 只在 Windows 输出
+`[build-dependencies]` + `└── embed-resource …` 两行，macos / ubuntu 没有。
+不带这层过滤时，期望文件含这两行 → 非 Windows 平台红；去掉后 Windows 又红。
+规则与 CI 步骤、期望文件头注释同源。
 
 它不在上面七条里，是因为日常提交不涉及依赖变更；但**改 `Cargo.toml` / `Cargo.lock`
 就必须跑**，否则 CI 红而本地全绿。

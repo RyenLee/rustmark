@@ -143,14 +143,24 @@ jobs:
       # `--color=never` 必须带：本 workflow 顶层 env 设了 `CARGO_TERM_COLOR: always`，
       # cargo 因此**即使输出被管道接走**也照常喷 ANSI 转义序列（实测 run #11 的
       # windows job 红在这里：逐行内容完全相同，肉眼不可见的 `\e[2m` 让 diff 全量失配）。
+      #
+      # `grep -v` 那一条是**平台差异**归一化：root 的 `embed-resource` 声明在
+      # `[target.'cfg(windows)'.build-dependencies]` 里，`cargo tree` 只在 Windows
+      # 输出 `[build-dependencies]` + `└── embed-resource …` 两行，macos / ubuntu
+      # 的输出没有——不剔除时三平台必然有一方红（macos job 实测 `16,17d15`）。
+      # 该规则与 docs/spec/workspace-topology.expected.txt 头部注释同源，改一处就要同步另一处。
       # 本地复现：CARGO_TERM_COLOR=always diff <(grep -v '^#' docs/spec/workspace-topology.expected.txt) \
-      #   <(cargo tree --workspace --depth 1 --no-dedupe --color=never | sed -E 's| \([^)]*\)||g')
+      #   <(cargo tree --workspace --depth 1 --no-dedupe --color=never \
+      #      | sed -E 's| \([^)]*\)||g' \
+      #      | grep -v -E '^\[build-dependencies\]$|embed-resource v')
       - name: Workspace topology assertion
         shell: bash
         run: |
           set -o pipefail
           if ! diff <(grep -v '^#' docs/spec/workspace-topology.expected.txt) \
-                     <(cargo tree --workspace --depth 1 --no-dedupe --color=never | sed -E 's| \([^)]*\)||g'); then
+                     <(cargo tree --workspace --depth 1 --no-dedupe --color=never \
+                        | sed -E 's| \([^)]*\)||g' \
+                        | grep -v -E '^\[build-dependencies\]$|embed-resource v'); then
             echo "::error::workspace 拓扑与 docs/spec/workspace-topology.expected.txt 不一致——若是预期变更，请按该文件头部注释的更新流程改完后重新提交"
             exit 1
           fi
@@ -231,11 +241,13 @@ jobs:
 
   # S8-07 ②：性能冒烟。
   #
-  # 跑两类自带阈值断言的用例：
+  # 跑三类自带阈值断言的用例：
   #   - `measure_*`：10KB 解析 / 语法集加载 / 编辑区高亮帧 / 1MB 降级帧等微基准；
   #   - `large_*`：1MB 全文查找 / 解析 / 首屏 / 滚动映射的耗时门禁（V11-13 裁定：
   #     这些门禁阈值**只在 release 生效**，故必须在此 release 步骤里跑，否则
-  #     debug 的 `check` job 会因 debug 吞吐偏低而误判）。
+  #     debug 的 `check` job 会因 debug 吞吐偏低而误判）；
+  #   - `profile_*`：1MB 归因探针（`diff_replace` 量级守卫、状态栏防抖），
+  #     其断言同为 release-only——debug / `llvm-cov` 插桩下数字不可比。
   # 它们超阈值会 fail。选 Linux 单平台：跨平台的绝对数字不可比（需求 §8 风险表
   # 已注明「基准不稳定导致 CI 抖动」→ 标记为仅 Linux 必过）。
   perf:
@@ -263,7 +275,7 @@ jobs:
           set -o pipefail
           cargo test --release --test integration -- --nocapture --test-threads=1 measure large \
             | tee integration-perf.log
-          cargo test --release --test presentation -- --nocapture --test-threads=1 measure \
+          cargo test --release --test presentation -- --nocapture --test-threads=1 measure profile \
             | tee presentation-perf.log
           {
             echo "### 性能冒烟（release / Linux）"

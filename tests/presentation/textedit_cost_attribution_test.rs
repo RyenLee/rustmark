@@ -541,16 +541,19 @@ fn profile_1mb_typing_frame_cost_attribution() {
          文末追加（前缀=全文，最坏）p50={e8_p50:.2}ms ｜ 文档中点替换 p50={e8b_p50:.2}ms"
     );
     // 硬证据：字节层实现必须远离旧实现的量级——否则说明它退化回了
-    // 「无论改哪里都整篇过一遍」。这是**量级**守卫，不是精确耗时断言；
-    // 阈值按档位给（debug 无内联无优化，实测 1.2 / 1.9ms，同机 release 0.24 / 0.33），
-    // 与 `textedit_frame_perf_test::typing_frame_limit_ms` 同一套口径。
-    // 旧实现（字符层）release 6.93ms ⇒ debug 约 55ms，两侧都远超对应上限，
-    // 故退化必然被抓。
-    let e8_limit = if cfg!(debug_assertions) { 16.0 } else { 2.0 };
+    // 「无论改哪里都整篇过一遍」。这是**量级**守卫，不是精确耗时断言。
+    //
+    // 断言只在 release 生效，与本文件 §11 的 A2（状态栏防抖）同一口径：
+    // 1MB 击键帧方差极大，与数百个测试并发跑时的时间抖动足以把它推过阈值；
+    // coverage job 还要叠加 `llvm-cov` 插桩，实测 15.77 / 21.41ms（本机 debug
+    // 只有 1.2 / 1.9ms）。debug 仍打印数字供肉眼核对；release 判定由 perf job
+    // （Linux / `--test-threads=1`）的 `profile` 过滤承担。
+    // 旧实现（字符层）release 6.93ms，是 release 上限 2.0ms 的 3.5 倍，退化必然被抓。
+    #[cfg(not(debug_assertions))]
     assert!(
-        e8_p50 < e8_limit && e8b_p50 < e8_limit,
+        e8_p50 < 2.0 && e8b_p50 < 2.0,
         "diff_replace 字节层实现退化：文末 {e8_p50:.2}ms / 中点 {e8b_p50:.2}ms \
-         （上限 {e8_limit:.0}ms；释放档旧字符层实现为 6.93ms——超过上限说明\
+         （上限 2ms；旧字符层实现为 6.93ms——超过上限说明\
          又出现了 O(全文) 的分配或解码）"
     );
 
