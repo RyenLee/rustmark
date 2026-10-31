@@ -18,32 +18,7 @@ use rustmark::infrastructure::export::pulldown_html_exporter::{
 use rustmark::shared::ids::{DocumentId, JobId};
 use rustmark::shared::path::FilePath;
 
-/// 测试用临时目录守卫。
-struct TempDir(PathBuf);
-
-impl TempDir {
-    fn new(tag: &str) -> Self {
-        let unique = format!(
-            "rustmark-exp-{tag}-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        );
-        let path = std::env::temp_dir().join(unique.replace(['(', ')', ' '], ""));
-        let _ = fs::remove_dir_all(&path);
-        fs::create_dir_all(&path).expect("应能创建临时目录");
-        Self(path)
-    }
-
-    fn join(&self, name: &str) -> PathBuf {
-        self.0.join(name)
-    }
-}
-
-impl Drop for TempDir {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
-    }
-}
+use crate::support::tempdir::TempDir;
 
 /// 构造一个 HTML 导出任务。
 fn html_job(dir: &TempDir, name: &str, include_toc: bool) -> (ExportJob, PathBuf) {
@@ -331,7 +306,7 @@ fn export_leaves_no_temp_file_behind() {
     let (job, _target) = html_job(&dir, "clean.html", true);
     exporter.export("# 标题", &job).expect("导出应成功");
 
-    let leftovers: Vec<String> = fs::read_dir(&dir.0)
+    let leftovers: Vec<String> = fs::read_dir(dir.path())
         .expect("应能列出目录")
         .filter_map(|e| e.ok())
         .map(|e| e.file_name().to_string_lossy().to_string())

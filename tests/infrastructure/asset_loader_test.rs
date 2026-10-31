@@ -4,36 +4,11 @@
 //! `data:text/html` 必须被拒、SVG 必须被拒、超限必须**硬拒绝**
 //! （而非原型那样的「只提示但依然插入」）。
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use rustmark::infrastructure::persistence::asset_loader::{AssetError, AssetLimits, AssetLoader};
 
-/// 临时目录守卫。
-struct TempDir(PathBuf);
-
-impl TempDir {
-    fn new(tag: &str) -> Self {
-        let unique = format!(
-            "rustmark-asset-{tag}-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        );
-        let path = std::env::temp_dir().join(unique.replace(['(', ')', ' '], ""));
-        let _ = std::fs::remove_dir_all(&path);
-        std::fs::create_dir_all(&path).expect("应能创建临时目录");
-        Self(path)
-    }
-
-    fn join(&self, name: &str) -> PathBuf {
-        self.0.join(name)
-    }
-}
-
-impl Drop for TempDir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
+use crate::support::tempdir::TempDir;
 
 /// 一个 1x1 的合法 PNG（用于本地路径与体积测试）。
 const TINY_PNG: &[u8] = &[
@@ -62,7 +37,7 @@ fn local_file_is_loaded_relative_to_document() {
 
     let loader = AssetLoader::new();
     let asset = loader
-        .load("a.png", Some(&dir.0))
+        .load("a.png", Some(dir.path()))
         .expect("相对路径应能加载");
 
     assert_eq!(asset.mime, "image/png");
@@ -78,7 +53,7 @@ fn local_file_with_subdirectory_is_loaded() {
     std::fs::write(dir.join("images/b.png"), TINY_PNG).expect("应能写入");
 
     let asset = AssetLoader::new()
-        .load("images/b.png", Some(&dir.0))
+        .load("images/b.png", Some(dir.path()))
         .expect("含子目录的相对路径应能加载");
     assert_eq!(asset.bytes, TINY_PNG);
 }
@@ -117,7 +92,7 @@ fn relative_path_without_base_dir_is_rejected_explicitly() {
 fn missing_local_file_returns_read_error_not_panic() {
     let dir = TempDir::new("missing");
     let error = AssetLoader::new()
-        .load("nope.png", Some(&dir.0))
+        .load("nope.png", Some(dir.path()))
         .expect_err("文件不存在应报错");
     assert!(
         matches!(error, AssetError::ReadFailed { .. }),
@@ -131,7 +106,7 @@ fn corrupt_image_content_does_not_panic() {
     let dir = TempDir::new("corrupt");
     std::fs::write(dir.join("bad.png"), b"this is definitely not a png").expect("应能写入");
 
-    let result = AssetLoader::new().load("bad.png", Some(&dir.0));
+    let result = AssetLoader::new().load("bad.png", Some(dir.path()));
     // 本实现只做字节读取与体积校验，不解码像素，
     // 因此「损坏」不会报错——但**更不能 panic**。
     // 断言的是：无论内容如何，调用都正常返回。
@@ -147,7 +122,7 @@ fn empty_local_file_is_rejected() {
     let dir = TempDir::new("empty");
     std::fs::write(dir.join("e.png"), b"").expect("应能写入");
     assert!(
-        AssetLoader::new().load("e.png", Some(&dir.0)).is_err(),
+        AssetLoader::new().load("e.png", Some(dir.path())).is_err(),
         "空图片应被拒绝"
     );
 }
@@ -500,7 +475,7 @@ fn local_svg_file_is_rejected() {
     std::fs::write(dir.join("x.svg"), b"<svg onload=alert(1)></svg>").expect("应能写入");
 
     let error = AssetLoader::new()
-        .load("x.svg", Some(&dir.0))
+        .load("x.svg", Some(dir.path()))
         .expect_err("本地 SVG 也必须被拒绝");
     assert!(
         matches!(error, AssetError::DisallowedMime { .. }),
@@ -513,7 +488,7 @@ fn unknown_extension_is_rejected() {
     let dir = TempDir::new("unknownext");
     std::fs::write(dir.join("a.txt"), b"hello").expect("应能写入");
     let error = AssetLoader::new()
-        .load("a.txt", Some(&dir.0))
+        .load("a.txt", Some(dir.path()))
         .expect_err("非图片扩展名应被拒绝");
     assert!(
         matches!(error, AssetError::UnresolvedPath { .. }),
@@ -526,6 +501,6 @@ fn unknown_extension_is_rejected() {
 fn loader_accepts_path_base_dir() {
     let dir = TempDir::new("pathdir");
     std::fs::write(dir.join("p.png"), TINY_PNG).expect("应能写入");
-    let base: &Path = &dir.0;
+    let base: &Path = dir.path();
     assert!(AssetLoader::new().load("p.png", Some(base)).is_ok());
 }

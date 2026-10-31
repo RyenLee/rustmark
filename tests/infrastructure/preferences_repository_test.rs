@@ -4,51 +4,25 @@
 //! **未知字段忽略而非报错**。
 
 use std::fs;
-use std::path::PathBuf;
 
 use rustmark::domain::preferences::aggregate::Preferences;
 use rustmark::domain::preferences::repository::PreferencesRepository;
 use rustmark::domain::preferences::value_objects::{EditorSettings, Theme, ThemeKind, WritingGoal};
 use rustmark::infrastructure::persistence::toml_preferences_repository::TomlPreferencesRepository;
 
-/// 测试用临时目录守卫。
-struct TempDir(PathBuf);
+use crate::support::tempdir::TempDir;
 
-impl TempDir {
-    fn new(tag: &str) -> Self {
-        let unique = format!(
-            "rustmark-pref-{tag}-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        );
-        let path = std::env::temp_dir().join(unique.replace(['(', ')', ' '], ""));
-        let _ = fs::remove_dir_all(&path);
-        fs::create_dir_all(&path).expect("应能创建临时目录");
-        Self(path)
-    }
-
-    fn join(&self, name: &str) -> PathBuf {
-        self.0.join(name)
-    }
-
-    /// 列出目录下的备份文件名。
-    fn backups(&self) -> Vec<String> {
-        fs::read_dir(&self.0)
-            .map(|entries| {
-                entries
-                    .filter_map(|e| e.ok())
-                    .map(|e| e.file_name().to_string_lossy().to_string())
-                    .filter(|n| n.contains(".bak-"))
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-}
-
-impl Drop for TempDir {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
-    }
+/// 列出目录下的备份文件名。
+fn backups(dir: &TempDir) -> Vec<String> {
+    fs::read_dir(dir.path())
+        .map(|entries| {
+            entries
+                .filter_map(|e| e.ok())
+                .map(|e| e.file_name().to_string_lossy().to_string())
+                .filter(|n| n.contains(".bak-"))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn repo_in(dir: &TempDir) -> TomlPreferencesRepository {
@@ -143,7 +117,7 @@ fn corrupt_file_falls_back_to_defaults_and_keeps_backup() {
         Preferences::default_preferences(),
         "按 ADR-003 应回退默认配置"
     );
-    assert_eq!(dir.backups().len(), 1, "损坏文件必须被备份以便排查");
+    assert_eq!(backups(&dir).len(), 1, "损坏文件必须被备份以便排查");
 }
 
 #[test]
@@ -171,7 +145,7 @@ fn unknown_fields_are_ignored_not_rejected() {
         .load()
         .expect("未知字段应被忽略，不得报错（旧版读新配置是常态）");
     assert_eq!(loaded.theme().font_size(), 16.0, "已知字段应照常读出");
-    assert!(dir.backups().is_empty(), "未知字段不构成损坏，不应产生备份");
+    assert!(backups(&dir).is_empty(), "未知字段不构成损坏，不应产生备份");
 }
 
 #[test]
@@ -193,7 +167,7 @@ fn out_of_range_values_are_rejected_and_replaced_by_defaults() {
         Preferences::default_preferences(),
         "非法取值必须回退默认"
     );
-    assert_eq!(dir.backups().len(), 1, "非法配置应被备份");
+    assert_eq!(backups(&dir).len(), 1, "非法配置应被备份");
 }
 
 #[test]
@@ -266,7 +240,7 @@ fn concurrent_style_repeated_saves_keep_file_valid() {
         repo.save(&prefs).expect("反复保存应始终成功");
     }
     assert!(repo.load().is_ok(), "最后一次写入的文件必须可解析");
-    assert!(dir.backups().is_empty(), "正常保存不应产生备份");
+    assert!(backups(&dir).is_empty(), "正常保存不应产生备份");
 }
 
 // ============================================================================
@@ -306,7 +280,7 @@ fn preferences_without_sidebar_visible_load_as_collapsed() {
         "缺字段应读出「没决定过」而不是 Some(false)——后者会把用户\n        锁死成「手动收起」，打开文件夹时再也不自动展开（问题 064）"
     );
     assert!(
-        dir.backups().is_empty(),
+        backups(&dir).is_empty(),
         "缺字段不该触发「备份 + 回退默认」——那会丢掉其余设置"
     );
 }
@@ -346,7 +320,7 @@ fn preferences_without_sidebar_width_load_as_theme_default() {
         "缺字段应按「没拖过」读出，而不是 Some(某个宽度)——\n        那会把用户锁死在一个他从未选过的宽度上"
     );
     assert!(
-        dir.backups().is_empty(),
+        backups(&dir).is_empty(),
         "缺字段不该触发「备份 + 回退默认」——那会丢掉其余设置"
     );
 }
@@ -382,7 +356,7 @@ fn preferences_without_auto_save_interval_load_with_the_default_interval() {
         "缺字段应按默认 30 秒读出——自动保存默认开启"
     );
     assert!(
-        dir.backups().is_empty(),
+        backups(&dir).is_empty(),
         "缺字段不该触发「备份 + 回退默认」——那会丢掉其余设置"
     );
 }
@@ -571,7 +545,7 @@ fn a_hand_edited_zero_max_open_documents_is_clamped_on_load() {
     );
     assert_eq!(loaded.theme().font_size(), 16.0, "其余字段必须原样保留");
     assert_eq!(loaded.editor().auto_save_interval(), Some(60));
-    assert!(dir.backups().is_empty(), "0 已收敛，不应触发备份+回退默认");
+    assert!(backups(&dir).is_empty(), "0 已收敛，不应触发备份+回退默认");
 }
 
 /// 旧配置缺 `max_open_documents` 字段时按默认值读出（不报错、不备份）。
@@ -596,7 +570,7 @@ fn an_old_config_without_max_open_documents_uses_the_default() {
         "缺字段必须按默认值 12 读出"
     );
     assert_eq!(loaded.theme().font_size(), 16.0, "其余字段应照常读出");
-    assert!(dir.backups().is_empty(), "缺字段不构成损坏，不应产生备份");
+    assert!(backups(&dir).is_empty(), "缺字段不构成损坏，不应产生备份");
 }
 
 /// 旧配置缺 `load_remote_images` 字段时按「加载」读出（PRIV-01）。
@@ -625,7 +599,7 @@ fn an_old_config_without_load_remote_images_keeps_loading() {
         "缺字段必须按「加载」读出——否则升级本身会静默改变已有文档的呈现"
     );
     assert_eq!(loaded.theme().font_size(), 16.0, "其余字段应照常读出");
-    assert!(dir.backups().is_empty(), "缺字段不构成损坏，不应产生备份");
+    assert!(backups(&dir).is_empty(), "缺字段不构成损坏，不应产生备份");
 }
 
 /// 关掉开关必须**写进配置文件**（不只是内存）——隐私承诺跨会话成立。

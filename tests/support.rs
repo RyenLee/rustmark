@@ -13,6 +13,11 @@ pub mod clock;
 pub mod fake_dialog;
 #[path = "support/keymap.rs"]
 pub mod keymap;
+/// `dead_code` 豁免：本模块被**每个**测试目标用 `#[path]` 引入，但并非每个
+/// 目标都用临时目录（如 `presentation` / `domain` 不用）。
+#[allow(dead_code)]
+#[path = "support/tempdir.rs"]
+pub mod tempdir;
 #[path = "support/text_buffer.rs"]
 pub mod text_buffer;
 

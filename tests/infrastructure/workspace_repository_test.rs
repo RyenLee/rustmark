@@ -13,48 +13,7 @@ use rustmark::ports::time::Timestamp;
 use rustmark::shared::error::AppError;
 use rustmark::shared::path::FilePath;
 
-/// 测试用临时目录守卫。
-pub struct TempDir(PathBuf);
-
-impl TempDir {
-    pub fn new(tag: &str) -> Self {
-        let unique = format!(
-            "rustmark-ws-{tag}-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        );
-        let path = std::env::temp_dir().join(unique.replace(['(', ')', ' '], ""));
-        let _ = fs::remove_dir_all(&path);
-        fs::create_dir_all(&path).expect("应能创建临时目录");
-        Self(path)
-    }
-
-    pub fn path(&self) -> &Path {
-        &self.0
-    }
-
-    /// 在目录下创建一个文件（含父目录）。
-    pub fn write(&self, relative: &str, content: &str) -> PathBuf {
-        let target = self.0.join(relative);
-        if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent).expect("应能创建父目录");
-        }
-        fs::write(&target, content).expect("应能写文件");
-        target
-    }
-
-    pub fn mkdir(&self, relative: &str) -> PathBuf {
-        let target = self.0.join(relative);
-        fs::create_dir_all(&target).expect("应能创建目录");
-        target
-    }
-}
-
-impl Drop for TempDir {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
-    }
-}
+use crate::support::tempdir::TempDir;
 
 fn fp(disk: &Path) -> FilePath {
     FilePath::new(disk.to_string_lossy().replace('\\', "/")).expect("临时路径应合法")

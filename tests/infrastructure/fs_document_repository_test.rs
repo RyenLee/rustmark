@@ -4,7 +4,7 @@
 //! 这类用例无法靠「读回来看对不对」验证——必须显式构造失败并检查原文件字节。
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use rustmark::domain::document::repository::{DocumentRepository, DocumentSnapshot};
 use rustmark::infrastructure::persistence::fs_document_repository::{
@@ -13,37 +13,7 @@ use rustmark::infrastructure::persistence::fs_document_repository::{
 use rustmark::shared::ids::DocumentId;
 use rustmark::shared::path::FilePath;
 
-/// 测试用临时目录守卫：Drop 时递归删除。
-struct TempDir(PathBuf);
-
-impl TempDir {
-    fn new(tag: &str) -> Self {
-        // 用「标签 + 进程 ID」命名，避免同机并行测试互相覆盖。
-        let unique = format!(
-            "rustmark-{tag}-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        );
-        let path = std::env::temp_dir().join(unique.replace(['(', ')', ' '], ""));
-        let _ = fs::remove_dir_all(&path);
-        fs::create_dir_all(&path).expect("应能创建临时目录");
-        Self(path)
-    }
-
-    fn join(&self, name: &str) -> PathBuf {
-        self.0.join(name)
-    }
-
-    fn path(&self) -> &Path {
-        &self.0
-    }
-}
-
-impl Drop for TempDir {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
-    }
-}
+use crate::support::tempdir::TempDir;
 
 /// 把磁盘路径包装成领域层的 `FilePath`。
 fn fp(disk: &Path) -> FilePath {
