@@ -3,6 +3,7 @@
 use crate::presentation::icons::IconKey;
 use crate::presentation::shortcuts::registry::UiAction;
 
+/// 顶层视图（依赖组合根 `app`，故只能留在 root）。
 pub mod views;
 
 // D-3 阶段 4a：非视图子模块 re-export 拼回 `crate::presentation::<子模块>`

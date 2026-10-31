@@ -98,6 +98,7 @@ pub struct Snapshot {
 }
 
 impl Snapshot {
+    /// 构造快照：全文、当时的选区（可为空）与时刻。
     pub fn new(content: impl Into<String>, selection: Option<TextRange>, at: Timestamp) -> Self {
         Self {
             content: content.into(),

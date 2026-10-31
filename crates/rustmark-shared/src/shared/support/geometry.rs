@@ -12,6 +12,7 @@ use std::ops::{Add, Sub};
 pub struct ByteOffset(usize);
 
 impl ByteOffset {
+    /// 由原始 `usize` 构造（调用方负责保证偏移落在文本字节边界内）。
     pub const fn new(value: usize) -> Self {
         Self(value)
     }

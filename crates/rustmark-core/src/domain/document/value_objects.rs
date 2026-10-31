@@ -212,6 +212,7 @@ pub struct Edit {
 }
 
 impl Edit {
+    /// 构造一次替换编辑：以 `replacement` 覆盖 `range` 区间的内容。
     pub fn new(range: TextRange, replacement: impl Into<String>) -> Self {
         Self {
             range,

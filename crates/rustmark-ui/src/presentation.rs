@@ -21,8 +21,11 @@
 pub mod rich {
     pub use rustmark_render::*;
 }
+/// 快捷键注册表与命令派发。
 pub mod shortcuts;
+/// 视图层 UI State（侧栏、对话框、命令面板等）。
 pub mod state;
+/// 主题定义与 `Preferences` → egui 样式的映射。
 pub mod theme;
 pub mod view_context;
 pub mod widgets;

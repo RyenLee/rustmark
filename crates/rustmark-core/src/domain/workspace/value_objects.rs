@@ -33,22 +33,27 @@ pub struct WorkspaceEntry {
 }
 
 impl WorkspaceEntry {
+    /// 构造条目：路径 + 类型。
     pub fn new(path: FilePath, kind: EntryKind) -> Self {
         Self { path, kind }
     }
 
+    /// 构造文件条目。
     pub fn file(path: FilePath) -> Self {
         Self::new(path, EntryKind::File)
     }
 
+    /// 构造目录条目。
     pub fn directory(path: FilePath) -> Self {
         Self::new(path, EntryKind::Directory)
     }
 
+    /// 条目路径。
     pub const fn path(&self) -> &FilePath {
         &self.path
     }
 
+    /// 条目类型。
     pub const fn kind(&self) -> EntryKind {
         self.kind
     }
@@ -152,6 +157,7 @@ impl RecentFile {
         Self { path, last_opened }
     }
 
+    /// 记录对应的文件路径。
     pub const fn path(&self) -> &FilePath {
         &self.path
     }
