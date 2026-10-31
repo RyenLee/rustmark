@@ -414,8 +414,7 @@ fn builtin_cjk_sits_after_system_cjk_in_both_families() {
 /// 且项目 fonts 目录优先于系统等宽候选。
 ///
 /// 这条把「发现」从硬编码路径里解放出来——删掉 `assets/fonts/` 的干净克隆
-/// 也能验证优先级，而无须依赖真实字体文件。变异与回退场景见
-/// `docs/archive/architecture-reviews/architecture-refactor-plan.md` 的 R-20 段。
+/// 也能验证优先级，而无须依赖真实字体文件。
 #[test]
 fn discovery_prefers_project_fonts_dir_over_system_candidates() {
     let dir = tempfile::tempdir().expect("应可创建临时目录");

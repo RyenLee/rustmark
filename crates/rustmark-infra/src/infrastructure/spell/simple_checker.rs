@@ -18,8 +18,7 @@
 //! 只是这里退化成了**编辑距离 1 + 小词表**的形态——精度有限，但**误报率极低**，
 //! 而误报率才是这类「辅助提示」功能的生命线。
 //!
-//! 代价：漏报（生僻范围内的错词抓不到）。这是刻意的取舍，已在
-//! `docs/p1p2-implementation-log.md` 记录。
+//! 代价：漏报（生僻范围内的错词抓不到）。这是刻意的取舍。
 
 use rustmark_core::domain::markdown::errors::SpellCheckError;
 use rustmark_core::domain::markdown::services::SpellChecker;

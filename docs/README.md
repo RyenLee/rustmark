@@ -1,9 +1,9 @@
 # docs/ 文档地图
 
-> 最近整理：**2026-10-28**（第三批：按用途分目录——顶层不再平铺文档，只剩本页 + 12 个分类目录）。
+> 最近整理：**2026-10-31**（补 `reviews/`、`diagrams/` 索引并校正计数；此前 2026-10-28 第三批按用途分目录）。
 > 本页是 `docs/` 的**唯一导航入口**。分区规则：
 > **`spec/` 是契约（改要同步跑门禁）、`guides/` 是手册（按动作查）、`plans/` 是进度（领活看这里）、
-> `stages/` `design/` `reports/` 是可读证据（只读）、`archive/` 是一次性报告（只查不维护）。**
+> `stages/` `design/` `reports/` 是可读证据（只读）。**
 
 ## 目录一览
 
@@ -14,22 +14,23 @@
 | [`guides/`](./guides/) | **操作手册**（面向具体动作） | 调试 / 排障 / 配置 / 测试 / 发布 / 依赖 / 三平台回归 | 9 |
 | [`stages/`](./stages/) | **阶段技术文档** | 01–11 各层实现说明 | 11 |
 | [`design/`](./design/) | **技术设计** | 缓存子系统设计 | 1 |
+| [`diagrams/`](./diagrams/) | **图示** | 项目文件 / 模块级关系图 | 1 |
 | [`reports/`](./reports/) | **专项报告与评审** | 合规差距 / 阈值审计与裁定 / shared 内部环评审 | 4 |
+| [`reviews/`](./reviews/) | **评审与审计** | 代码评审 / 安全健壮性评审 / 发布卫生审计 | 2 |
 | [`adr/`](./adr/) | **决策记录**（不可改写） | ADR-001 ~ ADR-013 | 13 |
-| [`remediation/`](./remediation/README.md) | **整改执行期档案**（按批次分文件夹） | R-01~R-11 总案 + R-10 专项评估 | 4 |
+| [`remediation/`](./remediation/README.md) | **整改执行期档案**（按批次分文件夹） | R-01~R-11 总案 + R-10 专项评估 | 5 |
 | [`samples/`](./samples/) | **样本与夹具** | `示例文档.md`（mermaid 测试取样源） | 1 |
 | [`logs/`](./logs/) | **流水**（append-only） | 问题记录 001–069 | 1 |
 | [`pic/`](./pic/) | **素材** | 问题记录按编号引用的截图 | 15 |
-| [`archive/`](./archive/README.md) | **归档**（一次性报告，只查不维护） | 两批：阶段报告 / 审计快照 / 架构评审 / 缺陷复盘 / 已收官方案 | 72 |
 
-合计 **139 个文件**。顶层只留本页——新增文档**必须**进上表某个目录，不许再平铺。
+合计 **71 个 tracked 文件**（口径：`git ls-files docs`；`docs/reviews/` 内新增的发布卫生审计文档尚待入库）。顶层只留本页——新增文档**必须**进上表某个目录，不许再平铺。
 
 ## 怎么用这份地图
 
 | 你是谁 | 先读 |
 |---|---|
 | 新接手的开发者 | 本页 → [`plans/PROGRESS.md`](./plans/PROGRESS.md)（做到哪了）→ [`guides/debug-guide.md`](./guides/debug-guide.md)（跑起来 + 排障）→ [`spec/architecture-constraints.md`](./spec/architecture-constraints.md)（不许做什么） |
-| 领任务开工 | [`plans/v1.1-backlog.md`](./plans/v1.1-backlog.md)（**唯一任务入口**）→ 对应阶段文档 → `.agent/conventions.md` |
+| 领任务开工 | [`plans/v1.1-backlog.md`](./plans/v1.1-backlog.md)（**唯一任务入口**）→ 对应阶段文档 → [`spec/architecture-constraints.md`](./spec/architecture-constraints.md) |
 | 要改架构 / 加 crate | [`spec/architecture-constraints.md`](./spec/architecture-constraints.md) §10（crate 地图与归属四问）→ [`remediation/`](./remediation/README.md)（为什么是现在这个样子）→ [`spec/current_dependency_graph.html`](./spec/current_dependency_graph.html) → [`diagrams/project-relationship-map.md`](./diagrams/project-relationship-map.md)（文件 / 模块级关联图） |
 | 用户 / 报缺陷 | [`guides/troubleshooting.md`](./guides/troubleshooting.md)（配置目录 / 草稿恢复 / 崩溃报告） |
 | 准备发布 | [`guides/release.md`](./guides/release.md) → [`reports/release-compliance-gap-report.md`](./reports/release-compliance-gap-report.md)（还剩什么没闭环）→ [`guides/testing.md`](./guides/testing.md) |
@@ -51,7 +52,7 @@
 | [`current_dependency_graph.html`](./spec/current_dependency_graph.html) | **10 crate / 16 条本地依赖边**的实测依赖图（SVG，分层布局 + 每 crate 规模） | 人工维护；`gen_dep_graph.sh` 只写 `target/` 下的机器图，**不覆盖本文** |
 
 > 原 `target_dependency_graph.html`（2026-10-27 目标态）已归档：
-> [`archive/architecture-reviews/target-dependency-graph-2026-10-27.html`](./archive/architecture-reviews/target-dependency-graph-2026-10-27.html)。
+> 当前依赖图见 [`spec/current_dependency_graph.html`](./spec/current_dependency_graph.html)。
 > 它预测的 5 项中 2 项达成、**2 项经决议不做**（`shared` 拆两 crate、`views` 迁 ui，见 ADR-013 决策 3）、
 > 且未预见 `rustmark-ports`。目标态与现状已合一，故合并为单图。
 
@@ -105,7 +106,7 @@
 
 | 文档 | 内容 | 现状 |
 |---|---|---|
-| [`release-compliance-gap-report.md`](./reports/release-compliance-gap-report.md) | **发布阻断项判定依据** + 未闭环待办（§6：三平台产物 / 真机回归 / 证书） | **仍是活文档**：§6 有未闭环项 |
+| [`release-compliance-gap-report.md`](./reports/release-compliance-gap-report.md) | **发布阻断项判定依据** + 未闭环待办（§6：三平台产物 / 真机回归 / 证书） | **活文档**：§6 未闭环项持续维护；§0–§5 实测数字为 2026-10-22 快照（`0.2.0` / 186 crate / 388 组件），现行口径见 `Cargo.toml` 与 SBOM |
 | [`threshold-audit-2026-10-25.md`](./reports/threshold-audit-2026-10-25.md) | 115 项阈值的全量审计（取值 / 依据 / 判定） | `spec/thresholds.baseline.yaml:8` 的 `audit_report:` 指向本篇 |
 | [`threshold-review-2026-10-25.md`](./reports/threshold-review-2026-10-25.md) | 审计的裁定结论（6 个语义簇 / 3 项阻断 / P0-P1 落地记录） | 同上 `review_report:`；121 条阈值的取值依据 |
 | [`shared-internal-cycle-review.md`](./reports/shared-internal-cycle-review.md) | `shared` 内部环评审（E-27 / V11-55） | 结论已固化为守卫；**`ports/dialog.rs:107` 直接引用为成环判据出处** |
@@ -150,18 +151,8 @@
 | 路径 | 内容 |
 |---|---|
 | [`logs/问题记录1.txt`](./logs/问题记录1.txt) | 用户反馈与缺陷修复的**原始流水**（001~069，**倒序** append-only）——调试经验已提炼至 `guides/debug-guide.md` §6 |
-| [`pic/`](./pic/) | 文档引用的截图（问题记录按编号引用）；无引用的已随第二批归档移入 `archive/pic/` |
+| [`pic/`](./pic/) | 文档引用的截图（问题记录按编号引用） |
 
-## 11. `archive/` · 归档（只查不维护）
-
-两批归档，逐篇索引与「现状」见其 README：
-
-| 批次 | 目录 | 收录 |
-|---|---|---|
-| 2026-10-14（第一批） | `stage-reports/` `audits-2026-10-12/` `crash-reports/` + 3 篇 10-17 报告 | 阶段收尾报告 / 一次性修复方案 / 审计快照 / 崩溃转储 |
-| **2026-10-28（第二批）** | **`architecture-reviews/`**（9 篇 + 2 图）**`incident-reports/`**（2）**`remediation-plans/`**（2）**`tooling/`**（2）**`pic/`**（+9 张） | R-01~R-11 整改收官后的评审 / 方案 / 复盘 / 工具治理记录 |
-
----
 
 ## 扩展 crate 的实操清单（贡献者）
 
@@ -197,6 +188,6 @@
    `logs/问题记录1.txt` 一律不回改（含其中的旧路径）。
 5. **三档归属**：仍在指引后续工作的 → `spec/` `plans/` `guides/` `stages/` `design/`；
    记录「当时做了什么」的 → `reports/` `remediation/` `adr/`；
-   任务已收官且结论被吸收的 → `archive/`。
+   任务已收官且结论被吸收的 → 不在 docs/ 留存（归档区已于 2026-10-31 移除）。
 6. **数字必须当日实测**：跨快照引用「此前全绿」而不复跑，会积累出「文档声称全绿、实际为红」的
    失实（教训见 `plans/PROGRESS.md` §1.1.1）。

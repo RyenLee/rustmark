@@ -1,8 +1,8 @@
 # 整改阶段档案（remediation）
 
 > 建档：2026-10-28　｜　定位：**架构整改的执行期档案**——按整改批次分文件夹存放，
-> 只收录「结论仍在指导后续判断」的方案与评估；已收官且结论被吸收的同类文档在
-> [`../archive/remediation-plans/`](../archive/remediation-plans/)。
+> 只收录「结论仍在指导后续判断」的方案与评估；已收官且结论被吸收的同类文档原置于
+> `../archive/remediation-plans/`，该归档区已于 2026-10-31 移除（见 git 历史）。
 > 现行规范一律看 [`../architecture-constraints.md`](../spec/architecture-constraints.md)；
 > 任务状态一律看 [`../v1.1-backlog.md`](../plans/v1.1-backlog.md)。
 
@@ -37,4 +37,4 @@
 1. 本区**只增不改**：批次收官后不再回改执行记录，纠正以新增段落显式标注（与 `../logs/问题记录1.txt` 同规）。
 2. 新批次立项时按 `r{编号}/` 或 `r{起}-r{止}/` 建文件夹，**不要平铺进 `docs/` 顶层**。
 3. 批次收官满一个评审周期、且结论已被 `architecture-constraints.md` / ADR 吸收后，
-   移入 [`../archive/remediation-plans/`](../archive/remediation-plans/)。
+   移入 `../archive/remediation-plans/`（该归档区已于 2026-10-31 移除，见 git 历史）。

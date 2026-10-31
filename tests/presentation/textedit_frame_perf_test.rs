@@ -199,7 +199,7 @@ fn warm_editor(app: &mut EditorApp, clock: &TestClock) -> (egui::Context, f64) {
 /// 真要把 1MB 打字做进 16ms 得自绘编辑器」——该归因已被实测证伪。1MB 击键帧里每帧
 /// 真正重排的行数**恒为 1**（不是 58k 行），成本构成为「空闲帧 + 排版层 +
 /// `diff_replace` + 应用层文本变更链」，其中占 58% 的应用层净开销与自绘无关。
-/// 见 `docs/spec/metrics.md` §3.2.4 与 `docs/archive/stage-reports/textedit-cost-attribution.md`。
+/// 见 `docs/spec/metrics.md` §3.2.4。
 fn typing_frame_limit_ms(bytes: usize) -> f64 {
     let release = if bytes >= 1024 * 1024 { 64.0 } else { 16.0 };
     if cfg!(debug_assertions) {
