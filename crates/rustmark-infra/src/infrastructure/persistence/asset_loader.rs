@@ -43,7 +43,7 @@ mod platform_certs;
 mod policy;
 
 use std::io::Read as _;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use agent::http_agent;
 use coding::{decode_base64, percent_decode};
@@ -197,18 +197,47 @@ impl AssetLoader {
     }
 
     /// 读取本地图片。
+    ///
+    /// # 安全边界（F-02）
+    ///
+    /// 本地图片解析分两种信任语境，由 `base_dir` 区分：
+    ///
+    /// - **有文档上下文**（`base_dir = Some(doc_dir)`，即已打开 / 已保存的文档）：
+    ///   文档内容可能来自不可信来源（下载的 `.md`、别人发的文件），其内嵌的
+    ///   `![](…)` 绝不能读走文档目录外的任意文件。故绝对路径与 `../` 越界引用
+    ///   一律拒绝，相对路径强制收束进 `doc_dir` 子树。
+    /// - **无文档上下文**（`base_dir = None`，即未保存文档 / 用户刚用对话框选图）：
+    ///   路径来自本次会话的受信用户操作（见「插入图片」对未命名文档插绝对路径的
+    ///   契约），允许绝对路径直接读取；相对路径因无基准目录无法解析，明确报错。
     fn load_local(&self, raw: &str, base_dir: Option<&Path>) -> Result<LoadedAsset, AssetError> {
-        let candidate = PathBuf::from(raw);
-        let path = if candidate.is_absolute() {
-            candidate
-        } else {
-            // 相对路径必须相对**当前文档**解析；没有基准目录就是无法解析，
-            // 此时给出明确错误而非静默失败。
-            let base = base_dir.ok_or_else(|| AssetError::UnresolvedPath {
-                raw: raw.to_string(),
-                reason: "相对路径需要先打开文档".to_string(),
-            })?;
-            base.join(candidate)
+        let candidate = Path::new(raw);
+        let path = match base_dir {
+            Some(base) => {
+                // 有文档上下文：收束进文档目录，绝对路径与 `../` 越界都拒。
+                if candidate.is_absolute() {
+                    return Err(AssetError::UnresolvedPath {
+                        raw: raw.to_string(),
+                        reason: "不允许绝对路径，图片必须相对当前文档引用".to_string(),
+                    });
+                }
+                Self::resolve_within_base(base, candidate).ok_or_else(|| {
+                    AssetError::UnresolvedPath {
+                        raw: raw.to_string(),
+                        reason: "图片路径越过文档目录（../ 越界）".to_string(),
+                    }
+                })?
+            }
+            None => {
+                // 无文档上下文：受信的用户选图路径，允许绝对路径直接读取。
+                if candidate.is_absolute() {
+                    candidate.to_path_buf()
+                } else {
+                    return Err(AssetError::UnresolvedPath {
+                        raw: raw.to_string(),
+                        reason: "相对路径需要先打开文档".to_string(),
+                    });
+                }
+            }
         };
 
         let mime = mime_from_extension(&path)
@@ -260,6 +289,35 @@ impl AssetLoader {
             mime,
             alt: alt_of(raw),
         })
+    }
+
+    /// 把相对引用解析进 `base` 目录内，越界（`../` 逃出 base）即返回 `None`。
+    ///
+    /// 仅做**文本分量**归一（不解析符号链接），足以拦住 `../` 与绝对路径这两类
+    /// 把读取范围扩大到文档目录之外的攻击面（F-02）。符号链接指向目录外这类
+    /// 更深的问题不在本次范围。
+    fn resolve_within_base(base: &Path, rel: &Path) -> Option<PathBuf> {
+        let mut out = base.to_path_buf();
+        let mut depth: usize = 0;
+        for comp in rel.components() {
+            match comp {
+                // 绝对路径 / 带盘符前缀：调用方 `is_absolute()` 已拒过，这里再兜一层。
+                Component::Prefix(_) | Component::RootDir => return None,
+                Component::CurDir => {}
+                Component::ParentDir => {
+                    if depth == 0 {
+                        return None; // 试图逃出 base
+                    }
+                    depth -= 1;
+                    out.pop();
+                }
+                Component::Normal(c) => {
+                    out.push(c);
+                    depth += 1;
+                }
+            }
+        }
+        Some(out)
     }
 
     /// 下载远程图片（http / https 同一条通路）。

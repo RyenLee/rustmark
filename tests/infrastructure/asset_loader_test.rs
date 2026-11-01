@@ -58,17 +58,58 @@ fn local_file_with_subdirectory_is_loaded() {
     assert_eq!(asset.bytes, TINY_PNG);
 }
 
+/// **安全收紧（F-02）**：在有文档上下文（`base_dir = Some`）时，绝对路径不再被
+/// 加载——本地图片必须相对当前文档引用，避免把「打开文档」变成「任意图像文件读取」。
+/// 无文档上下文（未保存文档 / 用户刚用对话框选图）的绝对路径仍属受信用户操作，
+/// 由 `absolute_path_without_base_dir_is_allowed_for_trusted_pick` 单独钉住。
 #[test]
-fn absolute_path_is_loaded_without_base_dir() {
+fn absolute_path_is_rejected_for_security() {
     let dir = TempDir::new("abs");
+    let file = dir.join("c.png");
+    std::fs::write(&file, TINY_PNG).expect("应能写入");
+
+    let raw = file.to_string_lossy().replace('\\', "/");
+    let error = AssetLoader::new()
+        .load(&raw, Some(dir.path()))
+        .expect_err("文档上下文内的绝对路径应被拒（F-02）");
+    assert!(
+        matches!(error, AssetError::UnresolvedPath { .. }),
+        "绝对路径应被拒，实际：{error:?}"
+    );
+}
+
+/// **契约（F-02 的补足）**：无文档上下文（`base_dir = None`，对应未保存文档或用户
+/// 刚用对话框选图）时，绝对路径是受信的用户操作，必须能直接读取——这条是
+/// `preview_image_fetcher` 与「未命名文档插绝对路径」契约的底层依赖，不能被安全收紧误伤。
+#[test]
+fn absolute_path_without_base_dir_is_allowed_for_trusted_pick() {
+    let dir = TempDir::new("abs_trusted");
     let file = dir.join("c.png");
     std::fs::write(&file, TINY_PNG).expect("应能写入");
 
     let raw = file.to_string_lossy().replace('\\', "/");
     let asset = AssetLoader::new()
         .load(&raw, None)
-        .expect("绝对路径不需要基准目录");
-    assert_eq!(asset.mime, "image/png");
+        .expect("无文档上下文的绝对路径（受信选图）应可加载");
+    assert_eq!(asset.bytes, TINY_PNG);
+}
+
+/// **安全（F-02）**：`../` 越过文档目录的引用必须被拒。
+#[test]
+fn parent_dir_escape_is_rejected() {
+    let dir = TempDir::new("escape");
+    std::fs::write(dir.join("outside.png"), TINY_PNG).expect("应能写入");
+    // 文档位于子目录 sub/，引用 ../outside.png 试图逃出文档目录。
+    let sub = dir.join("sub");
+    std::fs::create_dir_all(&sub).expect("应能建目录");
+
+    let error = AssetLoader::new()
+        .load("../outside.png", Some(&sub))
+        .expect_err("../ 越界必须被拒（F-02）");
+    assert!(
+        matches!(error, AssetError::UnresolvedPath { .. }),
+        "越界路径应被拒，实际：{error:?}"
+    );
 }
 
 /// 相对路径 + 无基准文档 → 必须给出**明确**错误，而不是静默失败。
@@ -384,15 +425,14 @@ fn limits_are_tiered_by_source() {
 #[test]
 fn oversized_local_file_is_rejected_before_read() {
     let dir = TempDir::new("local-limit");
-    let path = dir.join("big.png");
-    std::fs::write(&path, [0u8; 32]).expect("应能写测试文件");
+    std::fs::write(dir.join("big.png"), [0u8; 32]).expect("应能写测试文件");
     let loader = AssetLoader::with_limits(AssetLimits {
         max_local_bytes: 16,
         ..AssetLimits::default()
     });
 
     let error = loader
-        .load(path.to_str().expect("路径应可转字符串"), None)
+        .load("big.png", Some(dir.path()))
         .expect_err("超过本地上限应拒绝");
     match error {
         AssetError::TooLarge { actual, limit } => {

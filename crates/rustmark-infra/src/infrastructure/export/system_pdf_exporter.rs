@@ -215,6 +215,13 @@ impl Exporter for SystemPdfExporter {
         atomic_write(disk_path, html.as_bytes())
             .map_err(|e| ExportError::io_unavailable(format!("写入打印用 HTML 失败：{e}")))?;
 
+        // F-01：临时 `*.print.html` 含文档正文 HTML，此前导出后从未删除，会随
+        // 云同步 / 共享目录泄露明文（违反 PRIVACY.md §3）。这里用 RAII 守卫在
+        // 函数返回（含 `?` 提前返回）时删除；系统管线已在此前消费过该文件
+        // （Windows 无头内核同步读取、macOS/Linux 的 `lp` 在返回前已提交内容）。
+        // `panic = "abort"` 下的异常终止由进程退出兜底，不在守卫职责内。
+        let _temp_guard = TempPrintSourceGuard { path: disk_path };
+
         // 调用系统管线；具体用哪个命令由注入的 dispatcher 按平台决定。
         let outcome = self
             .dispatcher
@@ -240,4 +247,19 @@ impl Exporter for SystemPdfExporter {
 #[cfg(not(target_os = "windows"))]
 fn backend_hint_is_stat_only() -> bool {
     PATH_PROBE.exists("lpstat") && !PATH_PROBE.exists("lp")
+}
+
+/// 临时打印源 HTML 的 RAII 守卫（F-01 修复）。
+///
+/// 析构时尝试删除落盘的 `*.print.html`：导出成功与失败路径都会触发，
+/// 确保文档正文 HTML 不会残留在用户选定的输出目录（避免云同步 / 共享盘泄露明文）。
+/// 文件不存在（尚未写出或已被消费链路删除）时静默忽略。
+struct TempPrintSourceGuard<'a> {
+    path: &'a Path,
+}
+
+impl Drop for TempPrintSourceGuard<'_> {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(self.path);
+    }
 }

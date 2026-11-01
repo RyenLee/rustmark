@@ -54,6 +54,11 @@ fn build_agent(timeout: Duration) -> ureq::Agent {
                     .build(),
             )
             .timeout_global(Some(timeout))
+            // F-03：禁止跟随重定向。默认（10 次）会盲跟随 3xx 到内网 /
+            // 回环 / 链路本地地址，构成 SSRF（不受信文档里的图片地址可借此
+            // 探测内网）。设为 0 即不跟随、且不报 `TooManyRedirects` 错误，
+            // 把重定向目标当作普通响应由上层 MIME / 体积门槛正常处理。
+            .max_redirects(0)
             .build(),
     )
 }

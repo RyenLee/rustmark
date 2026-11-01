@@ -333,3 +333,40 @@ fn deep_nesting_does_not_shrink_to_nothing() {
         "最深层角标不应小于下限：{min_size}"
     );
 }
+
+/// F-04：深嵌套公式（五千层 `x^{x^{…}}`）此前会让解析器一直递归直至栈溢出，
+/// `panic = "abort"` 下直接终止进程。预算守卫应把它转成 `Err`，
+/// 由渲染层回退到源码卡，而不是崩溃。
+#[test]
+fn extremely_deep_nesting_is_rejected_not_panicked() {
+    let mut src = String::from("x");
+    // 每一层都写成 `^{x` / `^{y`：每个 `^` 前面都有底数，公式合法；
+    // 否则内层组以 `^` 开头、无底数会被语法错误提前拒绝，深度预算形同虚设。
+    for _ in 0..4999 {
+        src.push_str("^{x");
+    }
+    src.push_str("^{y");
+    for _ in 0..5000 {
+        src.push('}');
+    }
+    assert!(
+        layout(&src, 16.0, false, &fake_measure()).is_err(),
+        "深嵌套公式必须报错而非崩溃：{src}"
+    );
+}
+
+/// 与 F-04 配套的回归：适度嵌套（百层）仍是合法公式，不应被预算误伤。
+#[test]
+fn moderate_nesting_still_renders() {
+    let mut src = String::from("x");
+    // 同样用合法链：`x` + (`^{x`)×99 + `^{y` + `}`×100，共百层且每层有底数。
+    for _ in 0..99 {
+        src.push_str("^{x");
+    }
+    src.push_str("^{y");
+    for _ in 0..100 {
+        src.push('}');
+    }
+    let l = lay(&src, false);
+    assert!(l.width > 0.0, "百层嵌套仍应能排版：{} 层", 100);
+}

@@ -7,7 +7,28 @@ impl Parser {
     ///
     /// `stop` 为 `Some("right")` 时，`\right` 不被消费——留给 [`Self::parse_delim`]
     /// 读取它后面的定界符。返回时 `self.pos` 指向 `\right` 的 `\`。
+    ///
+    /// # 递归预算（F-04）
+    ///
+    /// 深嵌套公式会让下降解析器一直递归到栈溢出，`panic = "abort"` 下直接终止
+    /// 进程。所有子表达式最终都经由本方法进入，故在入口统一消耗一格预算，
+    /// 超限即报 `MathError::Malformed` 由渲染层回退源码卡。预算归还在
+    /// [`Self::parse_row_inner`] 返回之后执行（无论成功或 `?` 提前返回都执行），
+    /// 故不用守卫结构体——守卫需持有 `&mut self`，会与循环体内的 `&mut self`
+    /// 调用冲突（借用检查器不允许整结构借出与字段级借出并存）。
     pub(super) fn parse_row(&mut self, stop: Option<&str>) -> Result<Vec<Node>, MathError> {
+        if self.depth_remaining == 0 {
+            return Err(MathError::Malformed("数学公式嵌套过深".to_string()));
+        }
+        self.depth_remaining -= 1;
+        let result = self.parse_row_inner(stop);
+        self.depth_remaining += 1;
+        result
+    }
+
+    /// `parse_row` 的实际实现（见其文档）。独立的 `inner` 让 `parse_row` 能在
+    /// 返回前（含 `?` 透传的错误）统一归还递归预算，而不必持有 `&mut self` 的守卫。
+    fn parse_row_inner(&mut self, stop: Option<&str>) -> Result<Vec<Node>, MathError> {
         let mut out: Vec<Node> = Vec::new();
         loop {
             self.skip_spaces();

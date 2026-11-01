@@ -375,22 +375,95 @@ fn pdf_export_writes_print_html_and_dispatches_to_the_target_path() {
     // 交给对话框那条路：产物由用户在对话框里另存，本进程拿不到大小 → 约定返回 0。
     assert_eq!(bytes, 0, "交对话框时不落盘，bytes 约定为 0");
 
-    // 落盘的是**打印用 HTML**（扩展名换成 .print.html），不是 .pdf。
+    // F-01：导出后临时打印 HTML 必须被清理，不得残留在输出目录泄露明文。
     let html = dir.path().join("doc.print.html");
-    assert!(html.exists(), "必须生成打印用 HTML：{}", html.display());
+    assert!(
+        !html.exists(),
+        "导出后必须删除临时打印 HTML（F-01，对齐 PRIVACY.md §3）：{}",
+        html.display()
+    );
     assert!(
         !target.exists(),
         "不得凭空产出一个空的 .pdf——那会让用户以为导出成功了"
     );
-    let text = std::fs::read_to_string(&html).expect("打印用 HTML 应可读");
-    assert!(text.contains("标题"), "打印用 HTML 应含渲染后的正文");
 
     // 打印确实被调起一次，且同时收到「渲染源」与「目标 PDF」两条信息：
     // 无头内核需要目标路径才能直接落盘，只给 HTML 路径就退化成只能弹对话框。
     let calls = dispatcher.printed();
     assert_eq!(calls.len(), 1, "应调起一次系统打印");
-    assert_eq!(calls[0].0, html, "交给打印的必须是打印用 HTML");
+    assert!(
+        calls[0].0.ends_with("doc.print.html"),
+        "交给打印的必须是打印用 HTML：{:?}",
+        calls[0].0
+    );
     assert_eq!(calls[0].1, target, "调度端还要知道 PDF 该写到哪");
+}
+
+/// F-01：临时打印 HTML 在导出成功后必须被删除，且删除前确实写过正文。
+///
+/// 用一个「在 `print` 时读取并暂存 HTML 内容」的假调度，验证两件事：
+/// 1) 导出前确实落盘了一份含正文的 HTML；2) 导出后该文件不复存在。
+#[test]
+fn pdf_export_cleans_up_temp_html_after_success() {
+    let dir = tempfile::tempdir().expect("临时目录");
+    let target = dir.path().join("clean.pdf");
+    let path = FilePath::new(target.to_string_lossy().replace('\\', "/")).expect("路径应合法");
+    let job = ExportJob::new(
+        JobId::new(),
+        DocumentId::new(),
+        path,
+        ExportFormat::Pdf,
+        ExportOptions::default_options(),
+    );
+
+    let captured = Arc::new(Mutex::new(String::new()));
+    let dispatcher = Arc::new(CapturingDispatcher {
+        captured: captured.clone(),
+        outcome: Ok(PrintOutcome::Wrote(123)),
+    });
+    let exporter = SystemPdfExporter::with_probe_and_dispatcher(
+        Arc::new(FakeProbe::with(&["powershell", "pwsh", "lp", "lpstat"])),
+        dispatcher,
+    );
+
+    let bytes = exporter
+        .export("# 标题\n\n正文\n", &job)
+        .expect("导出应成功");
+    assert_eq!(bytes, 123, "应回报调度回报的字节数");
+
+    // 删除前：HTML 里含渲染后的正文（校验确实写过）。
+    let html = dir.path().join("clean.print.html");
+    let content = captured.lock().expect("捕获锁").clone();
+    assert!(
+        content.contains("标题"),
+        "导出应落盘含正文的 HTML：{content}"
+    );
+    // 删除后：文件不复存在（F-01 核心）。
+    assert!(
+        !html.exists(),
+        "导出后临时 HTML 必须被删除：{}",
+        html.display()
+    );
+}
+
+/// 在 `print` 时读取并暂存打印源 HTML 的假调度（F-01 测试用）。
+struct CapturingDispatcher {
+    captured: Arc<Mutex<String>>,
+    outcome: Result<PrintOutcome, String>,
+}
+
+impl PrintDispatcher for CapturingDispatcher {
+    fn print(
+        &self,
+        html_path: &std::path::Path,
+        _pdf_path: &std::path::Path,
+    ) -> Result<PrintOutcome, String> {
+        // 此刻临时 HTML 仍在磁盘上（删除发生在 `export` 返回时），可读取校验。
+        if let Ok(text) = std::fs::read_to_string(html_path) {
+            *self.captured.lock().expect("捕获锁") = text;
+        }
+        self.outcome.clone()
+    }
 }
 
 /// 无头内核直接落盘时，必须回报**真实字节数**而不是 0。
