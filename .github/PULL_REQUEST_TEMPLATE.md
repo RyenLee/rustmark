@@ -30,7 +30,7 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings →
 cargo test --workspace --all-targets --no-fail-fast            →  passed / failed / ignored
 cargo test --workspace --doc                                   →
 python tools/check_thresholds.py                               →
-bash scripts/size_gate.sh                                      →  B（红线 11 MiB）
+bash scripts/size_gate.sh                                      →  B（红线 Linux 13.5 MiB / 其余 11 MiB）
 ```
 
 - [ ] 涉及**守卫规则**的改动已做变异验证（把规则改坏 → 用例当场变红）

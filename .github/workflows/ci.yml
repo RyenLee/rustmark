@@ -41,9 +41,9 @@ on:
   workflow_dispatch:
     inputs:
       size_limit_bytes:
-        description: "体积红线（字节）；默认 11534336 = 11 MiB"
+        description: "体积红线（字节）；留空则用 scripts/size_gate.sh 的平台默认值（Linux 13.5 MiB，Windows/macOS 11 MiB）"
         required: false
-        default: "11534336"
+        default: ""
 
 # 最小权限：CI 只读代码。需要写权限的 job（release）单独声明。
 permissions:
@@ -53,13 +53,16 @@ env:
   CARGO_TERM_COLOR: always
   # 断言失败时打印回溯，省掉「复现一次只为拿 backtrace」的往返。
   RUST_BACKTRACE: "1"
-  # 体积门禁（S8-07 ① / NFR-PERF-01）：红线 11 MiB、预警线 10.5 MiB，单一真源是
-  # `scripts/size_gate.sh` 的默认值（L26-27）与 docs/spec/metrics.md §2.8。
-  # 本处只覆盖红线：为让 workflow_dispatch 的 size_limit_bytes 能临时调低、验证门禁
-  # 确实会红（S8-07）；未填时脚本用自身默认值。
-  # 预警线不再复制一份——两份字面量若漂移，check_thresholds 是逐条独立比对各源的，
+  # 体积门禁（S8-07 ① / NFR-PERF-01）：红/预警线按平台分档，单一真源是
+  # `scripts/size_gate.sh` 的默认值（Linux 13.5 / 13.0 MiB，Windows·macOS 11 / 10.5 MiB），
+  # 依据见 docs/spec/metrics.md §2.9。
+  # 此处**不再写死 11 MiB**：Linux 独有 x11 + wayland + Vulkan 后端栈，产物比 Windows
+  # 大 2 MiB 量级（首次实测 12.752 MiB），写死会让 Linux job 永久假红。
+  # 本项只做转发：为让 workflow_dispatch 的 size_limit_bytes 临时调低、验证门禁确实
+  # 会红（S8-07）；留空时为空串，脚本 `${SIZE_LIMIT_BYTES:-…}` 的兜底生效。
+  # 预警线同样不在此复制——两份字面量漂移时 check_thresholds 是逐条独立比对各源的，
   # 发现不了副本之间的不一致。
-  SIZE_LIMIT_BYTES: ${{ github.event.inputs.size_limit_bytes || '11534336' }}
+  SIZE_LIMIT_BYTES: ${{ github.event.inputs.size_limit_bytes }}
   # cargo 命令行工具（cargo-deny / cargo-llvm-cov / cargo-bloat）统一装到
   # 这个根目录，便于缓存；不能装进 ~/.cargo/bin——那里放着 rustup 的
   # cargo/rustc 代理，缓存回写会覆盖它们。

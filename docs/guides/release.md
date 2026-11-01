@@ -50,6 +50,8 @@ push tag 即触发 `.github/workflows/release.yml`：
    CI 侧对 **release 二进制**的体积判定另有 `scripts/size_gate.sh`——
    从 workflow 里抽出来的目的就是「CI 与本地同一份规则」，
    可 `SIZE_LIMIT_BYTES=5242880 bash scripts/size_gate.sh` 验证门禁真会红；
+   红/预警线按平台分档（Linux 13.5 / 13.0 MiB，Windows·macOS 11 / 10.5 MiB，
+   见 `docs/spec/metrics.md` §2.9），不设环境变量时由脚本按 `uname -s` 取默认值；
 3. **汇总**：聚合 SHA256 为 `SHA256SUMS`，按 commit 的 `[S{阶段}-{编号}]`
    自动归组生成 Release Notes——逻辑在 `tools/gen_release_notes.py`
    （不再是内联 heredoc，便于离线演练与复用）；

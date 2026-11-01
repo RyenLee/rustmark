@@ -66,28 +66,36 @@ modules:
         purpose: "许可证文本识别的置信度下限。低于阈值的依赖无法自动判定许可，需手写 [[licenses.clarify]]，否则 licenses 检查失败。"
         recommended: "0.90-0.95"
         configurable: "配置文件 deny.toml"
-      artifact_size_limit_ci:
-        value: 11534336
+      artifact_size_limit_linux:
+        value: 14155776
         unit: "bytes"
-        source: ".github/workflows/ci.yml:62"
-        anchor: "SIZE_LIMIT_BYTES"
-        purpose: "CI 体积红线（11 MiB），由 size_gate.sh 读取；越线 exit 1 使 check job 失败。按基线 10,487,296 B 尚有约 1.0 MiB 余量。"
-        recommended: "11534336（须与 NFR-PERF-01 单一真源一致）"
-        configurable: "环境变量 SIZE_LIMIT_BYTES（CI env）"
-      artifact_size_limit_local:
-        value: 11534336
-        unit: "bytes"
-        source: "scripts/size_gate.sh:26"
-        anchor: "LIMIT=\"${SIZE_LIMIT_BYTES:-11534336}\""
-        purpose: "本地与 CI 共用的体积红线默认值（11 MiB）；CI 经环境变量覆盖，故实际生效值取决于 CI。越线 exit 1。"
-        recommended: "11534336"
+        source: "scripts/size_gate.sh:41"
+        anchor: "DEFAULT_LIMIT=14155776"
+        purpose: "Linux 体积红线默认值（13.5 MiB）：Linux 独有 x11 + wayland + Vulkan 后端栈，首次 CI 实测 13,371,056 B = 12.752 MiB，按平台分档后留约 0.75 MiB 可行动窗口。越线 exit 1 使 check job 失败。"
+        recommended: "14155776（NFR-PERF-01 的 Linux 分档，见 metrics §2.9）"
         configurable: "环境变量 SIZE_LIMIT_BYTES（默认值）"
-      artifact_size_warn_local:
+      artifact_size_warn_linux:
+        value: 13631488
+        unit: "bytes"
+        source: "scripts/size_gate.sh:42"
+        anchor: "DEFAULT_WARN=13631488"
+        purpose: "Linux 体积预警线默认值（13.0 MiB，比红线低 0.5 MiB）；越线仅告警并打印距红线余量。"
+        recommended: "13631488（13.0 MiB）"
+        configurable: "环境变量 SIZE_WARN_BYTES（默认值）"
+      artifact_size_limit_other:
+        value: 11534336
+        unit: "bytes"
+        source: "scripts/size_gate.sh:45"
+        anchor: "DEFAULT_LIMIT=11534336"
+        purpose: "Windows / macOS 体积红线默认值（11 MiB），沿用 metrics §2.8 的 Windows 基线口径；越线 exit 1。"
+        recommended: "11534336（与 NFR-PERF-01 的 Windows/macOS 分档一致）"
+        configurable: "环境变量 SIZE_LIMIT_BYTES（默认值）"
+      artifact_size_warn_other:
         value: 11010048
         unit: "bytes"
-        source: "scripts/size_gate.sh:27"
-        anchor: "WARN=\"${SIZE_WARN_BYTES:-11010048}\""
-        purpose: "体积预警线默认值（10.5 MiB）；越线仅告警并打印距红线余量。"
+        source: "scripts/size_gate.sh:46"
+        anchor: "DEFAULT_WARN=11010048"
+        purpose: "Windows / macOS 体积预警线默认值（10.5 MiB）；越线仅告警并打印距红线余量。"
         recommended: "11010048（10.5 MiB）"
         configurable: "环境变量 SIZE_WARN_BYTES（默认值）"
       package_size_limit_linux:
@@ -117,7 +125,7 @@ modules:
       ci_timeout_check:
         value: 45
         unit: "minutes"
-        source: ".github/workflows/ci.yml:80"
+        source: ".github/workflows/ci.yml:83"
         anchor: "timeout-minutes: 45"
         purpose: "check job（三平台编译 + 全量测试）超时上限；超时即取消并判定失败。"
         recommended: "30-60"
@@ -125,7 +133,7 @@ modules:
       ci_timeout_perf:
         value: 30
         unit: "minutes"
-        source: ".github/workflows/ci.yml:279"
+        source: ".github/workflows/ci.yml:282"
         anchor: "timeout-minutes: 30"
         purpose: "perf job（release 性能冒烟）超时上限；超时即失败。"
         recommended: "40（整帧 smoke）；NFR 另测服务层 ≤10ms"
@@ -133,7 +141,7 @@ modules:
       ci_timeout_coverage:
         value: 30
         unit: "minutes"
-        source: ".github/workflows/ci.yml:331"
+        source: ".github/workflows/ci.yml:334"
         anchor: "timeout-minutes: 30"
         purpose: "coverage job（llvm-cov 全量插桩）超时上限；超时即无 lcov.info，门禁失败。"
         recommended: "30-45"
@@ -141,7 +149,7 @@ modules:
       ci_timeout_release_dryrun:
         value: 10
         unit: "minutes"
-        source: ".github/workflows/ci.yml:400"
+        source: ".github/workflows/ci.yml:403"
         anchor: "timeout-minutes: 10"
         purpose: "release-dryrun job 超时上限；离线演练为纯 Python，超时即流程异常。"
         recommended: "5-15"
@@ -149,7 +157,7 @@ modules:
       ci_timeout_deny:
         value: 20
         unit: "minutes"
-        source: ".github/workflows/ci.yml:421"
+        source: ".github/workflows/ci.yml:424"
         anchor: "timeout-minutes: 20"
         purpose: "deny job（依赖许可 / 安全公告）超时上限；超时即门禁未判定。"
         recommended: "10-20"

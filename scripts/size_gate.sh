@@ -5,13 +5,24 @@
 # 不会「CI 上的规则和我在本机看的不一样」。
 #
 # 用法（仓库根执行）：
-#   bash scripts/size_gate.sh                     # 用默认红线 11 MiB
+#   bash scripts/size_gate.sh                     # 用当前平台的默认红/预警线
 #   SIZE_LIMIT_BYTES=5242880 bash scripts/size_gate.sh   # 调低阈值验证门禁会红
 #
 # 环境变量：
-#   SIZE_LIMIT_BYTES  红线（字节，二进制口径），默认 11534336（11 MiB）
-#   SIZE_WARN_BYTES   预警线（字节），默认 11010048（10.5 MiB）
+#   SIZE_LIMIT_BYTES  红线（字节，二进制口径）；未设时按平台取默认值
+#   SIZE_WARN_BYTES   预警线（字节）；未设时按平台取默认值
 #   SIZE_GATE_SKIP_BUILD  设为 1 时跳过自动构建（默认会先 cargo build --release 以保证产物新鲜）
+#
+# 平台分档（2026-11-01）：Linux 独有 `x11` + `wayland` + Vulkan 后端栈，二进制比
+#   Windows/macOS 大一个量级（首次 CI 实测 13,371,056 B = 12.752 MiB）。原 11 MiB
+#   红线是按 Windows 数据定的（metrics §2.8 的基线全部是 x86_64-pc-windows-msvc），
+#   Linux 从未复测（§2.7 备注）。经维护者裁定按平台分档：
+#     Linux                 13.5 MiB 红线 / 13.0 MiB 预警（实测 + 约 0.75 MiB 窗口）
+#     Windows / macOS       11 MiB 红线 / 10.5 MiB 预警（不变）
+#   未设环境变量时由 `uname -s` 决定；CI 不再把 11 MiB 写进全局 env，否则 Linux 会
+#   被无条件按 Windows 口径判红（workflow_dispatch 的 size_limit_bytes 留空即走默认）。
+#   注意：这是**二进制口径**；安装包口径（tar.gz / AppImage / dmg / zip）的红线
+#   另见 threshold 基线 `package_size_limit_*`，不受本分档影响。
 #
 # 历史：2026-10-25 由 10 MiB / 8 MiB 上调——V11-62 批次 2（state 6,682 行迁入
 #   `rustmark-ui`）致 +2,560 B，旧 10 MiB 红线余量（512 B）耗尽越线；经维护者决策，
@@ -23,8 +34,21 @@
 
 set -u
 
-LIMIT="${SIZE_LIMIT_BYTES:-11534336}"
-WARN="${SIZE_WARN_BYTES:-11010048}"
+# 平台默认值（Linux 分支的数值即 NFR-PERF-01 的 Linux 分档，改动须同步
+# docs/spec/metrics.md §2.9 与 docs/spec/thresholds.baseline.yaml）。
+case "$(uname -s)" in
+  Linux)
+    DEFAULT_LIMIT=14155776
+    DEFAULT_WARN=13631488
+    ;;
+  *)
+    DEFAULT_LIMIT=11534336
+    DEFAULT_WARN=11010048
+    ;;
+esac
+
+LIMIT="${SIZE_LIMIT_BYTES:-$DEFAULT_LIMIT}"
+WARN="${SIZE_WARN_BYTES:-$DEFAULT_WARN}"
 
 # ---------------------------------------------------------------------------
 # 先构建，再测量（2026-10-27 修复）
