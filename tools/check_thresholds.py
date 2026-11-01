@@ -10,6 +10,9 @@
   只解析本仓库生成器产出的固定子集（modules → thresholds → 字段）。
 - **锚点定位**：每条带 `anchor`（源码行里必须出现的片段）。行号漂移可被发现，
   `--fix` 只回写行号，不改值——值的变化必须是有意修改。
+  锚点命中多处（如两个 `timeout-minutes: 30`）时 `--fix` 拒绝回写并报错，
+  列出候选行交人工裁定：就近猜测会把锚点写到别的 job 上，且两处数值相同时
+  门禁仍绿，属静默漏检。
 - **别名解析**：消费「单一真源」的条目（如 `PREVIEW_DEBOUNCE_MS` 引用
   `shared::constants::DEBOUNCE_MS`）用 `via` 指向定义文件，数值在定义处校验。
 
@@ -162,7 +165,7 @@ def split_source(source: str):
     return path, int(line)
 
 
-def check(root: Path, entries, strict_lines: bool):
+def check(root: Path, entries, strict_lines: bool, allow_fix: bool = False):
     errors: list[str] = []
     drifts: list[tuple[str, int, int]] = []
     fixed_candidates: dict[str, int] = {}
@@ -192,11 +195,19 @@ def check(root: Path, entries, strict_lines: bool):
         if anchor not in lines[index]:
             hits = find_anchor(lines, anchor)
             if len(hits) > 1:
-                # 同值多处（如两个 30 分钟超时）：按记录行号就近消歧，
-                # 距离超过 40 行说明基线已经不可信，直接报错。
+                # 同值多处（如两个 `timeout-minutes: 30`）：就近消歧只够用来告警。
+                # `--fix` 绝不据此回写——2026-10-31 实测：ci_timeout_coverage 被写到
+                # perf job 的 30 分钟行，因两处数值相同，门禁照常绿，改 coverage 超时时
+                # 反而静默放过。歧义交人工裁定，宁可报错也不写错锚点。
+                where = ", ".join(str(i + 1) for i in hits[:5])
+                if allow_fix:
+                    errors.append(
+                        f"{key}: 锚点不唯一（{rel}: {where}），--fix 拒绝回写；"
+                        "请确认目标行后人工改 source 行号"
+                    )
+                    continue
                 chosen = min(hits, key=lambda i: abs(i - index))
                 if abs(chosen - index) > 40:
-                    where = ", ".join(str(i + 1) for i in hits[:5])
                     errors.append(f"{key}: 锚点不唯一且距记录行过远（{rel}: {where}）")
                     continue
                 hits = [chosen]
@@ -308,7 +319,9 @@ def main() -> int:
         print(f"ERROR: 条目数异常（{len(entries)}），疑似解析失败")
         return 1
 
-    errors, checked, skipped, fixes = check(root, entries, args.strict_lines)
+    errors, checked, skipped, fixes = check(
+        root, entries, args.strict_lines, allow_fix=args.fix
+    )
 
     if args.fix and fixes:
         changed = rewrite_sources(yaml_path, fixes)
