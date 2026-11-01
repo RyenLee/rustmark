@@ -106,3 +106,101 @@ python tools/coverage_gate.py lcov.info            # 整体 ≥70%，领域 ≥9
 `.github/workflows/ci.yml` 的 `coverage` job：装 llvm-cov → 跑报告 →
 `coverage_gate.py` 判定 → 摘要写 `$GITHUB_STEP_SUMMARY`。
 人为删若干领域测试可验证门禁**确实会红**（S9-02 验收，见状态段演练记录）。
+
+---
+
+## 3. 平台专属用例（unix-only）
+
+`#[cfg(unix)]` 的用例在 Windows 上**根本不进编译**——不是被跳过，是那几行代码
+压根不存在，`--include-ignored` 也选不中它们。本仓库开发机是 Windows，所以
+「这 5 条到底能不能过」在本地拿不到任何证据，证据只能来自 CI 的 macOS / Linux
+runner。本节把这根证据链固定下来：**哪 5 条、怎么挂进 lib、CI 哪一行跑、本机怎么按需复跑。**
+
+### 3.1 清单
+
+| 文件:行 | 用例 | 为何 `#[cfg(unix)]` |
+|---|---|---|
+| `crates/rustmark-infra/src/infrastructure/persistence/fs_document_repository/tests.rs:201` | `sync_parent_dir_survives_missing_directory` | 被测的 `sync_parent_dir` 只在 unix 有实体（`fs_document_repository.rs:249`），非 unix 是空实现（`:263`）——「目录打不开 → 走 `log::warn!`」这条分支在 Windows 上不存在 |
+| 同上 `:215` | `sync_parent_dir_on_real_directory_is_quiet` | 同上。目录 fsync 是 POSIX 语义（`File::open(dir)` + `sync_all`）；Windows 的持久性是 `MoveFileEx`，没有可对应的调用 |
+| `.../asset_loader/tests.rs:163` | `symlink_escaping_base_is_rejected` | 需要 `std::os::unix::fs::symlink`。Windows 建符号链接要管理员或开发者模式，在 CI 上不可靠 |
+| 同上 `:184` | `symlinked_directory_escaping_base_is_rejected` | 同上（目录符号链接越界） |
+| 同上 `:206` | `symlink_staying_inside_base_is_allowed` | 同上，反向用例：指向 base **内部**的链接不得误伤 |
+
+> 五条都**没有** `#[ignore]`：它们是「这条平台上不适用」，不是「暂时不跑」。
+> 别把两者混为一谈——`#[ignore]` 的用例在任何平台都不会给信号，`#[cfg(unix)]`
+> 的用例在 unix 上是**必须绿**的正常回归项。
+
+### 3.2 它们怎么进 lib 单测（以及一个容易误判的点）
+
+两个 `tests.rs` 都以 `#[cfg(test)] mod tests;` 挂在父模块尾部
+（`fs_document_repository.rs:503`、`asset_loader.rs:538`），父模块 `persistence.rs`
+的 `pub mod asset_loader;` / `pub mod fs_document_repository;` 没有 feature 门控。
+因此它们就是 `rustmark-infra` 的**lib 单测**，不是某个被关掉的路径下的孤儿。
+
+**与 `remote-images` feature 无关**——这点值得写下来，因为 `asset_loader` 确实有
+一大批 feature 门控用例（文件后半段「#7 远程路径的行为级用例」那批）。
+3 条 symlink 用例调用的 `AssetLoader::ensure_within_base_real`
+（`asset_loader.rs:376`）上**没有** `#[cfg(feature = …)]`：它只做本地路径
+canonicalize 比对，不发网络请求。所以无论 feature 开还是关，这 3 条都已编译、
+都会执行。
+
+**另一点容易搞反**：`sync_parent_dir` 是「unix 实体 + 非 unix 空实现」的双定义，
+所以那 2 条**在 Windows 上编译得过**——加 `#[cfg(unix)]` 的理由是**语义**
+（空实现里没有 warn 分支可测），不是编译错误。这意味着「忘了门控」的后果是
+「静默测了个空函数」，比编译失败更隐蔽。
+
+### 3.3 覆盖它们的 CI
+
+`check` job（`.github/workflows/ci.yml:73`）跑三平台矩阵（`:83`）：
+
+```yaml
+os: [windows-latest, macos-latest, ubuntu-24.04]
+```
+
+- **`macos-latest` 与 `ubuntu-24.04` 两行是 unix**，这 5 条在此编译并执行；
+- `windows-latest` 那行 `cfg(unix)` 为假，5 条不进编译——该行的测试总数天然少于
+  另两行，这是**预期差异**，不是漏跑。
+
+执行步骤是 `cargo test (all targets)`（`:197`），命令原文（`:201`）：
+
+```bash
+cargo test --workspace --all-targets --no-fail-fast
+```
+
+三个 flag 各自不可省，理由与本文件 §1「运行约定」同源：
+
+- `--workspace`：显式覆盖全部成员。§1「运行约定」记的那次事故（不带它时
+  `rustmark-core` 的测试静默缺席，D-3 阶段 4a，2026-10-23）现已由 `default-members`
+  列全 + `tests/workspace_topology_test.rs` 的
+  `default_members_cover_every_workspace_member` 断言关闭；CI 仍显式写
+  `--workspace`，是不让「测试会不会跑」继续依赖另一处配置的正确性。
+- `--all-targets`：含 `--lib`，cargo 会为 `rustmark-infra` 的 lib 目标另起一个
+  测试 harness（输出行形如 `Running unittests src/lib.rs`）——这 5 条就在那个
+  harness 里。只跑 `--test <层名>` 不会碰到它们。
+- `--no-fail-fast`：一个目标红也跑完其余，一次拿到全部失败面。
+
+**核验结论（2026-11-01 只读核对 `a3994d4`）：覆盖成立，无缺口。** 三条判据：
+① 5 条均无 `#[ignore]`；② 所在模块与其依赖函数均无 feature 门控（见 §3.2）；
+③ `--all-targets` 的 `--lib` 覆盖 infra 的 lib 单测目标（本地 Windows 实测该
+目标 `98 passed`，输出里能看到 `Running unittests src/lib.rs (…rustmark_infra…)`）。
+顺手记一个事实：infra 里另有 `#[cfg(target_os = "windows")]` 的导出用例，
+所以 unix 与 Windows 两侧的用例**数目不能拿来做对拍。**
+
+### 3.4 本地怎么按需复跑
+
+Windows 开发机上**做不到**——`#[cfg(unix)]` 不进编译，本机 WSL 被安全策略禁用、
+无 Docker（同 `troubleshooting.md` §6 的说明）。能做的只有：
+
+```bash
+# 在 Linux / macOS 上按名字取这 5 条
+cargo test -p rustmark-infra sync_parent_dir
+cargo test -p rustmark-infra symlink_
+
+# 或整个 lib 目标（含上述 5 条与其余 infra 单测）
+cargo test -p rustmark-infra --lib
+```
+
+**改了这 5 条附近的生产代码时**：本地红灯**不会**提醒你。`sync_parent_dir` 在
+Windows 走空实现，符号链接形态也不会被构造。此时判断依据只有两条：CI 的
+macos / ubuntu 两行，或在一台 unix 机器上跑上面两条命令。反过来说，如果你在
+本地看到这 5 条中的某条红了，那说明你在 unix 上——这不是环境异常。
