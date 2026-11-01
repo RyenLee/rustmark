@@ -82,7 +82,7 @@ mod arch_check {
 /// - **删除条目** = 字段已收紧 / 已删：编译器保证外部没有读点，清单
 ///   同步移除，双向断言会把忘了删的情况报红。
 const APPROVED_PUB_FIELDS: &[&str] = &[
-    // total: 594
+    // total: 610
     // R-10 项 B（2026-10-28）：DI 边界 `application/composition.rs` 新增 26 条——
     // `AppServices` 13 条（core 装配产物，组合根逐字段映射成 `Services`，
     // 外部读点即 `src/app/bootstrap.rs::assemble_with_bundle`）+
@@ -706,6 +706,27 @@ const APPROVED_PUB_FIELDS: &[&str] = &[
     "ui/presentation/state/symbol_ui_state/catalog.rs::SymbolItem::text",
     "ui/presentation/state/workspace_entries.rs::WorkspaceEntries::items",
     "ui/presentation/state/workspace_entries.rs::WorkspaceEntries::root",
+    // M2（2026-10-29，本轮 P2 收口补登记）：组合根下沉 crate `rustmark-assembly`
+    // 新增 16 条——`Services` 14 条（装配产物，`frame/` 侧与 `tests/` 经 root 的
+    // `pub use rustmark_assembly::bootstrap::*` 读点即证据）+ `ConfigPaths` 2 条
+    // （root/tests 构造后读写 `preferences` / `recent` 路径）。该 crate 此前未纳入
+    // 扫描根，16 个 pub 字段静默漏守；本轮既补根（见 `scanned_roots`）也补登记。
+    "assembly/bootstrap.rs::ConfigPaths::preferences",
+    "assembly/bootstrap.rs::ConfigPaths::recent",
+    "assembly/bootstrap.rs::Services::assets",
+    "assembly/bootstrap.rs::Services::auto_save_tracker",
+    "assembly/bootstrap.rs::Services::dialogs",
+    "assembly/bootstrap.rs::Services::documents",
+    "assembly/bootstrap.rs::Services::drafts_dir",
+    "assembly/bootstrap.rs::Services::export",
+    "assembly/bootstrap.rs::Services::images",
+    "assembly/bootstrap.rs::Services::markdown",
+    "assembly/bootstrap.rs::Services::opener",
+    "assembly/bootstrap.rs::Services::preferences",
+    "assembly/bootstrap.rs::Services::registry",
+    "assembly/bootstrap.rs::Services::render_cache",
+    "assembly/bootstrap.rs::Services::workspace",
+    "assembly/bootstrap.rs::Services::workspace_id",
 ];
 
 /// 递归收集 `.rs` 文件。
@@ -857,16 +878,14 @@ fn pub_fields_in(source: &str) -> Vec<String> {
     out
 }
 
-/// 扫描 core 与抽出的叶子 crate 的全部 `.rs`，返回 `<键>::<结构体>::<字段>`
-/// 集合与未能归属到任何结构体体的命中（正常应为空，非空 = 匹配逻辑有洞）。
+/// 扫描根的唯一定义（`scan_pub_fields` 与「crate 覆盖完整性」断言共用）。
 ///
-/// 键前缀见 [`APPROVED_PUB_FIELDS`]：core / shared / infra 为 `""`（历史口径，
-/// 559 条不动；后两者保留 `shared/` `infrastructure/` 子目录，裸相对路径恰好
-/// 复现搬迁前的 core 键），icons / ui / render / ports 为 crate 短名 + `/`
-/// （防 `lib.rs` 同键碰撞；`ports` 为 R-10 项 A 从 `shared/kernel` 抽出的端口 crate）。
-fn scan_pub_fields() -> (BTreeSet<String>, Vec<String>) {
+/// 新增一个**含 `pub` 字段**的 crate 时**必须**在此加一行，否则它的公开字段面
+/// 会静默落在集合相等断言的射程外（评审 §1「新增 crate 忘登记静默漏守」）。
+/// 是否已加由 [`every_crate_is_scanned_or_explicitly_exempt`] 兜底。
+fn scanned_roots() -> [(&'static str, PathBuf); 8] {
     let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let roots: [(&str, PathBuf); 7] = [
+    [
         ("", base.join("crates").join("rustmark-core").join("src")),
         (
             "icons/",
@@ -883,7 +902,30 @@ fn scan_pub_fields() -> (BTreeSet<String>, Vec<String>) {
             "ports/",
             base.join("crates").join("rustmark-ports").join("src"),
         ),
-    ];
+        (
+            "assembly/",
+            base.join("crates").join("rustmark-assembly").join("src"),
+        ),
+    ]
+}
+
+/// 刻意不纳入字段扫描的 crate。
+///
+/// `rustmark-actions` 是零依赖的 `UiAction` 词汇表（枚举），没有「crate 外读取
+/// `pub` 结构体字段」的面；纳入只会让 `roots` 空扫。新增此类 crate 请在此登记
+/// 并写清理由，而不是让它静默缺省。
+const UNGUARDED_CRATES: &[&str] = &["rustmark-actions"];
+
+/// 扫描 core 与抽出的叶子 crate 的全部 `.rs`，返回 `<键>::<结构体>::<字段>`
+/// 集合与未能归属到任何结构体体的命中（正常应为空，非空 = 匹配逻辑有洞）。
+///
+/// 键前缀见 [`APPROVED_PUB_FIELDS`]：core / shared / infra 为 `""`（历史口径，
+/// 559 条不动；后两者保留 `shared/` `infrastructure/` 子目录，裸相对路径恰好
+/// 复现搬迁前的 core 键），icons / ui / render / ports / assembly 为 crate 短名 + `/`
+/// （防 `lib.rs` 同键碰撞；`ports` 为 R-10 项 A 从 `shared/kernel` 抽出的端口 crate；
+/// `assembly` 为 M2 从 root `app/bootstrap.rs` 下沉的组合根装配 crate）。
+fn scan_pub_fields() -> (BTreeSet<String>, Vec<String>) {
+    let roots = scanned_roots();
 
     let mut actual: BTreeSet<String> = BTreeSet::new();
     let mut unattributed = Vec::new();
@@ -913,6 +955,47 @@ fn scan_pub_fields() -> (BTreeSet<String>, Vec<String>) {
         }
     }
     (actual, unattributed)
+}
+
+/// 每个 `crates/*` 成员目录要么在扫描根里，要么在 [`UNGUARDED_CRATES`] 里。
+///
+/// 「新增一个含 `pub` 字段的 crate、却忘了把它加进 [`scanned_roots`]」会让该
+/// crate 的公开字段面**静默漏守**（集合相等断言根本扫不到它）。本用例把这种
+/// 缺口从"静默"变成"红"——评审 §1 第二条建议的落地。
+#[test]
+fn every_crate_is_scanned_or_explicitly_exempt() {
+    let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let scanned: BTreeSet<PathBuf> = scanned_roots()
+        .iter()
+        .map(|(_, root)| root.clone())
+        .collect();
+
+    let mut missing = Vec::new();
+    let entries = std::fs::read_dir(base.join("crates")).expect("crates/ 应可读");
+    for entry in entries.flatten() {
+        let dir = entry.path();
+        if !dir.is_dir() {
+            continue;
+        }
+        let name = dir
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        if UNGUARDED_CRATES.contains(&name.as_str()) {
+            continue;
+        }
+        // 只认带 `src/` 的成员目录（真正参与扫描的是 `src/`，crate 根目录本身不是根）。
+        if !scanned.contains(&dir.join("src")) {
+            missing.push(name);
+        }
+    }
+
+    assert!(
+        missing.is_empty(),
+        "以下 crate 未纳入字段扫描根（新增含 `pub` 字段的 crate 必须同步 \
+         `scanned_roots`；确无跨 crate `pub` 字段面则登记进 `UNGUARDED_CRATES` \
+         并写清理由）：{missing:?}"
+    );
 }
 
 #[test]

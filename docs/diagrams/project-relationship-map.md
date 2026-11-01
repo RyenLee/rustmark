@@ -135,7 +135,7 @@ flowchart LR
     approot --> crash["app/crash_log.rs"]
     approot --> timing["app/startup_timing.rs"]
 
-    frame --> framesub["app/frame/*（24 文件）<br/>actions / editor / files / find / export / preview / sidebar / tabs / ui / state …"]
+    frame --> framesub["app/frame/*（顶层 25 + editor/ 子目录 1，共 26 个 .rs）<br/>actions / editor / files / find / export / preview / sidebar / tabs / ui / state …"]
     frame --> frameeditor["app/frame/editor/"]
     framesub --> sched["frame/scheduler.rs<br/>帧预约唯一出口 + 帧预算告警"]
     framesub --> vctx["frame/view_context.rs<br/>EditorViewContext 的能力 trait 实现"]
@@ -150,7 +150,7 @@ flowchart LR
 
 - 视图**不持有** `EditorApp`：只拿 `&mut dyn <视图窄 trait>`，实现由 `frame/view_context.rs` 提供。
 - `main_view.rs` 与 `overlays.rs` 是仅有的两个「路由者」，由 `check_view_narrow_context` 机械钉死。
-- 25 个 `frame/` 子文件是 `EditorApp` 的按领域拆分（动作、文件、查找、导出、预览、侧栏、标签、状态、对话框…），
+- 26 个 `frame/` 子文件（顶层 25 + `editor/` 子目录 1）是 `EditorApp` 的按领域拆分（动作、文件、查找、导出、预览、侧栏、标签、状态、对话框…），
   新增功能默认落在对应子文件，而不是继续堆 `frame.rs`。
 
 ---
@@ -235,7 +235,7 @@ sequenceDiagram
 ```mermaid
 flowchart TD
     router["main_view.rs / overlays.rs<br/>路由者（唯一持有宽上下文）"]
-    bundle["EditorViewContext<br/>17 个 XxxViewAccess 的 bundle"]
+    bundle["EditorViewContext<br/>16 个 XxxViewAccess + ScrollSyncAccess（共 17 个 access trait）的 bundle"]
     router --> bundle
 
     bundle --> t1["AboutViewAccess"]

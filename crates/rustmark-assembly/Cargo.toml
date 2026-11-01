@@ -15,7 +15,13 @@ rustmark-core = { path = "../rustmark-core" }
 rustmark-infra = { path = "../rustmark-infra" }
 
 # --- 本地 crate（R-10 项 A：架构端口契约；SystemClock 实现住此 time.rs）---
-# 与 infra 同范式直连取端口契约，而非仅经 `rustmark_core::ports` 间接取。
+# **当前代码不直接引用本 crate**：`bootstrap.rs` 经 `rustmark_core::ports::time::
+# {Clock, SystemClock}`（core 对 ports 的 re-export）取端口，全 crate 没有一处
+# `use rustmark_ports::`（2026-11-01 实测 grep 零命中）。保留这条直连边是为
+# **语义完整性**——端口契约归属 `rustmark-ports`，装配层不依赖 core 的转发也能
+# 直取；拓扑断言（workspace_topology_test）据此把 {core, infra, ports} 钉为期望。
+# 它**不是死依赖**：删掉会削弱"端口归属"的表达、并需同步拓扑断言与 expected.txt。
+# 若未来认为"只经 core re-export 即可"更诚实，再统一删除（勿单点删 manifest 而留断言）。
 rustmark-ports = { path = "../rustmark-ports" }
 
 # V11-65：lint 经 [workspace.lints] 单点继承。

@@ -161,6 +161,10 @@ sudo pacman -S vulkan-icd-loader   # 另装 vulkan-intel / vulkan-radeon / vulka
     `~/.config/rustmark/crash/crash-*.txt`。
     处置见 [troubleshooting §6](docs/guides/troubleshooting.md)。取舍与体积数据见
     [P1 #3 处置记录](docs/reviews/p1-03-linux-vulkan-disposition.md)。
+11. **不支持多实例并发编辑同一文件**：应用是纯本地文件（无数据库、无文件锁、
+    无 watch）。同一文档被两个进程同时打开并编辑时，保存是"**最后写入者胜**"
+    ——后保存的一方会覆盖前一方，**可能静默丢失改动**。需要并行编辑请借助
+    Git 等版本控制合并，或避免同时打开同一文件。
 
 ## 5. 故障排查
 
