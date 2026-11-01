@@ -11,7 +11,12 @@ use rustmark_core::domain::document::repository::{DocumentRepository, DocumentSn
 use rustmark_core::shared::ids::DocumentId;
 use rustmark_core::shared::path::FilePath;
 
+use super::super::atomic_file::tmp_path_for;
 use super::FsDocumentRepository;
+// 目录 fsync 只在 Unix 上有实现，非 Unix 平台这两条用例整个不进编译，
+// 导入也必须同 cfg——否则 Windows 上是 `unused_imports`（`-D warnings` 会红）。
+#[cfg(unix)]
+use super::super::atomic_file::sync_parent_dir;
 
 /// 把磁盘路径包装成领域层的 `FilePath`。
 fn fp(disk: &Path) -> FilePath {
@@ -44,9 +49,9 @@ fn tmp_names_of_same_target_are_unique() {
     let dir = tempfile::tempdir().expect("应能建临时目录");
     let target = dir.path().join("note.md");
 
-    let first = FsDocumentRepository::tmp_path_for(&target);
-    let second = FsDocumentRepository::tmp_path_for(&target);
-    let third = FsDocumentRepository::tmp_path_for(&target);
+    let first = tmp_path_for(&target);
+    let second = tmp_path_for(&target);
+    let third = tmp_path_for(&target);
 
     assert_ne!(first, second, "同目标的两次 tmp 名不得相同");
     assert_ne!(second, third, "计数器必须持续推进");
@@ -58,7 +63,7 @@ fn tmp_name_carries_pid_prefix_and_original_name() {
     let dir = tempfile::tempdir().expect("应能建临时目录");
     let target = dir.path().join("note.md");
 
-    let tmp = FsDocumentRepository::tmp_path_for(&target);
+    let tmp = tmp_path_for(&target);
     let name = tmp
         .file_name()
         .expect("tmp 应有文件名")
@@ -95,7 +100,7 @@ fn tmp_file_lives_in_target_directory() {
     fs::create_dir_all(&sub).expect("应能建子目录");
 
     let target = sub.join("a.md");
-    let tmp = FsDocumentRepository::tmp_path_for(&target);
+    let tmp = tmp_path_for(&target);
     assert_eq!(tmp.parent(), Some(sub.as_path()), "tmp 必须在同一父目录");
 }
 
@@ -202,7 +207,7 @@ fn sync_parent_dir_survives_missing_directory() {
     let dir = tempfile::tempdir().expect("应能建临时目录");
     let missing = dir.path().join("not-created");
     assert!(!missing.exists());
-    FsDocumentRepository::sync_parent_dir(&missing);
+    sync_parent_dir(&missing);
 }
 
 /// 正常目录上执行目录 fsync：不 panic、无副作用。
@@ -214,7 +219,7 @@ fn sync_parent_dir_survives_missing_directory() {
 #[test]
 fn sync_parent_dir_on_real_directory_is_quiet() {
     let dir = tempfile::tempdir().expect("应能建临时目录");
-    FsDocumentRepository::sync_parent_dir(dir.path());
+    sync_parent_dir(dir.path());
 }
 
 // ---------------------------------------------------------------------------

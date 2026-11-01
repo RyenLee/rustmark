@@ -13,14 +13,14 @@
 //! 3. `fs::rename(tmp, target)` —— POSIX 与 Windows 的rename 都是原子的
 //!    （Windows 上需注意：目标被其它程序占用时可能失败，此时**原文件仍然完好**，
 //!    符合契约）；
-//! 4. **Unix** 上再对父目录 `fsync` 一次（`sync_parent_dir`）：POSIX 不保证
-//!    rename 后的目录项已持久化，断电可能让「刚保存的文件」消失。这一步是
-//!    **best-effort**——失败只记日志，绝不因此报错或回滚已成功的保存。
+//! 4. **Unix** 上再对父目录 `fsync` 一次：POSIX 不保证 rename 后的目录项
+//!    已持久化，断电可能让「刚保存的文件」消失。这一步是 **best-effort**
+//!    ——失败只记日志，绝不因此报错或回滚已成功的保存。
 //!
-//! 临时文件名形如 `.rustmark-tmp-<pid>-<seq>-<原文件名>`：同目录（rename 原子性）、
-//! 固定前缀（残留识别）、PID + 进程内计数器（并发保存不撞名）。上一代命名
-//! （`.rustmark-tmp-<原文件名>`，无 PID / 计数器）的崩溃残留会在保存前顺手清掉
-//! ——新命名不会覆盖旧名字，不清就是永久垃圾。
+//! 上述流程与临时文件命名（`.rustmark-tmp-<pid>-<seq>-<原文件名>`）已收口到
+//! `persistence::atomic_file`（评审 P3：此前文档保存与配置 / 导出各有一份实现，
+//! 两边的 tmp 命名还不一致，导出路径上因此原样留着「并发互相截断」的旧 bug）。
+//! 本节以下只讲编码与换行——那才是本模块自己的职责。
 //!
 //! 任一步失败都**不触碰目标文件**，并尽力清理临时文件。
 //!
@@ -48,10 +48,8 @@
 mod draft_id;
 mod line_ending;
 
-use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use rustmark_core::domain::document::repository::{DocumentRepository, DocumentSnapshot};
 use rustmark_core::shared::error::AppError;
@@ -59,16 +57,11 @@ use rustmark_core::shared::ids::DocumentId;
 use rustmark_core::shared::path::FilePath;
 use rustmark_ports::time::Timestamp;
 
+use super::atomic_file;
 use super::encoding::UTF8_BOM;
 
 use draft_id::parse_draft_id;
 pub use line_ending::LineEnding;
-
-/// 临时文件名的进程内单调计数器（配合进程 ID 保证唯一）。
-///
-/// 只用 `Relaxed`：这里需要的仅是「同进程内两次取值不同」，
-/// 不与任何其它内存操作建立 happens-before 关系。
-static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
 
 /// 文件系统文档仓储。
 #[derive(Debug, Default)]
@@ -188,146 +181,6 @@ impl FsDocumentRepository {
             super::encoding::encode(text, encoding)
         }
     }
-
-    /// 生成临时文件路径：`<父目录>/.rustmark-tmp-<pid>-<seq>-<原文件名>`。
-    ///
-    /// 三条约束都是硬要求：
-    /// - **同父目录**：跨目录 `rename` 不保证原子，还可能跨文件系统失败；
-    /// - **`.rustmark-tmp-` 前缀**：残留识别与清理都依赖这个约定；
-    /// - **进程 ID + 进程内计数器**：同一目标被并发保存时（多实例、多线程、
-    ///   或上一次崩溃遗留的同名临时文件），两次写绝不能落到同一个 tmp 上——
-    ///   否则后一个 `truncate(true)` 会把前一个正在写的临时文件截断，
-    ///   `rename` 之后目标文件的内容就错了。
-    ///
-    /// 此前实现只用了 `file_name`，与上面这段注释描述的行为**不一致**
-    /// （评审 P2 #2）：注释承诺了去重，代码没有，靠「反正很少并发」蒙混。
-    fn tmp_path_for(path: &Path) -> PathBuf {
-        let parent = path.parent().unwrap_or_else(|| Path::new("."));
-        let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
-        parent.join(format!(
-            ".rustmark-tmp-{}-{seq}-{}",
-            std::process::id(),
-            Self::file_name_of(path)
-        ))
-    }
-
-    /// 目标文件名（取不到时用 `untitled`）。
-    fn file_name_of(path: &Path) -> &str {
-        path.file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("untitled")
-    }
-
-    /// 旧版本（无 PID / 计数器的同名 tmp）留下的残留路径。
-    ///
-    /// 命名的变更必须处理**前一代命名的遗留物**：老版本崩溃时会在目标目录留下
-    /// `.rustmark-tmp-<原文件名>`，新版本的 `rename` 永远用不到这个名字，
-    /// 于是它成了永久垃圾。故每次保存前顺手清掉它。
-    ///
-    /// 为什么删它不会伤到别人：新代码从不使用这个格式的文件名（一定带 PID 与
-    /// 计数器）；唯一可能是「同一台机器上还跑着旧版本」——那种情况下旧实例的
-    /// `rename` 会失败并提示用户重试，**目标文件不会被损坏**（写失败不进目标）。
-    fn legacy_tmp_path_for(path: &Path) -> PathBuf {
-        let parent = path.parent().unwrap_or_else(|| Path::new("."));
-        parent.join(format!(".rustmark-tmp-{}", Self::file_name_of(path)))
-    }
-
-    /// 让父目录的目录项落盘（Unix 专有，**best-effort**）。
-    ///
-    /// POSIX 只保证 `rename` 的原子性，**不保证**新目录项已经持久化：
-    /// 断电后可能出现「文件数据在盘上，但目录里仍指向旧 inode / 新名字不存在」
-    /// 的窗口。对编辑器来说这等于「刚保存的文件消失了」，故 rename 成功后再对
-    /// 父目录 `fsync` 一次。
-    ///
-    /// 失败处理的原则：**恢复性**优先于**持久性**。此时目标文件已是新内容，
-    /// 若因目录 fsync 失败而向上返回 Err，调用方会以为「没保存成功」并可能
-    /// 提示用户重试或丢弃编辑——那才是真正的事故。故这里只记日志，
-    /// 不回滚、不报错（best-effort durability）。
-    ///
-    /// Windows 不在此列：`MoveFileEx` 的持久性语义与 POSIX 不同，且无法用
-    /// `File::open` 打开目录再 `sync_all`，整段跳过。
-    #[cfg(unix)]
-    fn sync_parent_dir(parent: &Path) {
-        match fs::File::open(parent) {
-            Ok(dir) => {
-                if let Err(error) = dir.sync_all() {
-                    log::warn!(
-                        "父目录 fsync 失败（保存已完成，仅影响断电后的目录项持久性）{}：{error}",
-                        parent.display()
-                    );
-                }
-            }
-            Err(error) => {
-                log::warn!(
-                    "无法打开父目录做 fsync（保存已完成）{}：{error}",
-                    parent.display()
-                );
-            }
-        }
-    }
-
-    /// 非 Unix 平台的空实现：见 Unix 版本的说明。
-    #[cfg(not(unix))]
-    fn sync_parent_dir(_parent: &Path) {}
-
-    /// 原子写入：同目录临时文件 → sync → rename。
-    fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), AppError> {
-        let parent = path
-            .parent()
-            .ok_or_else(|| AppError::io(format!("路径没有父目录，无法保存：{}", path.display())))?;
-        // 父目录不存在时创建——用户「另存为」到新目录下的常见场景。
-        if !parent.exists() {
-            fs::create_dir_all(parent)
-                .map_err(|e| AppError::io(format!("无法创建目录 {}：{e}", parent.display())))?;
-        }
-
-        // 临时文件名带进程 ID 与计数器（`.rustmark-tmp-<pid>-<seq>-<name>`）：
-        // 避免与并发实例 / 并发保存互相覆盖，也让残留的临时文件可被识别。
-        let tmp_path = Self::tmp_path_for(path);
-
-        // 顺手清掉旧命名（无 PID / 计数器）的崩溃残留：新命名不会覆盖它，
-        // 不清就是永久垃圾（见 `legacy_tmp_path_for` 的说明）。
-        let legacy_tmp = Self::legacy_tmp_path_for(path);
-        if legacy_tmp.exists() {
-            let _ = fs::remove_file(&legacy_tmp);
-        }
-
-        // 写入失败时删除残留临时文件——绝不留垃圾在用户目录里。
-        let write_result = (|| -> std::io::Result<()> {
-            let mut file = OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .open(&tmp_path)?;
-            file.write_all(bytes)?;
-            file.flush()?;
-            // 同步到磁盘：断电 / 崩溃后 rename 也不应指向未落盘的数据。
-            file.sync_all()
-        })();
-
-        if let Err(error) = write_result {
-            let _ = fs::remove_file(&tmp_path);
-            return Err(AppError::io(format!(
-                "写入临时文件失败（{}）：{error}",
-                tmp_path.display()
-            )));
-        }
-
-        // rename 失败（如 Windows 上文件被占用）时同样清理临时文件。
-        // 此时**原文件未被触碰**，符合 `FR-04` 的「不破坏原文件」契约。
-        if let Err(error) = fs::rename(&tmp_path, path) {
-            let _ = fs::remove_file(&tmp_path);
-            return Err(AppError::io(format!(
-                "无法覆盖目标文件（{}）：{error}。文件可能正被其它程序占用",
-                path.display()
-            )));
-        }
-
-        // rename 成功即「保存已成功」：此后的任何失败都不允许回滚或报错
-        // （best-effort durability，见 `sync_parent_dir` 的说明）。
-        Self::sync_parent_dir(parent);
-        Ok(())
-    }
 }
 
 impl DocumentRepository for FsDocumentRepository {
@@ -365,7 +218,7 @@ impl DocumentRepository for FsDocumentRepository {
             .map(|bytes| super::encoding::decode(bytes).1)
             .unwrap_or(super::encoding::Encoding::Utf8);
         let bytes = Self::encode_as(&snapshot.content, ending, encoding);
-        Self::atomic_write(&fs_path, &bytes)
+        atomic_file::atomic_write(&fs_path, &bytes)
     }
 
     fn exists(&self, path: &FilePath) -> bool {
@@ -400,12 +253,12 @@ impl DocumentRepository for FsDocumentRepository {
             .map_err(|e| AppError::io(format!("无法创建草稿目录 {}：{e}", drafts_dir.display())))?;
         let draft_path = drafts_dir.join(format!("{document_id}.draft"));
         let bytes = Self::encode(content, LineEnding::Lf, false);
-        Self::atomic_write(&draft_path, &bytes)?;
+        atomic_file::atomic_write(&draft_path, &bytes)?;
         // 旁车写在内容之后：内容才是恢复的命根子，路径丢了最多退回「未命名」，
         // 内容丢了才是事故。未命名文档（`None`）没有路径可记，不写旁车。
         if let Some(path) = path {
             let sidecar_path = drafts_dir.join(format!("{document_id}.draft.path"));
-            Self::atomic_write(&sidecar_path, path.as_str().as_bytes())?;
+            atomic_file::atomic_write(&sidecar_path, path.as_str().as_bytes())?;
         }
         Ok(())
     }

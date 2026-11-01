@@ -24,6 +24,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use rustmark_core::domain::workspace::value_objects::{RECENT_FILES_LIMIT, RecentFile};
 use rustmark_core::shared::error::AppError;
 
+use super::atomic_file;
+
 /// 最近文件存储（TOML 持久化）。
 #[derive(Clone, Debug)]
 pub struct RecentFilesStore {
@@ -93,7 +95,7 @@ impl RecentFilesStore {
         };
         let body = toml::to_string_pretty(&doc)
             .map_err(|e| AppError::io(format!("序列化最近文件列表失败：{e}")))?;
-        atomic_write(&self.file, body.as_bytes())
+        atomic_file::atomic_write(&self.file, body.as_bytes())
     }
 
     /// 把损坏内容备份到带时间戳的旁文件，返回备份路径。
@@ -109,7 +111,7 @@ impl RecentFilesStore {
             .unwrap_or("recent.json");
         let backup = self.file.with_file_name(format!("{name}.corrupt-{stamp}"));
         // 备份失败不应连带影响主流程（此时用户的列表本来就已经丢了）。
-        let _ = atomic_write(&backup, raw.as_bytes());
+        let _ = atomic_file::atomic_write(&backup, raw.as_bytes());
         backup
     }
 }
@@ -133,41 +135,4 @@ struct RecentFilesDoc {
 
 fn default_version() -> u32 {
     SCHEMA_VERSION
-}
-
-/// 原子写入：同目录临时文件 → rename 覆盖（与文档仓储同一策略，`FR-04`）。
-pub(crate) fn atomic_write(target: &Path, bytes: &[u8]) -> Result<(), AppError> {
-    let parent = target
-        .parent()
-        .ok_or_else(|| AppError::io(format!("路径没有父目录：{}", target.display())))?;
-    if !parent.exists() {
-        fs::create_dir_all(parent)
-            .map_err(|e| AppError::io(format!("无法创建目录 {}：{e}", parent.display())))?;
-    }
-    let name = target
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("config");
-    let tmp = parent.join(format!(".rustmark-tmp-{name}"));
-
-    let write = (|| -> std::io::Result<()> {
-        use std::io::Write;
-        let mut file = fs::File::create(&tmp)?;
-        file.write_all(bytes)?;
-        file.flush()?;
-        file.sync_all()
-    })();
-
-    if let Err(e) = write {
-        let _ = fs::remove_file(&tmp);
-        return Err(AppError::io(format!("写入 {} 失败：{e}", tmp.display())));
-    }
-    if let Err(e) = fs::rename(&tmp, target) {
-        let _ = fs::remove_file(&tmp);
-        return Err(AppError::io(format!(
-            "覆盖 {} 失败：{e}。文件可能正被其它程序占用",
-            target.display()
-        )));
-    }
-    Ok(())
 }

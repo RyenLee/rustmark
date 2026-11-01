@@ -664,7 +664,7 @@ modules:
       asset_remote_stream_cap:
         value: 8388608
         unit: "bytes"
-        source: "crates/rustmark-infra/src/infrastructure/persistence/asset_loader.rs:385"
+        source: "crates/rustmark-infra/src/infrastructure/persistence/asset_loader.rs:468"
         anchor: "bytes.len() > self.limits.max_local_bytes"
         via: "crates/rustmark-infra/src/infrastructure/persistence/asset_loader/policy.rs"
         purpose: "远程下载边读边判的瞬时上限（= 本地上限 8 MiB），超过即中止，不再先读到 2× 再拒绝。"
@@ -705,7 +705,7 @@ modules:
       crash_reports_retained:
         value: 10
         unit: "files"
-        source: "src/app/crash_log.rs:164"
+        source: "src/app/crash_log.rs:209"
         anchor: "MAX_REPORTS: usize = 10"
         purpose: "崩溃报告保留份数；每次启动按文件名降序清理更旧的，防崩溃风暴吃满磁盘。"
         recommended: "5-50"

@@ -37,8 +37,17 @@ pub fn run() -> anyhow::Result<()> {
     // panic hook 必须在**一切逻辑之前**安装（含装配）：
     // 装配期 panic（配置目录不可写等）同样要留下崩溃报告，
     // 晚一行就漏掉那一部分的诊断信息。
-    let crash_dir = ConfigPaths::detect().crash_dir();
+    let paths = ConfigPaths::detect();
+    let crash_dir = paths.crash_dir();
     crash_log::install_hook(crash_dir.clone());
+    // P3：清掉上次崩溃遗留的临时文件（`.rustmark-tmp-<pid>-<seq>-<name>`）。
+    // 这里只扫配置目录——一次 `read_dir` 的成本。用户文档目录无法在启动时
+    // 穷举（最近文件列表也只是子集），改由每次保存时顺带清理该目标所在目录
+    // （`atomic_file::atomic_write` 里的 `sweep_parent_once`，每目录每进程一次）。
+    // 清理失败不影响启动：该函数不返回错误，只记日志。
+    if let Some(config_dir) = paths.preferences.parent() {
+        crate::infrastructure::persistence::tmp_residue::sweep_stale(config_dir);
+    }
     // 装配先于窗口创建：装配失败时**不该**先闪一个空窗口再报错。
     // 代价是启动多等几十毫秒（语法集加载），换来「启动失败 = 什么都没发生」，
     // 这个取舍在S8-03 会用后台线程细化。

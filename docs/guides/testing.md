@@ -120,8 +120,8 @@ runner。本节把这根证据链固定下来：**哪 5 条、怎么挂进 lib�
 
 | 文件:行 | 用例 | 为何 `#[cfg(unix)]` |
 |---|---|---|
-| `crates/rustmark-infra/src/infrastructure/persistence/fs_document_repository/tests.rs:201` | `sync_parent_dir_survives_missing_directory` | 被测的 `sync_parent_dir` 只在 unix 有实体（`fs_document_repository.rs:249`），非 unix 是空实现（`:263`）——「目录打不开 → 走 `log::warn!`」这条分支在 Windows 上不存在 |
-| 同上 `:215` | `sync_parent_dir_on_real_directory_is_quiet` | 同上。目录 fsync 是 POSIX 语义（`File::open(dir)` + `sync_all`）；Windows 的持久性是 `MoveFileEx`，没有可对应的调用 |
+| `crates/rustmark-infra/src/infrastructure/persistence/fs_document_repository/tests.rs:206` | `sync_parent_dir_survives_missing_directory` | 被测的 `sync_parent_dir` 只在 unix 有实体（`persistence/atomic_file.rs:113`），非 unix 是空实现（`:134`）——「目录打不开 → 走 `log::warn!`」这条分支在 Windows 上不存在 |
+| 同上 `:220` | `sync_parent_dir_on_real_directory_is_quiet` | 同上。目录 fsync 是 POSIX 语义（`File::open(dir)` + `sync_all`）；Windows 的持久性是 `MoveFileEx`，没有可对应的调用 |
 | `.../asset_loader/tests.rs:163` | `symlink_escaping_base_is_rejected` | 需要 `std::os::unix::fs::symlink`。Windows 建符号链接要管理员或开发者模式，在 CI 上不可靠 |
 | 同上 `:184` | `symlinked_directory_escaping_base_is_rejected` | 同上（目录符号链接越界） |
 | 同上 `:206` | `symlink_staying_inside_base_is_allowed` | 同上，反向用例：指向 base **内部**的链接不得误伤 |
@@ -133,7 +133,7 @@ runner。本节把这根证据链固定下来：**哪 5 条、怎么挂进 lib�
 ### 3.2 它们怎么进 lib 单测（以及一个容易误判的点）
 
 两个 `tests.rs` 都以 `#[cfg(test)] mod tests;` 挂在父模块尾部
-（`fs_document_repository.rs:503`、`asset_loader.rs:538`），父模块 `persistence.rs`
+（`fs_document_repository.rs:358`、`asset_loader.rs:539`），父模块 `persistence.rs`
 的 `pub mod asset_loader;` / `pub mod fs_document_repository;` 没有 feature 门控。
 因此它们就是 `rustmark-infra` 的**lib 单测**，不是某个被关掉的路径下的孤儿。
 

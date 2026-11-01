@@ -41,7 +41,7 @@ mod dispatch;
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::infrastructure::persistence::recent_files_store::atomic_write;
+use crate::infrastructure::persistence::atomic_file::atomic_write;
 use rustmark_core::domain::export::aggregate::ExportJob;
 use rustmark_core::domain::export::errors::ExportError;
 use rustmark_core::domain::export::services::{Exporter, TocBuilder};

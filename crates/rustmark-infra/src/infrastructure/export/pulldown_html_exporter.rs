@@ -37,7 +37,7 @@ use std::path::PathBuf;
 use pulldown_cmark::{Options, html};
 
 use crate::infrastructure::parsing::pulldown_parser::{desugar_image_sizes, parser_options};
-use crate::infrastructure::persistence::recent_files_store::atomic_write;
+use crate::infrastructure::persistence::atomic_file::atomic_write;
 use rustmark_core::domain::export::aggregate::ExportJob;
 use rustmark_core::domain::export::errors::ExportError;
 use rustmark_core::domain::export::services::{Exporter, TocBuilder};

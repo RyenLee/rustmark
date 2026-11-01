@@ -58,7 +58,7 @@ impl TomlPreferencesRepository {
             .unwrap_or("settings.toml");
         let backup = self.file.with_file_name(format!("{name}.bak-{stamp}"));
         if let Ok(bytes) = fs::read(&self.file) {
-            let _ = super::recent_files_store::atomic_write(&backup, &bytes);
+            let _ = super::atomic_file::atomic_write(&backup, &bytes);
         }
         log::warn!(
             "配置文件 {} 处理（{reason}），已备份到 {}",
@@ -119,7 +119,7 @@ impl PreferencesRepository for TomlPreferencesRepository {
             .map_err(|e| AppError::config(format!("拒绝保存非法的偏好设置：{e}")))?;
         let body = toml::to_string_pretty(preferences)
             .map_err(|e| AppError::config(format!("序列化偏好设置失败：{e}")))?;
-        super::recent_files_store::atomic_write(&self.file, body.as_bytes())
+        super::atomic_file::atomic_write(&self.file, body.as_bytes())
             .map_err(|e| AppError::config(e.to_string()))
     }
 
