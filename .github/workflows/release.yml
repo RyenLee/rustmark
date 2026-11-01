@@ -34,7 +34,8 @@ jobs:
   build:
     name: package (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    # ubuntu-20.04 已被 GitHub 下线（runner 镜像退役），改用 22.04。
+    # Linux 保持 22.04（非 latest）：发布产物的 glibc 底线由构建镜像决定，换镜像等于
+    # 抬高最低支持的发行版；ci.yml 的 check 用 24.04 只影响门禁，不进产物。
     strategy:
       fail-fast: false
       matrix:
@@ -51,6 +52,19 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+
+      # eframe 开了 `wayland` feature，`wayland-sys` 的 build script 用 pkg-config
+      # 找 wayland-client.pc，缺了会直接 panic 在构建期（ubuntu-24.04 镜像已确认
+      # 不再预装 libwayland-dev；本 job 用 22.04，但预装包清单同样会随镜像更新
+      # 漂移）。`libxkbcommon-dev` 是 smithay-client-toolkit 的 pkg-config 依赖，
+      # 一起装避免再断一轮。不跑测试，故不装 CJK 字体。
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwayland-dev libxkbcommon-dev
 
       # 工具链唯一真源 = 仓库根 `rust-toolchain.toml`（channel / components / profile）。
       #
@@ -186,7 +200,9 @@ jobs:
   release:
     name: create release
     needs: build
-    runs-on: ubuntu-latest
+    # 发布 job 不编译、产物不由它产生，故不受 glibc 底线约束；钉 24.04 只为
+    # 与 ci.yml 同一镜像口径（本 job 只跑 python3 / cargo metadata / gh）。
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: write

@@ -53,14 +53,13 @@ env:
   CARGO_TERM_COLOR: always
   # 断言失败时打印回溯，省掉「复现一次只为拿 backtrace」的往返。
   RUST_BACKTRACE: "1"
-  # 体积门禁：红线 11 MiB（NFR-PERF-01，2026-10-25 由 10 MiB 上调），
-  # 预警线 10.5 MiB（保留约 512 KiB 的可行动窗口，而不是贴着产物常亮）。
-  # 三个数值的唯一真源是 `scripts/size_gate.sh` 的默认值与 docs/spec/metrics.md §2.8；
-  # 本处 env 只是把同一口径传给 CI，不得单独改动。
-  # 2026-10-25 实测（Windows）10,487,296 B = 10.001 MiB：距红线余约 1.0 MiB。
-  # 断言失败时可直接用 workflow_dispatch 的 size_limit_bytes 覆盖阈值，以验证门禁本身有效。
+  # 体积门禁（S8-07 ① / NFR-PERF-01）：红线 11 MiB、预警线 10.5 MiB，单一真源是
+  # `scripts/size_gate.sh` 的默认值（L26-27）与 docs/spec/metrics.md §2.8。
+  # 本处只覆盖红线：为让 workflow_dispatch 的 size_limit_bytes 能临时调低、验证门禁
+  # 确实会红（S8-07）；未填时脚本用自身默认值。
+  # 预警线不再复制一份——两份字面量若漂移，check_thresholds 是逐条独立比对各源的，
+  # 发现不了副本之间的不一致。
   SIZE_LIMIT_BYTES: ${{ github.event.inputs.size_limit_bytes || '11534336' }}
-  SIZE_WARN_BYTES: '11010048'
   # cargo 命令行工具（cargo-deny / cargo-llvm-cov / cargo-bloat）统一装到
   # 这个根目录，便于缓存；不能装进 ~/.cargo/bin——那里放着 rustup 的
   # cargo/rustc 代理，缓存回写会覆盖它们。
@@ -82,15 +81,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # runner 默认不装任何 CJK 字体，`a_cjk_font_is_available_on_this_platform`
-      # 会因此判死（run 41208877623 的 ubuntu job 红在这里）。该用例的语义是
-      # 「桌面环境应能渲染中文」——headless runner 也补装，而不是把断言改成跳过。
-      # 装好后 /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc 命中
-      # candidate_paths() 的第一项（22.04 与 24.04 路径相同）。
-      - name: Install CJK fonts
+      # Linux runner 缺两样系统依赖，必须在编译前补上：
+      #
+      # 1. **CJK 字体**：`a_cjk_font_is_available_on_this_platform` 会判死
+      #    （run 41208877623 的 ubuntu job 红在这里）。该用例的语义是「桌面环境
+      #    应能渲染中文」——headless runner 也补装，而不是把断言改成跳过。
+      #    装好后 /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc 命中
+      #    candidate_paths() 的第一项（22.04 与 24.04 路径相同）。
+      # 2. **wayland-client 的 pkg-config 元数据**：eframe 开了 `wayland` feature，
+      #    `wayland-sys` 的 build script 直接 `pkg-config wayland-client`，找不到
+      #    `wayland-client.pc` 就 unwrap 失败。ubuntu-24.04 镜像不再预装
+      #    libwayland-dev（22.04 有），报错形态是 `Package wayland-client was not
+      #    found`，与代码本身无关。
+      - name: Install Linux dependencies
         if: runner.os == 'Linux'
         shell: bash
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends fonts-noto-cjk
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            fonts-noto-cjk libwayland-dev libxkbcommon-dev
 
       # 工具链唯一真源 = 仓库根 `rust-toolchain.toml`（channel / components / profile）。
       #
@@ -130,11 +139,10 @@ jobs:
       - name: cargo fmt --check
         run: cargo fmt --check
 
+      # clippy 即「check + 额外 lint」，覆盖同一 `--all-targets` 集合；再跟一条
+      # `cargo check` 只会因 clippy-driver 指纹不同而重跑一遍完整编译，零新增信号。
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
-
-      - name: cargo check
-        run: cargo check --workspace --all-targets
 
       - name: Architecture boundary check
         run: cargo run --bin check-arch
@@ -265,10 +273,22 @@ jobs:
   # 已注明「基准不稳定导致 CI 抖动」→ 标记为仅 Linux 必过）。
   perf:
     name: perf smoke (linux)
-    runs-on: ubuntu-latest
+    # 与 check job 同一镜像（24.04）：latest 漂移会同时改变依赖清单与基准数字，
+    # 让「同一份代码昨天绿、今天红」重新变成环境问题（理由见 check job 的注释）。
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+
+      # release 产物同样要链接 wayland 系统库（eframe 的 `wayland` feature），
+      # 理由见 check job 的 `Install Linux dependencies`。本 job 不跑字体用例，
+      # 故不装 CJK 字体。
+      - name: Install Linux dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwayland-dev libxkbcommon-dev
 
       # 工具链由仓库根 `rust-toolchain.toml` 驱动（唯一真源），见 check job 的同名注释。
       - name: Install Rust
@@ -306,16 +326,21 @@ jobs:
   # 2% 缓冲区内 WARN），排除清单与理由见 docs/guides/testing.md。
   coverage:
     name: coverage gate (linux)
-    runs-on: ubuntu-latest
+    # 同上：钉 24.04，与 check job 同一镜像。
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
-      # 覆盖率 job 也跑 `rustmark-infra` 的 lib 单测（`--workspace`），
-      # 同样需要 CJK 字体；理由见 check job 的同名步骤。
-      - name: Install CJK fonts
+      # 覆盖率 job 也编译 eframe 并跑 `rustmark-infra` 的 lib 单测
+      # （`--workspace`）：CJK 字体与 wayland 开发包都不可省，理由见 check job
+      # 的同名步骤。
+      - name: Install Linux dependencies
         shell: bash
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends fonts-noto-cjk
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            fonts-noto-cjk libwayland-dev libxkbcommon-dev
 
       # 同上：工具链由 rust-toolchain.toml 驱动；本 job 额外需要 llvm-tools-preview。
       - name: Install Rust (+ llvm-tools-preview)
@@ -370,7 +395,8 @@ jobs:
   # 无 dist/ 产物时校验和项自动 WARN 跳过（不计失败），其余项照常判定。
   release-dryrun:
     name: release dry-run (linux)
-    runs-on: ubuntu-latest
+    # 同上：钉 24.04，与 check job 同一镜像。
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -390,7 +416,8 @@ jobs:
 
   deny:
     name: licenses / advisories
-    runs-on: ubuntu-latest
+    # 同上：钉 24.04，与 check job 同一镜像。
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4

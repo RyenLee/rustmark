@@ -74,14 +74,6 @@ modules:
         purpose: "CI 体积红线（11 MiB），由 size_gate.sh 读取；越线 exit 1 使 check job 失败。按基线 10,487,296 B 尚有约 1.0 MiB 余量。"
         recommended: "11534336（须与 NFR-PERF-01 单一真源一致）"
         configurable: "环境变量 SIZE_LIMIT_BYTES（CI env）"
-      artifact_size_warn_ci:
-        value: 11010048
-        unit: "bytes"
-        source: ".github/workflows/ci.yml:63"
-        anchor: "SIZE_WARN_BYTES"
-        purpose: "CI 体积预警线（10.5 MiB），越线只输出 ::warning 不失败；保留约 512 KiB 可行动窗口，当前产物不触发。"
-        recommended: "11010048（10.5 MiB，保留约 512 KiB 可行动窗口）"
-        configurable: "环境变量 SIZE_WARN_BYTES（CI env）"
       artifact_size_limit_local:
         value: 11534336
         unit: "bytes"
