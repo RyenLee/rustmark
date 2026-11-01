@@ -74,7 +74,7 @@ static SWEPT_DIRS: Mutex<Option<HashSet<PathBuf>>> = Mutex::new(None);
 /// 打开的目录」）。目录不存在、不可读、删除失败都只返回 0 或跳过，
 /// **不会**返回错误——启动流程不该被一次清理挡住。
 pub fn sweep_stale(dir: &Path) -> usize {
-    let removed = sweep_with(dir, SystemTime::now(), &liveness);
+    let removed = sweep_with(dir, SystemTime::now(), &liveness).unwrap_or(0);
     if removed > 0 {
         log::info!("清理了 {removed} 个崩溃残留的临时文件：{}", dir.display());
     }
@@ -86,9 +86,14 @@ pub(crate) fn sweep_parent_once(dir: &Path) {
     if !mark_swept(dir) {
         return;
     }
-    let removed = sweep_with(dir, SystemTime::now(), &liveness);
-    if removed > 0 {
-        log::debug!("清理了 {removed} 个崩溃残留的临时文件：{}", dir.display());
+    match sweep_with(dir, SystemTime::now(), &liveness) {
+        Some(removed) if removed > 0 => {
+            log::debug!("清理了 {removed} 个崩溃残留的临时文件：{}", dir.display());
+        }
+        Some(_) => {}
+        // 目录这次没读成（权限 / 网络盘抖动）：撤销登记，留给下次保存再试。
+        // 不撤销就把一次**瞬时**失败升级成「整个会话都不再清理这个目录」。
+        None => unmark_swept(dir),
     }
 }
 
@@ -96,6 +101,12 @@ pub(crate) fn sweep_parent_once(dir: &Path) {
 ///
 /// 锁中毒（别的线程 panic 在扫描期间）时返回 `false`：跳过清理，
 /// 而把 panic 继续留给上层——清理模块没有资格吞掉别人的故障。
+///
+/// 键是调用方给的**原始路径**，刻意不 canonicalize：同一物理目录的不同拼写
+/// （相对 vs 绝对、Windows 大小写、符号链接）会各登记一次，最坏是多扫几次。
+/// 反向的错误（把两个不同目录归一成同一个键 → 误跳过清理）才是真问题，
+/// 而少扫几次只是少清几个垃圾文件；多一次 `canonicalize` 的 syscall 换这点
+/// 收益不值当。
 fn mark_swept(dir: &Path) -> bool {
     let Ok(mut guard) = SWEPT_DIRS.lock() else {
         return false;
@@ -105,11 +116,23 @@ fn mark_swept(dir: &Path) -> bool {
         .insert(dir.to_path_buf())
 }
 
-/// 清扫主体（`now` 与存活判定均可注入，故这条规则在 Windows 开发机上也能测）。
-fn sweep_with(dir: &Path, now: SystemTime, liveness: &dyn Fn(u32) -> Liveness) -> usize {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return 0;
+/// 撤销登记（目录这次没读成时用），让下次保存还能再试一次。
+fn unmark_swept(dir: &Path) {
+    let Ok(mut guard) = SWEPT_DIRS.lock() else {
+        return;
     };
+    if let Some(swept) = guard.as_mut() {
+        swept.remove(dir);
+    }
+}
+
+/// 清扫主体（`now` 与存活判定均可注入，故这条规则在 Windows 开发机上也能测）。
+///
+/// 返回 `None` 表示目录**根本没读成**（不存在 / 权限 / 设备抖动）。必须与
+/// 「读成了、只是没有残留」的 `Some(0)` 分开：否则一次性失败会被上层当成
+/// 「这个目录已经干净」，随后不再重试（见 [`sweep_parent_once`] 的撤销登记）。
+fn sweep_with(dir: &Path, now: SystemTime, liveness: &dyn Fn(u32) -> Liveness) -> Option<usize> {
+    let entries = fs::read_dir(dir).ok()?;
     let mut removed = 0usize;
     for entry in entries.flatten() {
         // `file_type()` 不跟随符号链接：链接本身不会被当成普通文件删掉。
@@ -132,7 +155,7 @@ fn sweep_with(dir: &Path, now: SystemTime, liveness: &dyn Fn(u32) -> Liveness) -
             Err(error) => log::debug!("清理残留临时文件失败 {}：{error}", entry.path().display()),
         }
     }
-    removed
+    Some(removed)
 }
 
 /// 判定一个临时文件是否是「可以删的残留」（规则见模块文档）。

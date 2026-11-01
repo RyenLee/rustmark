@@ -4,7 +4,7 @@
 //! 真实数据。故每个用例钉住的都是「什么情况下**不**能删」，或「什么情况下
 //! 判不出来就必须退回年龄兜底」。
 //!
-//! 时间与存活判定都可注入（[`sweep_with`] 的 `now` / `liveness`），
+//! 时间与存活判定都可注入（[`sweep_in`] 的 `now` / `liveness`），
 //! 因此「一小时后才算残留」这类规则在 Windows 开发机上也能测——不必真的等，
 //! 也不必依赖 Linux 的 `/proc`。
 
@@ -28,6 +28,14 @@ fn touch(dir: &Path, name: &str) -> PathBuf {
 /// 而不必真的去改文件时间（那要额外依赖）。
 fn later(seconds: u64) -> SystemTime {
     SystemTime::now() + Duration::from_secs(seconds)
+}
+
+/// 清扫入口的测试包装：目录是刚建出来的 tempdir，必定可读。
+///
+/// `sweep_with` 返回 `None`（目录读不成）的分支由 `missing_directory_is_not_an_error`
+/// 单独钉住，这里用 `expect` 把「不该发生」变成显式失败，而不是静默 0。
+fn sweep_in(dir: &Path, now: SystemTime, liveness: &dyn Fn(u32) -> Liveness) -> usize {
+    sweep_with(dir, now, liveness).expect("临时目录应可读")
 }
 
 /// 判定为「死进程」：模拟 Linux 上 `/proc/<pid>` 不存在。
@@ -55,7 +63,7 @@ fn dead_process_residue_is_removed() {
     let dir = tempfile::tempdir().expect("应能建临时目录");
     let residue = touch(dir.path(), &format!(".rustmark-tmp-{DEAD_PID}-7-note"));
 
-    let removed = sweep_with(dir.path(), SystemTime::now(), &dead);
+    let removed = sweep_in(dir.path(), SystemTime::now(), &dead);
 
     assert_eq!(removed, 1, "死进程的残留应被删掉");
     assert!(!residue.exists(), "残留文件应已消失");
@@ -67,7 +75,7 @@ fn live_process_residue_is_kept_even_when_old() {
     let dir = tempfile::tempdir().expect("应能建临时目录");
     let residue = touch(dir.path(), ".rustmark-tmp-12345-1-note");
 
-    let removed = sweep_with(dir.path(), later(MAX_AGE.as_secs() * 3), &alive);
+    let removed = sweep_in(dir.path(), later(MAX_AGE.as_secs() * 3), &alive);
 
     assert_eq!(removed, 0, "活进程的临时文件不得清理");
     assert!(residue.exists());
@@ -81,7 +89,7 @@ fn own_process_residue_is_never_removed() {
     let name = format!(".rustmark-tmp-{}-3-note", std::process::id());
     let own = touch(dir.path(), &name);
 
-    let removed = sweep_with(dir.path(), later(MAX_AGE.as_secs() * 3), &dead);
+    let removed = sweep_in(dir.path(), later(MAX_AGE.as_secs() * 3), &dead);
 
     assert_eq!(removed, 0, "当前进程的临时文件绝不能被清理");
     assert!(own.exists());
@@ -98,13 +106,13 @@ fn unknown_liveness_falls_back_to_age_gate() {
     let fresh = touch(dir.path(), &format!(".rustmark-tmp-{DEAD_PID}-1-fresh"));
 
     assert_eq!(
-        sweep_with(dir.path(), SystemTime::now(), &unknown),
+        sweep_in(dir.path(), SystemTime::now(), &unknown),
         0,
         "刚写下的临时文件不得清理"
     );
     assert!(fresh.exists(), "年龄不足的临时文件必须留着");
 
-    let removed = sweep_with(dir.path(), later(MAX_AGE.as_secs() + 1), &unknown);
+    let removed = sweep_in(dir.path(), later(MAX_AGE.as_secs() + 1), &unknown);
     assert_eq!(removed, 1, "超过年龄上限的临时文件应被清理");
     assert!(!fresh.exists());
 }
@@ -117,14 +125,14 @@ fn legacy_named_residue_is_age_gated() {
 
     // 即便存活判定说「死」，旧命名没有 PID 可查，也只能看年龄。
     assert_eq!(
-        sweep_with(dir.path(), SystemTime::now(), &dead),
+        sweep_in(dir.path(), SystemTime::now(), &dead),
         0,
         "旧命名残留只看年龄，不看存活判定"
     );
     assert!(legacy.exists());
 
     assert_eq!(
-        sweep_with(dir.path(), later(MAX_AGE.as_secs() + 1), &dead),
+        sweep_in(dir.path(), later(MAX_AGE.as_secs() + 1), &dead),
         1,
         "超过年龄上限的旧命名残留应被清理"
     );
@@ -145,7 +153,7 @@ fn unrelated_entries_are_ignored() {
         .join(format!(".rustmark-tmp-{DEAD_PID}-2-directory"));
     fs::create_dir(&lookalike_dir).expect("应能建目录");
 
-    let removed = sweep_with(dir.path(), later(MAX_AGE.as_secs() * 3), &dead);
+    let removed = sweep_in(dir.path(), later(MAX_AGE.as_secs() * 3), &dead);
 
     assert_eq!(removed, 0, "非临时文件 / 目录不应被清理");
     assert!(note.exists(), "用户的普通文件绝不能被删");
@@ -162,7 +170,7 @@ fn malformed_names_are_not_treated_as_pid_owner() {
 
     // 若把 `12345` 当 PID，`dead` 会让它立刻被删——这正是要防的误判。
     assert_eq!(
-        sweep_with(dir.path(), SystemTime::now(), &dead),
+        sweep_in(dir.path(), SystemTime::now(), &dead),
         0,
         "形状不符的名字不得按 PID 判定"
     );
@@ -197,6 +205,12 @@ fn missing_directory_is_not_an_error() {
     assert_eq!(sweep_stale(&missing), 0);
     // 幂等：再调一次也是 0。
     assert_eq!(sweep_stale(&missing), 0);
+    // 关键区别：读不成是 `None`，不是「读成了、很干净」的 `Some(0)`——
+    // 上层据此决定要不要撤销「本目录已扫过」的登记（见 `sweep_parent_once`）。
+    assert!(
+        sweep_with(&missing, SystemTime::now(), &dead).is_none(),
+        "目录读不成必须返回 None"
+    );
 }
 
 /// 每目录每进程只扫一次：第一次扫过之后，新出现的残留不会被第二次调用清掉。
