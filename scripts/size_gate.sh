@@ -63,7 +63,7 @@ WARN_MB=$(awk "BEGIN{printf \"%.3f\", $WARN/1048576}")
 report() { echo "$1"; }
 
 report "release 产物：$BIN"
-report "字节数：$SIZE（${MB} MB）｜预警线 ${WARN_MB} MB，红线 ${LIMIT_MB} MB"
+report "字节数：${SIZE}（${MB} MB）｜预警线 ${WARN_MB} MB，红线 ${LIMIT_MB} MB"
 
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
   {

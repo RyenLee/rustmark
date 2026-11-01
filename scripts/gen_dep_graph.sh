@@ -24,7 +24,7 @@ cd "$(dirname "$0")/.."
 EXPECTED=docs/spec/workspace-topology.expected.txt
 
 # --- 1. 拓扑期望基线：保留注释头，重写机器主体 ---
-echo "== 生成 $EXPECTED（保留注释头）=="
+echo "== 生成 ${EXPECTED}（保留注释头）=="
 # 注释头 = 直到**最后一个** `#` 起始行；与机器主体之间的空行**不保留**。
 #
 # 为什么不能按「第一个非 `#` 起始行」切：CI 用 `grep -v '^#'` 剥掉注释头后与
@@ -47,7 +47,7 @@ echo "   注释头（前 $last_comment 行）保留，机器主体已重写"
 # --- 2. 机器图（需 cargo-depgraph，落 target/ 不入库）---
 GEN_SVG=target/dependency-graph.generated.svg
 if cargo depgraph --version >/dev/null 2>&1; then
-  echo "== 生成 $GEN_SVG（机器图，不入库）=="
+  echo "== 生成 ${GEN_SVG}（机器图，不入库）=="
   mkdir -p "$(dirname "$GEN_SVG")"
   cargo depgraph --workspace --format svg > "$GEN_SVG"
   echo "   已写入 $GEN_SVG"
