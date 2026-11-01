@@ -62,8 +62,23 @@ GBK/GB18030 无损读写、分屏实时预览。
   `xattr -d com.apple.quarantine /Applications/Rustmark.app`；
 - Linux：无签名机制，按发行版惯例处理。
 
-**系统依赖**（Linux）：Vulkan 或 OpenGL（`libvulkan1` / mesa）；
-wgpu 通过系统图形栈渲染，无窗口管理器外的额外依赖。
+**系统依赖**（Linux）：**Vulkan 驱动与 loader 是必需的**，OpenGL / GLES 回退
+**没有编入**（为控制发行体积，Linux 只编 vulkan 一个 wgpu 后端，见 `Cargo.toml`
+中 wgpu 的按平台声明）：
+
+```bash
+# Debian / Ubuntu
+sudo apt install mesa-vulkan-drivers libvulkan1
+# Fedora / RHEL
+sudo dnf install mesa-vulkan-drivers vulkan-loader
+# Arch
+sudo pacman -S vulkan-icd-loader   # 另装 vulkan-intel / vulkan-radeon / vulkan-nvidia
+```
+
+自检：`vulkaninfo --summary` 能列出 GPU 即可。缺驱动时应用会打印诊断并把它写入
+`~/.config/rustmark/crash/`，处置步骤见
+[docs/guides/troubleshooting.md](docs/guides/troubleshooting.md) §6。
+除此之外无窗口管理器外的额外依赖。
 
 ### 卸载
 
@@ -138,6 +153,14 @@ wgpu 通过系统图形栈渲染，无窗口管理器外的额外依赖。
    （自绘只读视图 / 视口虚拟化），成本远超收益，本期不做（V11-41 口径 A 裁定；
    「自绘 vs 修订口径」议题 T5 已由 §3.2.13 的排版层「原地补丁」落地闭环，
    4.57 → 0.241ms）。日常文档（<1MB）不受影响。
+10. **Linux 必须有可用的 Vulkan 驱动**：Linux 目标只编入 wgpu 的 `vulkan` 后端
+    （`Cargo.toml` 的 `cfg(not(any(windows, macos)))` 段），**没有** OpenGL / GLES
+    运行时回退。没有任何 Vulkan 驱动的机器（老核显、精简容器、部分虚拟机模板、
+    云桌面、只走 RDP 的会话）**无法启动**——这不是崩溃，是窗口建不出来：
+    应用会打印一段可操作诊断（装哪个包、用 `vulkaninfo` 自检）并写入
+    `~/.config/rustmark/crash/crash-*.txt`。
+    处置见 [troubleshooting §6](docs/guides/troubleshooting.md)。取舍与体积数据见
+    [P1 #3 处置记录](docs/reviews/p1-03-linux-vulkan-disposition.md)。
 
 ## 5. 故障排查
 

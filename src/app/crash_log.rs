@@ -76,6 +76,30 @@ impl CrashReport {
         }
     }
 
+    /// 从「启动期致命失败」构造报告（供 [`write_startup_failure`] 调用）。
+    ///
+    /// 这类失败**不是 panic**：`eframe::run_native` 正常返回 `Err`（典型是
+    /// GPU 适配器初始化失败，详见 [`super::startup_diagnosis`]），
+    /// 所以 panic hook 根本不会被调用，`panic = "abort"` 下更不会有「返回」。
+    /// 复用同一个报告结构而不是另起一套格式，是为了：
+    ///
+    /// - 用户只需记住一个目录（`crash/`）与一种文件名；
+    /// - [`prune_reports`] 的保留上限自动一并生效，不必写第二份清理逻辑。
+    ///
+    /// 与崩溃报告的差别只在语义字段：`location` 标明「启动期、非 panic」，
+    /// 栈回溯位置给出说明而不是空串——空串会让提交者以为是报告坏了。
+    pub fn from_startup_failure(diagnosis: String) -> Self {
+        Self {
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            platform: format!("{} {}", std::env::consts::OS, std::env::consts::ARCH),
+            timestamp: utc_timestamp_string(),
+            message: diagnosis,
+            location: "<启动期：eframe 返回 Err，不是 panic>".to_string(),
+            thread: "<主线程>".to_string(),
+            backtrace: "<无：非 panic 路径，进程栈未展开>".to_string(),
+        }
+    }
+
     /// 渲染为可提交的纯文本报告。
     ///
     /// 首段是固定骨架（版本/平台/时间），正文是消息、位置、线程与回溯。
@@ -155,6 +179,27 @@ pub fn write_report(dir: &Path, report: &CrashReport) -> std::io::Result<PathBuf
     ));
     std::fs::write(&path, report.render())?;
     Ok(path)
+}
+
+/// 把「启动期致命失败诊断」写到 `dir`，返回写入的文件路径。
+///
+/// 与 [`write_report`] 同目录、同前缀、同保留上限：用户只需记住一个 `crash/`。
+/// 区别只在来源——这条路径**不经过 panic hook**（启动失败是 `Err` 不是 panic），
+/// 由 `app::run()` 在接住 `eframe::run_native` 的错误后直接调用。
+///
+/// # 为什么必须落盘而不是只打 stderr
+///
+/// Windows release 带 `windows_subsystem = "windows"`（`src/main.rs`）——
+/// 双击 exe 时**没有控制台**，`eprintln!` / `log` 的输出全部落进虚空，
+/// 用户只会看到「双击没反应」。诊断文件是这类平台上唯一可见的通道。
+/// Linux / macOS 从终端启动时 stderr 可见，两条通道同时给。
+///
+/// 写盘失败返回 `Err` 由调用方决定（生产路径只记一条日志，不覆盖原始诊断）。
+pub fn write_startup_failure(dir: &Path, diagnosis: &str) -> std::io::Result<PathBuf> {
+    write_report(
+        dir,
+        &CrashReport::from_startup_failure(diagnosis.to_string()),
+    )
 }
 
 /// 目录内最多保留的崩溃报告份数。

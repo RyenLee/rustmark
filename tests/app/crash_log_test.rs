@@ -90,6 +90,35 @@ fn installed_hook_writes_a_report_on_panic() {
     assert!(found, "人为 panic 后应生成含该消息的崩溃记录");
 }
 
+/// 启动期非 panic 失败（P1 #3）：诊断同样落到 `crash/`，且与崩溃报告同前缀。
+///
+/// 这条路径**不经过 panic hook**（`eframe::run_native` 返回 `Err` 而非 panic），
+/// 是 Windows release「双击没反应」场景下唯一能给用户看的通道。
+#[test]
+fn startup_failure_writes_a_report_without_a_panic() {
+    let dir = tempfile::tempdir().unwrap();
+    let diagnosis = "rustmark 启动失败：找不到可用的图形适配器（GPU）\n\
+                     建议：sudo apt install mesa-vulkan-drivers\n";
+    let path = crash_log::write_startup_failure(dir.path(), diagnosis).expect("写盘应成功");
+    assert!(
+        path.file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.starts_with("crash-") && n.ends_with(".txt")),
+        "诊断文件必须与崩溃报告同前缀，才能被同一套保留策略清理：{:?}",
+        path
+    );
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(text.contains("mesa-vulkan-drivers"), "缺诊断正文：{text}");
+    assert!(
+        text.contains("不是 panic"),
+        "位置字段必须写明「非 panic」，否则提交者会以为报告坏了：{text}"
+    );
+    assert!(
+        text.contains(env!("CARGO_PKG_VERSION")),
+        "缺版本，Issue 无法定位：{text}"
+    );
+}
+
 /// 验收「默认不产生日志」：正常路径**零写盘**。
 ///
 /// 装配、配置读写都不该碰崩溃目录——目录甚至不应该存在。
