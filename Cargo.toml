@@ -313,7 +313,10 @@ wgpu = { workspace = true, features = ["dx12"] }
 wgpu = { workspace = true, features = ["metal"] }
 
 [target.'cfg(not(any(target_os = "windows", target_os = "macos")))'.dependencies]
-wgpu = { workspace = true, features = ["vulkan", "gles"] }
+# 原双开 vulkan + gles（fallback）导致 Linux release 比 Windows 基线大 2.7 MB，
+# 超过 NFR-PERF-01 的 11 MiB 红线。Ubuntu 22.04+ 自带 mesa-vulkan-drivers，
+# vulkan 已覆盖主流发行版；gles 保留会让体积门禁长期红。
+wgpu = { workspace = true, features = ["vulkan"] }
 
 # exe 内嵌图标（写进 PE 资源段）。与运行期 `ViewportBuilder::with_icon` 是两条
 # 独立链路：缺资源段时，资源管理器里与「固定到任务栏」的静态图标仍是空白。
