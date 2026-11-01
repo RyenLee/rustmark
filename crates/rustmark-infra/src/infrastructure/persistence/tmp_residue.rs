@@ -222,11 +222,11 @@ fn liveness(pid: u32) -> Liveness {
         if !Path::new("/proc/self").exists() {
             return Liveness::Unknown;
         }
-        return if Path::new(&format!("/proc/{pid}")).exists() {
+        if Path::new(&format!("/proc/{pid}")).exists() {
             Liveness::Alive
         } else {
             Liveness::Dead
-        };
+        }
     }
     #[cfg(not(target_os = "linux"))]
     {
