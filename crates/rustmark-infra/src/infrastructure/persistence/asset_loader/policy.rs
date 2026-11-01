@@ -165,3 +165,49 @@ pub(super) fn alt_of(path: &str) -> String {
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "image".to_string())
 }
+
+/// 判定魔数所需的字节窗口：取各格式签名长度的最大值（WebP 需看到偏移 8..12）。
+///
+/// 真实位图的最小体积都远大于 12 字节（最小的 BMP 头 14 字节、GIF 头 13 字节），
+/// 故「不足 12 字节」本身就可以判定为「不是任何合法位图」。
+///
+/// `remote-images` 关闭时远程路径整条不编译，本项只被单测使用，
+/// 故按「feature 或测试」门控，避免无该 feature 的构建报 dead_code
+/// （CI 有 `--no-default-features` job，`-D warnings` 会把它变成失败）。
+#[cfg(any(feature = "remote-images", test))]
+pub(super) const MAGIC_WINDOW: usize = 12;
+
+/// 字节头是否与**声明**的 MIME 同族（评审 P2 #7）。
+///
+/// 为什么要看字节而不是只信 `Content-Type`：远程图片的 MIME 只有两个来源——
+/// 响应头与 URL 扩展名，**两者都由服务端 / 文档作者控制**，与实际字节无关。
+/// 一个 `Content-Type: image/png` 的错误页、反代注入的 HTML、被中间人替换的
+/// 任意二进制，都会以「合法 png」的身份进入下游解码器。核对魔数把
+/// 「声明是什么」和「内容是什么」重新对齐。
+///
+/// 族匹配而非严格相等：`image/jpg` 与 `image/jpeg` 是同一族（前者是非标准
+/// 但常见的写法），其余格式各自成族。
+///
+/// `head` 不足 [`MAGIC_WINDOW`] 时一律返回 `false`——截断响应不能靠
+/// 「前缀凑巧对上」蒙混过关。
+#[cfg(any(feature = "remote-images", test))]
+pub(super) fn bytes_match_declared_mime(mime: &str, head: &[u8]) -> bool {
+    if head.len() < MAGIC_WINDOW {
+        return false;
+    }
+    match mime {
+        // PNG：8 字节固定签名 89 50 4E 47 0D 0A 1A 0A
+        "image/png" => head.starts_with(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]),
+        // JPEG：SOI（FF D8）后必跟一个标记段起始（FF xx），首段常见 E0/E1/DB
+        "image/jpeg" | "image/jpg" => head.starts_with(&[0xFF, 0xD8, 0xFF]),
+        // GIF：GIF87a / GIF89a
+        "image/gif" => head.starts_with(b"GIF87a") || head.starts_with(b"GIF89a"),
+        // WebP：RIFF 容器，`WEBP` 固定在偏移 8
+        "image/webp" => head.starts_with(b"RIFF") && &head[8..12] == b"WEBP",
+        // BMP：`BM` 签名（完整判定还需头部长度字段，但签名已足够筛掉异族内容）
+        "image/bmp" => head.starts_with(b"BM"),
+        // 白名单之外的类型不认——包括 `image/svg+xml`：它永远不该走到这里，
+        // 真走到了也只能被拒（白名单在调用侧已先拦一道）。
+        _ => false,
+    }
+}
