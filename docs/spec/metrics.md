@@ -1571,3 +1571,25 @@ presentation/state 30 / theme 19（12mo）；本脚本同窗口实测 **69 / 31 
 
 - 增量集中在三处生产代码：撤销预算结算、图片解码降采样 + 缓存字节账、共享常量引用；
   无新增依赖，符合「不改依赖图」的边界。
+
+## 2.10 远程图片 TLS feature 化（2026-11-01，建议 2 落地）
+
+> 口径同 §2.4（`cargo build --release`，Windows msvc；产物在
+> `target/x86_64-pc-windows-msvc/release/`）。本轮改动：`ureq` / `rustls` / `ring` /
+> `webpki` 整条 TLS 链改为 `optional`，由 `rustmark-infra` 的 `remote-images` feature
+> 门控；infra 刻意不设 `default`，由二进制组合根 `rustmark` 的
+> `default = ["remote-images"]` 单点转发开启。
+
+| 构建 | 实测 | 结论 |
+|---|---|---|
+| 默认（`remote-images` ON） | **10,651,136 B = 10.158 MiB** | 与 §2.9 基线一致（功能不变） |
+| `--no-default-features`（OFF） | **9,580,544 B = 9.137 MiB** | **−1,070,592 B ≈ −1.02 MiB（−10.1%）** |
+
+- **等价于 §2.4 待决策 3 的收益，但无其副作用**：native-tls 方案同样省 ≈1 MiB，却要
+  Linux 链 OpenSSL、三平台行为不再一致；本方案保留纯 Rust rustls/ureq，仅把整条链
+  变成可裁剪——三平台一致性不变。
+- **代价**：OFF 构建下 `![](https://…)` 不再加载（`load_remote` 返回明确错误，预览降级
+  占位图）；本地 / 相对路径 / data URI 图片完全不受影响。
+- **验证**：`cargo tree -p rustmark --no-default-features -i ureq` 与 `-i ring` 均
+  「did not match any packages」（整条链已出图）；默认构建 `ureq` 仍在树中。
+- **用法**：`cargo build --release --no-default-features`（安全 / 内网分发）；默认构建不受影响。

@@ -6,6 +6,17 @@ Release Notes 依此自动归组。
 
 ## [未发布]
 
+### 体积优化（建议 2：远程图片 TLS feature 化）
+
+- `ureq` + `rustls` + `ring` + `webpki` 整条 TLS 链改为 `optional`，由 `rustmark-infra`
+  的 `remote-images` feature 门控；`rustmark` 的 `default = ["remote-images"]` 单点转发，
+  默认构建功能与体积均不变。
+- `cargo build --release --no-default-features` 可整条剔除：Windows 实测
+  **10,651,136 B → 9,580,544 B（−1,070,592 B ≈ −1.02 MiB，−10.1%）**。代价仅是
+  `![](https://…)` 不再加载，本地 / 相对 / data URI 图片不受影响；关闭时对 http(s)
+  引用返回明确错误而非当成本地路径。
+- 默认构建 `cargo tree -i ureq` 仍在树中；OFF 构建 `ureq`/`ring` 均已出图（已实测）。
+
 ## [0.2.2] · 2026-10-31
 
 ### 本次发布概要

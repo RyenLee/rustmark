@@ -37,14 +37,20 @@
 //! 限制 / 错误 / MIME 推断在 `policy`，零依赖编码原语在 `coding`，
 //! HTTP agent 与平台根证书分别在 `agent` / `platform_certs`。
 
+#[cfg(feature = "remote-images")]
 mod agent;
 mod coding;
+#[cfg(feature = "remote-images")]
 mod platform_certs;
 mod policy;
 
+// `Read` 仅 `load_remote` 的边读边判上限用到；`remote-images` 关闭时整条门控掉，
+// 否则 `clippy -D warnings` 会报 unused import。
+#[cfg(feature = "remote-images")]
 use std::io::Read as _;
 use std::path::{Component, Path, PathBuf};
 
+#[cfg(feature = "remote-images")]
 use agent::http_agent;
 use coding::{decode_base64, percent_decode};
 use policy::{ALLOWED_MIME, alt_of, mime_from_extension};
@@ -328,6 +334,10 @@ impl AssetLoader {
     /// （纯 Rust TLS：三平台行为一致、不链系统 OpenSSL），TLS / 重定向 /
     /// chunked 等 HTTP 细节全部交出去；本函数只保留三条
     /// **安全与资源边界**——超时、体积硬上限、MIME 白名单。
+    ///
+    /// `remote-images` feature 关闭时，本函数被替换为直接报错的替身
+    /// （见下方 `#[cfg(not(feature = "remote-images"))]` 定义）。
+    #[cfg(feature = "remote-images")]
     fn load_remote(&self, url: &str) -> Result<LoadedAsset, AssetError> {
         let agent = http_agent(self.limits.download_timeout);
         let response = agent
@@ -399,6 +409,16 @@ impl AssetLoader {
             bytes,
             mime,
             alt: alt_of(&final_path),
+        })
+    }
+
+    /// 未启用 `remote-images` 时的替身：明确报错，而不是把 `https://…`
+    /// 当成本地路径去 `fs::read`。调用方（预览取图）会降级为占位图。
+    #[cfg(not(feature = "remote-images"))]
+    fn load_remote(&self, url: &str) -> Result<LoadedAsset, AssetError> {
+        Err(AssetError::DownloadFailed {
+            url: url.to_string(),
+            reason: "本构建未启用远程图片（remote-images feature 关闭）".to_string(),
         })
     }
 }

@@ -29,7 +29,7 @@ impl AssetLimits {
     ///
     /// 单独成常量是为了让 HTTP agent 的复用有一个**可判定的锚点**：
     /// agent 是进程级共享的，只有超时恰好等于该值的加载器才能共用同一份
-    /// （见 [`crate::infrastructure::persistence::asset_loader::http_agent`]）。
+    /// （见 `asset_loader::http_agent`；`remote-images` 关闭时该模块不编译）。
     pub const DEFAULT_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(10);
 }
 

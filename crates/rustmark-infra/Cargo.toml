@@ -43,14 +43,25 @@ thiserror = { workspace = true }
 # --- 远程图片下载（缺陷 025：https 图片此前因「未内置 TLS」全部失败）---
 # 纯 Rust TLS（rustls + ring）；REL-03 体积缓解：不启 rustls-webpki-roots，
 # 根证书运行期从平台信任库读取（见 asset_loader.rs 的 platform_root_certs）。
-ureq = { version = "3.5.0", default-features = false, features = [
+#
+# 体积（建议 2）：整条 TLS 链（ureq + rustls + ring + webpki）约 0.7–1.2 MiB。
+# 改为 optional，由 `remote-images` feature 门控：**本 crate 不设 default**，
+# 由二进制组合根（root）的 `default = ["remote-images"]` 转发开启。这样
+# distro / 内网分发可 `cargo build --release --no-default-features` 整条剔除，
+# 代价仅是 `![](https://…)` 不再加载；本地 / 相对 / data URI 图片不受影响。
+ureq = { version = "3.5.0", default-features = false, optional = true, features = [
     "rustls-no-provider",
     "_ring",
 ] }
-rustls-native-certs = "0.8"
+rustls-native-certs = { version = "0.8", optional = true }
 
 # --- 日志（越界告警用）---
 log = { workspace = true }
+
+[features]
+# 远程图片（http/https）加载能力。刻意不设 default：默认关闭，由 root 打开。
+# 单一开关点放在二进制组合根，避免 infra 的多个消费者各自把 TLS 链拖回二进制。
+remote-images = ["dep:ureq", "dep:rustls-native-certs"]
 
 [dev-dependencies]
 # 内联测试用临时目录（字体发现 / 图片落盘 / 编码探测）。

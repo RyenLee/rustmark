@@ -176,6 +176,15 @@ path = "src/bin/check-arch.rs"
 [lints]
 workspace = true
 
+[features]
+# 体积（建议 2）：远程图片 TLS 链（ureq + rustls + ring + webpki）约 0.7–1.2 MiB。
+# 默认开启以保持既有功能（`![](https://…)` 可加载）；安全 / 内网分发可用
+# `cargo build --release --no-default-features` 整条剔除，本地 / 相对 / data URI
+# 图片不受影响。单一开关点在此（infra 刻意不设 default），避免多消费者各自把
+# TLS 链拖回二进制（assembly 也依赖 infra，但它不开此 feature）。
+default = ["remote-images"]
+remote-images = ["rustmark-infra/remote-images"]
+
 [dependencies]
 # --- UI（ADR-001：egui 原生，wgpu 后端）---
 # 注意：eframe 的 default 渲染后端是 glow(OpenGL)，需求 §5.1 要求 wgpu，
