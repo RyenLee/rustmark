@@ -70,11 +70,14 @@ jobs:
   check:
     name: ${{ matrix.os }} / check + test
     runs-on: ${{ matrix.os }}
-    # ubuntu-20.04 已被 GitHub 下线（runner 镜像退役），改用 22.04。
+    # 显式钉 ubuntu-24.04 而不是 ubuntu-latest：latest 会随 GitHub 的镜像切换而
+    # 漂移（20.04 → 22.04 那轮已经踩过一次，退役镜像直接让 job 起不来）。
+    # 注意：本 job 的显示名 `${{ matrix.os }} / check + test` 是分支保护的必需
+    # 检查项，改这里的 os 会改名，必须同步更新仓库的分支保护设置。
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest, ubuntu-22.04]
+        os: [windows-latest, macos-latest, ubuntu-24.04]
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -82,7 +85,8 @@ jobs:
       # runner 默认不装任何 CJK 字体，`a_cjk_font_is_available_on_this_platform`
       # 会因此判死（run 41208877623 的 ubuntu job 红在这里）。该用例的语义是
       # 「桌面环境应能渲染中文」——headless runner 也补装，而不是把断言改成跳过。
-      # ubuntu-latest 自带的 noto 包路径命中 candidate_paths() 的第一项。
+      # 装好后 /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc 命中
+      # candidate_paths() 的第一项（22.04 与 24.04 路径相同）。
       - name: Install CJK fonts
         if: runner.os == 'Linux'
         shell: bash
