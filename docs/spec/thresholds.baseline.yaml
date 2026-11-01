@@ -125,15 +125,23 @@ modules:
       ci_timeout_check:
         value: 45
         unit: "minutes"
-        source: ".github/workflows/ci.yml:83"
+        source: ".github/workflows/ci.yml:84"
         anchor: "timeout-minutes: 45"
         purpose: "check job（三平台编译 + 全量测试）超时上限；超时即取消并判定失败。"
         recommended: "30-60"
         configurable: "配置文件 ci.yml"
+      ci_timeout_no_default_features:
+        value: 30
+        unit: "minutes"
+        source: ".github/workflows/ci.yml:286"
+        anchor: "timeout-minutes: 30"
+        purpose: "no-default-features job（remote-images 关闭形态的 clippy / 测试 / release 构建）超时上限；超时即该构建形态未获验证。"
+        recommended: "20-40"
+        configurable: "配置文件 ci.yml"
       ci_timeout_perf:
         value: 30
         unit: "minutes"
-        source: ".github/workflows/ci.yml:282"
+        source: ".github/workflows/ci.yml:408"
         anchor: "timeout-minutes: 30"
         purpose: "perf job（release 性能冒烟）超时上限；超时即失败。"
         recommended: "40（整帧 smoke）；NFR 另测服务层 ≤10ms"
@@ -141,7 +149,7 @@ modules:
       ci_timeout_coverage:
         value: 30
         unit: "minutes"
-        source: ".github/workflows/ci.yml:334"
+        source: ".github/workflows/ci.yml:460"
         anchor: "timeout-minutes: 30"
         purpose: "coverage job（llvm-cov 全量插桩）超时上限；超时即无 lcov.info，门禁失败。"
         recommended: "30-45"
@@ -149,7 +157,7 @@ modules:
       ci_timeout_release_dryrun:
         value: 10
         unit: "minutes"
-        source: ".github/workflows/ci.yml:403"
+        source: ".github/workflows/ci.yml:529"
         anchor: "timeout-minutes: 10"
         purpose: "release-dryrun job 超时上限；离线演练为纯 Python，超时即流程异常。"
         recommended: "5-15"
@@ -157,7 +165,7 @@ modules:
       ci_timeout_deny:
         value: 20
         unit: "minutes"
-        source: ".github/workflows/ci.yml:424"
+        source: ".github/workflows/ci.yml:550"
         anchor: "timeout-minutes: 20"
         purpose: "deny job（依赖许可 / 安全公告）超时上限；超时即门禁未判定。"
         recommended: "10-20"
@@ -656,7 +664,7 @@ modules:
       asset_remote_stream_cap:
         value: 8388608
         unit: "bytes"
-        source: "crates/rustmark-infra/src/infrastructure/persistence/asset_loader.rs:317"
+        source: "crates/rustmark-infra/src/infrastructure/persistence/asset_loader.rs:385"
         anchor: "bytes.len() > self.limits.max_local_bytes"
         via: "crates/rustmark-infra/src/infrastructure/persistence/asset_loader/policy.rs"
         purpose: "远程下载边读边判的瞬时上限（= 本地上限 8 MiB），超过即中止，不再先读到 2× 再拒绝。"

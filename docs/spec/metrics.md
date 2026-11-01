@@ -1593,3 +1593,11 @@ presentation/state 30 / theme 19（12mo）；本脚本同窗口实测 **69 / 31 
 - **验证**：`cargo tree -p rustmark --no-default-features -i ureq` 与 `-i ring` 均
   「did not match any packages」（整条链已出图）；默认构建 `ureq` 仍在树中。
 - **用法**：`cargo build --release --no-default-features`（安全 / 内网分发）；默认构建不受影响。
+- **CI 哨兵**：`.github/workflows/ci.yml` 新增 `no-default-features` job（仅 Linux）——
+  依赖树断言（正对照 `ureq` 必须在默认树中，再验 OFF 下 `ureq`/`rustls`/
+  `rustls-native-certs`/`ring`/`webpki` 全部出图）+ 双配置 clippy + `--test infrastructure`
+  用例 + release 构建 + 体积记录。没有它，「省了 1 MiB」只在落地当天成立：有人把
+  `ureq` 改回非 optional 时构建照样绿，收益会静默消失。
+  落地该 job 时据此实测出 `tests/infrastructure/asset_loader_test.rs` 有 4 条远程能力
+  用例未按 feature 门控（OFF 全量跑 1 红并中断后续 target），已按能力门控并补一条
+  OFF 专属用例；修后 OFF 全量 **1909 passed / 0 failed**。

@@ -297,7 +297,7 @@ flowchart LR
 | `workspace_topology` | crate 依赖面与成员表 | `cargo test` 红 |
 | `field_visibility_guard` | 跨 crate `pub` 字段集合 | `cargo test` 红 |
 | `test_target_guard` | `[[test]]` 是否漏声明 | `cargo test` 红 |
-| `check_thresholds.py` | 121 条阈值与源码逐条比对 | CI `Threshold baseline` 红 |
+| `check_thresholds.py` | 122 条阈值与源码逐条比对 | CI `Threshold baseline` 红 |
 
 ---
 

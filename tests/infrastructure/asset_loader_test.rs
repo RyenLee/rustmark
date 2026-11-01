@@ -286,6 +286,10 @@ fn base64_with_newlines_is_accepted() {
 /// 下载）依赖外网与系统时钟，不在单测里跑；这里钉住的是**可达性失败时
 /// 的行为**——连接被拒必须降级为 `DownloadFailed` 错误，绝不能 panic
 /// （`panic = "abort"` 下一张坏图引用会直接终止进程）。
+// 远程能力用例按 feature 门控：`remote-images` 关闭时 `load_remote` 是报错替身，
+// 「能下载」类断言无从成立；留着只会让关闭配置带着一条永红的用例（谁也不会去跑它）。
+// 关闭形态由下方 `remote_image_reports_remote_images_feature_disabled` 单独覆盖。
+#[cfg(feature = "remote-images")]
 #[test]
 fn https_connect_failure_returns_download_error_not_panic() {
     // 保留端口 1（tcpmux，几乎不会有服务监听）。
@@ -303,6 +307,7 @@ fn https_connect_failure_returns_download_error_not_panic() {
 /// 需要外网，默认忽略；手动验证跑：
 /// `cargo test --test infrastructure real_https_download -- --ignored --nocapture`
 /// 用户报障里的原始地址（CSDN 图床，base64 包装的跳转图）即此用例来源。
+#[cfg(feature = "remote-images")]
 #[test]
 #[ignore = "需外网"]
 fn real_https_download() {
@@ -317,6 +322,7 @@ fn real_https_download() {
     }
 }
 
+#[cfg(feature = "remote-images")]
 #[test]
 fn unreachable_host_returns_download_error_not_panic() {
     // 保留端口 1（tcpmux，几乎不会有服务监听）
@@ -329,6 +335,7 @@ fn unreachable_host_returns_download_error_not_panic() {
     );
 }
 
+#[cfg(feature = "remote-images")]
 #[test]
 fn remote_download_of_real_image_succeeds() {
     // 用本机临时起的极简 HTTP 服务，避免依赖外网与第三方 crate。
@@ -370,6 +377,32 @@ fn remote_download_of_real_image_succeeds() {
 
     assert_eq!(asset.mime, "image/png");
     assert_eq!(asset.bytes, TINY_PNG);
+}
+
+/// `remote-images` 关闭时的形态：远程引用必须**明确报错**，而不是被当成
+/// 本地路径去 `fs::read`（那样会把 `https://…` 拼成文档目录下的怪文件名，
+/// 报错信息也完全误导，用户看不出是「这个构建不带该能力」）。
+///
+/// 与上一条互补：那条验「能下载」（仅在 feature 开启时编译），这条验
+/// 「关掉之后行为可预期」。两种构建形态各有一条覆盖，关闭配置才不会变成
+/// 无人验证的盲区——CI 的 `no-default-features` job 正是靠这条守住语义。
+#[cfg(not(feature = "remote-images"))]
+#[test]
+fn remote_image_reports_remote_images_feature_disabled() {
+    let error = AssetLoader::new()
+        .load("https://example.com/a.png", None)
+        .expect_err("未启用 remote-images 时远程图片应报错");
+
+    match error {
+        AssetError::DownloadFailed { reason, .. } => {
+            // 文案要让用户能自己定位到构建开关，而不只是「下载失败」。
+            assert!(
+                reason.contains("remote-images") || reason.contains("未启用"),
+                "错误信息应指明是 feature 未启用，实际：{reason}"
+            );
+        }
+        other => panic!("应是 DownloadFailed，实际：{other:?}"),
+    }
 }
 
 // ---------------------------------------------------------------------------

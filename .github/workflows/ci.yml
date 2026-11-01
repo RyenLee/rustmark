@@ -5,6 +5,7 @@ name: CI
 #
 # 1. **一个 job 一个职责**，失败时从 job 名就能判断是哪一类问题：
 #      check          → 编译与测试（三平台矩阵）
+#      no-default-features → 关闭 remote-images 的构建形态（仅 Linux）
 #      perf           → 性能冒烟（仅 Linux，release）
 #      coverage       → 覆盖率门禁（仅 Linux）
 #      release-dryrun → 离线发布演练
@@ -261,6 +262,131 @@ jobs:
             echo '```'
             cargo bloat --release --bin rustmark --crates 15 || echo "(cargo bloat 不可用)"
             echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # 体积（建议 2 / docs/spec/metrics.md §2.10）：`remote-images` feature **关闭**时的构建形态。
+  #
+  # 为什么单独一个 job，而不是在 check job 里插一步：
+  #
+  # 1. **与平台无关，单平台足够**：关掉 feature 换的是 rustmark-infra / rustmark
+  #    的编译指纹，要验的是「cfg 关闭分支里有没有未用导入、死代码、签名漂移」——
+  #    这是语言层属性，不是平台属性（与 check job 里 Threshold baseline 的单平台口径一致）。
+  #    插进 check 就是三平台各多一次重复编译。
+  # 2. **不能和体积门禁同 job**：同一 job 内两次 `cargo build --release`
+  #    （ON / OFF）会先后覆盖同一个产物路径，体积门禁量到哪个取决于步骤顺序。
+  #    分到两个 job，各自只产一种形态，没有歧义。
+  #
+  # 守的是**意图**而不只是「能编译」：若有人把 ureq 改回非 optional，
+  # OFF 构建照样绿，但 −1.02 MiB 的收益会静默消失，
+  # 所以除 clippy / build 外还要断言依赖树里确实没有 TLS 链。
+  no-default-features:
+    name: no-default-features build (linux)
+    # 同上：钉 24.04，与 check job 同一镜像（latest 漂移会换依赖清单）。
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      # remote-images 只影响 ureq / rustls，与 eframe→winit→wayland 的系统库无关，
+      # 故仍要装 wayland 开发包（理由见 check job 的 `Install Linux dependencies`）。
+      # 只跑 `--test infrastructure`（不涉及宿主字体用例），故不装 CJK 字体。
+      - name: Install Linux dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwayland-dev libxkbcommon-dev
+
+      # 工具链由仓库根 `rust-toolchain.toml` 驱动（唯一真源），见 check job 的同名注释。
+      - name: Install Rust
+        shell: bash
+        run: |
+          rustup show
+          rustc --version
+          cargo --version
+
+      - uses: Swatinem/rust-cache@v2
+
+      # 先断言依赖树（秒级），再编译：最便宜的判定放最前，
+      # 让「feature 被改回非 optional」在几十秒内红，而不是等几分钟编译完才发现。
+      #
+      # 正对照必须先跑：`cargo tree -i <pkg>` 在包不存在时退出码 101，
+      # 若 tree 本身报错（锁文件损坏、索引不可用），负向断言会把「命令挂了」
+      # 误判成「包不在树里」——先证明这条命令在默认配置下确实能命中。
+      - name: Assert TLS chain excluded (remote-images off)
+        shell: bash
+        run: |
+          set -o pipefail
+          if ! cargo tree -p rustmark -i ureq >/dev/null 2>&1; then
+            echo "::error::正对照失败：默认配置下 cargo tree -i ureq 未命中——断言逻辑本身失效（先查 Cargo.lock / cargo tree 报错）"
+            exit 1
+          fi
+          failed=0
+          for pkg in ureq rustls rustls-native-certs ring webpki; do
+            if cargo tree -p rustmark --no-default-features -i "$pkg" >/dev/null 2>&1; then
+              echo "::error::$pkg 仍在 --no-default-features 的依赖树中——remote-images 门控漏了（应为 optional + 只由 root 的 default 转发开启）"
+              failed=1
+            fi
+          done
+          exit $failed
+
+      # clippy 而非 check：cfg 门控最典型的回归是关闭分支下留下未用导入 / 死代码，
+      # 只有 lint 能抓——本 feature 落地时就踩过一次（`use std::io::Read` 仅
+      # load_remote 用到，未门控时 `clippy -D warnings` 直接红）。
+      #
+      # infra 单独一条：`-p rustmark` 只 lint 被选中的包，infra 的 OFF 分支
+      # （load_remote 的报错替身）作为依赖会被编译但**不被 lint**。
+      # infra 没有 default feature，故不带 `--no-default-features` 即是 OFF 形态。
+      - name: cargo clippy (remote-images off)
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo clippy -p rustmark-infra --all-targets -- -D warnings
+          cargo clippy -p rustmark --no-default-features --all-targets -- -D warnings
+
+      # 用例按**目标**跑，不用 `--all-targets`：
+      #   - `infrastructure` 正是 asset_loader 用例所在目标，也是本次门控的落点；
+      #   - 其余 target 在 OFF 下与默认形态走同一份代码（实测 OFF 全量只有 1 条红，
+      #     就是那条未门控的真实下载用例），重复跑不增加信号；
+      #   - `--all-targets` 会把 `font_glyph` 这类**依赖宿主字体**的用例拖进来，
+      #     runner 缺 CJK 字体时红成环境问题（check job 为此专门装了字体）。
+      #
+      # 这一步不是装饰：落地本 feature 时它 1 条红（`remote_download_of_real_image_succeeds`），
+      # 暴露出 `asset_loader_test.rs` 里 4 条未按能力门控的远程用例。
+      - name: cargo test (remote-images off)
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test -p rustmark --no-default-features --test infrastructure 2>&1 | tee off-test.log
+          grep -E "^test .* FAILED" off-test.log | sed 's/^/::error::/' || true
+
+      # release 形态单独验一次：LTO / strip / panic=abort 只在 release profile 生效，
+      # debug 绿不代表发得出去。
+      - name: cargo build --release --no-default-features
+        run: cargo build -p rustmark --release --no-default-features
+
+      # 体积只记录、不设门禁：红线针对默认发布形态（scripts/size_gate.sh）。
+      # 记在这里是给这条 feature 一个回归哨兵——否则「省了 1 MiB」只在
+      # 落地当天的报告里成立，之后没人知道它还在不在。
+      - name: Size report (informational)
+        shell: bash
+        run: |
+          BIN=$(find target -maxdepth 4 -type f -name rustmark -path '*/release/*' -not -path '*/deps/*' 2>/dev/null | head -1)
+          {
+            echo "### 体积：remote-images 关闭（Linux）"
+            echo ""
+            if [ -n "$BIN" ] && [ -f "$BIN" ]; then
+              BYTES=$(stat -c %s "$BIN")
+              echo "| 项 | 值 |"
+              echo "|---|---|"
+              echo "| 产物 | \`$BIN\` |"
+              echo "| 字节 | $BYTES |"
+              echo "| MiB | $(awk -v s="$BYTES" 'BEGIN{printf "%.3f", s/1048576}') |"
+              echo ""
+              echo "> 仅记录，不设门禁：红/预警线针对默认发布形态（\`scripts/size_gate.sh\`）。"
+            else
+              echo "_未找到 release 产物，跳过体积记录。_"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
   # S8-07 ②：性能冒烟。
