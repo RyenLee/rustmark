@@ -10,21 +10,23 @@
 # **版本号保留**——体积红线余量仅 512 B，依赖升级可能直接吃掉它，
 # Cargo.lock 漂移同样是拓扑事件。
 #
-# 归一化规则（机器无关，续）：删除**无缩进的** `[build-dependencies]` 标题行
+# 归一化规则（平台差异）：删除**无缩进的** `[build-dependencies]` 标题行
 # 与 `└── embed-resource v…` 行。embed-resource 在 root Cargo.toml 里声明于
 # `[target.'cfg(windows)'.build-dependencies]`，`cargo tree` 只在 Windows 输出
-# 这两行，macos / ubuntu 没有（否则三平台必有一方红：macos job 实测 `16,17d15`）。
+# 这两行，macos / ubuntu 没有。本文件是 `gen_dep_graph.sh` 重写出的**原始快照**
+# （在 Windows 上重生成就会带上这两行），因此 CI 在比对前对**两侧**都做同一层
+# 过滤；只过滤一侧时，快照含/不含这两行都会有一方红（2026-11-02 实测 `16,17d15`）。
 # 带缩进的 `│   [build-dependencies]` / `    [build-dependencies]` 标记三平台一致，
-# 保留不动。CI 用的是同一条过滤，改此处就要同步 ci.yml 的 Workspace topology assertion。
+# 保留不动。CI 与 docs/spec/architecture-constraints.md 第八条用的是同一条过滤。
 #
 # `--no-dedupe` 必须带：默认去重模式下 workspace 第二个成员（rustmark-core）
 # 的直接依赖会被 `(*)` 折叠隐藏，core 新增依赖边将逃过本断言（2026-10-24 实测）。
 #
-# 更新方式：本地跑
-#   cargo tree --workspace --depth 1 --no-dedupe | sed -E 's| \([^)]*\)||g' \
-#     | grep -v -E '^\[build-dependencies\]$|embed-resource v'
-# 核对 diff 确为预期变更后，把输出写回本文件（保留本注释头），随变更 commit
-# 一并提交。CI 步骤见 .github/workflows/ci.yml「Workspace topology assertion」。
+# 更新方式：改依赖后跑 `bash scripts/gen_dep_graph.sh`（机器主体 = 原始
+#   cargo tree --workspace --depth 1 --no-dedupe | sed -E 's| \([^)]*\)||g' 的输出；
+#   写回时**不再**过滤——过滤只在比对时做，且两侧同一条）。
+# 核对 diff 确为预期变更后随变更 commit 一并提交。CI 步骤见
+# .github/workflows/ci.yml「Workspace topology assertion」。
 #
 #
 # 基线：2026-10-24，V11-58 抽出 rustmark-icons 后拓扑 = 两条本地依赖链在

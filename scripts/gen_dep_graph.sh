@@ -8,6 +8,9 @@
 #   1. docs/spec/workspace-topology.expected.txt —— 保留手写注释头（基线历史），只重写机器主体：
 #      基于始终可用的 `cargo tree` 归一化输出覆盖「注释头之后的机器部分」，与
 #      tests/workspace_topology_test.rs 的 CI 拓扑门禁对账（本地依赖边 / crate 依赖面）。
+#      机器主体是**原始快照**：只剥 ` (...)`，不滤平台专属的 build 依赖行
+#      （`[build-dependencies]` / `embed-resource`）——那层过滤由 CI 在比对时对**两侧**
+#      统一做；写回时过滤会让 Windows 与非 Windows 平台各红一方（2026-11-02 实测）。
 #   2. target/dependency-graph.generated.svg —— `cargo depgraph` 生成的机器图，
 #      落到 target/（不入库）供临时查看。需 `cargo install cargo-depgraph`，
 #      未安装时跳过并提示，不影响 txt 快照。

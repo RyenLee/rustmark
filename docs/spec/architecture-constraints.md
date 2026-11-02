@@ -470,15 +470,17 @@ bash scripts/size_gate.sh             # 先 build --release 再测量
 **第八条 · 拓扑基线 diff（CI 步骤，本地不默认跑，改依赖时必跑）**
 
 ```bash
-diff <(grep -v '^#' docs/spec/workspace-topology.expected.txt) \
+diff <(grep -v '^#' docs/spec/workspace-topology.expected.txt \
+       | grep -v -E '^\[build-dependencies\]$|embed-resource v') \
      <(cargo tree --workspace --depth 1 --no-dedupe | sed -E 's| \([^)]*\)||g' \
         | grep -v -E '^\[build-dependencies\]$|embed-resource v')
 ```
 
-末行 `grep -v` 是平台归一化：root 的 `embed-resource` 声明在
+`grep -v` 是平台归一化：root 的 `embed-resource` 声明在
 `[target.'cfg(windows)'.build-dependencies]`，`cargo tree` 只在 Windows 输出
 `[build-dependencies]` + `└── embed-resource …` 两行，macos / ubuntu 没有。
-不带这层过滤时，期望文件含这两行 → 非 Windows 平台红；去掉后 Windows 又红。
+期望文件由 `scripts/gen_dep_graph.sh` 写成原始快照（在 Windows 上重生成会带上
+这两行），故**两侧都要过滤**：只过滤一侧时，快照含/不含这两行都会让另一方红。
 规则与 CI 步骤、期望文件头注释同源。
 
 它不在上面七条里，是因为日常提交不涉及依赖变更；但**改 `Cargo.toml` / `Cargo.lock`
