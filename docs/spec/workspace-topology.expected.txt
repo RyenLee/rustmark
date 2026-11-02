@@ -168,7 +168,7 @@ rustmark-icons v0.2.2
 rustmark-infra v0.2.2
 ├── image v0.25.10
 ├── log v0.4.34
-├── pulldown-cmark v0.13.5
+├── pulldown-cmark v0.13.6
 ├── rfd v0.17.2
 ├── ropey v1.6.1
 ├── rustls-native-certs v0.8.5
