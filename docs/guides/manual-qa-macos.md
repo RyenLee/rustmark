@@ -140,7 +140,7 @@
 | 8 类边界不崩溃 | `large_file_test.rs` |
 | GBK 解码、中英混排、损坏字节降级 | `fs_document_repository_test.rs` + `encoding.rs` 内联 12 条 |
 | CJK 字体加载后中文/中文标点/等宽中文均有字形 | `fonts.rs` 内联 5 条（含「CJK 追加在末尾」顺序断言） |
-| 符号面板每条目均有字形 | `s6_11f_test.rs` `every_symbol_glyph_is_renderable_under_the_real_font_setup` |
+| 符号面板每条目均有字形 | `s6_11f_test.rs` `every_symbol_glyph_is_renderable_with_bundled_fonts` |
 | 视口裁剪 / 越界拒绝 / 尺寸上限 / PNG 落盘往返 | `viewport_capture_test.rs` |
 
 ## 6. 签署

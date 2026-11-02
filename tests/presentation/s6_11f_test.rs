@@ -22,7 +22,7 @@ use std::sync::Arc;
 
 use crate::support::fake_dialog::FakeDialog;
 use rustmark::app::bootstrap::{ConfigPaths, Services};
-use rustmark::app::frame::EditorApp;
+use rustmark::app::frame::{EditorApp, to_egui_font_definitions};
 use rustmark::application::document::commands::{ReplaceRangeCommand, UndoCommand};
 use rustmark::presentation::shortcuts::registry::UiAction;
 use rustmark::presentation::state::dialog_ui_state::Overlay;
@@ -684,15 +684,40 @@ fn opening_the_symbol_panel_resets_its_state() {
 /// 缺字形的表现只是"一个方框"：**不报错、不崩溃**，
 /// 在几十个条目里靠肉眼几乎不可能注意到。只有自动化断言能守住。
 ///
-/// 本条按**最终字体配置**（默认族 + 系统 CJK 字体）判定，
-/// 与运行时一致——若哪天换掉了字体加载，这里会立刻失败。
+/// # 判定口径：按**随包分发的字体**判，不按宿主系统字体判
+///
+/// 原先这里直接用 `font_definitions(None)` 的完整装配（默认族 + 系统 CJK）
+/// 判定，结果同一个提交在不同宿主机上红绿不一：`windows-latest` 是
+/// Windows Server 镜像，系统字体集与桌面 Windows 不同（`msyh` / `simhei` /
+/// `simsun` 是否存在、各自覆盖哪些码位都不一样）。而
+/// `assembly::extend_with_cjk` 的文档已写明系统字体只是「观感更好的可选项」，
+/// 内置 CJK 子集才是「一台机器上什么中文字体都没有」时的发行下限。
+///
+/// 所以这里先把系统 CJK 那一档摘掉再判：断言对象变成「随包字体
+/// （基础族 + 数学兜底 + 内置 CJK 子集）能否覆盖面板全部字形」——
+/// 与宿主无关，且不比原口径宽松（宿主多装字体只会增加覆盖，摘掉它同样覆盖）。
 #[test]
-fn every_symbol_glyph_is_renderable_under_the_real_font_setup() {
-    let setup = rustmark::infrastructure::fonts::font_definitions(None);
+fn every_symbol_glyph_is_renderable_with_bundled_fonts() {
+    let mut setup = rustmark::infrastructure::fonts::font_definitions(None);
+    // 摘掉系统 CJK 一档。键名与 `infrastructure::fonts::assembly` 的
+    // `CJK_KEY` 对应；若哪天改名，下面这条断言会立刻失败，
+    // 而不是悄悄退化成「又按宿主系统字体判定」。
+    if setup.cjk_source.is_some() {
+        assert!(
+            setup.definitions.font_data.remove("cjk").is_some(),
+            "系统 CJK 的字体键已不叫 \"cjk\"（见 assembly::CJK_KEY），本测试的剥离失效"
+        );
+        for keys in setup.definitions.families.values_mut() {
+            keys.retain(|k| k != "cjk");
+        }
+    }
+    eprintln!(
+        "按随包分发的字体判定字形（宿主系统 CJK：{}）",
+        setup.cjk_source.as_deref().unwrap_or("未发现")
+    );
+
     let ctx = egui::Context::default();
-    ctx.set_fonts(rustmark::app::frame::to_egui_font_definitions(
-        setup.definitions,
-    ));
+    ctx.set_fonts(to_egui_font_definitions(setup.definitions));
     // 必须先跑一帧，`fonts` 才可用。
     crate::support::run_ui(&ctx, egui::RawInput::default(), |_| {});
 
@@ -718,7 +743,7 @@ fn every_symbol_glyph_is_renderable_under_the_real_font_setup() {
     }
     assert!(
         missing.is_empty(),
-        "以下符号无字形，界面上会显示为方框（共 {} 个）：\n  {}",
+        "以下符号在随包分发的字体里没有字形，界面上会显示为方框（共 {} 个）：\n  {}",
         missing.len(),
         missing.join("\n  ")
     );

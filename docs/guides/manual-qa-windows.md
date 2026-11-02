@@ -151,7 +151,7 @@
 | GBK 文件正确解码、中英混排 | `fs_document_repository_test.rs`（`gbk_encoded_file_is_decoded_correctly` 等） | 真实 GBK 字节 |
 | 编码判定分级（BOM / UTF-8 / UTF-16 / GBK） | `src/infrastructure/persistence/encoding.rs` 内联用例（12 条） | 含损坏 UTF-8 与 GBK 的区分 |
 | 本机存在 CJK 字体、CJK 追加在族末尾、加载后中文/中文标点/等宽中文均有字形 | `src/infrastructure/fonts.rs` 内联用例（5 条） | 字形判定用 `Fonts::has_glyphs` |
-| 符号面板每一条目均有字形 | `tests/presentation/s6_11f_test.rs` `every_symbol_glyph_is_renderable_under_the_real_font_setup` | 逐字符 `has_glyph` |
+| 符号面板每一条目均有字形 | `tests/presentation/s6_11f_test.rs` `every_symbol_glyph_is_renderable_with_bundled_fonts` | 逐字符 `has_glyph`（按随包字体判，不含系统字体） |
 | 视口裁剪、越界拒绝、尺寸上限、PNG 落盘往返、alpha 保留 | `tests/infrastructure/viewport_capture_test.rs` | — |
 
 ## 6. 签署
