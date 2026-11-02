@@ -19,6 +19,8 @@ dryrun-summary.txt
 /target-verify/
 # UI 截图产出（浏览器验证用，不入库）
 .screenshots/
+.trae/
+deliverables/
 
 # 本地覆盖配置与密钥（严禁入库）
 *.local.toml
