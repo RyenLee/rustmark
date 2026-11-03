@@ -1,4 +1,44 @@
-// Windows 资源脚本：把多尺寸 ICO 挂成 exe 的主图标（资源 ID 取最小序号 1，
-// 系统会优先用它）。ICO 本身由 `build_logo.py` 生成，与 `.icns` / PNG 同源。
+// Windows 资源脚本：主图标 + 文件属性（VERSIONINFO）。
+//
+// 1. `IDI_ICON1`：把多尺寸 ICO 挂成 exe 的主图标（资源 ID 取最小序号 1，系统会
+//    优先用它）。ICO 本身由 `build_logo.py` 生成，与 `.icns` / PNG 同源。
+// 2. `VS_VERSION_INFO`：资源管理器「属性 → 详细信息」里的公司 / 产品 / 版本 /
+//    版权字段。**这些字段不等于 SmartScreen 的「发布者」**——后者只认 Authenticode
+//    签名，未签名时无论填什么都会显示「未知发布者」。
+//
+// 版本号由 `build.rs` 以 rc 预处理宏注入（`RM_VERSION_*` 取自 `CARGO_PKG_VERSION*`），
+// 不在本文件手抄，避免与 `Cargo.toml` 的 workspace 版本漂移。
 // 由 `build.rs` 经 `embed-resource` 编译并链接进所有 [[bin]] 目标。
 IDI_ICON1 ICON "assets/logo/rustmark.ico"
+
+// 资源 ID 必须是数字 1：`windows.h` 里 `VS_VERSION_INFO` 就是 `#define VS_VERSION_INFO 1`，
+// 不 include 头文件时若把它当名字用，rc 会生成「名为 VS_VERSION_INFO」的资源，
+// Windows 的 FileVersionInfo / 属性页只查 ID=1 的 RT_VERSION，字段仍为空。
+1 VERSIONINFO
+ FILEVERSION RM_VERSION_MAJOR,RM_VERSION_MINOR,RM_VERSION_PATCH,0
+ PRODUCTVERSION RM_VERSION_MAJOR,RM_VERSION_MINOR,RM_VERSION_PATCH,0
+ FILEFLAGSMASK 0x3fL
+ FILEFLAGS 0x0L
+ FILEOS 0x00040004L        // VOS_NT_WINDOWS32（不 include windows.h，避免依赖 SDK 头文件搜索路径）
+ FILETYPE 0x1L             // VFT_APP
+ FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0"   // 0x0409 en-US + 1200 Unicode；Windows 按回退规则读取，不影响中文系统显示
+        BEGIN
+            VALUE "CompanyName", "rustmark contributors"
+            VALUE "FileDescription", "rustmark - Markdown editor"
+            VALUE "FileVersion", RM_VERSION_STR
+            VALUE "InternalName", "rustmark"
+            VALUE "LegalCopyright", "Copyright (c) 2026 rustmark contributors"
+            VALUE "OriginalFilename", "rustmark.exe"
+            VALUE "ProductName", "rustmark"
+            VALUE "ProductVersion", RM_VERSION_STR
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

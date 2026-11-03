@@ -3,7 +3,8 @@
 Rust 2024 + egui（wgpu 后端）的桌面 Markdown 编辑器：单文件产物、零遥测、
 GBK/GB18030 无损读写、分屏实时预览。
 
-- 许可：MIT OR Apache-2.0（双许可，见 `LICENSE-MIT` / `LICENSE-APACHE`）
+- 许可：`MIT OR Apache-2.0` 双许可，可任选其一（[MIT License](LICENSE-MIT) /
+  [Apache License 2.0](LICENSE-APACHE)）
 - 当前版本：v0.2.2（见 `CHANGELOG.md`）
 - 平台：Windows / macOS / Linux
 
@@ -15,7 +16,7 @@ GBK/GB18030 无损读写、分屏实时预览。
 |---|---|---|
 | 语法高亮（增量，变更行级） | P0 | ✅ 已实现 |
 | 撤销 / 重做（连续输入合并） | P0 | ✅ 已实现 |
-| 查找 / 替换（正则 / 大小写 / 整词 / 全文搜索有界） | P0 | ✅ 已实现 |
+| 查找 / 替换（正则 / 大小写 / 整词 / 全文搜索有界；侧栏搜索支持一键「清空」） | P0 | ✅ 已实现 |
 | 分屏实时预览 + 双向滚动同步（按块映射，防抖 150ms） | P0 | ✅ 已实现 |
 | Markdown 渲染：标题 / 列表 / 引用 / 表格（GFM）/ 任务列表（点击回写）/ 链接（**预览内可点击**：外部地址交系统默认程序，`#锚点` 页内跳转） | P0 | ✅ 已实现 |
 | 图片显示（本地 / 远程 URL / data URI） | P0 | ✅ 已实现 |
@@ -141,7 +142,10 @@ sudo pacman -S vulkan-icd-loader   # 另装 vulkan-intel / vulkan-radeon / vulka
    结果显示在侧栏「检查」标签，点击问题可跳转到对应行。规则刻意精简，
    且**跳过围栏代码块内部**（代码里的行尾空格、`#` 注释不算问题）。
 7. **macOS / Linux 未经真机全面回归**：构建与产物脚本就绪，真机验收
-   （启动、字体路径、打包体积实测）见 `docs/07-*` 手工清单与 `tasks/09` 状态段。
+   （启动、字体路径、打包体积实测）见
+   [docs/stages/07-集成联调与原型对齐.md](docs/stages/07-集成联调与原型对齐.md) 与
+   [docs/stages/09-测试体系打包与发布.md](docs/stages/09-测试体系打包与发布.md) 的状态段；
+   环境前置项 `V11-02` 见 [docs/plans/v1.1-backlog.md](docs/plans/v1.1-backlog.md)。
 8. **状态栏已显示文档实际编码（v1.1 V11-03）**：底层按文件自动识别并写回原编码
    （UTF-8 / UTF-16 / GBK / GB18030），状态栏现已显示真实编码名；未落盘文档显示 `—`
    （不谎称 UTF-8）。写作目标进度条亦已在 v1.1 V11-05 打通（设置填目标字数 → 状态栏百分比 +
@@ -178,7 +182,7 @@ sudo pacman -S vulkan-icd-loader   # 另装 vulkan-intel / vulkan-radeon / vulka
 cargo build --release --bin rustmark   # 产物 target/release/rustmark*
 
 # 全量验证链（贡献者必过）——`--workspace` 必带：workspace 化（D-3 阶段 4a）后
-# 不带只跑默认成员（root 包），crates/* 七个成员 crate 的检查与单测会静默缺席
+# 不带只跑默认成员（root 包），crates/* 九个成员 crate 的检查与单测会静默缺席
 cargo fmt --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test  --workspace --all-targets
@@ -197,6 +201,15 @@ cargo llvm-cov --workspace --all-targets --lcov --output-path lcov.info
 python tools/coverage_gate.py lcov.info   # 覆盖率门禁：整体 ≥70%、领域 ≥90%
 python tools/release_dryrun.py            # 离线发布演练：版本守卫 / 校验和 / Notes 归组
 ```
+
+体积敏感构建（`remote-images` 默认开启，`ureq` / `rustls` / `ring` 整条 TLS 链会编入二进制）：
+
+```bash
+cargo build --release --no-default-features   # Windows 实测 −1,070,592 B（≈ −1.02 MiB）
+```
+
+关闭后 `![](https://…)` 不再下载（对 http(s) 引用返回明确错误），本地 / 相对路径 /
+`data:` URI 图片不受影响（见 `CHANGELOG.md`「未发布」段）。
 
 打包：`scripts/package-windows.ps1` / `package-macos.sh` / `package-linux.sh`，
 发布流程见 [docs/guides/release.md](docs/guides/release.md)。
@@ -222,6 +235,10 @@ python tools/release_dryrun.py            # 离线发布演练：版本守卫 / 
 唯一的联网行为是「文档含远程图片时下载该图片」与「导出 HTML 时注入的 CDN 资源」，
 详见 `PRIVACY.md` §2。
 
+v0.2.2 起的安全加固（细节见 `CHANGELOG.md` `[0.2.2]`）：PDF 导出用的临时 HTML 在成功与
+失败路径均即时删除；文档内嵌的本地图片被强制收束在文档目录子树内；远程图片不跟随 HTTP
+重定向；数学深嵌套表达式超限时回退源码卡而非栈溢出。
+
 ## 9. 许可
 
 双许可：`MIT OR Apache-2.0`，可任选其一。
@@ -229,19 +246,23 @@ python tools/release_dryrun.py            # 离线发布演练：版本守卫 / 
 **授权要点**（面向非开发者的可读摘要，不替代协议全文）：
 
 1. **可自由使用**：个人与商业用途均免费，可修改、可再分发，无需申请授权。
-2. **二选一**：MIT 与 Apache-2.0 任选其一即可，无需特别声明；未选择时两种许可同时成立。
+2. **二选一**：仓库同时提供 [MIT](LICENSE-MIT) 与 [Apache-2.0](LICENSE-APACHE) 两份全文，
+   接收方可自行选择其一，无需分发方另行声明。
 3. **再分发须留声明**：分发本软件（含修改版）时必须随附版权与许可声明——发行包已随附
    `LICENSE-MIT` / `LICENSE-APACHE` / `NOTICE` / `THIRD-PARTY-LICENSES.md`，请勿删除。
 4. **不含商标授权**：许可条款授予代码版权许可，**不授予** `rustmark` 名称与 Logo 的
    商标使用权（MIT 与 Apache-2.0 均明确保留商标权，Apache-2.0 §7）。
 5. **按原样提供、无担保**：软件不附带任何形式的担保，作者与贡献者不对任何损害负责
    （落点：MIT 免责声明全文、Apache-2.0 §7 与 §8、MIT 第 5 条）。
+6. **贡献即同意双许可**：提交贡献即以与本仓库相同的 `MIT OR Apache-2.0` 双许可授权，
+   并要求 commit 带 `Signed-off-by` 签名行（见 [CONTRIBUTING.md](CONTRIBUTING.md) §2.1）。
 
 协议全文：[LICENSE-MIT](LICENSE-MIT) · [LICENSE-APACHE](LICENSE-APACHE)
 
 - 第三方组件摘要：[NOTICE](NOTICE)
-- 第三方许可完整清单（含 186 个依赖的许可分布与 `self_cell` 的 GPL 选项处置；发布 SBOM 按组件口径为 395，两者口径差异见该文件 §2）：
-  [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md)
+- 第三方许可完整清单（含各依赖的许可分布与 `self_cell` 的 GPL 选项处置；发布 SBOM 由
+  `tools/sbom.py` 按组件口径统计，当前为 **393** 个组件，与 `cargo deny list` 的许可条目口径
+  不同，差异说明见该文件 §2）：[THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md)
 - 随包字体许可：`assets/fonts/Fonts-LICENSE.txt`，以及同目录下的许可全文
   `OFL-1.1.txt`（JetBrains Mono / Fira Code / IBM Plex Mono / Noto Sans SC / NotoEmoji）、
   `UFL.txt`（Ubuntu-Light）、`OFL.txt`（NotoEmoji 上游副本）、

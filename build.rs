@@ -41,19 +41,33 @@ mod arch_check {
     include!("tools/arch_check.rs");
 }
 
-/// 把 `assets/logo/rustmark.ico` 编进 exe 资源段（仅 Windows 目标）。
+/// 把 `assets/logo/rustmark.rc` 编进 exe 资源段（仅 Windows 目标）：
+/// 主图标 + `VERSIONINFO`（公司 / 产品 / 版本 / 版权，供资源管理器属性页读取）。
 ///
-/// 失败不 `panic`：图标是体验项，不该让构建失败。`NotAttempted`（机器上没有
+/// 版本号以 rc 预处理宏注入，取自 `CARGO_PKG_VERSION*`——workspace 版本是唯一事实源，
+/// `.rc` 不手抄版本号，避免版本升级时两处漂移。注意：这些字段只改善文件属性显示，
+/// **不会**让未签名的 exe 在 SmartScreen 里出现「发布者」。
+///
+/// 失败不 `panic`：图标与版本信息是体验项，不该让构建失败。`NotAttempted`（机器上没有
 /// `rc.exe`）与 `Failed` 都只打印 `cargo:warning`，构建照常继续——但会显式
-/// 说出「这一环没生效」，而不是静默降级成默认图标。
+/// 说出「这一环没生效」，而不是静默降级成默认图标与空属性。
 #[cfg(windows)]
 fn embed_icon() {
     println!("cargo:rerun-if-changed=assets/logo/rustmark.rc");
     println!("cargo:rerun-if-changed=assets/logo/rustmark.ico");
-    match embed_resource::compile("assets/logo/rustmark.rc", embed_resource::NONE) {
+
+    let macros = [
+        format!("RM_VERSION_MAJOR={}", env!("CARGO_PKG_VERSION_MAJOR")),
+        format!("RM_VERSION_MINOR={}", env!("CARGO_PKG_VERSION_MINOR")),
+        format!("RM_VERSION_PATCH={}", env!("CARGO_PKG_VERSION_PATCH")),
+        format!("RM_VERSION_STR=\"{}\"", env!("CARGO_PKG_VERSION")),
+    ];
+    match embed_resource::compile("assets/logo/rustmark.rc", macros) {
         embed_resource::CompilationResult::Ok => {}
         other => {
-            println!("cargo:warning=窗口图标未嵌入（{other:?}），exe 将沿用系统默认图标");
+            println!(
+                "cargo:warning=图标与版本信息未嵌入（{other:?}），exe 将沿用系统默认图标且文件属性为空"
+            );
         }
     }
 }
