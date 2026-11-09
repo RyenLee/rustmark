@@ -16,14 +16,14 @@
 | [`design/`](./design/) | **技术设计** | 缓存子系统设计 | 1 |
 | [`diagrams/`](./diagrams/) | **图示** | 项目文件 / 模块级关系图 | 1 |
 | [`reports/`](./reports/) | **专项报告与评审** | 合规差距 / 阈值审计与裁定 / shared 内部环评审 | 4 |
-| [`reviews/`](./reviews/) | **评审与审计** | 代码评审 / 安全健壮性评审 / 发布卫生审计 | 2 |
-| [`adr/`](./adr/) | **决策记录**（不可改写） | ADR-001 ~ ADR-013 | 13 |
+| [`reviews/`](./reviews/) | **评审与审计** | 代码评审 / 安全健壮性评审 / C1-H1 整改方案 / P1-03 Linux 处置 / 发布卫生审计 | 5 |
+| [`adr/`](./adr/) | **决策记录**（不可改写） | ADR-001 ~ ADR-014 | 14 |
 | [`remediation/`](./remediation/README.md) | **整改执行期档案**（按批次分文件夹） | R-01~R-11 总案 + R-10 专项评估 | 5 |
 | [`samples/`](./samples/) | **样本与夹具** | `示例文档.md`（mermaid 测试取样源） | 1 |
 | [`logs/`](./logs/) | **流水**（append-only） | 问题记录 001–069 | 1 |
 | [`pic/`](./pic/) | **素材** | 问题记录按编号引用的截图 | 15 |
 
-合计 **71 个 tracked 文件**（口径：`git ls-files docs`；`docs/reviews/` 内新增的发布卫生审计文档尚待入库）。顶层只留本页——新增文档**必须**进上表某个目录，不许再平铺。
+合计 **75 个 tracked 文件**（口径：`git ls-files docs`，含 ADR-014；不含未跟踪的截图与本地日志）。顶层只留本页——新增文档**必须**进上表某个目录，不许再平铺。
 
 ## 怎么用这份地图
 
@@ -32,7 +32,7 @@
 | 新接手的开发者 | 本页 → [`plans/PROGRESS.md`](./plans/PROGRESS.md)（做到哪了）→ [`guides/debug-guide.md`](./guides/debug-guide.md)（跑起来 + 排障）→ [`spec/architecture-constraints.md`](./spec/architecture-constraints.md)（不许做什么） |
 | 领任务开工 | [`plans/v1.1-backlog.md`](./plans/v1.1-backlog.md)（**唯一任务入口**）→ 对应阶段文档 → [`spec/architecture-constraints.md`](./spec/architecture-constraints.md) |
 | 要改架构 / 加 crate | [`spec/architecture-constraints.md`](./spec/architecture-constraints.md) §10（crate 地图与归属四问）→ [`remediation/`](./remediation/README.md)（为什么是现在这个样子）→ [`spec/current_dependency_graph.html`](./spec/current_dependency_graph.html) → [`diagrams/project-relationship-map.md`](./diagrams/project-relationship-map.md)（文件 / 模块级关联图） |
-| 用户 / 报缺陷 | [`guides/troubleshooting.md`](./guides/troubleshooting.md)（配置目录 / 草稿恢复 / 崩溃报告） |
+| 用户 / 报缺陷 | [`guides/troubleshooting.md`](./guides/troubleshooting.md)（数据目录 / 草稿恢复 / 崩溃报告） |
 | 准备发布 | [`guides/release.md`](./guides/release.md) → [`reports/release-compliance-gap-report.md`](./reports/release-compliance-gap-report.md)（还剩什么没闭环）→ [`guides/testing.md`](./guides/testing.md) |
 | 关心体积 / 性能数字 | [`spec/metrics.md`](./spec/metrics.md)（**唯一数字来源**）→ [`guides/dependencies.md`](./guides/dependencies.md) |
 
@@ -68,7 +68,7 @@
 | 文档 | 定位 | 什么时候读 |
 |---|---|---|
 | [`debug-guide.md`](./guides/debug-guide.md) | 运行 / 调试命令手册 + **GUI 缺陷定位方法论**（§6） | 跑程序、写测试、**排障前** |
-| [`troubleshooting.md`](./guides/troubleshooting.md) | 终端用户故障排查（配置目录 / 重置 / 草稿恢复 / 崩溃报告） | 应用出问题、要提 issue |
+| [`troubleshooting.md`](./guides/troubleshooting.md) | 终端用户故障排查（数据目录 / 重置 / 草稿恢复 / 崩溃报告） | 应用出问题、要提 issue |
 | [`config-reference.md`](./guides/config-reference.md) | **配置面参考**：`preferences.toml` 全字段 + 自定义主题色板 + 快捷键语法与默认键位 | 手改配置、写主题、查字段含义 |
 | [`testing.md`](./guides/testing.md) | 测试金字塔 / 覆盖率门禁 / 排除清单与理由 | 写测试、跑 CI 等价命令 |
 | [`dependencies.md`](./guides/dependencies.md) | 依赖清单、锁定版本、许可证、复查报告（§6） | 增删依赖、评审体积 |
@@ -111,13 +111,13 @@
 | [`threshold-review-2026-10-25.md`](./reports/threshold-review-2026-10-25.md) | 审计的裁定结论（6 个语义簇 / 3 项阻断 / P0-P1 落地记录） | 同上 `review_report:`；121 条阈值的取值依据 |
 | [`shared-internal-cycle-review.md`](./reports/shared-internal-cycle-review.md) | `shared` 内部环评审（E-27 / V11-55） | 结论已固化为守卫；**`ports/dialog.rs:107` 直接引用为成环判据出处** |
 
-## 7. `adr/` · 决策记录（13 条，不可改写）
+## 7. `adr/` · 决策记录（14 条，不可改写）
 
 | ADR | 决策 |
 |---|---|
 | [ADR-001](./adr/ADR-001-ui-framework.md) | UI 框架：egui + eframe（wgpu 后端），不采用 Tauri（正文记 0.33.3，**现行版本见 `Cargo.toml`**） |
 | [ADR-002](./adr/ADR-002-parser-highlighter.md) | 解析与高亮：pulldown-cmark + syntect（feature 收窄） |
-| [ADR-003](./adr/ADR-003-persistence-export.md) | 持久化与导出：ropey trait 隔离、原子写 |
+| [ADR-003](./adr/ADR-003-persistence-export.md) | 持久化与导出：ropey trait 隔离、原子写（**配置目录路径部分已由 ADR-014 取代**） |
 | [ADR-004](./adr/ADR-004-pdf-export.md) | PDF 导出：不内嵌引擎 → 系统打印 → **无头 Chromium**（修订） |
 | [ADR-005](./adr/ADR-005-prototype-relationship.md) | 原型关系：行为契约来源，非代码来源 |
 | [ADR-006](./adr/ADR-006-memory-threshold-revision.md) | 内存阈值修订：按平台各自口径（Windows Private WS ≤150 MB） |
@@ -128,6 +128,7 @@
 | [ADR-011](./adr/ADR-011-action-routing-and-dual-intent.md) | 动作路由：穷举路由表 + `Unbound` 显式声明（无 `_` 兜底） |
 | [ADR-012](./adr/ADR-012-icon-system-and-resource-layout.md) | 图标系统：向量手绘废止字形 + 规格即数据（16×16）；字体外置随包分发 |
 | [ADR-013](./adr/ADR-013-core-adapter-residency-and-leaf-extraction.md) | core 适配层驻留与叶层外移：模块归属四问 + 外移触发条件量化表 |
+| [ADR-014](./adr/ADR-014-portable-config-directory.md) | 数据目录改为应用目录便携优先：`data/` 默认 + 不可写回退 + 旧数据只复制迁移 |
 
 ## 8. `remediation/` · 整改执行期档案
 

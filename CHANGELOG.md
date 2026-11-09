@@ -6,16 +6,35 @@ Release Notes 依此自动归组。
 
 ## [未发布]
 
-### 体积优化（建议 2：远程图片 TLS feature 化）
+暂无未发布变更；已发布内容见对应版本条目。
 
-- `ureq` + `rustls` + `ring` + `webpki` 整条 TLS 链改为 `optional`，由 `rustmark-infra`
-  的 `remote-images` feature 门控；`rustmark` 的 `default = ["remote-images"]` 单点转发，
-  默认构建功能与体积均不变。
-- `cargo build --release --no-default-features` 可整条剔除：Windows 实测
-  **10,651,136 B → 9,580,544 B（−1,070,592 B ≈ −1.02 MiB，−10.1%）**。代价仅是
-  `![](https://…)` 不再加载，本地 / 相对 / data URI 图片不受影响；关闭时对 http(s)
-  引用返回明确错误而非当成本地路径。
-- 默认构建 `cargo tree -i ureq` 仍在树中；OFF 构建 `ureq`/`ring` 均已出图（已实测）。
+## [0.2.3] · 2026-11-09
+
+### 本次发布概要
+
+- **设置浮窗三项修复**：外观设置调整行高后预览即时同步，字体渲染显式钉死抗锯齿
+  选项，消除换字体后的锯齿 / 发虚；自动保存在配置读取失败时回退默认 30 秒而非
+  静默停摆，设置页直接写明开关状态与生效条件；「全部关闭」且存在未保存内容时，
+  提示由系统原生弹窗改为应用软件内统一的「确定 / 取消」弹窗（Esc 与标题栏 × 等价取消）。
+- **自动保存可选写回原文件**：设置 → 编辑器新增「自动保存时同时写回原文件」，
+  **默认关闭**。开启后仅当前活动文档在到期时写回原路径并清除脏标记，其余文档
+  仍按 `ADR-003` 只写草稿；写回前核对磁盘内容指纹，文件若被其他程序改动则跳过、
+  状态栏提示一次且仅存草稿，手动保存或「还原修改」后解锁。未命名文档仍需先「另存为」。
+- **数据目录改为应用目录（ADR-014）**：设置、草稿、最近文件与崩溃报告默认落在
+  可执行文件同级的 `data/`，删除整个应用目录即完全清理；启动期做可写性探测，
+  应用目录不可写或属于 macOS `.app` / Linux AppImage 等只读、签名分发形态时，
+  回退到原平台配置目录并在日志给出原因。首次启动把旧平台目录的数据**复制**
+  到 `data/`（不覆盖、不删源、写 `.rustmark-migrated` 标记保证幂等），
+  避免升级后草稿与设置「消失」。`PRIVACY.md` §4 隐私契约、README 卸载口径、
+  配置参考 / 排障 / 发布指南、三个打包脚本与 Issue 模板已同步。
+- **Windows 版本信息**：构建期把 `CARGO_PKG_VERSION*` 注入 exe 的 `VERSIONINFO`
+  资源；版本号只以 `[workspace.package].version` 为真源，`.rc` 不再手抄（提交 `2d31806`）。
+- **配套**：配置项与故障排查文档、字段可见性守卫登记、端到端回归用例与阈值基线行号回写。
+- **v0.2.3 发布文档口径同步**：`SECURITY.md` 支持版本表、`PRIVACY.md` 适用版本、
+  `docs/reports/release-compliance-gap-report.md` 的当前版本 / SBOM 组件数指引、
+  `docs/guides/release.md` 的版本真源（`[workspace.package].version`）、许可文件随包
+  现状与「先推 main 再推 tag」流程，全部对齐 v0.2.3；`release_dryrun.py --tag v0.2.3`
+  16/16 全绿。
 
 ## [0.2.2] · 2026-10-31
 
@@ -44,6 +63,19 @@ Release Notes 依此自动归组。
 - **F-04 · 数学深嵌套栈溢出（🟡 DoS）**：自研数学排版对超深嵌套表达式无递归上限，栈溢出
   在 `panic = "abort"` 下直接终止进程；现于解析入口加递归深度预算（≤256 层），超限回退
   源码卡而非崩溃，并补「五千层报错 / 百层仍渲染」双回归用例。
+
+### 体积优化（补记：本项实际随 v0.2.2 发布）
+
+- `ureq` + `rustls` + `ring` + `webpki` 整条 TLS 链改为 `optional`，由 `rustmark-infra`
+  的 `remote-images` feature 门控；`rustmark` 的 `default = ["remote-images"]` 单点转发，
+  默认构建功能与体积均不变。
+- `cargo build --release --no-default-features` 可整条剔除：Windows 实测
+  **10,651,136 B → 9,580,544 B（−1,070,592 B ≈ −1.02 MiB，−10.1%）**。代价仅是
+  `![](https://…)` 不再加载，本地 / 相对 / data URI 图片不受影响；关闭时对 http(s)
+  引用返回明确错误而非当成本地路径。
+- 默认构建 `cargo tree -i ureq` 仍在树中；OFF 构建 `ureq`/`ring` 均已出图（已实测）。
+- 归属说明：本项由提交 `5d0512d` 引入，位于 `v0.2.2` tag 之前，此前误留在「未发布」
+  节，现按实际归属补记于此。
 
 ## [0.2.1] · 2026-10-31
 
@@ -517,7 +549,8 @@ Release Notes 依此自动归组。
 - release 产物 ≤10MB 红线门禁（CI 强制）与性能冒烟基准。
 - 架构分层（DDD 四层）由 `check-arch` 在 build.rs 构建期强制。
 
-[未发布]: https://example.invalid/rustmark/compare/v0.2.2...HEAD
+[未发布]: https://example.invalid/rustmark/compare/v0.2.3...HEAD
+[0.2.3]: https://example.invalid/rustmark/releases/tag/v0.2.3
 [0.2.2]: https://example.invalid/rustmark/releases/tag/v0.2.2
 [0.2.1]: https://example.invalid/rustmark/releases/tag/v0.2.1
 [0.2.0]: https://example.invalid/rustmark/releases/tag/v0.2.0

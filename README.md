@@ -5,7 +5,7 @@ GBK/GB18030 无损读写、分屏实时预览。
 
 - 许可：`MIT OR Apache-2.0` 双许可，可任选其一（[MIT License](LICENSE-MIT) /
   [Apache License 2.0](LICENSE-APACHE)）
-- 当前版本：v0.2.2（见 `CHANGELOG.md`）
+- 当前版本：v0.2.3（见 `CHANGELOG.md`）
 - 平台：Windows / macOS / Linux
 
 ---
@@ -77,17 +77,29 @@ sudo pacman -S vulkan-icd-loader   # 另装 vulkan-intel / vulkan-radeon / vulka
 ```
 
 自检：`vulkaninfo --summary` 能列出 GPU 即可。缺驱动时应用会打印诊断并把它写入
-`~/.config/rustmark/crash/`，处置步骤见
+数据目录下的 `crash/`，处置步骤见
 [docs/guides/troubleshooting.md](docs/guides/troubleshooting.md) §6。
 除此之外无窗口管理器外的额外依赖。
 
+**数据目录（v0.2.3 起，见 ADR-014）**：默认在应用目录下的 `data/`
+（与可执行文件同级），内含设置、草稿、最近文件与崩溃报告。
+应用目录不可写，或分发形态是 macOS `.app` / Linux AppImage 时，
+回退到平台配置目录（`%APPDATA%\rustmark\` /
+`~/Library/Application Support/rustmark/` / `~/.config/rustmark/`）。
+升级自旧版本时旧数据会被**复制**过来，原目录保留不删。
+
 ### 卸载
 
-- Windows：删除 exe 与 `%APPDATA%\rustmark\`；
-- macOS：删除 Rustmark.app 与 `~/Library/Application Support/rustmark/`；
-- Linux：删除 AppImage 与 `~/.config/rustmark/`。
+删除整个应用目录（含 `data/`）即完成清理；若应用目录下没有 `data/`，
+说明本次运行回退到了平台配置目录，请一并删除：
 
-配置目录内含个人设置与草稿，删除即完全清除（无残留服务、无注册表项）。
+- Windows：`%APPDATA%\rustmark\`；
+- macOS：`~/Library/Application Support/rustmark/`；
+- Linux：`~/.config/rustmark/`（或 `$XDG_CONFIG_HOME/rustmark/`）。
+
+数据内含个人设置与草稿，删除即完全清除（无残留服务、无注册表项）。
+**升级时请勿删除 `data/`**：解压新版覆盖即可保留设置与草稿。
+`data/` 是共享目录，同一份解压目录被多个用户或两个进程同时使用会互相覆盖。
 
 ## 3. 快捷键（默认绑定，全部可自定义）
 
@@ -162,7 +174,7 @@ sudo pacman -S vulkan-icd-loader   # 另装 vulkan-intel / vulkan-radeon / vulka
     运行时回退。没有任何 Vulkan 驱动的机器（老核显、精简容器、部分虚拟机模板、
     云桌面、只走 RDP 的会话）**无法启动**——这不是崩溃，是窗口建不出来：
     应用会打印一段可操作诊断（装哪个包、用 `vulkaninfo` 自检）并写入
-    `~/.config/rustmark/crash/crash-*.txt`。
+    数据目录下的 `crash/`（`data/crash/crash-*.txt`，回退场景见 §2）。
     处置见 [troubleshooting §6](docs/guides/troubleshooting.md)。取舍与体积数据见
     [P1 #3 处置记录](docs/reviews/p1-03-linux-vulkan-disposition.md)。
 11. **不支持多实例并发编辑同一文件**：应用是纯本地文件（无数据库、无文件锁、
@@ -172,7 +184,7 @@ sudo pacman -S vulkan-icd-loader   # 另装 vulkan-intel / vulkan-radeon / vulka
 
 ## 5. 故障排查
 
-见 [docs/guides/troubleshooting.md](docs/guides/troubleshooting.md)，覆盖：配置目录位置、
+见 [docs/guides/troubleshooting.md](docs/guides/troubleshooting.md)，覆盖：数据目录位置与回退、
 重置设置、找回草稿、崩溃报告的提交方式（本地写盘、无遥测、不含文档内容）。
 
 ## 6. 从源码构建

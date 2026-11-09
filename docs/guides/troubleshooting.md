@@ -4,23 +4,35 @@
 
 ---
 
-## 1. 配置目录在哪里？
+## 1. 数据目录在哪里？
 
-| 平台 | 路径 |
+**默认：应用目录下的 `data/`**（与 `rustmark.exe` / `rustmark` 同级，首次运行自动创建）。
+这就是「解压即用」形态：删掉整个应用目录即完全清理。
+
+**回退**：应用目录不可写（装在 `Program Files`、受管目录），或分发形态本身不可写
+（macOS `.app` bundle、Linux AppImage）时，沿用平台配置目录：
+
+| 平台 | 回退路径 |
 |---|---|
 | Windows | `%APPDATA%\rustmark\`（即 `C:\Users\<用户名>\AppData\Roaming\rustmark\`） |
 | macOS | `~/Library/Application Support/rustmark/` |
 | Linux | `$XDG_CONFIG_HOME/rustmark/`，未设则 `~/.config/rustmark/` |
 
-目录内容：
+判断方法：看应用目录下**有没有 `data/`**。没有就是回退了（原因会写进启动日志）。
+
+目录内容（两处位置的结构相同）：
 
 | 文件 / 目录 | 用途 |
 |---|---|
 | `preferences.toml` | 用户设置（主题、快捷键、拼写检查开关等） |
-| `preferences.toml.bak` | 设置损坏回退默认时自动留下的备份 |
-| `recent.json` | 最近打开的文件 |
+| `preferences.toml.bak-*` | 设置损坏回退默认时自动留下的备份 |
+| `recent.json` | 最近打开的文件（文件名是 `.json`，内容格式是 TOML） |
 | `.rustmark-draft/` | 自动保存草稿（异常退出后可恢复） |
 | `crash/` | 崩溃报告（仅真实崩溃过才会出现） |
+| `.rustmark-migrated` | 旧版本数据已迁移的标记；存在即不再扫描旧目录 |
+
+> 升级自旧版本时，旧平台目录的内容被**复制**过来，原目录保留不删、此后不再更新。
+> 想「重置设置」请删新位置的 `preferences.toml`——迁移标记会阻止旧配置复活。
 
 ## 2. 如何重置设置？
 
@@ -41,12 +53,21 @@
   扩展名 `.md`，内容就是编辑器缓冲的快照，用任意编辑器都能打开。
 - 找回后记得手动另存到目标位置；草稿在文档正常保存/关闭后会被清理。
 
+**想让自动保存直接写回原文件？** 设置 → 编辑器 → 勾选「自动保存时同时写回原文件」
+（默认关闭）。开启后，到期时只有**当前活动文档**会写回它原本的路径，脏标记
+随之清除；其他标签仍只写草稿，未命名文档仍需先「另存为」。
+
+写回是覆盖磁盘的操作，因此每次写回前会核对磁盘内容：若文件在打开后被
+Git、另一个编辑器或同步盘改动，状态栏会提示「已被其他程序改动」并跳过
+写回，本次修改只存草稿，不会覆盖对方的改动。此时请自行核对后按 `Ctrl+S`
+显式保存（或「还原修改」采纳磁盘版本），之后自动写回才会恢复。
+
 ## 4. 应用崩溃了怎么办？（崩溃报告的提交方式）
 
 rustmark **不做任何遥测**，崩溃时只在本地写一份诊断报告，
 由你决定是否提交：
 
-1. 打开配置目录下的 `crash/`，找到崩溃时间点对应的
+1. 打开数据目录（默认应用目录下 `data/`）里的 `crash/`，找到崩溃时间点对应的
    `crash-<时间>-<进程ID>.txt`（最多保留最近 10 份，更早的自动清理）。
 2. 报告内容**只有**：应用版本、平台（OS/架构）、崩溃时间、线程、
    源码位置、栈回溯——**不含你编辑的任何文档内容**，可直接作为附件。
@@ -58,14 +79,16 @@ rustmark **不做任何遥测**，崩溃时只在本地写一份诊断报告，
 ## 5. 启动失败：提示「无法读取应用配置」
 
 启动装配唯一可失败的点是**配置文件读不到**（权限异常、路径是目录等）。
-按报错信息里的默认位置检查：
+报错信息会打印**本次实际使用的数据目录**，按它检查：
 
 - 目录是否存在且可读；
 - `preferences.toml` 是否被其他程序占用；
-- Windows 上可尝试以当前用户身份重新创建 `%APPDATA%\rustmark\`。
+- 应用目录不可写时，应用会回退到平台配置目录（见 §1）——请检查回退目录
+  是否可写；Windows 上可尝试以当前用户身份重建 `%APPDATA%\rustmark\`。
 
 配置**内容**损坏不会导致启动失败（会自动备份 + 回退默认），
-报这个错基本是文件系统权限问题。
+报这个错基本是文件系统权限问题。启动期还会做一次可写性探测，
+目录完全不可写时通常会直接回退而不是报这个错。
 
 ## 6. 启动失败：提示「找不到可用的图形适配器」（Linux 无 Vulkan 驱动）
 
@@ -80,7 +103,8 @@ WGPU error: No suitable graphics adapter found; … vulkan drivers/libraries cou
 ```
 
 Windows 上同一故障表现为**双击没反应**（release 构建无控制台），此时看
-`%APPDATA%\rustmark\crash\` 下最新的一份 `crash-*.txt`。
+应用目录下 `data/crash/`（回退场景为 `%APPDATA%\rustmark\crash\`）
+下最新的一份 `crash-*.txt`。
 
 **原因**：Linux 版只编入了 wgpu 的 Vulkan 后端，没有 OpenGL / GLES 回退
 （体积取舍，见 [P1 #3 处置记录](../reviews/p1-03-linux-vulkan-disposition.md)）。
@@ -119,7 +143,8 @@ apt update && apt install -y curl
 # 3) 预期输出（关键三条，缺一即回归）
 #    a. 首行 "rustmark 启动失败：找不到可用的图形适配器（GPU）"
 #    b. 建议里出现 "mesa-vulkan-drivers" 与 "vulkaninfo"
-#    c. 落盘出现在 $XDG_CONFIG_HOME/rustmark/crash/crash-<时间>-<PID>.txt
+#    c. 落盘出现在应用目录 data/crash/（若回退则 $XDG_CONFIG_HOME/rustmark/crash/）
+#       下的 crash-<时间>-<PID>.txt
 
 # 4) 装上驱动后应恢复（宿主有 X11 时）
 apt install -y mesa-vulkan-drivers libvulkan1 vulkan-tools
@@ -135,7 +160,7 @@ vulkaninfo --summary   # 应列出 GPU0
 | 现象 | 说明 |
 |---|---|
 | Linux 启动即退出，提示「找不到可用的图形适配器」 | 缺 Vulkan 驱动；装 `mesa-vulkan-drivers` + `libvulkan1`，见 §6 |
-| Windows 双击 exe 没反应 | 多为 GPU 初始化失败；看 `%APPDATA%\rustmark\crash\` 最新报告，见 §6 |
+| Windows 双击 exe 没反应 | 多为 GPU 初始化失败；看应用目录 `data/crash/`（回退时 `%APPDATA%\rustmark\crash\`）最新报告，见 §6 |
 | Windows 首次运行提示 SmartScreen | 安装包**未签名**（证书成本原因），点「仍要运行」即可；校验 SHA256 与发布页一致 |
 | macOS 首次运行被 Gatekeeper 拦截 | 同上未签名未公证，右键 → 打开，或 `xattr -d com.apple.quarantine <App路径>` |
 | PDF 导出提示未实现 | PDF 导出暂未交付（需系统级 PDF 引擎），请改用 HTML / Markdown / 图片导出 |

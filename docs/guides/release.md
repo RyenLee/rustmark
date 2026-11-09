@@ -20,7 +20,8 @@
       （`advisories` 需拉取 RustSec 数据库，离线环境跑不了，必须在 CI 或有网环境确认）
 - [ ] **许可文件随包**：三平台产物内均含 `LICENSE-MIT` / `LICENSE-APACHE` / `NOTICE` /
       `THIRD-PARTY-LICENSES.md`，字体包内含 `Fonts-LICENSE.txt` + `OFL-1.1.txt`
-      （Apache-2.0 §4 与 OFL-1.1 的再分发要求；当前打包脚本缺前四项，见差距报告 `LEG-01`）
+      （Apache-2.0 §4 与 OFL-1.1 的再分发要求；三平台打包脚本均已复制这四份许可，
+      差距报告 `LEG-01` 已闭环——旧文案「缺前四项」已过时）
 - [ ] **合规文档与现状一致**：`PRIVACY.md` / `SECURITY.md` / `NOTICE` / `THIRD-PARTY-LICENSES.md`
       已随本次发布的实际行为与依赖重新核对（依赖变更后必须重跑 `cargo deny list` 并同步）
 - [ ] 用户文档状态抽查一致（README 功能清单 vs 代码现状，见 S9-07 验收）
@@ -34,12 +35,15 @@ version 必须一致——release workflow 第一步就做守卫，不一致直�
 ## 3. 发布步骤（tag 驱动，CI 全自动）
 
 ```bash
-# 1) 更新版本号（Cargo.toml [package].version）并提交
+# 1) 更新版本号并提交：真源是 [workspace.package].version（不是
+#    [package].version —— 那里是 version.workspace = true，改它会分叉，
+#    且 release.yml 的版本守卫仍读到旧值）。Cargo.lock 由 cargo 同步。
 #    message 例：chore(release): 1.0.0 [S9-06]
 
-# 2) 打 tag 并推送
-git tag -a v1.0.0 -m "rustmark 1.0.0"
-git push origin v1.0.0        # 只推 tag，main 由分支流程另行推送
+# 2) 先把发布内容推到 main 并确认远端已更新，再打附注 tag 并推送
+git push origin main
+git tag -a v1.0.0 -m "rustmark 1.0.0"   # 必须指向刚推送的那个提交
+git push origin v1.0.0                 # tag 推送即触发 release.yml
 ```
 
 push tag 即触发 `.github/workflows/release.yml`：
@@ -92,7 +96,8 @@ python tools/release_dryrun.py --tag v9.9.9   # 红路径：故意用错 tag，�
 本机无 git 仓库与远端、仅 Windows，以下各项需在 fork 仓库与三平台执行：
 
 - [ ] 三平台 job 全绿，产物可在 Actions 页下载
-- [ ] Windows：干净虚拟机解压 zip，双击启动正常，关闭后删除 `%APPDATA%\rustmark\` 无残留
+- [ ] Windows：干净虚拟机解压 zip，双击启动正常；确认数据落在解压目录 `data/`（ADR-014），删除整个解压目录后 `%APPDATA%\rustmark\` 无新增残留
+- [ ] 升级路径：造一份旧版 `%APPDATA%\rustmark\` 数据（含草稿），启动新版后确认已复制到 `data/`、源目录未被删除、草稿可恢复
 - [ ] macOS：`codesign --verify --deep --strict --verbose=2 Rustmark.app` 通过，且字体在 `Contents/Resources/fonts`；未公证场景右键打开正常
 - [ ] Linux：Ubuntu 20.04 / 24.04 各启动一次 AppImage
 - [ ] `sha256sum -c SHA256SUMS` 全部 OK

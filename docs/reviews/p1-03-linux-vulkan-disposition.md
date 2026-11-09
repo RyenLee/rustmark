@@ -181,8 +181,9 @@ eframe 默认 `Backends::all()`，故被「请求过」但没编译 → `support
    且建议里出现 `mesa-vulkan-drivers` 与 `vulkaninfo`。
    （失败路径本身已可从源码逐跳确认，见 §2；待确认的是**文案确实出现在屏幕上**、
    以及 `raw` 字符串与 `classify` 的判据逐字吻合。）
-2. **确认诊断落盘**：`ls ~/.config/rustmark/crash/` 出现 `crash-<时间>-<PID>.txt`，
-   内容含「位置：<启动期：eframe 返回 Err，不是 panic>」。
+2. **确认诊断落盘**：`ls data/crash/`（ADR-014 后的默认位置；若应用目录不可写
+   或跑的是 AppImage，则回退到 `~/.config/rustmark/crash/`）出现
+   `crash-<时间>-<PID>.txt`，内容含「位置：<启动期：eframe 返回 Err，不是 panic>」。
 3. **体积复核**：装好后跑一次 `bash scripts/size_gate.sh`，把 Linux 实测值记进
    `metrics.md` §2.9，与 §3 的「< 8 KiB」预估对照。
 

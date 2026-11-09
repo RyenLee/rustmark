@@ -10,14 +10,22 @@
 
 ## 1. 文件位置
 
-配置目录下的 `preferences.toml`（同目录还有 `recent.json` 最近文件、
-`crash/` 崩溃报告、`.rustmark-draft/` 草稿，见 `PRIVACY.md` §4）：
+数据目录下的 `preferences.toml`（同目录还有 `recent.json` 最近文件、
+`crash/` 崩溃报告、`.rustmark-draft/` 草稿，见 `PRIVACY.md` §4）。
 
-| 平台 | 路径 |
+**默认位置：应用目录下的 `data/`**（与可执行文件同级），首次运行自动创建。
+应用目录不可写，或分发形态是 macOS `.app` / Linux AppImage 时回退到平台
+配置目录（ADR-014）：
+
+| 平台 | 回退后的路径 |
 |---|---|
 | Windows | `%APPDATA%\rustmark\preferences.toml` |
 | macOS | `~/Library/Application Support/rustmark/preferences.toml` |
-| Linux | `~/.config/rustmark/preferences.toml` |
+| Linux | `$XDG_CONFIG_HOME/rustmark/preferences.toml`（未设则 `~/.config/rustmark/preferences.toml`） |
+
+判断实际用的是哪一个：看应用目录下有没有 `data/`。升级自旧版本时，
+旧目录内容会被**复制**到 `data/` 并留下 `.rustmark-migrated` 标记，
+原文件不删除；此后旧目录不再更新，改设置请改新位置的那份。
 
 ## 2. 加载与回退行为
 
@@ -109,6 +117,7 @@ schema_version = 1        # 配置 schema 版本（ADR-003），结构变更时�
 | `tab_size` | 字符串 | `"Four"` | 缩进宽度枚举：`"Two"` / `"Four"` / `"Eight"`（**变体名**，非数字） |
 | `word_wrap` | 布尔 | `true` | 自动换行 |
 | `auto_save_interval` | 整数或省略 | `30` | 自动保存间隔（秒）；**`0` 非法**（保存被拒）；键省略 = 关闭自动保存 |
+| `auto_save_to_source` | 布尔 | `false` | 自动保存时是否**写回原文件**。默认 `false` = 只写草稿（ADR-003 的崩溃恢复语义）；旧配置缺此键按 `false` 读出。改为 `true` 后，仅当前活动文档在到期时写回原路径并清除脏标记，其余文档仍写草稿；写回前会核对磁盘内容，若文件被其他程序改动则跳过、提示一次并仅存草稿。未命名文档无原文件可写，仍走草稿 |
 | `spell_check` | 布尔 | `false` | 拼写检查（内置 3779 词英文词表，演示级） |
 | `show_line_numbers` | 布尔 | `true` | 行号栏（缺省按 `true` 读出） |
 | `load_remote_images` | 布尔 | `true` | 是否加载文档里的远程（http/https）图片，**隐私开关**（PRIV-01）；缺省按 `true` 读出。关闭后预览区对这些地址**一次请求都不发**（占位文案与断网一致，只多一句「已在设置中关闭」），状态栏常驻「远程图片已禁用」；本地图片与 data URI 不受影响。改动即时落盘 |
@@ -209,6 +218,7 @@ line_height = 1.6          # 1.0 – 3.0
 tab_size = "Four"          # Two | Four | Eight
 word_wrap = true
 auto_save_interval = 30    # 秒；删除本键 = 关闭自动保存（0 非法）
+auto_save_to_source = false # true = 到期时把当前活动文档写回原文件
 spell_check = false
 show_line_numbers = true
 load_remote_images = true   # false = 预览区不再请求远程图片（零外联）
