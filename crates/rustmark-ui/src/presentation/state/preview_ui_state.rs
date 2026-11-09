@@ -11,7 +11,7 @@
 //! 故本模块把这三者（连同代码块高亮状态）合成一个 [`PreviewCacheKey`]。
 
 use crate::presentation::state::scroll_sync_state::BlockRect;
-use crate::presentation::theme::builtin::palette_signature;
+use crate::presentation::theme::builtin::{Theme, palette_signature};
 use rustmark_core::application::dto::BlockView;
 
 /// 防抖时长（毫秒）。
@@ -40,20 +40,49 @@ pub struct PreviewCacheKey {
     pub(crate) palette: [u8; 4],
     /// 字号（整数化，避免浮点抖动导致每次都判定「变了」）。
     pub(crate) font_size_q: u32,
+    /// 预览排版度量签名（行高 / 字体族，见 [`appearance_signature`]）。
+    pub(crate) metrics: u64,
+}
+
+/// 预览区的排版度量签名：行高、字号与字体族一起折叠。
+///
+/// # 为什么必须与配色签名分开、又必须进缓存键
+///
+/// `palette_signature` 刻意只含颜色（有测试钉住「改字号不改变配色签名」）。
+/// 但行高与字体族是**排版输入**：
+///
+/// - 行高变了，`LayoutJob` 的 `TextFormat::line_height` 就变了，缓存的
+///   `BlockView` 对应的旧排版不能复用；只更新主题而不过期缓存，用户看到的是
+///   「改了行高，预览纹丝不动」。
+/// - 换字体后 `ctx.set_fonts` 重建字体图集，缓存里跨帧持有的字形坐标会
+///   指向旧图集（与 V11-17 的乱码同源），表现为锯齿 / 字形错位 / 发虚。
+///   字体族进签名后一次改动即整篇重排，重新取一遍字形坐标。
+///
+/// 量化后再折叠（行高 ×1000），避免浮点末位抖动导致每帧都判定「变了」。
+fn appearance_signature(theme: &Theme) -> u64 {
+    let mut h: u64 = 1469598103934665603;
+    let line = (theme.metrics.preview_line_height * 1000.0).round() as u64;
+    let size = (theme.metrics.preview_font_size * 100.0).round() as u64;
+    for v in [line, size] {
+        h ^= v;
+        h = h.wrapping_mul(1099511628211);
+    }
+    for b in theme.editor_font_family.as_bytes() {
+        h ^= u64::from(*b);
+        h = h.wrapping_mul(1099511628211);
+    }
+    h
 }
 
 impl PreviewCacheKey {
     /// 由文档标识、文档版本与主题构造。
-    pub fn new(
-        doc_id: u64,
-        content_version: u64,
-        theme: &crate::presentation::theme::builtin::Theme,
-    ) -> Self {
+    pub fn new(doc_id: u64, content_version: u64, theme: &Theme) -> Self {
         Self {
             doc_id,
             content_version,
             palette: palette_signature(theme).unwrap_or([0; 4]),
             font_size_q: (theme.metrics.preview_font_size * 100.0).round() as u32,
+            metrics: appearance_signature(theme),
         }
     }
 
@@ -69,7 +98,9 @@ impl PreviewCacheKey {
 
     /// 外观是否变化（需要重建）。
     pub(crate) fn appearance_changed(&self, other: &Self) -> bool {
-        self.palette != other.palette || self.font_size_q != other.font_size_q
+        self.palette != other.palette
+            || self.font_size_q != other.font_size_q
+            || self.metrics != other.metrics
     }
 }
 
@@ -218,5 +249,37 @@ impl PreviewUiState {
     /// 文档过大降级（FR-06：> 500KB 只渲染可视区）。
     pub fn set_degraded(&mut self, degraded: bool) {
         self.degraded = degraded;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 改行高 / 换字体必须让预览重建，否则用户看到的是「设置改了但预览没动」
+    /// 或旧字形坐标采样新字体图集造成的锯齿与错码。
+    #[test]
+    fn appearance_signature_tracks_line_height_and_font_family() {
+        let base = Theme::dark();
+        let before = PreviewCacheKey::new(1, 3, &base);
+
+        let mut taller = base.clone();
+        taller.metrics.preview_line_height = 2.4;
+        assert!(
+            before.appearance_changed(&PreviewCacheKey::new(1, 3, &taller)),
+            "改行高必须让预览重建"
+        );
+
+        let mut other_font = base.clone();
+        other_font.editor_font_family = "Consolas".to_string();
+        assert!(
+            before.appearance_changed(&PreviewCacheKey::new(1, 3, &other_font)),
+            "换字体必须让预览重建"
+        );
+
+        assert!(
+            !before.appearance_changed(&PreviewCacheKey::new(1, 3, &base)),
+            "同一主题不应反复重建"
+        );
     }
 }

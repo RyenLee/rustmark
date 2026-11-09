@@ -64,7 +64,7 @@ impl WorkspaceAppService {
     /// 移除一条失效的最近文件记录（失败静默）。
     ///
     /// 这只是清理动作：条目已经不在磁盘上，把它留在最近文件里只会让
-    /// 用户点到一个打不开的路径。清理失败（配置目录只读）不值得打断操作。
+    /// 用户点到一个打不开的路径。清理失败（数据目录只读）不值得打断操作。
     pub(super) fn forget_recent_quietly(&self, path: &FilePath) {
         let _ = self.forget_recent(ForgetRecentCommand { path: path.clone() });
     }

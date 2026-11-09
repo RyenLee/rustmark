@@ -54,7 +54,10 @@ Copy-Item "LICENSE-MIT", "LICENSE-APACHE", "NOTICE", "THIRD-PARTY-LICENSES.md" $
 rustmark v$Version（Windows 便携版）
 
 直接运行 rustmark.exe 即可，无需安装。
-设置与草稿保存在 %APPDATA%\rustmark\，删除该目录即完全卸载。
+设置、草稿与崩溃报告默认保存在本目录的 data\ 下（首次运行自动创建），
+删除整个解压目录即完全卸载。升级时请保留 data\。
+若本目录不可写（例如放在 Program Files），数据会回退到 %APPDATA%\rustmark\；
+从旧版本升级时旧数据会被复制进 data\，原目录保留不删。
 
 本包未做代码签名：首次运行如遇 SmartScreen 提示，请点「更多信息 → 仍要运行」，
 并核对 SHA256 与发布页 checksums 一致。

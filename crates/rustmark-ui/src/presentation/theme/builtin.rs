@@ -274,6 +274,20 @@ impl Theme {
         }
         theme.editor_font_size = font_size;
         theme.editor_line_height = line_height;
+        // 预览区必须跟随同一份「行高」设置：预览排版取
+        // `metrics.preview_line_height`（见 preview_view::inline::text_format），
+        // 只写 `editor_line_height` 会让「外观 → 行高」对预览完全无效。
+        //
+        // 保留既有的 0.1 差值（默认 1.6 → 预览 1.7）：预览正文比编辑区
+        // 源码稍松一档是原型的既有观感，行内公式与正文的基线对齐全靠这个
+        // 行高算出来（有 1px 级精度的回归用例钉着）。直接令二者相等会让
+        // 默认态的整篇排版位移，属于「修一个设置、坏一片视觉」。
+        // 用户把行高调到 N 时预览变成 N + 0.1，变化量是 1:1 传导的。
+        //
+        // 字号刻意不动：`preview_font_size` 同时驱动全局 `TextStyle::Body` /
+        // `Heading`（mapper::apply），跟着编辑器字号改会连带缩放整棵 UI，
+        // 超出本设置的语义（UI 字号另有 `metrics.ui_font_size`）。
+        theme.metrics.preview_line_height = line_height + 0.1;
         theme
     }
 
@@ -338,6 +352,20 @@ impl Theme {
         }
         theme.editor_font_size = font_size;
         theme.editor_line_height = line_height;
+        // 预览区必须跟随同一份「行高」设置：预览排版取
+        // `metrics.preview_line_height`（见 preview_view::inline::text_format），
+        // 只写 `editor_line_height` 会让「外观 → 行高」对预览完全无效。
+        //
+        // 保留既有的 0.1 差值（默认 1.6 → 预览 1.7）：预览正文比编辑区
+        // 源码稍松一档是原型的既有观感，行内公式与正文的基线对齐全靠这个
+        // 行高算出来（有 1px 级精度的回归用例钉着）。直接令二者相等会让
+        // 默认态的整篇排版位移，属于「修一个设置、坏一片视觉」。
+        // 用户把行高调到 N 时预览变成 N + 0.1，变化量是 1:1 传导的。
+        //
+        // 字号刻意不动：`preview_font_size` 同时驱动全局 `TextStyle::Body` /
+        // `Heading`（mapper::apply），跟着编辑器字号改会连带缩放整棵 UI，
+        // 超出本设置的语义（UI 字号另有 `metrics.ui_font_size`）。
+        theme.metrics.preview_line_height = line_height + 0.1;
 
         // 由主背景亮度决定 egui 明暗模式（custom 不直接映射 Light/Dark）。
         theme.kind = if dark {

@@ -15,6 +15,11 @@
 # notarytool 提交 + stapler 装订；任一缺失按配置错误直接失败，不静默降级。
 # 公证必须搭配正式证书签名（ad-hoc 签名无法通过公证）。
 # 证书与公证凭据绝不入仓，只经 CI secrets 或本机钥匙串注入。
+#
+# 数据目录（ADR-014）：.app 是签名 bundle，往 Contents/ 里写数据会破坏签名。
+# 因此本产物**固定回退**到 ~/Library/Application Support/rustmark/，
+# 与其它平台「应用目录 data/」的默认行为不同；发布说明与 PRIVACY.md §4 已披露。
+# 打包时不要预置 data/，避免覆盖用户配置。
 
 set -euo pipefail
 

@@ -501,6 +501,7 @@ fn set_writing_goal(app: &mut EditorApp, goal: u32) {
                 tab_size: view.tab_size,
                 word_wrap: view.word_wrap,
                 auto_save_interval: view.auto_save_interval,
+                auto_save_to_source: view.auto_save_to_source,
                 spell_check: view.spell_check,
                 show_line_numbers: view.show_line_numbers,
                 load_remote_images: view.load_remote_images,

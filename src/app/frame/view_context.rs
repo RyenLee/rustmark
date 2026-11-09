@@ -390,6 +390,10 @@ impl CommandPort for EditorApp {
         EditorApp::close_all_with_confirm(self);
     }
 
+    fn resolve_close_all_confirm(&mut self, confirmed: bool) {
+        EditorApp::resolve_close_all_confirm(self, confirmed);
+    }
+
     fn set_tabstrip_scroll_x(&mut self, x: f32) {
         EditorApp::set_tabstrip_scroll_x(self, x);
     }

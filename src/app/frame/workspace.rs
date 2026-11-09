@@ -334,6 +334,9 @@ impl EditorApp {
             .services
             .workspace
             .touch_recent(TouchRecentCommand { path: file_path });
+        // 自动写回的磁盘基线：从这一刻起，磁盘内容若被别的程序改动，
+        // 无人值守的写回必须停手（见 `frame::auto_write`）。
+        self.seed_auto_write_baseline(id, path);
         Ok(())
     }
 

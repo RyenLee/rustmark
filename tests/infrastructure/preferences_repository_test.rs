@@ -330,6 +330,38 @@ fn preferences_without_sidebar_width_load_as_theme_default() {
 ///
 /// 该字段此前没有 serde 缺省：TOML 对「缺字段」直接报错，仓储的处理是
 /// 备份原文件 + 整体回退默认——用户其余全部设置一起作废。
+/// 旧配置缺 `auto_save_to_source` 字段时必须按**关闭**读出。
+///
+/// 「自动写回原文件」会覆盖磁盘，升级时静默打开是不可逆的风险；
+/// serde 缺省值是这条不变量的最后一道保险。
+#[test]
+fn preferences_without_auto_save_to_source_keep_write_back_disabled() {
+    let dir = TempDir::new("write-back-legacy");
+    let repo = repo_in(&dir);
+
+    let prefs = Preferences::default_preferences();
+    repo.save(&prefs).expect("保存应成功");
+    let path = dir.join("settings.toml");
+    let text = fs::read_to_string(&path).expect("配置应可读");
+    let stripped: String = text
+        .lines()
+        .filter(|line| !line.contains("auto_save_to_source"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert_ne!(stripped, text, "应确实删掉了 auto_save_to_source 那一行");
+    fs::write(&path, stripped).expect("回写应成功");
+
+    let loaded = repo.load().expect("旧配置应能加载（缺字段不报错）");
+    assert!(
+        !loaded.editor().auto_save_to_source(),
+        "缺字段必须按关闭读出，否则升级即静默覆盖用户文件"
+    );
+    assert!(
+        backups(&dir).is_empty(),
+        "缺字段不该触发「备份 + 回退默认」"
+    );
+}
+
 #[test]
 fn preferences_without_auto_save_interval_load_with_the_default_interval() {
     let dir = TempDir::new("auto-save-legacy");

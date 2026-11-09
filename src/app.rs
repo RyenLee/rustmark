@@ -34,20 +34,38 @@ use bootstrap::{ConfigPaths, Services};
 ///
 /// S8-03 将在此接入启动优化（延迟加载、首次启动引导）。
 pub fn run() -> anyhow::Result<()> {
-    // panic hook 必须在**一切逻辑之前**安装（含装配）：
-    // 装配期 panic（配置目录不可写等）同样要留下崩溃报告，
-    // 晚一行就漏掉那一部分的诊断信息。
-    let paths = ConfigPaths::detect();
+    // panic hook 必须在**装配与迁移之前**安装：装配期 panic（数据目录不可写等）
+    // 同样要留下崩溃报告，晚一行就漏掉那一部分的诊断信息。
+    // 唯一先行的是路径解算——hook 自己需要知道报告写到哪里。
+    // ADR-014：数据目录在应用目录的 `data/`；不可写时回退平台配置目录。
+    // 只解算一次——装配与崩溃 hook 必须用同一组路径，否则「配置在 A 处、
+    // 崩溃报告在 B 处」会让排障彻底失焦。
+    let (paths, fallback_note) = ConfigPaths::detect_with_note();
+    // hook 仍须紧随路径解算：迁移也是磁盘 I/O，早期 panic 一样要有报告。
     let crash_dir = paths.crash_dir();
     crash_log::install_hook(crash_dir.clone());
+    if let Some(note) = fallback_note {
+        log::warn!(
+            "数据目录回退：{note}；实际位置 {}",
+            paths.root_dir().display()
+        );
+    }
+    // 旧版本把数据写在平台配置目录。这里**只复制、不删除**地把它们带过来，
+    // 否则升级后未保存的草稿、设置与最近文件会「凭空消失」。
+    // 迁移幂等且失败不阻断启动（见 ConfigPaths::migrate_legacy）。
+    let migrated = paths.migrate_legacy();
+    if migrated > 0 {
+        log::info!(
+            "已从旧配置目录迁移 {migrated} 个文件到 {}",
+            paths.root_dir().display()
+        );
+    }
     // P3：清掉上次崩溃遗留的临时文件（`.rustmark-tmp-<pid>-<seq>-<name>`）。
-    // 这里只扫配置目录——一次 `read_dir` 的成本。用户文档目录无法在启动时
+    // 这里只扫数据目录——一次 `read_dir` 的成本。用户文档目录无法在启动时
     // 穷举（最近文件列表也只是子集），改由每次保存时顺带清理该目标所在目录
     // （`atomic_file::atomic_write` 里的 `sweep_parent_once`，每目录每进程一次）。
     // 清理失败不影响启动：该函数不返回错误，只记日志。
-    if let Some(config_dir) = paths.preferences.parent() {
-        crate::infrastructure::persistence::tmp_residue::sweep_stale(config_dir);
-    }
+    crate::infrastructure::persistence::tmp_residue::sweep_stale(&paths.root_dir());
     // 装配先于窗口创建：装配失败时**不该**先闪一个空窗口再报错。
     // 代价是启动多等几十毫秒（语法集加载），换来「启动失败 = 什么都没发生」，
     // 这个取舍在S8-03 会用后台线程细化。
@@ -55,14 +73,14 @@ pub fn run() -> anyhow::Result<()> {
     // 注意这里能失败**只有读不到配置文件**（权限/路径异常）；
     // 配置内容损坏由 `TomlPreferencesRepository` 按 ADR-003 备份后回退默认，
     // 不会走到这条错误路径——用户不該因为一个语法错误就打不开编辑器。
-    let services = Services::bootstrap().map_err(|e| {
+    let services = Services::assemble(paths.clone()).map_err(|e| {
         anyhow::anyhow!(
             "启动失败：无法读取应用配置。\n\
-             默认位置：Windows %APPDATA%\\rustmark\\preferences.toml，\
-             macOS ~/Library/Application Support/rustmark/preferences.toml，\
-             Linux ~/.config/rustmark/preferences.toml。\n\
-             请确认该文件可读（若损坏，删掉它会用默认配置重建，原文件会留一份 .bak）。\n\
-             原始错误：{e}"
+             数据目录：{}（默认是应用目录下的 data/；不可写时回退到平台配置目录）。\n\
+             请确认 preferences.toml 可读（若损坏，删掉它会用默认配置重建，\
+             原文件会留一份 .bak）。\n\
+             原始错误：{e}",
+            paths.root_dir().display()
         )
     })?;
     startup_timing::mark("装配完成");

@@ -51,6 +51,7 @@ pub fn show(vctx: &mut dyn EditorViewContext, ui: &mut Ui) {
         Overlay::CommandPalette => {
             crate::presentation::views::command_palette_view::show(vctx, &ctx)
         }
+        Overlay::Confirm => crate::presentation::views::confirm_view::show(vctx, &ctx),
     }
 }
 

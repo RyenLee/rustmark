@@ -160,10 +160,12 @@ pub fn diagnose(error_display: &str, platform: HostPlatform) -> String {
          原始错误（提交 Issue 时请附上）：\n\
          {error_display}\n\
          \n\
-         本诊断同时写入配置目录下的 crash/：\n\
-         Windows %APPDATA%\\rustmark\\crash\\，\
+         本诊断同时写入数据目录下的 crash/：\n\
+         默认是应用目录下的 data/crash/；若应用目录不可写（例如装在\n\
+         Program Files、macOS .app 或 Linux AppImage），则回退到平台配置目录\n\
+         （Windows %APPDATA%\\rustmark\\crash\\，\
          macOS ~/Library/Application Support/rustmark/crash/，\
-         Linux ~/.config/rustmark/crash/。\n\
+         Linux ~/.config/rustmark/crash/）。\n\
          报告只含版本 / 平台 / 本条错误，不含任何文档内容。\n"
     )
 }

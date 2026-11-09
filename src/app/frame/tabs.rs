@@ -113,6 +113,8 @@ impl EditorApp {
                 .services
                 .documents
                 .clear_draft(&self.services.drafts_dir, id);
+            // 文档真的关掉了：清掉它的写回基线，别让表随开关的文档无限长大。
+            self.auto_write_guard.remove(&id);
         }
         // 关掉的是不是当前页？——决定末尾要不要恢复光标（R-06）。
         // 关的不是当前页时**不能**恢复：`per_doc_cursor` 里当前文档的值是

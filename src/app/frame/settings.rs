@@ -14,6 +14,7 @@ impl EditorApp {
             tab_size: view.editor.tab_size,
             word_wrap: view.editor.word_wrap,
             auto_save_interval: view.editor.auto_save_interval,
+            auto_save_to_source: view.editor.auto_save_to_source,
             spell_check: view.editor.spell_check,
             show_line_numbers: view.editor.show_line_numbers,
             load_remote_images: view.editor.load_remote_images,
@@ -62,8 +63,10 @@ impl EditorApp {
 
     /// 写一个编辑器设置字段并立即生效。
     pub fn apply_editor_field(&mut self, mutate: impl FnOnce(&mut EditorSettingsView)) {
+        let was_write_back = self.settings().editor.auto_save_to_source;
         let mut view = self.settings().editor;
         mutate(&mut view);
+        let write_back_enabled = view.auto_save_to_source;
         match self
             .services
             .preferences
@@ -72,6 +75,11 @@ impl EditorApp {
             Ok(()) => {
                 self.settings_ui.error = None;
                 self.settings_ui.dirty = true;
+                // 「写回原文件」刚打开：给已打开的文档补上磁盘基线，
+                // 否则它们第一次自动写回时没有可比对的基准。
+                if !was_write_back && write_back_enabled {
+                    self.seed_open_auto_write_baselines();
+                }
             }
             Err(e) => self.settings_ui.set_error(e.to_string()),
         }
@@ -152,6 +160,7 @@ impl EditorApp {
             tab_size: snapshot.tab_size,
             word_wrap: snapshot.word_wrap,
             auto_save_interval: snapshot.auto_save_interval,
+            auto_save_to_source: snapshot.auto_save_to_source,
             spell_check: snapshot.spell_check,
             show_line_numbers: snapshot.show_line_numbers,
             load_remote_images: snapshot.load_remote_images,

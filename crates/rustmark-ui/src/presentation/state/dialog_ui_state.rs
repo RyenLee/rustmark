@@ -31,6 +31,13 @@ pub enum Overlay {
     Symbol,
     /// 差异对比。
     Diff,
+    /// 应用内「确认 / 取消」弹窗（全部关闭前的未保存提示）。
+    ///
+    /// 刻意**不进** [`Self::ALL`]：`ALL` 是「有开启动作、可由快捷键反查」的
+    /// 浮层集合；确认框由业务动作直接压栈，没有独立的开关动作。加进去会让
+    /// `opened_by` 反查、动作回合、焦点遍历等守卫都要求它有一个开启动作，
+    /// 为一处确认框改动整张动作表没有必要。
+    Confirm,
     // 注意：`InsertLink` / `InsertTable` / `CodeBlock` **不再**对应浮层。
     // 它们曾是 `Overlay::Link` / `Table` / `Code`，但那三个浮层的视图
     // 从未实现（文件只有一行占位），于是动作被 `openable_overlay`
@@ -67,23 +74,28 @@ impl Overlay {
             Self::CommandPalette => "命令面板",
             Self::Symbol => "插入符号",
             Self::Diff => "对比文件差异",
+            Self::Confirm => "请确认",
         }
     }
 
     /// 该浮层由哪个动作打开（用于焦点归还与模态判定）。
+    ///
+    /// 确认框没有开启动作：它由「全部关闭」这样的业务动作直接请求，
+    /// 不是用户从菜单/快捷键唤起的面板，故返回 `None`。
     pub const fn opened_by(self) -> Option<UiAction> {
-        Some(match self {
-            Self::Find => UiAction::Find,
-            Self::Settings => UiAction::OpenSettings,
-            Self::Export => UiAction::Export,
-            Self::ShortcutOverview => UiAction::ShortcutOverview,
-            Self::About => UiAction::About,
-            Self::Stats => UiAction::DocumentStats,
-            Self::CommandPalette => UiAction::CommandPalette,
-            Self::Symbol => UiAction::InsertSymbol,
-            Self::Diff => UiAction::CompareDiff,
-            Self::QuickOpen => UiAction::OpenDocument,
-        })
+        match self {
+            Self::Find => Some(UiAction::Find),
+            Self::Settings => Some(UiAction::OpenSettings),
+            Self::Export => Some(UiAction::Export),
+            Self::ShortcutOverview => Some(UiAction::ShortcutOverview),
+            Self::About => Some(UiAction::About),
+            Self::Stats => Some(UiAction::DocumentStats),
+            Self::CommandPalette => Some(UiAction::CommandPalette),
+            Self::Symbol => Some(UiAction::InsertSymbol),
+            Self::Diff => Some(UiAction::CompareDiff),
+            Self::QuickOpen => Some(UiAction::OpenDocument),
+            Self::Confirm => None,
+        }
     }
 
     /// 该浮层的**附加**开启动作（[`Self::opened_by`] 之外的）。
@@ -115,11 +127,22 @@ impl Overlay {
     }
 }
 
+/// 一次应用内确认请求的内容。
+///
+/// 目前只有「全部关闭」一种意图，故不引入意图枚举：文案由组合根在请求时
+/// 写入（含脏文档数），视图只读它，不必碰领域数据。
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ConfirmRequest {
+    message: String,
+}
+
 /// 浮层 UI 状态。
 #[derive(Clone, Debug, Default)]
 pub struct DialogUiState {
     /// 当前打开的浮层栈（栈而非单值：对话框可叠加，如「设置」上再开「关于」）。
     open: Vec<Overlay>,
+    /// 待答复的应用内确认请求（与 [`Overlay::Confirm`] 同生共灭）。
+    confirm: Option<ConfirmRequest>,
     /// 需要关闭的浮层（`Esc` 的消费标记）。
     pending_close: Option<Overlay>,
     /// 已经申请过「打开即聚焦」的浮层（一次性闩锁）。
@@ -144,6 +167,27 @@ impl DialogUiState {
     /// 构造默认状态（无浮层）。
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// 打开一次应用内确认框（重复请求时刷新文案并把它提到栈顶）。
+    pub fn open_confirm(&mut self, message: impl Into<String>) {
+        // 先压栈再写文案：`open()` 在浮层已打开时会先 `close()` 把它提到
+        // 栈顶，而 `close(Overlay::Confirm)` 会清掉待确认内容——顺序反了
+        // 会让重复请求丢掉文案。
+        self.open(Overlay::Confirm);
+        self.confirm = Some(ConfirmRequest {
+            message: message.into(),
+        });
+    }
+
+    /// 当前确认框文案（`None` = 没有待答复的请求）。
+    pub fn confirm_message(&self) -> Option<&str> {
+        self.confirm.as_ref().map(|r| r.message.as_str())
+    }
+
+    /// 是否有一个确认框正在等用户答复。
+    pub fn confirm_pending(&self) -> bool {
+        self.confirm.is_some() && self.is_open(Overlay::Confirm)
     }
 
     /// 浮层是否**刚打开且还没申请过聚焦**；返回 `true` 的同时记下已申请。
@@ -198,7 +242,11 @@ impl DialogUiState {
     ///
     /// 返回被关闭的浮层与它的来源动作（供焦点归还）。
     pub fn close_top(&mut self) -> Option<Overlay> {
-        self.open.pop()
+        let popped = self.open.pop();
+        if popped == Some(Overlay::Confirm) {
+            self.confirm = None;
+        }
+        popped
     }
 
     /// 关闭指定浮层（不论它在栈中的位置）。
@@ -207,6 +255,10 @@ impl DialogUiState {
             return false;
         };
         self.open.remove(index);
+        // 确认框关掉就必须撤掉请求：否则下次打开会拿到上一条旧文案。
+        if overlay == Overlay::Confirm {
+            self.confirm = None;
+        }
         // 顺手撤掉「打开即聚焦」的登记：下次打开要能重新给一次焦点。
         self.focus_granted.retain(|o| *o != overlay);
         true
@@ -215,6 +267,7 @@ impl DialogUiState {
     /// 关闭全部浮层。
     pub fn close_all(&mut self) {
         self.open.clear();
+        self.confirm = None;
         self.pending_close = None;
         self.focus_granted.clear();
     }

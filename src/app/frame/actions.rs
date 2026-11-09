@@ -393,7 +393,11 @@ fn route_prev_tab(app: &mut EditorApp) {
 /// 才退出专注模式。否则 Esc 会「关掉对话框顺便把专注模式也退掉」——
 /// 一次按键做两件事几乎总是 bug。
 fn route_close_overlay(app: &mut EditorApp) {
-    if app.dialog.is_open(Overlay::Settings) {
+    if app.dialog.is_open(Overlay::Confirm) {
+        // Esc / 标题栏 × 语义 = 取消：与「取消」按钮走同一段兑现逻辑，
+        // 由它清掉 pending 闩锁（只 close_top 会让下次「全部关闭」被吞掉）。
+        EditorApp::resolve_close_all_confirm(app, false);
+    } else if app.dialog.is_open(Overlay::Settings) {
         // Esc 语义 = 取消：与面板上的「取消」按钮、与标题栏 × 一致。
         app.cancel_settings();
     } else if app.dialog.close_top().is_none() {

@@ -50,7 +50,9 @@ body:
       label: 日志 / 截图
       description: |
         从源码构建时可附 `cargo run --release 2> frame.log` 的尾部；
-        崩溃可附 `%LOCALAPPDATA%\rustmark\crashes`（或 `~/.local/share/rustmark/crashes`）里的报告。
+        崩溃可附应用目录 `data/crash/`（若该目录不存在，说明回退到了平台配置目录：
+        Windows `%APPDATA%\rustmark\crash\`、macOS `~/Library/Application Support/rustmark/crash/`、
+        Linux `~/.config/rustmark/crash/`）里的报告。
         截图可直接拖进本框。
     validations:
       required: false

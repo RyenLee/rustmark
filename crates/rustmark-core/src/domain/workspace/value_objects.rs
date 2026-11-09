@@ -88,7 +88,7 @@ impl RecentFiles {
 
     /// 由已持久化的记录重建列表（保留原始时间戳，不做时间重置）。
     ///
-    /// 用于启动时从配置目录恢复「最近文件」；重建后会重新排序并裁剪到上限。
+    /// 用于启动时从数据目录恢复「最近文件」；重建后会重新排序并裁剪到上限。
     pub(crate) fn with_items(items: Vec<RecentFile>, limit: usize) -> Self {
         let mut recent = Self {
             items,

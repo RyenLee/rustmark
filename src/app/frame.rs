@@ -113,6 +113,7 @@ pub(crate) use state::STATS_DEBOUNCE_MS;
 // ————————————————————————————————————————————————————————————
 
 mod actions;
+mod auto_write;
 mod capture;
 mod dialog;
 mod diff;
@@ -136,6 +137,7 @@ mod tabs;
 mod ui;
 mod view_context;
 mod workspace;
+pub(crate) use auto_write::AutoWriteOutcome;
 pub(crate) use drag_drop::classify_dropped;
 pub(crate) use scheduler::{Deadline, FramePhase, FrameScheduler};
 
@@ -152,13 +154,22 @@ pub(crate) use scheduler::{Deadline, FramePhase, FrameScheduler};
 /// 不必为 1.5 MB 的内置 CJK 子集再复制一份。端口类型用 `Arc` 包裹字节
 /// 正是为了保住这条零拷贝路径。
 ///
-/// # 为什么只转 `scale`
+/// # 字体清晰度：从 `scale` 扩展到显式抗锯齿组合
 ///
 /// egui 0.37 的 `FontTweak` 有 9 个字段（hinting / hinting_target /
-/// subpixel_binning / coords / thin_space_width / tab_size …），本项目只设置
-/// `scale`（emoji 字体 0.81 / 0.90，与 epaint 内嵌时代原值一致）。其余取 egui
-/// 默认值，与端口化之前的行为逐字段等价——端口化前那些字段也从未被赋值。
-/// 理由与扩展方式见 `rustmark_core::infrastructure::fonts::port` 的模块文档。
+/// subpixel_binning / coords / thin_space_width / tab_size …）。端口化早期这里
+/// 只转 `scale`（emoji 字体 0.81 / 0.90，与 epaint 内嵌时代原值一致），
+/// 其余取 `Default`（`hinting: None` / `subpixel_binning: None` = **跟随全局
+/// `TextOptions`**）。问题在于全局值来自每帧重建的 `Visuals`，一旦主题或
+/// egui 默认变更，字体图集会被再次重建；换字体时 `set_fonts` 本就重建一次，
+/// 两次叠加会让跨帧 Galley 的 `uv_rect` 采样到错位的字形——表现为锯齿、
+/// 发虚（用户换字体后尤其明显）。
+///
+/// 故此处把 `hinting` / `subpixel_binning` 显式钉成 `Some(true)`（与
+/// `theme::mapper::apply` 钉死的全局值同一组合），字体本身不再依赖全局
+/// 选项是否漂移；`hinting_target` 仍取 `Default`（`Smooth`，适合抗锯齿渲染）。
+/// 端口类型依旧只承载「字节 + scale」——这两项是**全局渲染策略**，不是
+/// 每个字体的数据，理由见 `rustmark_infra::infrastructure::fonts::port`。
 pub fn to_egui_font_definitions(
     defs: crate::infrastructure::fonts::PortFontDefinitions,
 ) -> egui::FontDefinitions {
@@ -170,6 +181,8 @@ pub fn to_egui_font_definitions(
         .map(|(key, data)| {
             let font = egui::FontData::from_blob(data.bytes, 0).tweak(egui::FontTweak {
                 scale: data.scale,
+                hinting: Some(true),
+                subpixel_binning: Some(true),
                 ..Default::default()
             });
             (key, std::sync::Arc::new(font))

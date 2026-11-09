@@ -1,5 +1,6 @@
 pub mod about_view;
 pub mod command_palette_view;
+pub mod confirm_view;
 pub mod diff_view;
 pub mod editor_ops;
 pub mod editor_view;

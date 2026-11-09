@@ -493,6 +493,15 @@ pub fn apply(ctx: &egui::Context, theme: &Theme) {
     // **明暗两份默认值的差异依旧存在**，这条钉死不能随升级一起删掉。
     visuals.text_options.color_transfer_function =
         egui::epaint::image::FontColorTransferFunction::TwoCoverageMinusCoverageSq;
+    // 字体清晰度三个开关同样必须钉死，不能随 `Visuals::dark()/light()` 的
+    // 默认值走。egui 每帧比对 `text_options`，任一字段变化都会整体重建
+    // `Fonts` 与字体图集（见上一条注释）；而设置页换字体时本来就会
+    // `ctx.set_fonts` 重建一次，两次重建叠加会让跨帧 Galley 的 `uv_rect`
+    // 指向已失效的图集，用户看到的就是锯齿 / 字形错位 / 发虚。
+    // 显式取 egui 的抗锯齿组合：平滑 hinting + 亚像素定位，对内置字体与
+    // 用户在设置页选的系统字体一视同仁。
+    visuals.text_options.font_hinting = true;
+    visuals.text_options.subpixel_binning = true;
     visuals.panel_fill = theme.bg_secondary;
     visuals.window_fill = theme.bg_secondary;
     visuals.extreme_bg_color = theme.bg_primary;

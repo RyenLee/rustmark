@@ -168,6 +168,12 @@ pub struct EditorSettingsView {
     pub word_wrap: bool,
     /// 自动保存间隔（秒）；`None` 表示关闭自动保存。
     pub auto_save_interval: Option<u32>,
+    /// 自动保存时是否写回原文件（默认关闭；旧配置缺字段按关闭读出）。
+    ///
+    /// 关闭时自动保存只写草稿；开启后仅当前活动文档写回原路径。
+    /// 这是危险选项：会覆盖磁盘内容，故缺省值与领域默认值都是 `false`。
+    #[serde(default)]
+    pub auto_save_to_source: bool,
     /// 是否启用拼写检查。
     pub spell_check: bool,
     /// 是否显示行号栏；与领域默认一致（显示），旧配置缺省同样按显示处理。
@@ -339,6 +345,7 @@ impl SettingsView {
                 // 读失败只是「读不到用户的定制」，不该把自动保存一并关掉——
                 // 旧值 `None` 会让兜底界面里的自动保存静默失效。
                 auto_save_interval: Some(30),
+                auto_save_to_source: false,
                 spell_check: false,
                 show_line_numbers: true,
                 load_remote_images: true,

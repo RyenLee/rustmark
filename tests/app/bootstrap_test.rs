@@ -1,7 +1,5 @@
 //! 依赖装配用例（S6-01）。
 
-use std::path::PathBuf;
-
 use rustmark::app::bootstrap::{ConfigPaths, PREVIEW_DEBOUNCE_MS, Services};
 use rustmark::application::document::commands::NewDocumentCommand;
 use rustmark::application::document::queries::GetContentQuery;
@@ -99,23 +97,20 @@ fn workspace_scan_on_missing_root_reports_error_not_panic() {
     assert!(result.is_err(), "扫描不存在的目录必须报错");
 }
 
+/// ADR-014 之后默认根目录是「应用目录 data/」，不可写时回退平台目录——
+/// 两者都是合法结果，所以这里只钉**结构性契约**：两个文件必须同目录、
+/// 文件名固定、且 `drafts_dir` / `crash_dir` 都从同一个根派生。
+/// 「可写时确实选 data/」由 assembly 内的 `choose_root` 纯函数用例覆盖，
+/// 不依赖测试进程所在目录是否可写。
 #[test]
-fn config_paths_detect_appends_rustmark_directory() {
+fn config_paths_keep_all_derived_paths_under_one_root() {
     let paths = ConfigPaths::detect();
-    assert!(
-        paths
-            .preferences
-            .ends_with(PathBuf::from("rustmark").join("preferences.toml")),
-        "配置应落在 rustmark 子目录下，实际：{}",
-        paths.preferences.display()
-    );
-    assert!(
-        paths
-            .recent
-            .ends_with(PathBuf::from("rustmark").join("recent.json")),
-        "最近文件应与配置同目录，实际：{}",
-        paths.recent.display()
-    );
+    assert!(paths.preferences.ends_with("preferences.toml"));
+    assert!(paths.recent.ends_with("recent.json"));
+    assert_eq!(paths.preferences.parent(), paths.recent.parent());
+    let root = paths.root_dir();
+    assert_eq!(paths.drafts_dir(), root.join(".rustmark-draft"));
+    assert_eq!(paths.crash_dir(), root.join("crash"));
 }
 
 #[test]

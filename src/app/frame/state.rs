@@ -12,6 +12,7 @@
 //! `crate::app::frame::EditorApp` 与 `rustmark::app::frame::EditorApp` 两条路径
 //! 保持原样（兄弟模块的 `use super::*` 也照常拿到）。
 
+use super::auto_write::AutoWriteState;
 use super::*;
 
 /// 行索引缓存的存储类型（见 [`EditorApp::line_index_cache`]）。
@@ -148,6 +149,11 @@ pub struct EditorApp {
     /// 这是**编辑区与领域之间唯一的中介**：领域是内容的单一真相，
     /// `editor_text` 只是它的一个视图副本，每次领域命令后从 `get_content` 回读。
     pub(crate) active_doc: Option<DocumentId>,
+    /// 自动写回原文件的磁盘基线（按文档）；见 `frame::auto_write` 模块文档。
+    ///
+    /// 只在「写回原文件」开关打开时才有读点，但字段本身与开关无关：
+    /// 开关在设置页可以随时打开，届时打开文档时播种的基线必须还在。
+    pub(crate) auto_write_guard: std::collections::HashMap<DocumentId, AutoWriteState>,
     /// 编辑区的可变文本副本（egui `TextEdit` 直接绑定它）。
     ///
     /// 它不是「另一份真值」——`refresh_text()` 每次命令后都用领域内容覆盖它，
@@ -370,6 +376,7 @@ impl EditorApp {
             editor_fonts: crate::infrastructure::fonts::editor_font_choices(),
             installed_font_family: None,
             active_doc: None,
+            auto_write_guard: std::collections::HashMap::new(),
             editor_text: String::new(),
             line_index_cache: std::cell::RefCell::new(None),
             // 首次见某篇文档要立刻算（避免开文先显 0），故默认空、惰性填充。

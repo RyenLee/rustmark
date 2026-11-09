@@ -45,12 +45,11 @@ impl EditorApp {
         // 撤销待删目标。若跟着路径类结果一起短路返回，`pending_delete`
         // 会一直悬着，用户下次点「删除」反而被「已有确认在飞」吞掉。
         if let DialogOutcome::Confirm(result) = &outcome {
-            // 三类确认框（删除 / 全部关闭 / 还原）共用同一个 `Confirm` 出口，
-            // 靠「哪个 pending 有值」分流——与 `PendingDialog` 当年
-            // 「一个字段多种含义」的缺陷相反：这里三个字段各自只有一种含义。
-            if self.pending_close_all {
-                self.apply_close_all_confirm(result);
-            } else if self.pending_revert.is_some() {
+            // 原生确认框现在只服务「删除」与「还原」：「全部关闭」已改为
+            // 应用内浮层（不走后台线程、不产生 DialogOutcome），故这里
+            // 只按两个 pending 分流。`pending_delete` 为 None 时
+            // `apply_delete_confirm` 会直接返回，不会误伤别的操作。
+            if self.pending_revert.is_some() {
                 self.apply_revert_confirm(result);
             } else {
                 self.apply_delete_confirm(result);
@@ -179,11 +178,15 @@ impl EditorApp {
         }
     }
 
-    /// 请求「全部关闭」确认（登记意图 → 后台确认框 → 每帧取回）。
+    /// 请求「全部关闭」确认（应用内浮层，问题 038）。
     ///
-    /// 与 [`Self::request_delete`] 同一套路，理由同源：`confirm` 是同步
-    /// 阻塞的原生模态框。文案报出脏文档数——用户要凭这条信息决定
-    /// 「值是不值得为它再存一次」。
+    /// 这里**不再**走 `DialogRunner` + `DialogPort::confirm`：那是系统原生
+    /// 消息框（白底、灰按钮、黄色警告图标），与项目 egui 深色界面和交互
+    /// 完全割裂。改为把文案登记进 `DialogUiState` 并压入 `Overlay::Confirm`，
+    /// 由 `confirm_view` 用应用自己的主题画「确定 / 取消」，答复统一经
+    /// [`Self::resolve_close_all_confirm`] 兑现。
+    ///
+    /// 文案仍报出脏文档数——用户要凭这条信息决定「值不值得为它再存一次」。
     pub fn request_close_all(&mut self) {
         if self.pending_close_all {
             return;
@@ -196,21 +199,23 @@ impl EditorApp {
         self.pending_close_all = true;
         let message =
             format!("有 {dirty} 个文档有未保存的修改，「全部关闭」将丢失这些修改。确定继续吗？");
-        self.dialogs.spawn(DialogRequest::Confirm { message });
+        self.dialog.open_confirm(message);
     }
 
-    /// 兑现一次「全部关闭」确认的答复（问题 038）。
+    /// 兑现一次「全部关闭」确认的答复（应用内弹窗）。
     ///
-    /// 三种答复与删除确认同义：是 → 执行；否 / 关掉对话框 → 什么都不做
-    /// （用户刚明确拒绝，再弹一条「已取消」是废话）；对话框系统不可用 →
-    /// 必须提示，否则用户以为关了、实际一个都没关。
-    fn apply_close_all_confirm(&mut self, result: &Result<bool, AppError>) {
+    /// 三条关闭路径共用此处：确定按钮、取消按钮、以及标题栏 × / Esc
+    /// （[`crate::app::frame::actions::route_close_overlay`] 把它转成 `false`）。
+    /// 集中在此才能同时清掉「已有一个确认在飞」的闩锁——只在视图里
+    /// `close_top()` 会让下次点击「全部关闭」被静默吞掉。
+    ///
+    /// 应用内浮层没有「对话框系统不可用」这一分支（属于 rfd 端口），
+    /// 故取消时什么都不做、也不报错：用户刚明确拒绝，不必再提示。
+    pub fn resolve_close_all_confirm(&mut self, confirmed: bool) {
         self.pending_close_all = false;
-        match result {
-            Ok(true) => self.close_all_documents(),
-            Ok(false) => {}
-            Err(AppError::Cancelled) => {}
-            Err(e) => self.set_status_error(&format!("未能确认全部关闭：{e}")),
+        self.dialog.close(Overlay::Confirm);
+        if confirmed {
+            self.close_all_documents();
         }
     }
 

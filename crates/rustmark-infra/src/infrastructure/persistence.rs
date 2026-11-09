@@ -17,7 +17,7 @@ pub mod recent_files_store;
 /// 崩溃残留临时文件的清理（评审 P3）。
 ///
 /// 对组合根公开的唯一入口是 [`tmp_residue::sweep_stale`]：启动时清一次
-/// 配置目录；文档目录由保存路径上的内部钩子顺带清理。
+/// 数据目录；文档目录由保存路径上的内部钩子顺带清理。
 pub mod tmp_residue;
 
 pub mod toml_preferences_repository;

@@ -82,6 +82,7 @@ fn set_editor_valid_persists() {
             tab_size: 2,
             word_wrap: false,
             auto_save_interval: Some(10),
+            auto_save_to_source: true,
             spell_check: true,
             show_line_numbers: false,
             load_remote_images: false,
@@ -101,6 +102,10 @@ fn set_editor_valid_persists() {
         !settings.editor.load_remote_images,
         "远程图片开关必须经 DTO → 领域 → DTO 往返（PRIV-01）：只写一半会\n         让用户关掉开关、重启后又开始联网"
     );
+    assert!(
+        settings.editor.auto_save_to_source,
+        "「写回原文件」同样要完整往返；漏掉 `to_editor` 或 `to_editor_view` 任一侧\n         都会让设置页勾了却不生效"
+    );
 }
 
 #[test]
@@ -111,6 +116,7 @@ fn set_editor_goal_beyond_max_saturates_instead_of_failing() {
             tab_size: 4,
             word_wrap: true,
             auto_save_interval: None,
+            auto_save_to_source: false,
             spell_check: false,
             show_line_numbers: false,
             load_remote_images: true,
@@ -139,6 +145,7 @@ fn set_editor_invalid_tab_size_fails() {
             tab_size: 3, // 非 {2,4,8}
             word_wrap: false,
             auto_save_interval: Some(10),
+            auto_save_to_source: false,
             spell_check: true,
             show_line_numbers: false,
             load_remote_images: true,

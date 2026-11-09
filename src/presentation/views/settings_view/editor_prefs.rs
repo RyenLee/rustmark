@@ -75,9 +75,48 @@ pub(super) fn editor(vctx: &mut dyn SettingsViewAccess, ui: &mut Ui, theme: &The
             });
         }
     });
-    if view.auto_save_interval.is_none() {
-        ui.colored_label(theme.text_secondary, "自动保存已关闭。");
-    }
+    // 「写回原文件」是独立开关（默认关闭）：自动保存的语义从「只写草稿」
+    // 升级为「覆盖磁盘文件」，必须让用户显式勾选。间隔为 0 时禁用——
+    // 没有节拍就没有写回，勾上却不生效会被当成 bug。
+    let autosave_on = view.auto_save_interval.is_some_and(|secs| secs > 0);
+    field(ui, theme, "写回原文件", |ui| {
+        let mut on = view.auto_save_to_source;
+        if ui
+            .add_enabled(
+                autosave_on,
+                egui::Checkbox::new(&mut on, "自动保存时同时写回原文件"),
+            )
+            .changed()
+        {
+            vctx.apply_editor_field(&mut |e: &mut EditorSettingsView| {
+                e.auto_save_to_source = on;
+            });
+        }
+    });
+    // 开关状态与生效条件必须写在界面上：默认路径写的是**草稿**而不是原文件，
+    // 状态栏的「未保存」标记不会因此消失。不说明这一点，用户会把它当成
+    // 「自动保存没生效」——本次修复要消除的正是这种无法判定的状态。
+    match view.auto_save_interval {
+        None | Some(0) => ui.colored_label(
+            theme.text_secondary,
+            "自动保存已关闭：编辑内容不会写入草稿，仅手动保存（Ctrl+S）写回原文件。",
+        ),
+        Some(secs) if view.auto_save_to_source => ui.colored_label(
+            theme.text_secondary,
+            format!(
+                "已开启：停止编辑满 {secs} 秒后写回当前活动文档的原文件，脏标记随之清除；\
+                 其他标签仍只写草稿。写回前核对磁盘：文件若被其他程序改动则跳过、提示一次\
+                 并仅存草稿；未命名文档没有原文件，仍需先另存为。"
+            ),
+        ),
+        Some(secs) => ui.colored_label(
+            theme.text_secondary,
+            format!(
+                "自动保存已开启：停止编辑满 {secs} 秒后把内容写入草稿（异常退出可恢复）。\
+                 仅对本次会话中编辑过的文档生效；草稿不覆盖原文件，原文件仍需 Ctrl+S 保存。"
+            ),
+        ),
+    };
     // 打开文档数量上限（问题 038）：标签条限额，达上限后拒绝**新的**打开。
     field(ui, theme, "打开文档上限", |ui| {
         let mut limit = view.max_open_documents;

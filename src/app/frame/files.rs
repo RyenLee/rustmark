@@ -128,6 +128,9 @@ impl EditorApp {
             return Ok(());
         };
         self.services.documents.save(SaveCommand { id, save_as })?;
+        // 手动保存同样刷新自动写回的磁盘基线并解除「外部改动」封锁：
+        // 用户刚刚显式决定了磁盘内容，此后自动写回可以安全地重新比对。
+        self.note_auto_write_synced(id);
         // 已正常保存：草稿失去意义，清掉以免启动时误报「待恢复」。
         let _ = self
             .services
@@ -176,6 +179,8 @@ impl EditorApp {
                     .services
                     .documents
                     .clear_draft(&self.services.drafts_dir, id);
+                // 还原 = 显式采纳磁盘版本：刷新基线并解除自动写回封锁。
+                self.note_auto_write_synced(id);
                 if self.active_doc == Some(id) {
                     // 领域内容已换：回读文本 + 把 egui 光标对齐到领域光标
                     // （还原后光标在文档头，与「重新打开」一致）。
@@ -299,24 +304,35 @@ impl EditorApp {
     /// 若测试自己 `arm(Deadline::AutoSave, ..)`，被测的就成了 `FrameScheduler`
     /// 而非「自动保存有没有接线」，后者才是历史上出错的地方。
     pub fn run_autosave(&mut self) {
-        let interval = self
-            .services
-            .preferences
-            .get_settings(GetSettingsQuery)
-            .ok()
-            .and_then(|s| s.editor.auto_save_interval);
-        let Some(secs) = interval else {
-            return;
+        // 读取失败不能让「默认开启」的自动保存静默停摆：与设置页同源的
+        // `settings()` 在仓储读失败时回退 `SettingsView::fallback()`（默认
+        // 30 秒），自动保存仍按默认间隔工作。早先这里写的是
+        // `get_settings().ok().and_then(...)`，一次 IO 失败就直接 return，
+        // 用户完全看不到「为什么改了内容却始终没有草稿」。
+        let editor = self.settings().editor;
+        let Some(secs) = editor.auto_save_interval else {
+            return; // None = 用户在设置页把滑块拖到 0，明确关闭
         };
         if secs == 0 {
-            return; // 0 表示「关闭自动保存」
+            return; // 0 也被当作关闭（领域校验已拒 0，此处是旧配置的兜底）
         }
+        let write_back = editor.auto_save_to_source;
+        let active = self.active_doc;
         let interval_ms = secs as u64 * 1000;
         let now = self.services.markdown.now();
         let due = self.services.auto_save_tracker.due(now, interval_ms);
         if !due.is_empty() {
             let drafts_dir = self.services.drafts_dir.clone();
             for id in due {
+                // 「写回原文件」只对当前活动文档生效：一次节拍悄悄改写多个
+                // 文件比只改一个更难预期，其余到期文档仍按 ADR-003 写草稿。
+                // 写回成功时 `save_document` 已清草稿、同步脏标记，不必再写。
+                if write_back
+                    && active == Some(id)
+                    && self.try_auto_write_to_source(id) == AutoWriteOutcome::Written
+                {
+                    continue;
+                }
                 // 失败不再静默吞掉（问题 068）：草稿是崩溃恢复的唯一凭据，
                 // 写失败还不告知，用户既没有草稿也没有任何线索。
                 if let Err(e) = self.services.documents.save_draft(&drafts_dir, id) {

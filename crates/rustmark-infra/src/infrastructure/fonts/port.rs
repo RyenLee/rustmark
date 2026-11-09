@@ -24,10 +24,14 @@
 //!
 //! 本项目的实际需求只有两项（见 `fonts.rs::install_egui_base_fonts` 与
 //! `discovery.rs`）：**字体文件字节**，以及 emoji 字体的**整体缩放**
-//! （NotoEmoji 0.81 / emoji-icon-font 0.90）。`index` 恒为 0（首字面），
-//! 其余微调项改造前也从未赋值——适配器把它们一律取 egui 的 `Default`，
-//! 与改造前的行为逐字段等价。将来真要调 hinting / coords 时，在此加字段
-//! 并在适配器里补一行映射即可（端口是本地类型，改动面收敛在这两个文件）。
+//! （NotoEmoji 0.81 / emoji-icon-font 0.90）。`index` 恒为 0（首字面）。
+//!
+//! `hinting` / `subpixel_binning` 是**全局渲染策略**而非逐字体数据，故不进
+//! 端口类型：由组合根适配器 `to_egui_font_definitions` 显式钉成 `Some(true)`
+//! （与 `theme::mapper::apply` 钉死的 `Visuals::text_options` 同一组合），
+//! 保证换字体后字形始终以抗锯齿 / 平滑 hinting 光栅化。`coords` 等其余项
+//! 仍取 egui 的 `Default`。将来真要逐字体调 hinting 时，在此加字段并在
+//! 适配器里补一行映射即可（端口是本地类型，改动面收敛在这两个文件）。
 
 use std::collections::BTreeMap;
 use std::sync::Arc;

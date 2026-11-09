@@ -146,6 +146,42 @@ fn autosave_arms_a_deadline_for_a_dirty_document() {
     drop(cfg);
 }
 
+/// 自动保存的开关状态与生效条件：默认开启（30 秒）；显式设为 `None`
+/// 后不再登记到期点，即真正关闭。
+///
+/// `run_autosave` 读配置走 `settings()`（失败时回退到同样的默认值），
+/// 不会因为一次配置读取失败就让「默认开启」的功能静默停摆。
+#[test]
+fn autosave_is_on_by_default_and_only_off_when_explicitly_disabled() {
+    let (cfg, mut app, _clock) = app_with_clock();
+    assert_eq!(
+        app.settings().editor.auto_save_interval,
+        Some(30),
+        "默认配置应开启 30 秒自动保存"
+    );
+
+    let mut editor = app
+        .services
+        .preferences
+        .get_settings(GetSettingsQuery)
+        .expect("设置应可读")
+        .editor;
+    editor.auto_save_interval = None;
+    app.services
+        .preferences
+        .set_editor(SetEditorCommand { editor })
+        .expect("间隔应可写");
+
+    app.new_document().expect("新建应成功");
+    app.insert_at_cursor("dirty").expect("插入应成功");
+    app.run_autosave();
+    assert!(
+        deadline_of(&app, "autosave").is_none(),
+        "显式关闭后不应再登记自动保存到期点"
+    );
+    drop(cfg);
+}
+
 /// 统计防抖：版本刚变、窗口未满时必须登记到期点。
 #[test]
 fn stats_debounce_arms_a_deadline_after_an_edit() {

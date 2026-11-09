@@ -134,6 +134,15 @@ fn default_auto_save_interval() -> Option<u32> {
     Some(30)
 }
 
+/// `EditorSettings::auto_save_to_source` 的 serde 缺省值（**关闭**）。
+///
+/// 自动写回原文件会覆盖磁盘内容，升级时绝不能静默打开。旧配置文件
+/// 没有这个字段时按关闭读出，行为与升级前逐字节一致——与
+/// `show_line_numbers` / `load_remote_images` 的「兼容优先」缺省同一条规矩。
+fn default_auto_save_to_source() -> bool {
+    false
+}
+
 /// 反序列化 `max_open_documents`：把 0 收敛到 1。
 ///
 /// # 为什么必须在 serde 入口收敛，而不是留给 `is_valid` 拒绝
@@ -176,6 +185,14 @@ pub struct EditorSettings {
     /// 而不是让整份配置反序列化失败、触发「备份 + 回退默认」。
     #[serde(default = "default_auto_save_interval")]
     auto_save_interval: Option<u32>,
+    /// 自动保存时是否**同时写回原文件**（默认关闭）。
+    ///
+    /// 关闭时自动保存只写草稿（ADR-003 的崩溃恢复语义）；开启后只对
+    /// 当前活动文档写回原路径，其余到期文档仍写草稿。这是个危险开关：
+    /// 写盘会覆盖磁盘内容，故默认关闭，且写回前必须做外部改动检测
+    /// （组合根 `frame::auto_write`）。
+    #[serde(default = "default_auto_save_to_source")]
+    auto_save_to_source: bool,
     spell_check: bool,
     /// 是否显示行号栏。
     ///
@@ -278,6 +295,7 @@ impl EditorSettings {
             tab_size: TabSize::Four,
             word_wrap: true,
             auto_save_interval: Some(30),
+            auto_save_to_source: false,
             spell_check: false,
             show_line_numbers: true,
             load_remote_images: true,
@@ -314,6 +332,10 @@ impl EditorSettings {
             tab_size,
             word_wrap,
             auto_save_interval,
+            // 显式构造一律关闭；持久化值由 serde 直填字段绕过 `new`，
+            // 设置页的开启值由 `with_auto_save_to_source` 链式写入。
+            // 三处分工让「默认关闭」在每条入口都成立。
+            auto_save_to_source: false,
             spell_check,
             show_line_numbers,
             load_remote_images,
@@ -342,6 +364,25 @@ impl EditorSettings {
     /// 自动保存间隔（秒）。
     pub const fn auto_save_interval(&self) -> Option<u32> {
         self.auto_save_interval
+    }
+
+    /// 自动保存是否写回原文件（默认关闭）。
+    pub const fn auto_save_to_source(&self) -> bool {
+        self.auto_save_to_source
+    }
+
+    /// 设置「自动写回原文件」开关，返回新的设置（值对象不可变）。
+    ///
+    /// 刻意不塞进 [`Self::new`] 的参数表：那张表被多处测试逐字构造，
+    /// 为一个可选开关改签名会让不相干的用例全部跟着改。与
+    /// [`Self::with_sidebar_visible`] / [`Self::with_sidebar_width`]
+    /// 同款手法：后加的可选设置用链式构造器，默认值由
+    /// `default_settings()` 与 serde 缺省值兜住。
+    pub const fn with_auto_save_to_source(self, enabled: bool) -> Self {
+        Self {
+            auto_save_to_source: enabled,
+            ..self
+        }
     }
 
     /// 是否启用拼写检查。

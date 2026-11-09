@@ -13,7 +13,7 @@ pub trait WorkspaceRepository: Send + Sync {
     /// 扫描根目录，返回 `max_depth` 层以内的条目（目录在前、同层按名称排序）。
     fn scan(&self, root: &FilePath, max_depth: usize) -> Result<Vec<WorkspaceEntry>, AppError>;
 
-    /// 读取最近文件列表（持久化在配置目录）。
+    /// 读取最近文件列表（持久化在数据目录）。
     fn load_recent(&self) -> Result<Vec<RecentFile>, AppError>;
 
     /// 保存最近文件列表。

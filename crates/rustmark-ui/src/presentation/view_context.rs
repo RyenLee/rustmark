@@ -543,6 +543,13 @@ pub trait CommandPort {
     /// 关闭全部文档（先弹确认）。
     fn close_all_with_confirm(&mut self);
 
+    /// 兑现应用内「确认 / 取消」弹窗的答复。
+    ///
+    /// `true` = 继续执行（关闭全部文档），`false` = 取消（什么都不做）。
+    /// 两条路径都必须关掉浮层并清掉待确认请求，否则下次点击会被
+    /// 「已有一个确认在飞」的闩锁吞掉。
+    fn resolve_close_all_confirm(&mut self, confirmed: bool);
+
     /// 标签条的水平滚动位置。
     fn set_tabstrip_scroll_x(&mut self, x: f32);
 
@@ -1203,11 +1210,21 @@ impl<T: ThemeAccess + DocumentAccess + CommandPort + ?Sized> WelcomeViewAccess f
 /// `EditorViewContext` 会被 `tools/arch_check.rs::check_view_narrow_context`
 /// 机械拦截），路由者再经 trait object upcasting 把它转成子视图要的那一个。
 ///
-/// 本 trait **没有自有方法**：它只是 17 个窄 trait 的并集，
+/// 应用内「确认 / 取消」浮层的窄上下文。
+///
+/// 视图读文案走 [`DialogStackAccess`]（`dialog_state().confirm_message()`），
+/// 兑现答复走 [`CommandPort`]，配色走 [`ThemeAccess`]——它不认识 `EditorApp`，
+/// 也拿不到其它浮层的状态，符合视图窄化的分层约束。
+pub trait ConfirmViewAccess: ThemeAccess + DialogStackAccess + CommandPort {}
+
+impl<T: ThemeAccess + DialogStackAccess + CommandPort + ?Sized> ConfirmViewAccess for T {}
+
+/// 本 trait **没有自有方法**：它只是全部窄 trait 的并集，
 /// 拆开是为了让「这个视图能碰到什么」在类型上可辨（见模块文档）。
 pub trait EditorViewContext:
     AboutViewAccess
     + CommandPaletteViewAccess
+    + ConfirmViewAccess
     + DiffViewAccess
     + EditorViewAccess
     + ExportViewAccess

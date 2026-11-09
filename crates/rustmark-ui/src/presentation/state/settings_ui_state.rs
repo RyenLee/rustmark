@@ -101,6 +101,8 @@ pub struct Snapshot {
     pub word_wrap: bool,
     /// 自动保存间隔（秒）。
     pub auto_save_interval: Option<u32>,
+    /// 自动保存是否写回原文件（默认关闭；「取消」必须一并回滚）。
+    pub auto_save_to_source: bool,
     /// 拼写检查。
     pub spell_check: bool,
     /// 是否显示行号栏。
@@ -301,6 +303,7 @@ mod tests {
             tab_size: 4,
             word_wrap: true,
             auto_save_interval: Some(2),
+            auto_save_to_source: false,
             spell_check: false,
             show_line_numbers: false,
             load_remote_images: true,

@@ -296,7 +296,9 @@ fn to_editor(view: &EditorSettingsView) -> AppResult<EditorSettings> {
         // 0 在领域构造时收敛到 1；这里再兜一层是因为 DTO 可能来自
         // 手改的配置文件（反序列化不经过 `new`）。
         view.max_open_documents.max(1),
-    ))
+    )
+    // 可选开关走链式构造器，不动 `new` 的 13 参数表（见领域侧注释）。
+    .with_auto_save_to_source(view.auto_save_to_source))
 }
 
 /// 领域 [`Preferences`] → [`SettingsView`]。
@@ -334,6 +336,7 @@ fn to_editor_view(editor: &EditorSettings) -> EditorSettingsView {
         tab_size: editor.tab_size().spaces() as u8,
         word_wrap: editor.word_wrap(),
         auto_save_interval: editor.auto_save_interval(),
+        auto_save_to_source: editor.auto_save_to_source(),
         spell_check: editor.spell_check(),
         show_line_numbers: editor.show_line_numbers(),
         load_remote_images: editor.load_remote_images(),

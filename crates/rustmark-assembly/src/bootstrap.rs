@@ -24,7 +24,8 @@
 //! 若先构造 Markdown 服务再构造文档服务，就拿不到 provider；
 //! 故顺序固定为：**注册表 → 文档服务 → 其余三个服务 → 事件订阅**。
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 use rustmark_core::application::composition::{AppServices, ComposeConfig, ImplBundle, compose};
@@ -55,6 +56,15 @@ use rustmark_infra::infrastructure::spell::VendoredSpellChecker;
 use rustmark_infra::infrastructure::system::SystemExternalOpener;
 use rustmark_infra::infrastructure::text::rope_text_buffer::RopeBufferFactory;
 
+/// 便携数据目录名（可执行文件同级）。
+const PORTABLE_DIR: &str = "data";
+/// 迁移完成标记：存在即不再重复扫描旧目录。
+const MIGRATION_MARKER: &str = ".rustmark-migrated";
+/// 写权限探针文件名前缀（探测后立即删除）。
+const WRITE_PROBE: &str = ".rustmark-write-probe";
+/// 探针序号：多个测试二进制并行启动时避免抢同一个文件名。
+static PROBE_SEQ: AtomicU64 = AtomicU64::new(0);
+
 /// 配置与最近文件的存放位置。
 #[derive(Clone, Debug)]
 pub struct ConfigPaths {
@@ -65,35 +75,60 @@ pub struct ConfigPaths {
 }
 
 impl ConfigPaths {
-    /// 按平台惯例推导配置目录。
+    /// 推导数据目录：**应用目录优先**（ADR-014）。
     ///
-    /// - Windows：`%APPDATA%\rustmark\`
-    /// - macOS：`~/Library/Application Support/rustmark/`
-    /// - Linux：`$XDG_CONFIG_HOME/rustmark/`（未设则 `~/.config/rustmark/`）
+    /// - 默认：可执行文件同级的 `data/`。Windows 便携 zip、Linux tar.gz
+    ///   解压即用形态都落在这里，卸载只需删掉整个应用目录。
+    /// - 回退：应用目录不可写，或属于 macOS `.app` / Linux AppImage 这类
+    ///   只读、签名的分发形态时，沿用各平台配置目录
+    ///   （Windows `%APPDATA%\rustmark\`、macOS
+    ///   `~/Library/Application Support/rustmark/`、Linux
+    ///   `$XDG_CONFIG_HOME/rustmark/`）。
     ///
-    /// 目录**不**在此创建：构造失败（如只读文件系统）应在真正写配置时才暴露，
-    /// 否则应用会在「只想读一次配置」时被磁盘状态挡住启动。
-    /// 全部环境变量缺失时退化到当前目录 `.`，让「首次运行」仍能进行，
-    /// 而不是因取不到路径就 panic。
+    /// 与旧版不同，这里**会创建 `data/` 目录**：写权限必须在启动期判定，
+    /// 否则「改设置时才失败」会把文件系统问题伪装成配置读取错误。
+    /// 探测只写一个随即删除的探针文件，不产生常驻缓存。
+    /// 全部环境变量缺失时退化到当前目录 `.`，首次运行不会因此 panic。
     pub fn detect() -> Self {
-        let base = if cfg!(target_os = "windows") {
-            std::env::var_os("APPDATA")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from("."))
-        } else if cfg!(target_os = "macos") {
-            std::env::var_os("HOME")
-                .map(|home| PathBuf::from(home).join("Library/Application Support"))
-                .unwrap_or_else(|| PathBuf::from("."))
-        } else {
-            std::env::var_os("XDG_CONFIG_HOME")
-                .map(PathBuf::from)
-                .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
-                .unwrap_or_else(|| PathBuf::from("."))
-        };
-        Self::in_dir(base.join("rustmark"))
+        Self::detect_with_note().0
     }
 
-    /// 指定目录（测试与便携模式）。
+    /// 同 [`Self::detect`]，额外返回回退原因（`None` = 正在使用便携目录）。
+    ///
+    /// 组合根用这条提示做启动日志：用户若发现数据没落在应用目录，
+    /// 原因必须可查，而不是「什么都没说就换了地方」。
+    pub fn detect_with_note() -> (Self, Option<&'static str>) {
+        let legacy = platform_config_root().join("rustmark");
+        let exe = std::env::current_exe().ok();
+        let (root, note) = choose_root(exe.as_deref(), legacy, probe_writable);
+        (Self::in_dir(root), note)
+    }
+
+    /// 本次实际使用的数据根目录。
+    ///
+    /// 诊断文案打印**实际值**而不是列一张三平台路径表：默认目录变了之后，
+    /// 硬编码的路径表必然与回退行为脱节。
+    pub fn root_dir(&self) -> PathBuf {
+        self.preferences
+            .parent()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("."))
+    }
+
+    /// 首次启动把旧平台配置目录的内容复制进当前数据目录。
+    ///
+    /// **只复制、不移动、不删除**：旧目录是用户既有数据，草稿尤其不能丢；
+    /// 目标已存在的文件一律跳过（用户改过的新配置优先）。成功后写
+    /// `.rustmark-migrated` 标记，既避免每次启动扫描旧目录，也避免用户
+    /// 删掉新配置想「重置」时旧配置又被复制回来。
+    /// 任何失败都静默降级为「不迁移」，绝不阻断启动。
+    /// 返回值是本次复制的文件数（供启动日志与测试观察）。
+    pub fn migrate_legacy(&self) -> usize {
+        let from = platform_config_root().join("rustmark");
+        migrate_between(&from, &self.root_dir())
+    }
+
+    /// 指定目录（测试与调用方显式注入）。
     pub fn in_dir(dir: impl Into<PathBuf>) -> Self {
         let dir = dir.into();
         Self {
@@ -102,31 +137,155 @@ impl ConfigPaths {
         }
     }
 
-    /// 草稿（异常退出后可恢复内容）存放目录：配置目录下的 `.rustmark-draft/`。
+    /// 草稿（异常退出后可恢复内容）存放目录：数据目录下的 `.rustmark-draft/`。
     ///
     /// 草稿**不覆盖**原文件，单独成目录便于「启动扫描 + 一键清理」，
     /// 也避免与 `preferences.toml` / `recent.json` 混在一起。
     pub fn drafts_dir(&self) -> PathBuf {
-        self.preferences
-            .parent()
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join(".rustmark-draft")
+        self.root_dir().join(".rustmark-draft")
     }
 
-    /// 崩溃报告（S9-08）存放目录：配置目录下的 `crash/`。
+    /// 崩溃报告（S9-08）存放目录：数据目录下的 `crash/`。
     ///
     /// 与草稿同理单独成目录：崩溃报告是**用户要手动提交**的诊断文件，
-    /// 混进配置目录会被误删；集中在 `crash/` 里，文档（troubleshooting.md）
+    /// 混进配置目录会被误删；集中在 `crash/` 里，文档（troubleshooting）
     /// 才能用一句话指路。正常使用**不会**创建该目录——只有真的崩溃过
     /// （或启动清理扫描到旧报告）才会出现。
     pub fn crash_dir(&self) -> PathBuf {
-        self.preferences
-            .parent()
+        self.root_dir().join("crash")
+    }
+}
+
+/// 平台配置根目录（**不含** `rustmark` 尾段）。
+///
+/// 它在 ADR-014 之后只承担两个角色：回退目标、旧数据迁移来源。
+fn platform_config_root() -> PathBuf {
+    if cfg!(target_os = "windows") {
+        std::env::var_os("APPDATA")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("."))
-            .join("crash")
+    } else if cfg!(target_os = "macos") {
+        std::env::var_os("HOME")
+            .map(|home| PathBuf::from(home).join("Library/Application Support"))
+            .unwrap_or_else(|| PathBuf::from("."))
+    } else {
+        std::env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
+            .unwrap_or_else(|| PathBuf::from("."))
     }
+}
+
+/// 只读 / 签名分发形态：不能往可执行文件旁边写数据。
+///
+/// 这两类目录**可能**恰好可写，但写进去是错的：macOS `.app` 一旦被改动
+/// 就破坏代码签名（Gatekeeper 拒启）；AppImage 是只读 squashfs 挂载点，
+/// `current_exe` 落在临时挂载目录里，那个 `data/` 重启即消失。
+/// 因此主动识别并回退，不依赖「碰巧写失败」。
+fn packaged_in_readonly_bundle(exe: &Path) -> bool {
+    let text = exe.to_string_lossy();
+    let macos_app = cfg!(target_os = "macos") && text.contains(".app/Contents/");
+    let appimage = cfg!(target_os = "linux") && text.contains("/.mount_");
+    macos_app || appimage
+}
+
+/// 目录可写探测：建目录 + 写一个探针文件再删掉。
+fn probe_writable(dir: &Path) -> bool {
+    if std::fs::create_dir_all(dir).is_err() {
+        return false;
+    }
+    // 带 pid + 序号：CI 上多个测试二进制并行、或用户同时开两个实例时，
+    // 固定文件名会互相截断，把「可写」误判成「不可写」而白白回退。
+    let seq = PROBE_SEQ.fetch_add(1, Ordering::Relaxed);
+    let probe = dir.join(format!("{WRITE_PROBE}-{}-{seq}", std::process::id()));
+    let ok = std::fs::write(&probe, b"ok").is_ok();
+    if ok {
+        let _ = std::fs::remove_file(&probe);
+    }
+    ok
+}
+
+/// 目录决策（拆成可注入探测器的纯函数，便于无副作用地钉住各分支）。
+fn choose_root(
+    exe: Option<&Path>,
+    legacy: PathBuf,
+    probe: impl FnOnce(&Path) -> bool,
+) -> (PathBuf, Option<&'static str>) {
+    let Some(exe) = exe else {
+        return (legacy, Some("无法定位可执行文件，已回退到平台配置目录"));
+    };
+    if packaged_in_readonly_bundle(exe) {
+        return (legacy, Some("只读/签名分发形态，已回退到平台配置目录"));
+    }
+    let Some(parent) = exe.parent() else {
+        return (legacy, Some("可执行文件没有父目录，已回退到平台配置目录"));
+    };
+    let portable = parent.join(PORTABLE_DIR);
+    if probe(&portable) {
+        (portable, None)
+    } else {
+        (legacy, Some("应用目录 data/ 不可写，已回退到平台配置目录"))
+    }
+}
+
+/// 把旧目录内容复制到新目录，返回复制的文件数。
+///
+/// 公开是为了让测试能注入两个临时目录，不必改动进程级环境变量
+/// （`APPDATA` / `HOME` 是全局状态，并发测试里改它必然互相干扰）。
+/// 符号链接一律不跟随（宁漏勿错）；所有 I/O 失败都降级为跳过该条目。
+pub fn migrate_between(from: &Path, to: &Path) -> usize {
+    if from == to || !from.is_dir() || to.join(MIGRATION_MARKER).exists() {
+        return 0;
+    }
+    if std::fs::create_dir_all(to).is_err() {
+        return 0;
+    }
+    let mut copied = 0;
+    if let Ok(entries) = std::fs::read_dir(from) {
+        for entry in entries.flatten() {
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            let name = entry.file_name();
+            if name == MIGRATION_MARKER {
+                continue;
+            }
+            let dst = to.join(&name);
+            if kind.is_dir() {
+                copied += copy_tree_new_only(&entry.path(), &dst);
+            } else if kind.is_file() && !dst.exists() && std::fs::copy(entry.path(), &dst).is_ok() {
+                copied += 1;
+            }
+        }
+    }
+    // 即使一个文件都没复制到也要写标记：旧目录里没有需要迁移的东西时，
+    // 不该每次启动都重复 read_dir。写失败则下次重试（无副作用）。
+    let _ = std::fs::write(to.join(MIGRATION_MARKER), b"rustmark data migrated\n");
+    copied
+}
+
+/// 递归复制目录，只补目标缺失的文件，不覆盖、不删源。
+fn copy_tree_new_only(src: &Path, dst: &Path) -> usize {
+    if std::fs::create_dir_all(dst).is_err() {
+        return 0;
+    }
+    let Ok(entries) = std::fs::read_dir(src) else {
+        return 0;
+    };
+    let mut copied = 0;
+    for entry in entries.flatten() {
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
+        let target = dst.join(entry.file_name());
+        if kind.is_dir() {
+            copied += copy_tree_new_only(&entry.path(), &target);
+        } else if kind.is_file() && !target.exists() && std::fs::copy(entry.path(), &target).is_ok()
+        {
+            copied += 1;
+        }
+    }
+    copied
 }
 
 /// 装配产物：全部用例服务 + 仍需在 UI 侧持有的基础设施能力。
@@ -203,7 +362,11 @@ fn production_bundle(paths: &ConfigPaths) -> ImplBundle {
 }
 
 impl Services {
-    /// 从零装配（使用平台默认配置路径）。
+    /// 从零装配（自动推导数据目录）。
+    ///
+    /// 生产入口 `app::run` 不调用本函数：它要用同一组路径同时装崩溃 hook、
+    /// 做残留清理与迁移，故显式走 [`ConfigPaths::detect_with_note`] +
+    /// [`Self::assemble`]。本函数保留给只需要「装配一套服务」的调用方。
     pub fn bootstrap() -> AppResult<Self> {
         Self::assemble(ConfigPaths::detect())
     }
@@ -338,5 +501,69 @@ impl Services {
             auto_save_tracker,
             drafts_dir,
         })
+    }
+}
+
+/// 目录决策的纯函数分支：注入探测器，不碰真实文件系统。
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod config_paths_tests {
+    use super::{Path, PathBuf, choose_root, migrate_between, packaged_in_readonly_bundle};
+
+    #[test]
+    fn writable_app_directory_uses_exe_sibling_data() {
+        let legacy = PathBuf::from("/legacy/rustmark");
+        let (root, note) = choose_root(
+            Some(Path::new("/apps/rustmark/rustmark.exe")),
+            legacy,
+            |candidate| {
+                assert_eq!(candidate, Path::new("/apps/rustmark/data"));
+                true
+            },
+        );
+        assert_eq!(root, PathBuf::from("/apps/rustmark/data"));
+        assert!(note.is_none(), "可写时不应产生回退提示");
+    }
+
+    #[test]
+    fn unwritable_app_directory_falls_back_with_a_reason() {
+        let legacy = PathBuf::from("/legacy/rustmark");
+        let (root, note) = choose_root(
+            Some(Path::new("/apps/rustmark/rustmark")),
+            legacy.clone(),
+            |_| false,
+        );
+        assert_eq!(root, legacy);
+        assert!(
+            note.is_some_and(|n| n.contains("不可写")),
+            "回退必须给出可查的原因：{note:?}"
+        );
+    }
+
+    #[test]
+    fn missing_exe_path_falls_back_to_platform_directory() {
+        let legacy = PathBuf::from("/legacy/rustmark");
+        let (root, note) = choose_root(None, legacy.clone(), |_| true);
+        assert_eq!(root, legacy);
+        assert!(note.is_some(), "拿不到 exe 路径时也要有回退提示");
+    }
+
+    #[test]
+    fn ordinary_paths_are_not_mistaken_for_readonly_bundles() {
+        assert!(!packaged_in_readonly_bundle(Path::new(
+            "/home/me/apps/rustmark/rustmark"
+        )));
+        assert!(!packaged_in_readonly_bundle(Path::new(
+            "C:/tools/rustmark/rustmark.exe"
+        )));
+    }
+
+    #[test]
+    fn same_source_and_target_is_a_no_op() {
+        let dir =
+            std::env::temp_dir().join(format!("rustmark-migrate-same-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        assert_eq!(migrate_between(&dir, &dir), 0);
+        let _ = std::fs::remove_dir(&dir);
     }
 }

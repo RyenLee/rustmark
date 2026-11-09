@@ -48,8 +48,12 @@ cp LICENSE-MIT LICENSE-APACHE NOTICE THIRD-PARTY-LICENSES.md "$stage/"
 cat > "$stage/README.txt" <<EOF
 rustmark v$version（Linux）
 
-运行 ./rustmark 即可。依赖：libvulkan1 / mesa（Vulkan 或 GL 渲染）。
-设置在 ~/.config/rustmark/，删除该目录即完全卸载。
+运行 ./rustmark 即可。依赖：libvulkan1 / mesa（Vulkan 渲染，无 GLES 回退）。
+设置、草稿与崩溃报告默认保存在本目录的 data/ 下（首次运行自动创建），
+删除整个解压目录即完全卸载；升级时请保留 data/。
+若以 AppImage 方式运行，挂载目录只读，数据会回退到
+$XDG_CONFIG_HOME/rustmark/（未设则 ~/.config/rustmark/），请一并删除该目录。
+从旧版本升级时旧数据会被复制进 data/，原目录保留不删。
 
 许可：本软件按 MIT OR Apache-2.0 双许可发布，随包附 LICENSE-MIT / LICENSE-APACHE /
 NOTICE（版权与声明）与 THIRD-PARTY-LICENSES.md（第三方依赖清单）；fonts/ 内含字体许可。

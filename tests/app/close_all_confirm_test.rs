@@ -1,49 +1,36 @@
 //! 「全部关闭」的二次确认（问题 038）。
 //!
-//! # 为什么需要确认
+//! # 为什么用应用内浮层
 //!
-//! 全部关闭会丢弃**所有**未保存修改，不可逆；而 `DialogPort::confirm` 是
-//! 同步阻塞的原生模态框，不能在 `update()` 里直接调。故与 V11-06 的删除
-//! 确认同一套路：登记意图 → 后台确认框 → 每帧取回。
+//! 全部关闭会丢弃**所有**未保存修改，不可逆，必须二次确认。但此前走的是
+//! `DialogRunner` → `DialogPort::confirm` → rfd 系统原生消息框：白底、灰按钮、
+//! 黄色警告图标，与项目 egui 深色界面和交互完全割裂。现改为
+//! `Overlay::Confirm` 应用内浮层 + 统一的「确定 / 取消」按钮。
 //!
-//! 本文件钉住五件事：
-//! 1. **没有脏文档时不弹框**（零风险操作不该有摩擦）；
-//! 2. 有脏文档时先确认，且确认文案报出脏文档数；
-//! 3. 答复「是」才真关，且回到欢迎页状态（`should_show_welcome()`）；
-//! 4. 答复「否」/ 取消同效：不关、不报错；
-//! 5. 对话框不可用时报错且**不关**（静默是最坏结果）。
+//! 本文件钉住六件事：
+//! 1. **没有脏文档时不弹浮层**（零风险操作不该有摩擦）；
+//! 2. 有脏文档时弹应用内浮层，且**完全不调用系统确认框**；
+//! 3. 确认文案报出脏文档数；
+//! 4. 答复「确定」才真关，并回到欢迎页状态；
+//! 5. 答复「取消」/ Esc / 标题栏 × 同效：不关、不报错、闩锁被清；
+//! 6. 已有一个确认在飞时重复请求被忽略（不会叠出第二个浮层）。
 
 use std::sync::Arc;
 
 use rustmark::app::bootstrap::{ConfigPaths, Services};
 use rustmark::app::frame::EditorApp;
 use rustmark::application::document::commands::InsertTextCommand;
+use rustmark::presentation::shortcuts::registry::UiAction;
+use rustmark::presentation::state::dialog_ui_state::Overlay;
 use rustmark::shared::ids::DocumentId;
 
-use crate::support::fake_dialog::{FakeDialog, Reply};
+use crate::support::fake_dialog::FakeDialog;
 
 fn app_with(fake: FakeDialog) -> (tempfile::TempDir, EditorApp) {
     let dir = tempfile::tempdir().expect("应可创建临时目录");
     let services = Services::assemble_with_dialogs(ConfigPaths::in_dir(dir.path()), Arc::new(fake))
         .expect("装配应成功");
     (dir, EditorApp::new(services, false))
-}
-
-/// 把后台结果收回来并应用（等价于 `update` 里的那两步）。
-///
-/// 注意时序：`DialogRunner::spawn` 起**后台线程**调 `DialogPort::confirm`，
-/// `confirm_calls` 是那个线程里自增的——**drain 之前**读它是在和线程
-/// 赛跑（既有删除确认测试一律在 drain 之后才断言语义次数的原因）。
-/// 同步可观测的「确认框已弹出」用 [`EditorApp::dialog_busy`]。
-fn drain(app: &mut EditorApp) -> bool {
-    for _ in 0..200 {
-        if let Some(outcome) = app.dialogs.poll() {
-            app.apply_dialog_outcome(outcome);
-            return true;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
-    false
 }
 
 /// 打开 `n` 份磁盘文件（默认限额 12，够用）。
@@ -72,7 +59,11 @@ fn open_count(app: &EditorApp) -> usize {
     app.open_document_list().len()
 }
 
-/// 零风险路径：没有脏文档时直接关，**不弹确认框**。
+fn confirm_message(app: &EditorApp) -> String {
+    app.dialog.confirm_message().unwrap_or_default().to_owned()
+}
+
+/// 零风险路径：没有脏文档时直接关，**不弹确认浮层**。
 #[test]
 fn closing_clean_documents_needs_no_confirmation() {
     let ws = tempfile::tempdir().expect("工作区");
@@ -84,14 +75,18 @@ fn closing_clean_documents_needs_no_confirmation() {
 
     assert_eq!(open_count(&app), 0, "全部关闭后应一个不剩");
     assert!(app.should_show_welcome(), "应回到欢迎页状态");
-    assert_eq!(fake.confirm_calls(), 0, "没有脏文档不该弹确认框");
+    assert!(
+        !app.dialog.is_open(Overlay::Confirm),
+        "干净文档不该弹确认框"
+    );
+    assert_eq!(fake.confirm_calls(), 0, "不该调用系统确认框");
 }
 
-/// 有脏文档时先确认，文档在答复前必须还在。
+/// 有脏文档时先弹**应用内**浮层；文档在答复前必须还在。
 #[test]
 fn closing_dirty_documents_asks_first() {
     let ws = tempfile::tempdir().expect("工作区");
-    let fake = FakeDialog::new(); // 不预置回应 = 取消
+    let fake = FakeDialog::new();
     let (_cfg, mut app) = app_with(fake.clone());
     open_n(&mut app, ws.path(), 3);
     dirty_active(&mut app);
@@ -99,10 +94,11 @@ fn closing_dirty_documents_asks_first() {
     app.close_all_with_confirm();
 
     assert_eq!(open_count(&app), 3, "答复之前一个都不能关");
-    assert!(app.dialog_busy(), "有脏文档必须先弹确认框");
-    assert!(drain(&mut app), "确认框应有答复");
-    assert_eq!(fake.confirm_calls(), 1, "应弹一次确认框");
-    assert_eq!(open_count(&app), 3, "用户没确认，文档必须还在");
+    assert!(app.dialog.is_open(Overlay::Confirm), "应打开应用内确认浮层");
+    assert!(app.dialog.confirm_pending(), "应有待答复的确认请求");
+    assert!(app.dialog.is_modal(), "确认浮层必须是模态");
+    assert!(!confirm_message(&app).is_empty(), "确认文案不能为空");
+    assert_eq!(fake.confirm_calls(), 0, "不再调用系统原生确认框");
 }
 
 /// 确认文案报出脏文档数——用户要凭这条信息决定「值不值得再存一次」。
@@ -115,13 +111,12 @@ fn the_confirm_message_reports_the_dirty_count() {
     // 把三份都改脏。
     for _ in 0..3 {
         dirty_active(&mut app);
-        app.execute(rustmark::presentation::shortcuts::registry::UiAction::NextTab);
+        app.execute(UiAction::NextTab);
     }
 
     app.close_all_with_confirm();
-    assert!(drain(&mut app));
 
-    let message = fake.last_message();
+    let message = confirm_message(&app);
     assert!(
         message.contains('3'),
         "确认框应报出脏文档数，实际 {message:?}"
@@ -132,65 +127,76 @@ fn the_confirm_message_reports_the_dirty_count() {
     );
 }
 
-/// 答复「是」→ 真的全关，回到欢迎页。
+/// 答复「确定」→ 真的全关，回到欢迎页，浮层与待确认请求一起清掉。
 #[test]
 fn confirming_closes_everything() {
     let ws = tempfile::tempdir().expect("工作区");
     let fake = FakeDialog::new();
-    fake.set_confirm(Reply::Yes);
     let (_cfg, mut app) = app_with(fake.clone());
     open_n(&mut app, ws.path(), 3);
     dirty_active(&mut app);
 
     app.close_all_with_confirm();
-    assert!(drain(&mut app));
+    app.resolve_close_all_confirm(true);
 
     assert_eq!(open_count(&app), 0, "确认后应全部关闭");
     assert!(app.should_show_welcome(), "应回到欢迎页状态");
-    assert_eq!(fake.confirm_calls(), 1, "确认框只该弹一次");
+    assert!(!app.dialog.is_open(Overlay::Confirm), "确认后浮层应关闭");
+    assert!(app.dialog.confirm_message().is_none(), "待确认请求应清空");
 }
 
-/// 答复「否」与取消同效：不关、不报错。
+/// 答复「取消」与关掉窗口同效：不关、不报错，且闩锁被清（可再次请求）。
 #[test]
-fn answering_no_keeps_everything() {
+fn cancelling_keeps_everything_and_clears_the_latch() {
     let ws = tempfile::tempdir().expect("工作区");
     let fake = FakeDialog::new();
-    fake.set_confirm(Reply::No);
-    let (_cfg, mut app) = app_with(fake);
+    let (_cfg, mut app) = app_with(fake.clone());
     open_n(&mut app, ws.path(), 2);
     dirty_active(&mut app);
 
     app.close_all_with_confirm();
-    assert!(drain(&mut app));
+    app.resolve_close_all_confirm(false);
 
-    assert_eq!(open_count(&app), 2, "点了「否」就不该关");
+    assert_eq!(open_count(&app), 2, "点了「取消」就不该关");
+    assert!(!app.dialog.is_open(Overlay::Confirm), "取消后浮层应关闭");
     assert!(
         app.status_bar.message.as_ref().is_none_or(|m| !m.is_error),
-        "「否」是正常操作，不该报错"
+        "「取消」是正常操作，不该报错"
     );
+    // 只 close_top 不清闩锁的话，下一次点击会被静默吞掉。
+    app.close_all_with_confirm();
+    assert!(
+        app.dialog.confirm_pending(),
+        "取消后必须能重新发起「全部关闭」确认"
+    );
+    assert_eq!(open_count(&app), 2, "重新确认期间文档仍要保留");
 }
 
-/// 对话框不可用：报错且不关（静默会让用户以为关了、实际没关）。
+/// Esc（走 `CloseOverlay` 动作）等价于「取消」，不能只关浮层不清闩锁。
 #[test]
-fn an_unavailable_confirm_reports_and_keeps_documents() {
+fn escape_is_equivalent_to_cancel() {
     let ws = tempfile::tempdir().expect("工作区");
     let fake = FakeDialog::new();
-    fake.set_confirm(Reply::Unavailable("no display".to_string()));
-    let (_cfg, mut app) = app_with(fake);
+    let (_cfg, mut app) = app_with(fake.clone());
     open_n(&mut app, ws.path(), 2);
     dirty_active(&mut app);
 
     app.close_all_with_confirm();
-    assert!(drain(&mut app));
+    app.execute(UiAction::CloseOverlay);
 
-    assert_eq!(open_count(&app), 2, "拿不到答复就不能关");
+    assert_eq!(open_count(&app), 2, "Esc 取消不该关掉文档");
+    assert!(!app.dialog.is_open(Overlay::Confirm), "Esc 应关掉确认浮层");
     assert!(
-        app.status_bar.message.as_ref().is_some_and(|m| m.is_error),
-        "对话框不可用必须报错，不能静默"
+        app.dialog.confirm_message().is_none(),
+        "Esc 应清掉待确认请求"
+    );
+    assert!(
+        app.status_bar.message.as_ref().is_none_or(|m| !m.is_error),
+        "Esc 取消不该报错"
     );
 }
 
-/// 已有一个「全部关闭」在等确认时再次请求应被忽略（不弹第二个窗口）。
+/// 已有一个「全部关闭」在等确认时再次请求应被忽略（不叠第二个浮层）。
 #[test]
 fn a_second_close_all_request_is_dropped_while_one_is_pending() {
     let ws = tempfile::tempdir().expect("工作区");
@@ -200,10 +206,11 @@ fn a_second_close_all_request_is_dropped_while_one_is_pending() {
     dirty_active(&mut app);
 
     app.close_all_with_confirm();
+    let first = confirm_message(&app);
     app.close_all_with_confirm();
 
-    assert!(app.dialog_busy(), "第一个请求应已弹出确认框");
-    assert!(drain(&mut app));
-    assert_eq!(fake.confirm_calls(), 1, "只该弹一个确认框");
+    assert!(app.dialog.confirm_pending(), "第一个请求应仍在等确认");
+    assert_eq!(confirm_message(&app), first, "重复请求不该改写文案");
+    assert_eq!(fake.confirm_calls(), 0, "不该调用系统确认框");
     assert_eq!(open_count(&app), 2, "未确认前文档必须还在");
 }

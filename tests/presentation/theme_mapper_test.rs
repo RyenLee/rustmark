@@ -396,6 +396,45 @@ fn font_settings_do_not_change_palette() {
     assert_eq!(themed.editor_font_family, "Consolas");
 }
 
+/// 外观设置的「行高」必须同时作用于编辑区与预览区。
+///
+/// 只写 `editor_line_height` 会让预览继续用 `metrics` 里的固定 1.7，
+/// 用户改行高后预览纹丝不动。预览保留既有的 +0.1 松一档（默认 1.6 → 1.7，
+/// 行内公式基线靠它对齐），变化量 1:1 传导。字号则刻意不联动：
+/// `preview_font_size` 还驱动全局 `TextStyle::Body` / `Heading`。
+#[test]
+fn resolve_applies_line_height_to_preview_metrics() {
+    let view = ThemeView {
+        kind: "dark".to_string(),
+        font_family: "Consolas".to_string(),
+        font_size: 18.0,
+        line_height: 2.4,
+        custom: None,
+    };
+    let themed = resolve(&view, false);
+
+    assert_eq!(themed.editor_line_height, 2.4);
+    assert!(
+        (themed.metrics.preview_line_height - 2.5).abs() < 1e-4,
+        "预览行高应跟随设置并保留 +0.1 的既有差值，实际 {}",
+        themed.metrics.preview_line_height
+    );
+    assert_eq!(
+        themed.metrics.preview_font_size,
+        Theme::dark().metrics.preview_font_size,
+        "UI 字号不应被编辑器字号联动"
+    );
+
+    // 自定义主题走的是另一条构造路径，同样要跟随行高。
+    let mut custom = view.clone();
+    custom.kind = "custom".to_string();
+    custom.custom = Some(rustmark::application::dto::CustomThemePaletteView::default());
+    assert!(
+        (resolve(&custom, false).metrics.preview_line_height - 2.5).abs() < 1e-4,
+        "自定义主题同样要跟随行高设置"
+    );
+}
+
 /// 空字体族不应把排版搞坏（退回内置默认）。
 #[test]
 fn blank_font_family_falls_back_to_default() {
