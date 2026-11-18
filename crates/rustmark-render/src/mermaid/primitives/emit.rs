@@ -2,19 +2,25 @@
 //!
 //! 几何类型走 `render` 端口层（`Pt`），不依赖 egui（问题 F / O4）。
 
-use crate::render::Pt;
+use crate::render::{Pt, geom::Rect};
 
 use super::super::model::{Edge, Graph, Head, LineStyle, NodeShape, Placed, Prim};
 use super::super::*;
+use super::paint::rect_corners;
 
-/// 发出图元：先把节点全部画出，再画边（箭头落在节点边界上，不会被节点盖住）。
+/// 发出图元：先画边、再画节点。
+///
+/// 顺序很关键：跨组连线常常要穿过别的节点，若边画在节点之后，线条会把
+/// 节点文字**划开**（《第三方加密授权平台》总体架构图实测）。反过来让
+/// 节点盖住线条，视觉上读作「线从节点背后穿过」；箭头尖端仍在节点边界上，
+/// 不会被遮住。
 pub(crate) fn emit(g: &Graph, placed: &[Placed], size: f32, measure: Measure<'_>) -> Vec<Prim> {
     let mut prims: Vec<Prim> = Vec::new();
-    for (i, p) in placed.iter().enumerate() {
-        push_node(&mut prims, p, &g.nodes[i].0, size);
-    }
     for e in &g.edges {
         push_edge(&mut prims, g, placed, e, size, measure);
+    }
+    for (i, p) in placed.iter().enumerate() {
+        push_node(&mut prims, p, &g.nodes[i].0, size);
     }
     prims
 }
@@ -49,7 +55,7 @@ fn push_node(prims: &mut Vec<Prim>, p: &Placed, text: &str, size: f32) {
         // 而圆角矩形在视觉上同样表达「存储」。
         NodeShape::Cylinder => prims.push(corners(hw, hh, hh * 0.7, false)),
         // 圆：尺寸阶段已把宽高调成正方形，故「圆角=半宽」即圆。
-        NodeShape::Circle => prims.push(corners(hw, hh, hw.min(hh), false)),
+        NodeShape::Circle | NodeShape::Dot => prims.push(corners(hw, hh, hw.min(hh), false)),
         NodeShape::Rhombus => prims.push(Prim::Poly {
             points: vec![
                 Pt::new(c.x, c.y - hh),
@@ -114,10 +120,49 @@ fn push_node(prims: &mut Vec<Prim>, p: &Placed, text: &str, size: f32) {
             });
         }
     }
+    let lines = split_label_lines(text);
+    if lines.iter().any(|l| !l.is_empty()) {
+        let lh = size * LABEL_LINE_HEIGHT;
+        let top = c.y - lines.len().saturating_sub(1) as f32 * lh * 0.5;
+        for (k, line) in lines.iter().enumerate() {
+            if line.is_empty() {
+                continue;
+            }
+            prims.push(Prim::Text {
+                at: Pt::new(c.x, top + k as f32 * lh),
+                text: line.clone(),
+                size,
+                plate: false,
+                color: None,
+            });
+        }
+    }
+}
+
+/// 一个 `subgraph` 分组框：只描边不填充（不遮住组内节点），标题画在左上角。
+pub(crate) fn push_group(
+    prims: &mut Vec<Prim>,
+    rect: Rect,
+    label: &str,
+    size: f32,
+    measure: Measure<'_>,
+) {
+    prims.push(Prim::Poly {
+        points: rect_corners(rect),
+        radius: size * 0.7,
+        fill: false,
+        ticks: false,
+        fill_color: None,
+        stroke_color: None,
+    });
+    let text_w = measure(label, size * 0.9);
     prims.push(Prim::Text {
-        at: c,
-        text: text.to_string(),
-        size,
+        at: Pt::new(
+            rect.left() + size * 0.7 + text_w * 0.5,
+            rect.top() + size * 0.85,
+        ),
+        text: label.to_string(),
+        size: size * 0.9,
         plate: false,
         color: None,
     });
@@ -231,9 +276,10 @@ fn push_edge(
 
     if let Some(label) = &e.label {
         // 标签压在线上读不清，故 `plate = true` 铺一块底色把线挡住（见 paint）。
-        let _ = measure;
+        // 但只取中点会在跨组连线上出事：中点常常正好落在别的节点上，底牌
+        // 把节点文字盖掉。这里沿折线找第一个不压节点框的落点。
         prims.push(Prim::Text {
-            at: polyline_midpoint(&route),
+            at: label_point(&route, label, size * 0.85, measure, placed),
             text: label.clone(),
             size: size * 0.85,
             plate: true,
@@ -248,7 +294,7 @@ fn boundary_point(p: &Placed, dir: Pt) -> Pt {
     // 菱形 / 圆按更小的内切半径算，让线不要插进斜边里。
     let (sx, sy) = match p.shape {
         NodeShape::Rhombus => (hw * 0.62, hh * 0.62),
-        NodeShape::Circle => (hw * 0.8, hh * 0.8),
+        NodeShape::Circle | NodeShape::Dot => (hw * 0.8, hh * 0.8),
         _ => (hw, hh),
     };
     let t = if dir.x.abs() > f32::EPSILON {
@@ -295,10 +341,61 @@ fn route_points(start: Pt, end: Pt, out_dir: Pt, in_dir: Pt) -> Vec<Pt> {
     }
 }
 
-/// 折线的中点（用于放标签）。
-fn polyline_midpoint(pts: &[Pt]) -> Pt {
+/// 边标签落点：沿折线找一个不压节点框的位置。
+///
+/// 只看中点会在「跨组连线」上翻车——中点往往正好落在另一个节点上，标签底牌
+/// 会把节点文字盖掉（《第三方加密授权平台》总体架构图实测）。顺序是
+/// 中点 → 两侧 → 垂直错开；都找不到时退回中点，至少位置可预期。
+fn label_point(
+    route: &[Pt],
+    label: &str,
+    size: f32,
+    measure: Measure<'_>,
+    placed: &[Placed],
+) -> Pt {
+    // 与绘制时的底牌同口径：文字宽度 + 一点余量。
+    let half = Pt::new(
+        (measure(label, size).max(size) + size * 0.5) * 0.5,
+        size * 1.4 * 0.5,
+    );
+    let obstacles: Vec<Rect> = placed
+        .iter()
+        .map(|p| Rect::from_center_size(p.center, p.size).expand(size * 0.2))
+        .collect();
+    let free = |at: Pt| {
+        let r = Rect::from_center_size(at, Pt::new(half.x * 2.0, half.y * 2.0));
+        !obstacles.iter().any(|o| rects_overlap(*o, r))
+    };
+    for f in [0.5, 0.36, 0.64, 0.22, 0.78] {
+        let at = polyline_at(route, f);
+        if free(at) {
+            return at;
+        }
+    }
+    let base = polyline_at(route, 0.5);
+    for k in 1..=3 {
+        let dy = half.y * 1.4 * k as f32;
+        for at in [Pt::new(base.x, base.y - dy), Pt::new(base.x, base.y + dy)] {
+            if free(at) {
+                return at;
+            }
+        }
+    }
+    base
+}
+
+/// 两个轴对齐矩形是否相交（边界相接不算）。
+fn rects_overlap(a: Rect, b: Rect) -> bool {
+    a.left() < b.right() && b.left() < a.right() && a.top() < b.bottom() && b.top() < a.bottom()
+}
+
+/// 折线上按**长度比例**取点（`frac` 越界会被夹到 [0, 1]）。
+fn polyline_at(pts: &[Pt], frac: f32) -> Pt {
     let total: f32 = pts.windows(2).map(|w| (w[1] - w[0]).length()).sum();
-    let mut want = total * 0.5;
+    if total <= f32::EPSILON {
+        return pts.first().copied().unwrap_or_else(Pt::zero);
+    }
+    let mut want = total * frac.clamp(0.0, 1.0);
     for w in pts.windows(2) {
         let seg = (w[1] - w[0]).length();
         if seg >= want {
@@ -307,5 +404,5 @@ fn polyline_midpoint(pts: &[Pt]) -> Pt {
         }
         want -= seg;
     }
-    *pts.last().unwrap_or(&Pt::zero())
+    pts.last().copied().unwrap_or_else(Pt::zero)
 }

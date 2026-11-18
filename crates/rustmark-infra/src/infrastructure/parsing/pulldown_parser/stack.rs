@@ -503,6 +503,20 @@ pub(super) fn flush_inline_text(stack: &mut Vec<OpenBlock>, pending: &mut String
         return;
     }
     let run = std::mem::take(pending);
+    // 代码 / 图表块内是**源码**，必须逐字保留：`<br/>`、`~x~`、`^x^`、`==x==`
+    // 都不能按正文规则改写。否则 Mermaid 的 `<br/>` 会被拆成真实换行，
+    // 标签跨行后 `[` 与 `]` 分居两行，预览报「形状没有闭合」（实测：
+    // `D2["接入 SDK<br/>授权校验 + 解密加载"]`）。
+    let in_code = stack.iter().rev().find(|f| !f.is_inline).is_some_and(|f| {
+        matches!(
+            f.kind.as_ref(),
+            Some(BlockKind::CodeBlock { .. } | BlockKind::Diagram { .. })
+        )
+    });
+    if in_code {
+        push_content(stack, &run, None);
+        return;
+    }
     push_markup_aware(stack, &run);
 }
 

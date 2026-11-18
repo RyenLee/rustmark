@@ -30,7 +30,7 @@
 | `NFR-COMPAT-01` | Windows 10 (1809)+，目标 Windows 11 | 阶段 09 打包验证 |
 | `NFR-COMPAT-02` | macOS 10.15 Catalina+，目标 14+ | 阶段 09 打包验证 |
 | `NFR-COMPAT-03` | Ubuntu 20.04+，目标 24.04 | 阶段 09 打包验证 |
-| `CONSTR-01` | Rust 2024 Edition / 1.99.0+ | `Cargo.toml` + `rust-toolchain.toml` |
+| `CONSTR-01` | Rust 2024 Edition / 1.100.0+ | `Cargo.toml` + `rust-toolchain.toml` |
 | `CONSTR-02` | 开源免费，MIT / Apache-2.0 双许可 | 阶段 09 LICENSE 文件 + `cargo deny` |
 
 ---
@@ -128,7 +128,7 @@
 
 | 编号 | 约束 | 强制手段 |
 |---|---|---|
-| `CONSTR-01` | Rust 2024 Edition / 1.99.0+ | `Cargo.toml` + `rust-toolchain.toml` |
+| `CONSTR-01` | Rust 2024 Edition / 1.100.0+ | `Cargo.toml` + `rust-toolchain.toml` |
 | `CONSTR-03` | 禁止 `mod.rs`；模块文件为 `module_name.rs`，子模块放 `module_name/` | `check-arch` + review |
 | `CONSTR-04` | 路径统一 `crate::` 开头，禁止 2015 风格 `::` | clippy + review |
 | `CONSTR-05` | 依赖方向 `presentation → application → domain ← infrastructure` | `build.rs` / `check-arch` 每提交校验 |

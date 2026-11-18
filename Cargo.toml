@@ -132,9 +132,9 @@ missing_docs = "warn"
 # 逐字重复，升级工具链或版本时要改 10 处，漏改一处即静默分叉。
 # publish = false：仅参与本地 workspace 构建，不发布到 crates.io。
 [workspace.package]
-version = "0.2.3"
+version = "0.2.4"
 edition = "2024"
-rust-version = "1.99"
+rust-version = "1.100.0"
 license = "MIT OR Apache-2.0"
 publish = false
 
@@ -215,6 +215,11 @@ remote-images = ["rustmark-infra/remote-images"]
 egui = { workspace = true }
 eframe = { version = "0.37.0", default-features = false, features = [
     "wgpu_no_default_features",
+    # `default-features = false` 同时关掉了 eframe 的 `clipboard`（进而关掉
+    # egui-winit 的剪贴板后端）。`ctx.copy_text` 仍会发出
+    # `OutputCommand::CopyText`，但没人消费——预览区代码块 / 公式 / 图表上的
+    # 「复制」按钮点了没反应。剪贴板不是渲染后端，显式补回。
+    "clipboard",
     "x11",
     "wayland",
 ] }

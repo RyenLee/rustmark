@@ -1,3 +1,5 @@
+use crate::render::{Pt, geom::Rect};
+
 use super::class::{RelKind, parse_class};
 use super::gantt::{GanttStatus, parse_gantt};
 use super::graph_layout::rank_nodes;
@@ -285,12 +287,11 @@ fn cosmetic_directives_are_ignored_not_fatal() {
 
 #[test]
 fn other_diagram_kinds_are_unsupported() {
-    // 这三种现已支持，见下方各自的布局测试；这里只保留仍未支持的图种。
+    // 已支持的图种见各自模块内的布局测试；这里只保留仍未实现的图种。
     for src in [
-        "pie title x\n\"a\" : 1",
-        "stateDiagram-v2\n[*] --> A",
-        "erDiagram\nA ||--o{ B : has",
-        "journey\ntitle x",
+        "kanban\n  todo[待办]\n    t1[任务]\n",
+        "radar-beta\n  axis a, b\n",
+        "info\n",
     ] {
         assert!(
             matches!(bad(src), MermaidError::Unsupported(_)),
@@ -457,10 +458,262 @@ fn markdown_link_in_label_creates_hotspot() {
 }
 
 #[test]
-fn subgraph_is_unsupported_rather_than_half_drawn() {
-    // 半张图比不画更难排查：用户会先怀疑自己的语法。
-    let e = bad("graph LR\nsubgraph 一组\nA-->B\nend\n");
-    assert!(matches!(e, MermaidError::Unsupported(_)), "实际 {e:?}");
+fn subgraph_renders_as_group_boxes() {
+    // 取 `docs/logs/第三方加密授权平台.md` 的「总体架构」一节的真实写法：
+    // `subgraph ID["标题"]` + 跨组连线 + 双向箭头。
+    let src = "flowchart LR\n\
+               subgraph DEV[\"开发者侧\"]\n\
+               D1[\"业务源码/工程\"]\n\
+               D2[\"接入 SDK\"]\n\
+               end\n\
+               subgraph PLAT[\"第三方授权平台\"]\n\
+               P1[\"应用注册\"]\n\
+               end\n\
+               subgraph CUST[\"客户运行环境\"]\n\
+               C1[\"加密后的程序\"]\n\
+               C2[\"license.lic\"]\n\
+               end\n\
+               D1 --> D2\n\
+               D2 --> P1\n\
+               P1 <-->|\"HTTPS\"| C1\n\
+               C1 --> C2\n";
+    let g = parse_graph(src).expect("分组流程图应能解析");
+    assert_eq!(g.groups.len(), 3, "三个 subgraph 各成一组");
+    assert_eq!(g.groups[0].label, "开发者侧", "标题取方括号内文本");
+    assert_eq!(g.groups[0].members.len(), 2);
+    assert_eq!(g.edges.len(), 4);
+
+    let l = lay(src);
+    assert!(l.width > 0.0 && l.height > 0.0);
+    // 分组框只描边不填充，故不计入节点数。
+    assert_eq!(l.node_count(), 5, "分组框不得被算成节点");
+    // 分组框必须最先发出（否则会盖住组内节点）：每个框 = 描边矩形 + 标题。
+    for p in &l.prims[..2] {
+        match p {
+            Prim::Poly { fill, .. } => assert!(!*fill, "分组框应为不填充的描边矩形"),
+            Prim::Text { .. } => {}
+            other => panic!("首几个图元应为分组框，实际 {other:?}"),
+        }
+    }
+    let box_count = l
+        .prims
+        .iter()
+        .filter(|p| matches!(p, Prim::Poly { fill: false, .. }))
+        .count();
+    assert_eq!(box_count, 3, "三个 subgraph 应各有一个框");
+}
+
+/// `<br/>` 是 Mermaid 里最常见的换行写法，不能被原样画进节点。
+#[test]
+fn br_tags_split_node_text_into_lines() {
+    let l = lay("flowchart LR\nA[\"第一行<br/>第二行\"]\n");
+    let texts: Vec<&str> = l
+        .prims
+        .iter()
+        .filter_map(|p| match p {
+            Prim::Text { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(texts, vec!["第一行", "第二行"]);
+
+    let single = lay("flowchart LR\nA[\"第一行\"]\n");
+    assert!(l.height > single.height, "两行标签应比单行更高");
+}
+
+/// 适配 `docs/logs/第三方加密授权平台.md`「授权生命周期状态机」一节的真实写法。
+#[test]
+fn state_diagram_from_doc_renders() {
+    let src = "stateDiagram-v2\n\
+               [*] --> 未激活\n\
+               未激活 --> 已激活: 激活成功\n\
+               已激活 --> 运行中: 启动校验通过\n\
+               运行中 --> 已过期: 超过有效期\n\
+               运行中 --> 已吊销: 平台吊销 / 设备数超限\n\
+               已过期 --> 已激活: 续期\n\
+               已吊销 --> [*]\n\
+               已过期 --> [*]\n\
+               运行中 --> 宽限期: 心跳连续失败\n\
+               宽限期 --> 运行中: 恢复联网\n\
+               宽限期 --> 受限模式: 超过宽限期\n";
+    let g = super::state::parse_state(src).expect("状态图应能解析");
+    // 7 个状态 + 3 个 `[*]` 标记（各自独立）。
+    assert_eq!(g.nodes.len(), 10, "{:?}", g.nodes);
+    assert_eq!(g.edges.len(), 11);
+    assert!(g.edges.iter().any(|e| e.label.as_deref() == Some("续期")));
+
+    let l = lay(src);
+    assert!(l.width > 0.0 && l.height > 0.0);
+    assert_eq!(l.node_count(), 10, "状态与起止标记都要画出来");
+}
+
+/// 回归：《第三方加密授权平台》总体架构图的排版不允许重叠。
+///
+/// 截图反馈：跨组连线的边标签压在「构建插件 / 标记并加密关键模块」等节点上，
+/// 连线把节点文字划开。这里把两条约束钉在版面层面：
+/// 1. 节点框两两不相交；
+/// 2. 所有边标签（`plate = true` 的文字）不落在任何节点框内。
+#[test]
+fn clustered_architecture_has_no_overlap() {
+    let src = r#"flowchart LR
+subgraph DEV["开发者侧"]
+D1["业务源码/工程"]
+D2["接入 SDK<br/>授权校验 + 解密加载"]
+D3["构建插件<br/>标记并加密关键模块"]
+end
+subgraph PLAT["第三方授权平台"]
+P1["应用注册 / 版本管理"]
+P2["KMS 密钥管理<br/>主密钥永不下发"]
+P3["加密构建服务"]
+P4["授权签发服务"]
+P5["激活 / 校验 / 心跳 API"]
+P6["审计日志 + 风控"]
+end
+subgraph CUST["客户运行环境"]
+C1["加密后的程序"]
+C2["license.lic 授权文件"]
+C3["运行时 SDK"]
+end
+D1 --> D3 --> P3
+D2 --> P3
+P2 --> P3
+P2 --> P4
+P3 -->|"加密产物 + 桩代码"| D1
+P4 -->|"签发授权文件"| C2
+C1 --> C3
+C2 --> C3
+C3 <-->|"HTTPS 激活/心跳"| P5
+P5 --> P6
+"#;
+    let l = lay(src);
+    assert_eq!(l.node_count(), 12, "12 个节点应各画一个框");
+
+    let rect_of = |points: &[Pt]| {
+        let mut min = points[0];
+        let mut max = points[0];
+        for p in points {
+            min = Pt::new(min.x.min(p.x), min.y.min(p.y));
+            max = Pt::new(max.x.max(p.x), max.y.max(p.y));
+        }
+        Rect::from_two_pos(min, max)
+    };
+    let nodes: Vec<Rect> = l
+        .prims
+        .iter()
+        .filter_map(|p| match p {
+            Prim::Poly {
+                points, fill: true, ..
+            } => Some(rect_of(points)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(nodes.len(), 12);
+
+    let overlap = |a: Rect, b: Rect| {
+        a.left() < b.right() && b.left() < a.right() && a.top() < b.bottom() && b.top() < a.bottom()
+    };
+    for i in 0..nodes.len() {
+        for j in i + 1..nodes.len() {
+            assert!(
+                !overlap(nodes[i].expand(-0.5), nodes[j].expand(-0.5)),
+                "节点 {i} 与节点 {j} 的框重叠"
+            );
+        }
+    }
+
+    let measure = m();
+    let mut labels = 0;
+    let mut label_rects: Vec<(Rect, &str)> = Vec::new();
+    for p in &l.prims {
+        let Prim::Text {
+            at,
+            text,
+            size,
+            plate: true,
+            ..
+        } = p
+        else {
+            continue;
+        };
+        labels += 1;
+        let half = Pt::new(
+            (measure(text, *size).max(*size) + *size * 0.5) * 0.5,
+            *size * 1.4 * 0.5,
+        );
+        let r = Rect::from_center_size(*at, Pt::new(half.x * 2.0, half.y * 2.0));
+        for (i, n) in nodes.iter().enumerate() {
+            assert!(!overlap(*n, r), "边标签 `{text}` 压在节点 {i} 上");
+        }
+        label_rects.push((r, text));
+    }
+    assert_eq!(labels, 3, "图里应有 3 条带标签的边");
+    for i in 0..label_rects.len() {
+        for j in i + 1..label_rects.len() {
+            assert!(
+                !overlap(label_rects[i].0, label_rects[j].0),
+                "边标签 `{}` 与 `{}` 互相重叠",
+                label_rects[i].1,
+                label_rects[j].1
+            );
+        }
+    }
+}
+
+/// 回归：10 个新增图种都必须经 `layout` 分发出可绘制版面。
+#[test]
+fn new_diagram_kinds_dispatch_and_render() {
+    let cases = [
+        ("pie", "pie title 占比\n\"A\" : 40\n\"B\" : 60\n"),
+        ("journey", "journey\ntitle 旅程\nsection 出门\n起床: 3\n"),
+        ("timeline", "timeline\n2024 : 立项\n2025 : 上线\n"),
+        ("mindmap", "mindmap\n 根\n   分支\n"),
+        ("quadrantChart", "quadrantChart\nA: [0.2, 0.8]\n"),
+        ("xychart", "xychart-beta\nx-axis [a, b]\nbar [1, 2]\n"),
+        ("erDiagram", "erDiagram\nA ||--o{ B : has\n"),
+        (
+            "requirementDiagram",
+            "requirementDiagram\nrequirement r {\n id: 1\n}\n",
+        ),
+        ("gitGraph", "gitGraph\ncommit\n"),
+        ("sankey", "sankey-beta\nA,B,1\n"),
+    ];
+    for (kind, src) in cases {
+        let l = lay(src);
+        assert!(l.width > 0.0 && l.height > 0.0, "{kind} 应有正尺寸");
+        assert!(prim_count(&l) > 0, "{kind} 应有图元");
+    }
+}
+
+/// `xychart-beta` / `sankey-beta` 的 `-beta` 后缀会被 `leading_word` 截断，
+/// 分发仍须命中。
+#[test]
+fn suffixed_kind_names_are_recognized() {
+    for (kind, src) in [
+        ("xychart-beta", "xychart-beta\nx-axis [a]\nbar [1]\n"),
+        ("sankey-beta", "sankey-beta\nA,B,1\n"),
+    ] {
+        assert!(layout(src, 14.0, &m()).is_ok(), "{kind} 应被识别");
+    }
+}
+
+/// 新增图种的畸形输入只能是 `Err`，绝不能 panic（`panic = "abort"`）。
+#[test]
+fn new_kinds_hostile_inputs_are_errors_not_panics() {
+    for src in [
+        "pie\n\"A\" : x\n",
+        "pie\n",
+        "journey\n任务: 9\n",
+        "timeline\n",
+        "mindmap\n",
+        "quadrantChart\nA: 右上\n",
+        "xychart-beta\n",
+        "erDiagram\nA ||--\n",
+        "requirementDiagram\nr - likes -> e\n",
+        "gitGraph\n",
+        "sankey-beta\nA,B\n",
+    ] {
+        let _ = bad(src);
+    }
 }
 
 #[test]

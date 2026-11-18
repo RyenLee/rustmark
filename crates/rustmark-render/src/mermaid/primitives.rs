@@ -10,7 +10,7 @@
 mod emit;
 mod paint;
 
-pub(crate) use emit::emit;
+pub(crate) use emit::{emit, push_group};
 pub use paint::{
     MermaidStyle, collect_clicks, commands, finalize, first_md_link, fitted_height, prim_count,
     push_check, rect_boundary, rect_corners,

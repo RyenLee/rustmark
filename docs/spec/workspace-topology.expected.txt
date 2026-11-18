@@ -123,20 +123,20 @@
 #   rustmark-ui     → {rustmark-core, rustmark-render}                                      （2 条）
 #   rustmark-ports  → rustmark-shared                                                      （1 条）
 # 合计 16 条，无环。
-rustmark v0.2.3
+rustmark v0.2.4
 ├── anyhow v1.0.104
 ├── eframe v0.37.0
 ├── egui v0.37.0
 ├── env_logger v0.11.11
 ├── image v0.25.10
-├── log v0.4.34
-├── rustmark-assembly v0.2.3
-├── rustmark-core v0.2.3
-├── rustmark-icons v0.2.3
-├── rustmark-infra v0.2.3
+├── log v0.4.35
+├── rustmark-assembly v0.2.4
+├── rustmark-core v0.2.4
+├── rustmark-icons v0.2.4
+├── rustmark-infra v0.2.4
 │   [dev-dependencies]
-├── rustmark-ui v0.2.3
-└── wgpu v30.0.1
+├── rustmark-ui v0.2.4
+└── wgpu v30.0.2
     [build-dependencies]
 [build-dependencies]
 └── embed-resource v3.0.12
@@ -144,61 +144,61 @@ rustmark v0.2.3
 ├── syntect v5.3.0
 └── tempfile v3.27.0
 
-rustmark-actions v0.2.3
+rustmark-actions v0.2.4
 
-rustmark-assembly v0.2.3
-├── rustmark-core v0.2.3
-├── rustmark-infra v0.2.3
+rustmark-assembly v0.2.4
+├── rustmark-core v0.2.4
+├── rustmark-infra v0.2.4
 │   [dev-dependencies]
-└── rustmark-ports v0.2.3
+└── rustmark-ports v0.2.4
 
-rustmark-core v0.2.3
+rustmark-core v0.2.4
 ├── ahash v0.8.12
 │   [build-dependencies]
-├── log v0.4.34
-├── rustmark-actions v0.2.3
-├── rustmark-ports v0.2.3
-├── rustmark-shared v0.2.3
+├── log v0.4.35
+├── rustmark-actions v0.2.4
+├── rustmark-ports v0.2.4
+├── rustmark-shared v0.2.4
 ├── serde v1.0.229
 └── thiserror v2.0.21
 
-rustmark-icons v0.2.3
+rustmark-icons v0.2.4
 └── egui v0.37.0
 
-rustmark-infra v0.2.3
+rustmark-infra v0.2.4
 ├── image v0.25.10
-├── log v0.4.34
+├── log v0.4.35
 ├── pulldown-cmark v0.13.6
 ├── rfd v0.17.2
 ├── ropey v1.6.1
 ├── rustls-native-certs v0.8.5
-├── rustmark-core v0.2.3
-├── rustmark-ports v0.2.3
+├── rustmark-core v0.2.4
+├── rustmark-ports v0.2.4
 ├── serde v1.0.229
 ├── syntect v5.3.0
 ├── thiserror v2.0.21
-├── toml v1.1.8+spec-1.1.0
-└── ureq v3.5.0
+├── toml v1.2.1+spec-1.1.0
+└── ureq v3.5.2
 [dev-dependencies]
 └── tempfile v3.27.0
 
-rustmark-ports v0.2.3
+rustmark-ports v0.2.4
 ├── ahash v0.8.12
 │   [build-dependencies]
-├── rustmark-shared v0.2.3
+├── rustmark-shared v0.2.4
 ├── serde v1.0.229
 └── thiserror v2.0.21
 
-rustmark-render v0.2.3
+rustmark-render v0.2.4
 └── egui v0.37.0
 
-rustmark-shared v0.2.3
+rustmark-shared v0.2.4
 ├── ahash v0.8.12
 │   [build-dependencies]
 ├── serde v1.0.229
 └── thiserror v2.0.21
 
-rustmark-ui v0.2.3
+rustmark-ui v0.2.4
 ├── egui v0.37.0
-├── rustmark-core v0.2.3
-└── rustmark-render v0.2.3
+├── rustmark-core v0.2.4
+└── rustmark-render v0.2.4

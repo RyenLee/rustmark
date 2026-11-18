@@ -135,7 +135,10 @@ pub(super) fn draw_math(ui: &mut Ui, theme: &Theme, block: &BlockView, wrap: boo
 /// 旧实现却只把源码当代码块打出来、再附一句「导出后由浏览器渲染」。
 /// 现在直接画成节点—连线图（分层布局 + 正交走线 + 箭头 + 边标签）。
 ///
-/// 子集外的图种（`sequenceDiagram` 等）与 `subgraph` 回退到源码卡并说明原因。
+/// 支持 `graph` / `flowchart`（含 `subgraph` 分组框）、`sequenceDiagram`、
+/// `classDiagram`、`gantt`、`stateDiagram-v2`、`pie`、`journey`、`timeline`、
+/// `mindmap`、`quadrantChart`、`xychart`、`erDiagram`、`requirementDiagram`、
+/// `gitGraph`、`sankey`；其余图种回退到源码卡并说明原因。
 ///
 /// `wrap` 跟随「自动换行」开关：回退源码卡内的长行在开启时折行（问题 2）。
 pub(super) fn draw_diagram(ui: &mut Ui, theme: &Theme, block: &BlockView, wrap: bool) {

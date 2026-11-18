@@ -8,6 +8,30 @@ Release Notes 依此自动归组。
 
 暂无未发布变更；已发布内容见对应版本条目。
 
+## [0.2.4] · 2026-11-18
+
+### 本次发布概要
+
+- **Mermaid 图种补全**：预览内置渲染器新增 `pie`、`journey`、`timeline`、
+  `mindmap`、`quadrantChart`、`xychart`、`erDiagram`、`requirementDiagram`、
+  `gitGraph`、`sankey` 十种图，统一走「解析 → 纯函数布局 → 图元 → finalize」
+  管线；仍不支持的写法继续回退源码卡并说明原因。
+- **测试补强**：为上述图种新增 60+ 条单元测试，覆盖解析、边界值与畸形输入，
+  并补充分发层回归用例（版式尺寸、图元数量、错误类型）。
+- **修复**：代码 / 图表块内容被当成正文做行内标记改写，`<br/>` 被换成真实
+  换行，导致 Mermaid 节点标签跨行、`[` 与 `]` 分居两行并报「形状没有闭合」
+  （表现为《第三方加密授权平台》总体架构图无法排版）。
+- **排版**：流程图加大列/节点间距、按边标签宽度预留跨组通道；边标签沿折线
+  自动避让节点，连线改画在节点下层，解决预览里标签压字与线条穿框。
+- **修复**：`-->|"文案"|` 的管道标签去掉定界引号，不再把引号画进图里。
+- **修复**：`default-features = false` 连带关掉了 eframe 的剪贴板后端，
+  预览区代码块 / 公式 / 图表上的「复制」按钮点击无效；已显式启用
+  `clipboard` feature。
+- **配套**：版本号升至 0.2.4（真源 `[workspace.package].version`），
+  `Cargo.lock` 与 workspace 拓扑期望文件同步更新。
+- **工具链与依赖**：Rust 工具链与 MSRV 升至 1.100.0（`rust-toolchain.toml`
+  钉 `1.100`）；`cargo update` 同步 semver 兼容的依赖补丁版本。
+
 ## [0.2.3] · 2026-11-09
 
 ### 本次发布概要
@@ -549,7 +573,8 @@ Release Notes 依此自动归组。
 - release 产物 ≤10MB 红线门禁（CI 强制）与性能冒烟基准。
 - 架构分层（DDD 四层）由 `check-arch` 在 build.rs 构建期强制。
 
-[未发布]: https://example.invalid/rustmark/compare/v0.2.3...HEAD
+[未发布]: https://example.invalid/rustmark/compare/v0.2.4...HEAD
+[0.2.4]: https://example.invalid/rustmark/releases/tag/v0.2.4
 [0.2.3]: https://example.invalid/rustmark/releases/tag/v0.2.3
 [0.2.2]: https://example.invalid/rustmark/releases/tag/v0.2.2
 [0.2.1]: https://example.invalid/rustmark/releases/tag/v0.2.1

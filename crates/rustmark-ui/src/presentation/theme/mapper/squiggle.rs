@@ -139,8 +139,8 @@ fn row_segments(
     };
 
     let mut out = Vec::new();
-    for idx in first..=last.min(galley.rows.len().saturating_sub(1)) {
-        let placed = &galley.rows[idx];
+    let last = last.min(galley.rows.len().saturating_sub(1));
+    for (idx, placed) in galley.rows.iter().enumerate().take(last + 1).skip(first) {
         let row_rect = placed.rect();
         let x0 = if idx == first {
             start_rect.left_center().x

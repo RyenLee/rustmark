@@ -1,6 +1,6 @@
 //! `graph` / `flowchart`「节点 + 有向边」子集的解析器。
 
-use super::model::{Edge, Graph, Head, LineStyle, NodeShape};
+use super::model::{Edge, Graph, Group, Head, LineStyle, NodeShape};
 use super::*;
 
 /// 解析 Mermaid 源码为图模型。
@@ -38,9 +38,12 @@ pub(super) fn parse_graph(src: &str) -> Result<Graph, MermaidError> {
         nodes: Vec::new(),
         node_ids: Vec::new(),
         edges: Vec::new(),
+        groups: Vec::new(),
     };
+    // 当前所处的 `subgraph` 层级（内层在后）。`end` 弹栈。
+    let mut stack: Vec<usize> = Vec::new();
     if !tail.is_empty() {
-        parse_line(tail, &mut g)?;
+        parse_line(tail, &mut g, &mut stack)?;
     }
     // 头部那一行之后的其余行。
     let mut seen_header = false;
@@ -52,19 +55,19 @@ pub(super) fn parse_graph(src: &str) -> Result<Graph, MermaidError> {
             seen_header = true;
             continue;
         }
-        parse_line(line, &mut g)?;
+        parse_line(line, &mut g, &mut stack)?;
     }
     Ok(g)
 }
 
 /// 解析一行（可能含多条语句，用 `;` 分隔）。
-fn parse_line(line: &str, g: &mut Graph) -> Result<(), MermaidError> {
+fn parse_line(line: &str, g: &mut Graph, stack: &mut Vec<usize>) -> Result<(), MermaidError> {
     let line = line.trim();
     if line.is_empty() || line.starts_with("%%") {
         return Ok(());
     }
     for stmt in line.split(';').map(str::trim).filter(|s| !s.is_empty()) {
-        parse_statement(stmt, g)?;
+        parse_statement(stmt, g, stack)?;
     }
     Ok(())
 }
@@ -91,42 +94,60 @@ fn is_cosmetic(stmt: &str) -> bool {
     )
 }
 
-/// 结构上不支持：宁可整体回退，也不要画出半张图。
-fn unsupported_kind(stmt: &str) -> Option<String> {
-    let head = leading_word(stmt);
-    if matches!(head.as_str(), "subgraph" | "end") {
-        return Some(head);
+/// `subgraph` 的标题：`DEV["开发者侧"]` / `DEV[开发者侧]` / `开发者侧`。
+fn group_label(rest: &str) -> String {
+    let rest = rest.trim();
+    let inner = match rest.find(['[', '(', '{']) {
+        Some(open) => {
+            let tail = &rest[open..];
+            match tail.rfind([']', ')', '}']) {
+                Some(close) => tail[1..close].trim().to_string(),
+                None => String::new(),
+            }
+        }
+        None => rest.to_string(),
+    };
+    let inner = inner.trim().trim_matches('"').trim();
+    if inner.is_empty() {
+        "分组".to_string()
+    } else {
+        inner.to_string()
     }
-    // `sequenceDiagram` / `classDiagram` / `gantt` 已由 `layout` 分发处理，
-    // 不再在此拦截；其余图种（pie / journey / …）仍整体回退。
-    if matches!(
-        head.as_str(),
-        "pie"
-            | "journey"
-            | "gitGraph"
-            | "mindmap"
-            | "timeline"
-            | "quadrantChart"
-            | "xychart"
-            | "sankey"
-            | "requirement"
-    ) {
-        return Some(head);
+}
+
+/// 把节点登记进当前所有外层分组（嵌套时祖先也要包含它，框才是完整包住）。
+fn add_member(g: &mut Graph, stack: &[usize], v: usize) {
+    for gi in stack {
+        let members = &mut g.groups[*gi].members;
+        if !members.contains(&v) {
+            members.push(v);
+        }
     }
-    None
 }
 
 /// 解析一条语句：`节点 (边 节点)*`。
-fn parse_statement(stmt: &str, g: &mut Graph) -> Result<(), MermaidError> {
+fn parse_statement(stmt: &str, g: &mut Graph, stack: &mut Vec<usize>) -> Result<(), MermaidError> {
     if is_cosmetic(stmt) {
         return Ok(());
     }
-    if let Some(what) = unsupported_kind(stmt) {
-        return Err(MermaidError::Unsupported(what));
+    let head = leading_word(stmt);
+    if head == "subgraph" {
+        let rest = stmt[head.len()..].trim();
+        g.groups.push(Group {
+            label: group_label(rest),
+            members: Vec::new(),
+        });
+        stack.push(g.groups.len() - 1);
+        return Ok(());
+    }
+    if head == "end" {
+        stack.pop();
+        return Ok(());
     }
     let chars: Vec<char> = stmt.chars().collect();
     let mut i = 0usize;
     let mut prev = parse_node(&chars, &mut i, g)?;
+    add_member(g, stack, prev);
     loop {
         skip_ws(&chars, &mut i);
         if i >= chars.len() {
@@ -136,6 +157,7 @@ fn parse_statement(stmt: &str, g: &mut Graph) -> Result<(), MermaidError> {
         i += edge.consumed;
         skip_ws(&chars, &mut i);
         let next = parse_node(&chars, &mut i, g)?;
+        add_member(g, stack, next);
         g.edges.push(Edge {
             from: prev,
             to: next,
@@ -294,6 +316,15 @@ struct ParsedEdge {
     consumed: usize,
 }
 
+/// 去掉成对的首尾双引号（不处理转义，够用）。
+fn strip_quotes(s: &str) -> &str {
+    if s.len() >= 2 && s.starts_with('"') && s.ends_with('"') {
+        &s[1..s.len() - 1]
+    } else {
+        s
+    }
+}
+
 /// 读一条边。
 ///
 /// # 为什么用「扫描找收尾符」而不是穷举全部写法
@@ -353,8 +384,10 @@ fn parse_edge(c: &[char], start: usize) -> Result<ParsedEdge, MermaidError> {
         }
         if j < c.len() {
             let piped: String = c[body_start..j].iter().collect();
-            if !piped.trim().is_empty() {
-                label = piped.trim().to_string();
+            let piped = piped.trim();
+            // Mermaid 允许 `-->|"文案"|`：引号只是定界符，不参与显示。
+            if !piped.is_empty() {
+                label = strip_quotes(piped).to_string();
             }
             consumed = j + 1;
         }

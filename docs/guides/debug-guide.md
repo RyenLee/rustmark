@@ -87,7 +87,7 @@ RUSTMARK_STARTUP_TIMING=1 cargo run --bin rustmark
    约 10.5 MB，距红线约 1.0 MiB 余量（实时数字见 `docs/spec/metrics.md` §2）。
    若只想验证打包流程，可本地临时调大脚本里的 `$packageLimitBytes`（**勿提交该改动**）。
 
-> 工具链由 `rust-toolchain.toml` 钉到 **1.99**（minor 级，补丁号由 rustup 跟随最新；含 rustfmt / clippy 组件，`profile = "minimal"`），
+> 工具链由 `rust-toolchain.toml` 钉到 **1.100**（minor 级，补丁号由 rustup 跟随最新；含 rustfmt / clippy 组件，`profile = "minimal"`），
 > 首次构建时 rustup 自动安装，无需手工 `rustup install`。
 > 切换工具链或改过 feature 后遇到「怪问题」（如 §5.4 的 wgpu panic），先 `cargo clean` 再重建。
 

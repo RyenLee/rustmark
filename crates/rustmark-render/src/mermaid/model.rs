@@ -18,6 +18,8 @@ pub(super) enum NodeShape {
     Hexagon,
     Parallelogram,
     Asymmetric,
+    /// 状态图里的 `[*]`：起止标记，画成小实心圆点。
+    Dot,
 }
 
 /// 边的线型。
@@ -53,6 +55,15 @@ pub(super) struct Edge {
     pub(super) bidirectional: bool,
 }
 
+/// 子图（`subgraph ... end`）：一个带标题的分组框。
+#[derive(Clone, Debug)]
+pub(super) struct Group {
+    /// 标题（`subgraph DEV["开发者侧"]` 里的 `开发者侧`）。
+    pub(super) label: String,
+    /// 成员节点下标。嵌套分组时节点同时属于所有外层分组。
+    pub(super) members: Vec<usize>,
+}
+
 /// 解析后的图。
 #[derive(Clone, Debug)]
 pub(super) struct Graph {
@@ -65,6 +76,8 @@ pub(super) struct Graph {
     /// 节点 id（与 `nodes` 一一对应，供 `click` 指令按 id 命中热点）。
     pub(super) node_ids: Vec<String>,
     pub(super) edges: Vec<Edge>,
+    /// 子图分组（`subgraph`）。空表示图里没有分组。
+    pub(super) groups: Vec<Group>,
 }
 
 /// 一个节点在版面里的位置与尺寸。

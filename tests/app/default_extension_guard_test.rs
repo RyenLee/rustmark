@@ -122,12 +122,7 @@ fn is_hardcoded_default_extension(line: &str) -> bool {
     }
     // 形态 3：`let ext = "md";` 一类
     let trimmed = code.trim_start();
-    if trimmed.starts_with("let ")
-        && (trimmed.contains("= \"md\";") || trimmed.contains("=\"md\";"))
-    {
-        return true;
-    }
-    false
+    trimmed.starts_with("let ") && (trimmed.contains("= \"md\";") || trimmed.contains("=\"md\";"))
 }
 
 /// 去掉行注释与字符串字面量里的内容，避免注释里的 `.md` 被误判。

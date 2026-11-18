@@ -5,7 +5,7 @@ GBK/GB18030 无损读写、分屏实时预览。
 
 - 许可：`MIT OR Apache-2.0` 双许可，可任选其一（[MIT License](LICENSE-MIT) /
   [Apache License 2.0](LICENSE-APACHE)）
-- 当前版本：v0.2.3（见 `CHANGELOG.md`）
+- 当前版本：v0.2.4（见 `CHANGELOG.md`）
 - 平台：Windows / macOS / Linux
 
 ---
@@ -190,7 +190,7 @@ sudo pacman -S vulkan-icd-loader   # 另装 vulkan-intel / vulkan-radeon / vulka
 ## 6. 从源码构建
 
 ```bash
-# 工具链：Rust 1.99（rust-toolchain.toml 钉 minor，补丁号由 rustup 自动跟随）
+# 工具链：Rust 1.100（rust-toolchain.toml 钉 minor，补丁号由 rustup 自动跟随）
 cargo build --release --bin rustmark   # 产物 target/release/rustmark*
 
 # 全量验证链（贡献者必过）——`--workspace` 必带：workspace 化（D-3 阶段 4a）后

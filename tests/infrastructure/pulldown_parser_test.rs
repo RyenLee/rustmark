@@ -711,6 +711,28 @@ fn mermaid_fence_becomes_diagram_block() {
 }
 
 #[test]
+fn fenced_code_keeps_markup_verbatim() {
+    // 代码 / 图表块里是**源码**：`<br/>` 不能被「正文软换行」规则改写成换行，
+    // 否则 Mermaid 节点标签会跨行、`[` 与 `]` 分居两行，
+    // 预览报「形状没有闭合」（回归：D2["接入 SDK<br/>授权校验 + 解密加载"]）。
+    let diagram = parse("```mermaid\nflowchart LR\n  D2[\"接入 SDK<br/>授权校验\"]\n```\n");
+    assert!(
+        diagram[0]
+            .content()
+            .contains("D2[\"接入 SDK<br/>授权校验\"]"),
+        "图表源码里的 <br/> 必须原样保留：{:?}",
+        diagram[0].content()
+    );
+
+    let code = parse("```html\na<br/>b\n```\n");
+    assert!(
+        code[0].content().contains("a<br/>b"),
+        "代码块里的 <br/> 必须原样保留：{:?}",
+        code[0].content()
+    );
+}
+
+#[test]
 fn mermaid_detection_is_case_insensitive_and_lang_scoped() {
     // 围栏语言大小写不敏感（```Mermaid 也要认），
     // 但 `mermaid-ish` 这类前缀相似语言不应被误判。

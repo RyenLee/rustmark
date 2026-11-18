@@ -82,6 +82,7 @@ pub(super) fn parse(src: &str) -> Result<Graph, MermaidError> {
         nodes: Vec::new(),
         node_ids: Vec::new(),
         edges: Vec::new(),
+        groups: Vec::new(),
     };
     let mut seen_header = false;
     for line in src.lines().map(str::trim) {

@@ -741,6 +741,43 @@ fn canonical_flowchart_renders_each_node_exactly_once() {
     );
 }
 
+/// 节点标签里的 `<br/>` 不能被预览前的 Markdown 解析改写成真实换行。
+///
+/// 回归：《第三方加密授权平台》总体架构图里
+/// `D2["接入 SDK<br/>授权校验 + 解密加载"]` 曾因解析层把 `<br/>` 换成 `\n`，
+/// 标签被拆成两行，第二行没有 `[`，Mermaid 报「D2 的形状 `[` 没有 `]` 闭合」。
+/// 预览拿到的 `diagram.content` 必须仍是**单行源码**，整张图才能排版。
+#[test]
+fn diagram_keeps_br_tag_in_node_label() {
+    const DOC: &str = "```mermaid\n\
+        flowchart LR\n\
+        \x20 D2[\"接入 SDK<br/>授权校验 + 解密加载\"]\n\
+        \x20 D3[\"构建插件<br/>标记并加密关键模块\"]\n\
+        \x20 D2 --> D3\n\
+        ```\n";
+
+    let (_dir, mut app) = app_with(DOC);
+    let ctx = egui::Context::default();
+    render(&mut app, &ctx, 3);
+
+    let diagram = app
+        .preview
+        .blocks
+        .iter()
+        .find(|b| b.kind == "diagram")
+        .expect("这段 mermaid 应产出图表块");
+    assert!(
+        diagram.content.contains("<br/>"),
+        "图表源码里的 <br/> 被改写成了换行：{:?}",
+        diagram.content
+    );
+
+    let measure = |t: &str, size: f32| t.chars().count() as f32 * size * 0.5;
+    let layout = rustmark::presentation::views::mermaid::layout(&diagram.content, 14.0, &measure)
+        .unwrap_or_else(|e| panic!("含 <br/> 的节点标签必须能排版：{e}"));
+    assert_eq!(layout.node_count(), 2);
+}
+
 // ============================================================================
 // 脚注的渲染回归（问题：预览区注脚等内容的渲染失效）
 // ============================================================================
